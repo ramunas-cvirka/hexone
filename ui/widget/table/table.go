@@ -5,8 +5,6 @@ import (
 	"image/color"
 
 	"gioui.org/font"
-	"gioui.org/io/event"
-	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -26,8 +24,8 @@ const (
 )
 
 type Column struct {
-	Width unit.Dp
-	Flex  bool
+	Width unit.Dp // base width (minimum if Flex)
+	Flex  bool    // takes share of remaining width
 	Align Align
 	PadX  unit.Dp
 }
@@ -48,8 +46,8 @@ type Table struct {
 	Columns  []Column
 	Selected int
 
-	OnActivate func(row int)
-	OnSelect   func(row int)
+	OnActivate func(row int) // Enter
+	OnSelect   func(row int) // selection change
 
 	TextSize   unit.Sp
 	RowHeight  unit.Dp
@@ -59,9 +57,10 @@ type Table struct {
 	SelectedBg color.NRGBA
 	SelectedFg *color.NRGBA
 
-	tag           struct{}
-	rowClicks     []widget.Clickable
-	pendingScroll bool
+	rowClicks []widget.Clickable
+
+	// internal: request ensureVisible next frame (after list updated Count)
+	pendingEnsure bool
 }
 
 func New(cols []Column) *Table {
@@ -119,22 +118,19 @@ func (t *Table) clampListPos(n int) {
 	}
 }
 
-func (t *Table) requestFocus(gtx layout.Context) {
-	gtx.Execute(key.FocusCmd{Tag: &t.tag})
+func (t *Table) notifySelect(prev int) {
+	if t.OnSelect != nil && prev != t.Selected {
+		t.OnSelect(t.Selected)
+	}
 }
 
-func fillRect(gtx layout.Context, c color.NRGBA, size image.Point) {
-	paint.FillShape(gtx.Ops, c, clip.Rect(image.Rectangle{Max: size}).Op())
-}
-
-func (t *Table) scrollSelectionIntoView(viewportHpx int, rowHpx int, n int) {
+// ensureVisible uses the authoritative List.Position.Count (computed by List.Layout).
+func (t *Table) ensureVisible(n int) {
 	if n <= 0 || t.Selected < 0 {
 		return
 	}
-	if rowHpx < 1 {
-		rowHpx = 1
-	}
-	visible := viewportHpx / rowHpx
+
+	visible := t.List.Position.Count
 	if visible < 1 {
 		visible = 1
 	}
@@ -146,87 +142,66 @@ func (t *Table) scrollSelectionIntoView(viewportHpx int, rowHpx int, n int) {
 		t.List.Position.First = t.Selected
 		t.List.Position.Offset = 0
 	} else if t.Selected > last {
-		newFirst := t.Selected - (visible - 1)
-		if newFirst < 0 {
-			newFirst = 0
+		t.List.Position.First = t.Selected - (visible - 1)
+		if t.List.Position.First < 0 {
+			t.List.Position.First = 0
 		}
-		t.List.Position.First = newFirst
 		t.List.Position.Offset = 0
 	}
+
 	t.clampListPos(n)
 }
 
-func (t *Table) notifySelect(prev int) {
-	if t.OnSelect != nil && t.Selected != prev {
-		t.OnSelect(t.Selected)
-	}
+func fillRect(gtx layout.Context, c color.NRGBA, size image.Point) {
+	paint.FillShape(gtx.Ops, c, clip.Rect(image.Rectangle{Max: size}).Op())
 }
 
-func (t *Table) handleKeys(gtx layout.Context, n int, viewportHpx int, rowHpx int) {
-	for {
-		ev, ok := gtx.Event(
-			key.Filter{Name: key.NameUpArrow},
-			key.Filter{Name: key.NameDownArrow},
-			key.Filter{Name: key.NamePageUp},
-			key.Filter{Name: key.NamePageDown},
-			key.Filter{Name: key.NameHome},
-			key.Filter{Name: key.NameEnd},
-			key.Filter{Name: key.NameReturn},
-			key.Filter{Name: key.NameEnter},
-		)
-		if !ok {
-			break
-		}
-		ke, ok := ev.(key.Event)
-		if !ok || ke.State != key.Press {
-			continue
-		}
-
-		prev := t.Selected
-
-		switch ke.Name {
-		case key.NameUpArrow:
-			t.Selected--
-		case key.NameDownArrow:
-			t.Selected++
-		case key.NameHome:
-			t.Selected = 0
-		case key.NameEnd:
-			t.Selected = n - 1
-		case key.NamePageUp:
-			step := viewportHpx / rowHpx
-			if step < 1 {
-				step = 10
-			}
-			t.Selected -= step
-		case key.NamePageDown:
-			step := viewportHpx / rowHpx
-			if step < 1 {
-				step = 10
-			}
-			t.Selected += step
-		case key.NameReturn, key.NameEnter:
-			if t.OnActivate != nil && t.Selected >= 0 && t.Selected < n {
-				t.OnActivate(t.Selected)
-			}
-		}
-
-		t.clampSelection(n)
-		t.scrollSelectionIntoView(viewportHpx, rowHpx, n)
-		t.notifySelect(prev)
+// HandleKey is called from Tab code after tbl.Layout has run at least once this frame.
+// It uses List.Position.Count to scroll correctly.
+func (t *Table) HandleKey(name string, n int) bool {
+	if n <= 0 {
+		return false
 	}
-}
 
-func (t *Table) Focus(gtx layout.Context) { gtx.Execute(key.FocusCmd{Tag: &t.tag}) }
+	prev := t.Selected
+
+	switch name {
+	case "↑":
+		t.Selected--
+	case "↓":
+		t.Selected++
+	case "⇞": // PageUp
+		step := t.List.Position.Count
+		if step < 1 {
+			step = 10
+		}
+		t.Selected -= step
+	case "⇟": // PageDown
+		step := t.List.Position.Count
+		if step < 1 {
+			step = 10
+		}
+		t.Selected += step
+	case "⇱": // Home
+		t.Selected = 0
+	case "⇲": // End
+		t.Selected = n - 1
+	case "⏎":
+		if t.OnActivate != nil && t.Selected >= 0 && t.Selected < n {
+			t.OnActivate(t.Selected)
+		}
+		return true
+	default:
+		return false
+	}
+
+	t.clampSelection(n)
+	t.ensureVisible(n)
+	t.notifySelect(prev)
+	return true
+}
 
 func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.Dimensions {
-
-	area := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
-	event.Op(gtx.Ops, &t.tag)
-	area.Pop()
-
-	event.Op(gtx.Ops, &t.tag)
-
 	n := 0
 	if m != nil {
 		n = m.Len()
@@ -236,40 +211,42 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 	t.clampSelection(n)
 	t.clampListPos(n)
 
+	// Background
 	fillRect(gtx, t.Bg, gtx.Constraints.Max)
 
 	outer := layout.UniformInset(unit.Dp(10))
 	return outer.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		viewportHpx := gtx.Constraints.Max.Y
+		// IMPORTANT: clip so table doesn't steal clicks outside (tabs etc.)
+		clipArea := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
+		defer clipArea.Pop()
 
 		rowHpx := gtx.Dp(t.RowHeight)
 		if rowHpx < 1 {
 			rowHpx = 1
 		}
 
-		if t.pendingScroll {
-			t.pendingScroll = false
-			t.scrollSelectionIntoView(viewportHpx, rowHpx, n)
+		// If selection changed by click in previous frame, ensure visible now (after Count exists).
+		if t.pendingEnsure {
+			t.pendingEnsure = false
+			t.ensureVisible(n)
 		}
-
-		t.handleKeys(gtx, n, viewportHpx, rowHpx)
 
 		return t.List.Layout(gtx, n, func(gtx layout.Context, row int) layout.Dimensions {
 			if row < 0 || row >= len(t.rowClicks) {
 				return layout.Dimensions{}
 			}
 
+			// Fixed height rows.
 			gtx.Constraints.Min.Y = rowHpx
 			gtx.Constraints.Max.Y = rowHpx
 
 			click := &t.rowClicks[row]
-
 			for click.Clicked(gtx) {
 				prev := t.Selected
 				t.Selected = row
 				t.clampSelection(n)
-				t.pendingScroll = true
-				t.requestFocus(gtx)
+				// ensure visible next frame, after List updates Position.Count
+				t.pendingEnsure = true
 				t.notifySelect(prev)
 			}
 
@@ -292,6 +269,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 						cellH = 1
 					}
 
+					// column widths
 					fixedW := 0
 					minFlexW := 0
 					flexCount := 0

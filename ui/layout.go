@@ -4,6 +4,7 @@ import (
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -28,6 +29,23 @@ type DemoRow struct {
 
 type DemoModel struct {
 	rows []DemoRow
+}
+
+const (
+	repeatSlow       = 80 * time.Millisecond
+	repeatFast       = 25 * time.Millisecond
+	repeatAccelAfter = 120 * time.Millisecond
+)
+
+type KeyRepeat struct {
+	active     bool
+	name       string
+	next       time.Time
+	started    time.Time
+	period     time.Duration
+	slow       time.Duration
+	fast       time.Duration
+	accelAfter time.Duration
 }
 
 func (m *DemoModel) Len() int { return len(m.rows) }
@@ -68,6 +86,8 @@ type UI struct {
 	leftPrev       string
 	rightPrev      string
 	wantFocusTable bool
+	rep            KeyRepeat
+	held           map[string]bool // key glyph -> isDown
 
 	// Tab buttons
 	tab0, tab1, tab2 widget.Clickable
@@ -86,9 +106,30 @@ func NewUI() *UI {
 	ui.RightEd.Submit = false
 
 	ui.LeftInfo = "0 bytes"
+	ui.held = make(map[string]bool, 16)
 
 	ui.model = &DemoModel{
 		rows: []DemoRow{
+			{"src/", "<DIR>", "Jan 31 2026", 1},
+			{"assets/", "<DIR>", "Jan 12 2026", 1},
+			{"main.go", "8.2 KB", "Jan 31 2026", 0},
+			{"table.go", "6.5 KB", "Jan 31 2026", 2},
+			{"broken_link", "0 B", "—", 3},
+			{"src/", "<DIR>", "Jan 31 2026", 1},
+			{"assets/", "<DIR>", "Jan 12 2026", 1},
+			{"main.go", "8.2 KB", "Jan 31 2026", 0},
+			{"table.go", "6.5 KB", "Jan 31 2026", 2},
+			{"broken_link", "0 B", "—", 3},
+			{"src/", "<DIR>", "Jan 31 2026", 1},
+			{"assets/", "<DIR>", "Jan 12 2026", 1},
+			{"main.go", "8.2 KB", "Jan 31 2026", 0},
+			{"table.go", "6.5 KB", "Jan 31 2026", 2},
+			{"broken_link", "0 B", "—", 3},
+			{"src/", "<DIR>", "Jan 31 2026", 1},
+			{"assets/", "<DIR>", "Jan 12 2026", 1},
+			{"main.go", "8.2 KB", "Jan 31 2026", 0},
+			{"table.go", "6.5 KB", "Jan 31 2026", 2},
+			{"broken_link", "0 B", "—", 3},
 			{"src/", "<DIR>", "Jan 31 2026", 1},
 			{"assets/", "<DIR>", "Jan 12 2026", 1},
 			{"main.go", "8.2 KB", "Jan 31 2026", 0},
@@ -109,6 +150,13 @@ func NewUI() *UI {
 	}
 
 	return ui
+}
+
+func (ui *UI) resetKeys() {
+	ui.rep.active = false
+	for k := range ui.held {
+		ui.held[k] = false
+	}
 }
 
 // Top tabs row: centered, closer together.
@@ -163,13 +211,17 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			switch ui.Tabs.Value {
 			case "tab0":
+				ui.resetKeys()
 				return ui.layoutTab0(th, gtx)
 			case "tab1":
+				ui.resetKeys()
 				ui.wantFocusTable = true
 				return ui.layoutTab1(th, gtx)
 			case "tab2":
+				ui.resetKeys()
 				return ui.layoutTabPlaceholder(th, gtx, "Tab 3 content")
 			default:
+				ui.resetKeys()
 				return ui.layoutTab0(th, gtx)
 			}
 		}),
