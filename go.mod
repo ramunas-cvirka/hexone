@@ -2,7 +2,10 @@ module hexone
 
 go 1.25.5
 
-require gioui.org v0.9.0
+require (
+	gioui.org v0.9.0
+	go.yaml.in/yaml/v4 v4.0.0-rc.4
+)
 
 require (
 	gioui.org/shader v1.0.8 // indirect

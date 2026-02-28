@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"hexone/protocols"
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
+	"os"
 	"time"
 
 	"gioui.org/font"
@@ -74,6 +76,47 @@ func (m *DemoModel) Cell(r, c int) (string, table.CellStyle) {
 	}
 }
 
+type FieldSpan struct {
+	Name      string
+	StartByte int
+	EndByte   int
+	Value     string
+	Meaning   string
+	Color     color.NRGBA
+
+	click widget.Clickable
+}
+
+type tab2State struct {
+	hexEd       widget.Editor
+	protoChoice widget.Enum // "gt06" | "teltonika_tcp"
+
+	spec *protocols.Spec
+	reg  *protocols.DefaultHookRegistry
+
+	lastHexText string
+	lastProto   string
+	lastBytes   []byte
+	lastRes     protocols.Result
+	lastErr     string
+
+	// selection/hover are by *span*, not by row2 piece.
+	selectedSpanKey string // "start:end"
+	hoverSpanKey    string // "start:end"
+	hoverSpan       *protocols.Span
+
+	protoDropOpen bool
+
+	hoverRowID    string
+	selectedRowID string
+
+	// scroll-to-selected: tracks which rowID we last scrolled to.
+	lastScrolledRowID string
+
+	list   layout.List
+	clicks map[string]*widget.Clickable
+}
+
 type UI struct {
 	Tabs widget.Enum // selected tab key: "tab0" / "tab1" / "tab2"
 
@@ -88,6 +131,8 @@ type UI struct {
 	wantFocusTable bool
 	rep            KeyRepeat
 	held           map[string]bool // key glyph -> isDown
+
+	tab2State *tab2State
 
 	// Tab buttons
 	tab0, tab1, tab2 widget.Clickable
@@ -148,6 +193,10 @@ func NewUI() *UI {
 	ui.tbl.OnActivate = func(row int) {
 		ui.LeftInfo = "Activated: " + ui.model.rows[row].Name
 	}
+
+	data, _ := os.ReadFile("protocols.yaml")
+
+	ui.ensureTab2Loaded(data)
 
 	return ui
 }
@@ -219,7 +268,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 				return ui.layoutTab1(th, gtx)
 			case "tab2":
 				ui.resetKeys()
-				return ui.layoutTabPlaceholder(th, gtx, "Tab 3 content")
+				return ui.layoutTab2(th, gtx)
 			default:
 				ui.resetKeys()
 				return ui.layoutTab0(th, gtx)
