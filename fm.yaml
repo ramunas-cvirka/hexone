@@ -1,0 +1,40 @@
+date_formats:
+  - "Jan 02 2006 15:04"
+  - "Jan 02 15:04"
+  - "Jan 02 2006"
+  - "Jan 02"
+  - "01-02"
+
+name_compact:
+  approx_char_px: 8
+  min_head: 6
+  min_tail: 3
+  marker: ".."
+
+columns:
+  name_width_dp: 180
+  name_min_width_dp: 52
+  size_width_dp: 92
+  size_min_width_dp: 48
+  date_width_dp: 128
+  date_min_width_dp: 56
+  brief_width_dp: 180
+  brief_gap_dp: 4
+
+key_bindings:
+  focus_next_pane: "tab"
+  focus_prev_pane: "shift+tab"
+  move_up: "up"
+  move_down: "down"
+  move_left: "left"
+  move_right: "right"
+  page_up: "pgup"
+  page_down: "pgdown"
+  home: "home"
+  end: "end"
+  activate: "enter"
+
+sort:
+  default_key: "name"
+  descending: false
+  directories_first: true

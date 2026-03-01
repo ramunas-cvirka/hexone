@@ -1,14 +1,13 @@
 package ui
 
 import (
+	"hexone/fm"
 	"hexone/protocols"
-	"hexone/ui/widget/table"
 	"image"
 	"image/color"
 	"os"
 	"time"
 
-	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -22,18 +21,8 @@ var (
 	hintColor = color.NRGBA{R: 140, G: 140, B: 140, A: 255}
 )
 
-type DemoRow struct {
-	Name string
-	Size string
-	Date string
-	Kind int // 0 normal, 1 dir, 2 warn, 3 bad
-}
-
-type DemoModel struct {
-	rows []DemoRow
-}
-
 const (
+	repeatStartDelay = 180 * time.Millisecond
 	repeatSlow       = 80 * time.Millisecond
 	repeatFast       = 25 * time.Millisecond
 	repeatAccelAfter = 120 * time.Millisecond
@@ -41,6 +30,7 @@ const (
 
 type KeyRepeat struct {
 	active     bool
+	pane       int
 	name       string
 	next       time.Time
 	started    time.Time
@@ -50,30 +40,9 @@ type KeyRepeat struct {
 	accelAfter time.Duration
 }
 
-func (m *DemoModel) Len() int { return len(m.rows) }
-
-func (m *DemoModel) Cell(r, c int) (string, table.CellStyle) {
-	row := m.rows[r]
-
-	st := table.CellStyle{Color: txtColor, Weight: font.Medium}
-	switch row.Kind {
-	case 1:
-		st.Color = color.NRGBA{R: 170, G: 200, B: 255, A: 255}
-	case 2:
-		st.Color = color.NRGBA{R: 240, G: 200, B: 120, A: 255}
-	case 3:
-		st.Color = color.NRGBA{R: 255, G: 120, B: 120, A: 255}
-		st.Weight = font.Bold
-	}
-
-	switch c {
-	case 0:
-		return row.Name, st
-	case 1:
-		return row.Size, st
-	default:
-		return row.Date, st
-	}
+type fileOpenRequest struct {
+	pane int
+	row  int
 }
 
 type FieldSpan struct {
@@ -136,8 +105,11 @@ type UI struct {
 
 	// Tab buttons
 	tab0, tab1, tab2 widget.Clickable
-	tbl              *table.Table
-	model            *DemoModel
+	filePanes        []*filePaneState
+	fmCfg            *fm.Config
+	fileKeys         fileKeyMap
+	activeFilePane   int
+	pendingFileOpen  *fileOpenRequest
 }
 
 func NewUI() *UI {
@@ -153,56 +125,41 @@ func NewUI() *UI {
 	ui.LeftInfo = "0 bytes"
 	ui.held = make(map[string]bool, 16)
 
-	ui.model = &DemoModel{
-		rows: []DemoRow{
-			{"src/", "<DIR>", "Jan 31 2026", 1},
-			{"assets/", "<DIR>", "Jan 12 2026", 1},
-			{"main.go", "8.2 KB", "Jan 31 2026", 0},
-			{"table.go", "6.5 KB", "Jan 31 2026", 2},
-			{"broken_link", "0 B", "—", 3},
-			{"src/", "<DIR>", "Jan 31 2026", 1},
-			{"assets/", "<DIR>", "Jan 12 2026", 1},
-			{"main.go", "8.2 KB", "Jan 31 2026", 0},
-			{"table.go", "6.5 KB", "Jan 31 2026", 2},
-			{"broken_link", "0 B", "—", 3},
-			{"src/", "<DIR>", "Jan 31 2026", 1},
-			{"assets/", "<DIR>", "Jan 12 2026", 1},
-			{"main.go", "8.2 KB", "Jan 31 2026", 0},
-			{"table.go", "6.5 KB", "Jan 31 2026", 2},
-			{"broken_link", "0 B", "—", 3},
-			{"src/", "<DIR>", "Jan 31 2026", 1},
-			{"assets/", "<DIR>", "Jan 12 2026", 1},
-			{"main.go", "8.2 KB", "Jan 31 2026", 0},
-			{"table.go", "6.5 KB", "Jan 31 2026", 2},
-			{"broken_link", "0 B", "—", 3},
-			{"src/", "<DIR>", "Jan 31 2026", 1},
-			{"assets/", "<DIR>", "Jan 12 2026", 1},
-			{"main.go", "8.2 KB", "Jan 31 2026", 0},
-			{"table.go", "6.5 KB", "Jan 31 2026", 2},
-			{"broken_link", "0 B", "—", 3},
-		},
-	}
-
-	cols := []table.Column{
-		{Width: unit.Dp(220), Flex: true, Align: table.AlignStart, PadX: unit.Dp(8)},
-		{Width: unit.Dp(110), Flex: false, Align: table.AlignEnd, PadX: unit.Dp(8)},
-		{Width: unit.Dp(180), Flex: false, Align: table.AlignStart, PadX: unit.Dp(8)},
-	}
-	ui.tbl = table.New(cols)
-	ui.tbl.SelectedFg = &color.NRGBA{R: 230, G: 230, B: 255, A: 255}
-	ui.tbl.OnActivate = func(row int) {
-		ui.LeftInfo = "Activated: " + ui.model.rows[row].Name
-	}
-
 	data, _ := os.ReadFile("protocols.yaml")
 
 	ui.ensureTab2Loaded(data)
+	ui.fmCfg = fm.LoadConfig("fm.yaml")
+	ui.fileKeys = newFileKeyMap(ui.fmCfg)
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
+
+	ui.filePanes = []*filePaneState{
+		newFilePaneState(cwd, ui.fmCfg),
+		newFilePaneState(cwd, ui.fmCfg),
+	}
+	ui.activeFilePane = 0
+	for i, pane := range ui.filePanes {
+		idx := i
+		pane.table.OnClick = func(row int) {
+			_ = row
+			ui.setActiveFilePane(idx)
+		}
+		pane.table.OnDoubleClick = func(row int) {
+			ui.queueFilePaneOpen(idx, row)
+		}
+		pane.table.OnActivate = func(row int) {
+			ui.queueFilePaneOpen(idx, row)
+		}
+	}
 	return ui
 }
 
 func (ui *UI) resetKeys() {
 	ui.rep.active = false
+	ui.rep.pane = -1
 	for k := range ui.held {
 		ui.held[k] = false
 	}
@@ -224,11 +181,11 @@ func (ui *UI) layoutTabs(th *material.Theme, gtx layout.Context) layout.Dimensio
 				return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
 			}
 			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceSides}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return tabBtn(gtx, &ui.tab0, "tab0", "Tab 1") }),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return tabBtn(gtx, &ui.tab0, "tab0", "hex-to-ascii") }),
 				layout.Rigid(gap),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return tabBtn(gtx, &ui.tab1, "tab1", "Tab 2") }),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return tabBtn(gtx, &ui.tab1, "tab1", "file manager") }),
 				layout.Rigid(gap),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return tabBtn(gtx, &ui.tab2, "tab2", "Tab 3") }),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return tabBtn(gtx, &ui.tab2, "tab2", "protocol analyzer") }),
 			)
 		})
 	})
@@ -263,7 +220,6 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 				ui.resetKeys()
 				return ui.layoutTab0(th, gtx)
 			case "tab1":
-				ui.resetKeys()
 				ui.wantFocusTable = true
 				return ui.layoutTab1(th, gtx)
 			case "tab2":

@@ -3,6 +3,7 @@ package table
 import (
 	"image"
 	"image/color"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -24,10 +25,11 @@ const (
 )
 
 type Column struct {
-	Width unit.Dp // base width (minimum if Flex)
-	Flex  bool    // takes share of remaining width
-	Align Align
-	PadX  unit.Dp
+	Width    unit.Dp // preferred width
+	MinWidth unit.Dp // minimum width when shrinking
+	Flex     bool    // takes share of remaining width
+	Align    Align
+	PadX     unit.Dp
 }
 
 type CellStyle struct {
@@ -35,9 +37,20 @@ type CellStyle struct {
 	Weight font.Weight
 }
 
+type Mode uint8
+
+const (
+	ModeFull Mode = iota
+	ModeBrief
+)
+
 type Model interface {
 	Len() int
 	Cell(row, col int) (string, CellStyle)
+}
+
+type WidthAwareModel interface {
+	CellWithWidth(row, col, widthPx int) (string, CellStyle)
 }
 
 type Table struct {
@@ -45,9 +58,12 @@ type Table struct {
 
 	Columns  []Column
 	Selected int
+	Mode     Mode
 
-	OnActivate func(row int) // Enter
-	OnSelect   func(row int) // selection change
+	OnActivate    func(row int) // keyboard activation (Enter)
+	OnClick       func(row int) // mouse click
+	OnDoubleClick func(row int) // mouse double-click
+	OnSelect      func(row int) // selection change
 
 	TextSize   unit.Sp
 	RowHeight  unit.Dp
@@ -57,25 +73,56 @@ type Table struct {
 	SelectedBg color.NRGBA
 	SelectedFg *color.NRGBA
 
+	BriefColumnWidth unit.Dp
+	BriefGap         unit.Dp
+
+	viewRows         int
+	briefRowsPerCol  int
+	briefVisibleCols int
+
 	rowClicks []widget.Clickable
 
 	// internal: request ensureVisible next frame (after list updated Count)
 	pendingEnsure bool
+	lastClickRow  int
+	lastClickAt   time.Time
 }
+
+const doubleClickWindow = 400 * time.Millisecond
 
 func New(cols []Column) *Table {
 	t := &Table{
-		Columns:    cols,
-		Selected:   0,
-		TextSize:   unit.Sp(15),
-		RowHeight:  unit.Dp(24),
-		RowPadY:    unit.Dp(2),
-		Bg:         color.NRGBA{R: 32, G: 32, B: 32, A: 255},
-		HoverBg:    color.NRGBA{R: 45, G: 45, B: 45, A: 255},
-		SelectedBg: color.NRGBA{R: 60, G: 60, B: 80, A: 255},
+		Columns:          cols,
+		Selected:         0,
+		Mode:             ModeFull,
+		TextSize:         unit.Sp(15),
+		RowHeight:        unit.Dp(24),
+		RowPadY:          unit.Dp(2),
+		Bg:               color.NRGBA{R: 32, G: 32, B: 32, A: 255},
+		HoverBg:          color.NRGBA{R: 45, G: 45, B: 45, A: 255},
+		SelectedBg:       color.NRGBA{R: 60, G: 60, B: 80, A: 255},
+		BriefColumnWidth: unit.Dp(220),
+		BriefGap:         unit.Dp(12),
 	}
 	t.List.Axis = layout.Vertical
 	return t
+}
+
+func (t *Table) SetMode(mode Mode) {
+	if t.Mode == mode {
+		return
+	}
+	t.Mode = mode
+	t.List.Position = layout.Position{}
+	t.pendingEnsure = true
+}
+
+func (t *Table) SetSelected(row, total int, ensureVisible bool) {
+	t.Selected = row
+	t.clampSelection(total)
+	if ensureVisible {
+		t.pendingEnsure = true
+	}
 }
 
 func (t *Table) ensureClicks(n int) {
@@ -124,17 +171,78 @@ func (t *Table) notifySelect(prev int) {
 	}
 }
 
-// ensureVisible uses the authoritative List.Position.Count (computed by List.Layout).
+func (t *Table) pageStep() int {
+	if t.Mode == ModeBrief {
+		rowsPerCol := t.briefRowsPerCol
+		if rowsPerCol < 1 {
+			rowsPerCol = 1
+		}
+		cols := t.List.Position.Count
+		if cols < 1 {
+			cols = t.briefVisibleCols
+		}
+		if cols < 1 {
+			cols = 1
+		}
+		return rowsPerCol * cols
+	}
+	if t.List.Position.Count > 0 {
+		return t.List.Position.Count
+	}
+	return 10
+}
+
+func (t *Table) columnStep() int {
+	if t.briefRowsPerCol > 0 {
+		return t.briefRowsPerCol
+	}
+	return t.pageStep()
+}
+
+func (t *Table) listItemCount(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if t.Mode != ModeBrief {
+		return n
+	}
+	step := t.columnStep()
+	return (n + step - 1) / step
+}
+
 func (t *Table) ensureVisible(n int) {
 	if n <= 0 || t.Selected < 0 {
 		return
 	}
 
-	visible := t.List.Position.Count
-	if visible < 1 {
-		visible = 1
+	if t.Mode == ModeBrief {
+		visible := t.List.Position.Count
+		if visible < 1 {
+			visible = t.briefVisibleCols
+		}
+		if visible < 1 {
+			visible = 1
+		}
+		step := t.columnStep()
+		selectedCol := t.Selected / step
+		first := t.List.Position.First
+		last := first + visible - 1
+
+		if selectedCol < first {
+			t.List.Position.First = selectedCol
+			t.List.Position.Offset = 0
+		} else if selectedCol > last {
+			t.List.Position.First = selectedCol - (visible - 1)
+			if t.List.Position.First < 0 {
+				t.List.Position.First = 0
+			}
+			t.List.Position.Offset = 0
+		}
+		t.clampListPos(t.listItemCount(n))
+		return
 	}
 
+	visible := t.pageStep()
 	first := t.List.Position.First
 	last := first + visible - 1
 
@@ -156,8 +264,129 @@ func fillRect(gtx layout.Context, c color.NRGBA, size image.Point) {
 	paint.FillShape(gtx.Ops, c, clip.Rect(image.Rectangle{Max: size}).Op())
 }
 
+func layoutCellLabel(gtx layout.Context, th *material.Theme, face font.Typeface, size unit.Sp, txt string, st CellStyle, align text.Alignment, hideIfTruncated bool) layout.Dimensions {
+	colorMacro := op.Record(gtx.Ops)
+	paint.ColorOp{Color: st.Color}.Add(gtx.Ops)
+	textColor := colorMacro.Stop()
+
+	lbl := widget.Label{
+		Alignment: align,
+		MaxLines:  1,
+		Truncator: "…",
+	}
+	fontSpec := font.Font{
+		Typeface: face,
+		Weight:   st.Weight,
+	}
+
+	if !hideIfTruncated {
+		return lbl.Layout(gtx, th.Shaper, fontSpec, size, txt, textColor)
+	}
+
+	m := op.Record(gtx.Ops)
+	dims, info := lbl.LayoutDetailed(gtx, th.Shaper, fontSpec, size, txt, textColor)
+	call := m.Stop()
+	if info.Truncated == 0 {
+		call.Add(gtx.Ops)
+	}
+	return dims
+}
+
+func (t *Table) columnWidthPx(gtx layout.Context, c Column) (base, min int) {
+	base = gtx.Dp(c.Width)
+	min = gtx.Dp(c.MinWidth)
+	if min < 0 {
+		min = 0
+	}
+	if base < min {
+		base = min
+	}
+	return base, min
+}
+
+func (t *Table) computeColumnWidths(gtx layout.Context, maxW int) []int {
+	widths := make([]int, len(t.Columns))
+	if len(t.Columns) == 0 {
+		return widths
+	}
+
+	flexIdx := make([]int, 0, len(t.Columns))
+	baseSum := 0
+	for i, c := range t.Columns {
+		base, _ := t.columnWidthPx(gtx, c)
+		widths[i] = base
+		baseSum += base
+		if c.Flex {
+			flexIdx = append(flexIdx, i)
+		}
+	}
+
+	if maxW >= baseSum && len(flexIdx) > 0 {
+		extra := maxW - baseSum
+		share := extra / len(flexIdx)
+		rem := extra % len(flexIdx)
+		for _, idx := range flexIdx {
+			widths[idx] += share
+			if rem > 0 {
+				widths[idx]++
+				rem--
+			}
+		}
+		return widths
+	}
+
+	deficit := baseSum - maxW
+	if deficit <= 0 {
+		return widths
+	}
+
+	for i := len(t.Columns) - 1; i >= 0 && deficit > 0; i-- {
+		base, min := t.columnWidthPx(gtx, t.Columns[i])
+		shrinkable := base - min
+		if shrinkable <= 0 {
+			continue
+		}
+		cut := shrinkable
+		if cut > deficit {
+			cut = deficit
+		}
+		widths[i] -= cut
+		deficit -= cut
+	}
+
+	for i := len(t.Columns) - 1; i >= 0 && deficit > 0; i-- {
+		if widths[i] <= 0 {
+			continue
+		}
+		cut := widths[i]
+		if cut > deficit {
+			cut = deficit
+		}
+		widths[i] -= cut
+		deficit -= cut
+	}
+
+	return widths
+}
+
+func (t *Table) isDoubleClick(row int, ev widget.Click, now time.Time) bool {
+	if ev.NumClicks >= 2 {
+		t.lastClickRow = row
+		t.lastClickAt = now
+		return true
+	}
+	if t.lastClickRow == row && !t.lastClickAt.IsZero() && now.Sub(t.lastClickAt) <= doubleClickWindow {
+		t.lastClickRow = row
+		t.lastClickAt = now
+		return true
+	}
+	t.lastClickRow = row
+	t.lastClickAt = now
+	return false
+}
+
 // HandleKey is called from Tab code after tbl.Layout has run at least once this frame.
-// It uses List.Position.Count to scroll correctly.
+// It uses the most recent viewport measurements recorded during Layout.
 func (t *Table) HandleKey(name string, n int) bool {
 	if n <= 0 {
 		return false
@@ -170,17 +399,23 @@ func (t *Table) HandleKey(name string, n int) bool {
 		t.Selected--
 	case "↓":
 		t.Selected++
-	case "⇞": // PageUp
-		step := t.List.Position.Count
-		if step < 1 {
-			step = 10
+	case "←":
+		if t.Mode != ModeBrief {
+			t.Selected = 0
+			break
 		}
+		t.Selected -= t.columnStep()
+	case "→":
+		if t.Mode != ModeBrief {
+			t.Selected = n - 1
+			break
+		}
+		t.Selected += t.columnStep()
+	case "⇞": // PageUp
+		step := t.pageStep()
 		t.Selected -= step
 	case "⇟": // PageDown
-		step := t.List.Position.Count
-		if step < 1 {
-			step = 10
-		}
+		step := t.pageStep()
 		t.Selected += step
 	case "⇱": // Home
 		t.Selected = 0
@@ -209,12 +444,11 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 
 	t.ensureClicks(n)
 	t.clampSelection(n)
-	t.clampListPos(n)
 
 	// Background
 	fillRect(gtx, t.Bg, gtx.Constraints.Max)
 
-	outer := layout.UniformInset(unit.Dp(10))
+	outer := layout.UniformInset(unit.Dp(2))
 	return outer.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		// IMPORTANT: clip so table doesn't steal clicks outside (tabs etc.)
 		clipArea := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
@@ -225,122 +459,288 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 			rowHpx = 1
 		}
 
+		if t.Mode == ModeBrief {
+			t.List.Axis = layout.Horizontal
+		} else {
+			t.List.Axis = layout.Vertical
+		}
+
+		t.viewRows = gtx.Constraints.Max.Y / rowHpx
+		if t.viewRows < 1 {
+			t.viewRows = 1
+		}
+		t.briefRowsPerCol = t.viewRows
+		t.briefVisibleCols = 1
+		if t.Mode == ModeBrief {
+			itemW := gtx.Dp(t.BriefColumnWidth) + gtx.Dp(t.BriefGap)
+			if itemW < 1 {
+				itemW = 1
+			}
+			t.briefVisibleCols = gtx.Constraints.Max.X / itemW
+			if t.briefVisibleCols < 1 {
+				t.briefVisibleCols = 1
+			}
+		}
+
+		itemCount := t.listItemCount(n)
+		t.clampListPos(itemCount)
+
 		// If selection changed by click in previous frame, ensure visible now (after Count exists).
 		if t.pendingEnsure {
 			t.pendingEnsure = false
 			t.ensureVisible(n)
 		}
 
-		return t.List.Layout(gtx, n, func(gtx layout.Context, row int) layout.Dimensions {
-			if row < 0 || row >= len(t.rowClicks) {
-				return layout.Dimensions{}
+		if t.Mode == ModeBrief {
+			return t.layoutBrief(th, gtx, m, n, rowHpx, itemCount)
+		}
+
+		listH := t.viewRows * rowHpx
+		if listH > gtx.Constraints.Max.Y {
+			listH = gtx.Constraints.Max.Y
+		}
+		if listH < 1 {
+			listH = gtx.Constraints.Max.Y
+		}
+		spareH := gtx.Constraints.Max.Y - listH
+
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				listGtx := gtx
+				listGtx.Constraints.Min.Y = listH
+				listGtx.Constraints.Max.Y = listH
+				return t.layoutFull(th, listGtx, m, n, rowHpx)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if spareH <= 0 {
+					return layout.Dimensions{}
+				}
+				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, spareH)}
+			}),
+		)
+	})
+}
+
+func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, rowHpx int) layout.Dimensions {
+	return t.List.Layout(gtx, n, func(gtx layout.Context, row int) layout.Dimensions {
+		if row < 0 || row >= len(t.rowClicks) {
+			return layout.Dimensions{}
+		}
+
+		// Fixed height rows.
+		gtx.Constraints.Min.Y = rowHpx
+		gtx.Constraints.Max.Y = rowHpx
+
+		click := &t.rowClicks[row]
+		for {
+			ev, ok := click.Update(gtx)
+			if !ok {
+				break
+			}
+			if t.OnClick != nil {
+				t.OnClick(row)
+			}
+			prev := t.Selected
+			t.Selected = row
+			t.clampSelection(n)
+			t.pendingEnsure = true
+			t.notifySelect(prev)
+			if t.OnDoubleClick != nil && t.isDoubleClick(row, ev, gtx.Now) {
+				t.OnDoubleClick(row)
+			}
+		}
+
+		bg := color.NRGBA{}
+		if row == t.Selected {
+			bg = t.SelectedBg
+		} else if click.Hovered() {
+			bg = t.HoverBg
+		}
+
+		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			if bg.A != 0 {
+				fillRect(gtx, bg, image.Pt(gtx.Constraints.Max.X, rowHpx))
 			}
 
-			// Fixed height rows.
-			gtx.Constraints.Min.Y = rowHpx
-			gtx.Constraints.Max.Y = rowHpx
-
-			click := &t.rowClicks[row]
-			for click.Clicked(gtx) {
-				prev := t.Selected
-				t.Selected = row
-				t.clampSelection(n)
-				// ensure visible next frame, after List updates Position.Count
-				t.pendingEnsure = true
-				t.notifySelect(prev)
-			}
-
-			bg := color.NRGBA{}
-			if row == t.Selected {
-				bg = t.SelectedBg
-			} else if click.Hovered() {
-				bg = t.HoverBg
-			}
-
-			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				if bg.A != 0 {
-					fillRect(gtx, bg, image.Pt(gtx.Constraints.Max.X, rowHpx))
+			return layout.Inset{Top: t.RowPadY, Bottom: t.RowPadY}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				maxW := gtx.Constraints.Max.X
+				cellH := rowHpx - 2*gtx.Dp(t.RowPadY)
+				if cellH < 1 {
+					cellH = 1
 				}
 
-				return layout.Inset{Top: t.RowPadY, Bottom: t.RowPadY}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					maxW := gtx.Constraints.Max.X
-					cellH := rowHpx - 2*gtx.Dp(t.RowPadY)
-					if cellH < 1 {
-						cellH = 1
+				widths := t.computeColumnWidths(gtx, maxW)
+				aware, awareOK := m.(WidthAwareModel)
+				x := 0
+				for col := 0; col < len(t.Columns); col++ {
+					c := t.Columns[col]
+					w := widths[col]
+					if w < 0 {
+						w = 0
 					}
 
-					// column widths
-					fixedW := 0
-					minFlexW := 0
-					flexCount := 0
-					for _, c := range t.Columns {
-						w := gtx.Dp(c.Width)
-						if c.Flex {
-							flexCount++
-							minFlexW += w
-						} else {
-							fixedW += w
-						}
+					contentW := w - 2*gtx.Dp(c.PadX)
+					if contentW < 0 {
+						contentW = 0
 					}
-					rem := maxW - fixedW
-					if rem < 0 {
-						rem = 0
+					txt, st := m.Cell(row, col)
+					if awareOK {
+						txt, st = aware.CellWithWidth(row, col, contentW)
 					}
-					extra := 0
-					if flexCount > 0 && rem > minFlexW {
-						extra = rem - minFlexW
-					}
-					share := 0
-					if flexCount > 0 {
-						share = extra / flexCount
+					if row == t.Selected && t.SelectedFg != nil {
+						st.Color = *t.SelectedFg
 					}
 
-					x := 0
-					for col := 0; col < len(t.Columns); col++ {
-						c := t.Columns[col]
-						w := gtx.Dp(c.Width)
-						if c.Flex {
-							w += share
-						}
-						if w < 0 {
-							w = 0
-						}
-
-						txt, st := m.Cell(row, col)
-						if row == t.Selected && t.SelectedFg != nil {
-							st.Color = *t.SelectedFg
-						}
-
-						lbl := material.Label(th, t.TextSize, txt)
-						lbl.MaxLines = 1
-						lbl.Truncator = "…"
-						lbl.Color = st.Color
-						lbl.Font.Weight = st.Weight
-						switch c.Align {
-						case AlignEnd:
-							lbl.Alignment = text.End
-						case AlignCenter:
-							lbl.Alignment = text.Middle
-						default:
-							lbl.Alignment = text.Start
-						}
-
-						cellGtx := gtx
-						cellGtx.Constraints = layout.Exact(image.Pt(w, cellH))
-
-						tr := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-						_ = layout.Inset{Left: c.PadX, Right: c.PadX}.Layout(cellGtx, lbl.Layout)
-						tr.Pop()
-
-						x += w
-						if x >= maxW {
-							break
-						}
+					align := text.Start
+					switch c.Align {
+					case AlignEnd:
+						align = text.End
+					case AlignCenter:
+						align = text.Middle
 					}
 
-					return layout.Dimensions{Size: image.Pt(maxW, rowHpx)}
-				})
+					cellGtx := gtx
+					cellGtx.Constraints = layout.Exact(image.Pt(w, cellH))
+
+					tr := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+					hideIfTruncated := t.Mode == ModeFull && col == 0 && txt != ""
+					_ = layout.Inset{Left: c.PadX, Right: c.PadX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
+						return layoutCellLabel(gtx, th, th.Face, t.TextSize, txt, st, align, hideIfTruncated)
+					})
+					tr.Pop()
+
+					x += w
+					if x >= maxW {
+						break
+					}
+				}
+
+				return layout.Dimensions{Size: image.Pt(maxW, rowHpx)}
 			})
+		})
+	})
+}
+
+func (t *Table) layoutBrief(th *material.Theme, gtx layout.Context, m Model, n, rowHpx, itemCount int) layout.Dimensions {
+	rowsPerCol := t.columnStep()
+	colW := gtx.Dp(t.BriefColumnWidth)
+	if colW < 1 {
+		colW = 1
+	}
+
+	return t.List.Layout(gtx, itemCount, func(gtx layout.Context, col int) layout.Dimensions {
+		start := col * rowsPerCol
+		if start >= n {
+			return layout.Dimensions{}
+		}
+		end := start + rowsPerCol
+		if end > n {
+			end = n
+		}
+
+		return layout.Inset{Right: t.BriefGap}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			innerW := colW
+			if gtx.Constraints.Max.X < innerW {
+				innerW = gtx.Constraints.Max.X
+			}
+			if innerW < 1 {
+				innerW = 1
+			}
+			gtx.Constraints.Min.X = innerW
+			gtx.Constraints.Max.X = innerW
+
+			children := make([]layout.FlexChild, 0, end-start)
+			for row := start; row < end; row++ {
+				row := row
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return t.layoutBriefRow(th, gtx, m, row, n, rowHpx)
+				}))
+			}
+
+			dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			minH := rowsPerCol * rowHpx
+			if dims.Size.Y < minH {
+				dims.Size.Y = minH
+			}
+			return dims
+		})
+	})
+}
+
+func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, row, n, rowHpx int) layout.Dimensions {
+	if row < 0 || row >= len(t.rowClicks) {
+		return layout.Dimensions{}
+	}
+
+	gtx.Constraints.Min.Y = rowHpx
+	gtx.Constraints.Max.Y = rowHpx
+
+	click := &t.rowClicks[row]
+	for {
+		ev, ok := click.Update(gtx)
+		if !ok {
+			break
+		}
+		if t.OnClick != nil {
+			t.OnClick(row)
+		}
+		prev := t.Selected
+		t.Selected = row
+		t.clampSelection(n)
+		t.pendingEnsure = true
+		t.notifySelect(prev)
+		if t.OnDoubleClick != nil && t.isDoubleClick(row, ev, gtx.Now) {
+			t.OnDoubleClick(row)
+		}
+	}
+
+	bg := color.NRGBA{}
+	if row == t.Selected {
+		bg = t.SelectedBg
+	} else if click.Hovered() {
+		bg = t.HoverBg
+	}
+
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if bg.A != 0 {
+			fillRect(gtx, bg, image.Pt(gtx.Constraints.Max.X, rowHpx))
+		}
+
+		return layout.Inset{Top: t.RowPadY, Bottom: t.RowPadY}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			maxW := gtx.Constraints.Max.X
+			cellH := rowHpx - 2*gtx.Dp(t.RowPadY)
+			if cellH < 1 {
+				cellH = 1
+			}
+
+			padX := unit.Dp(0)
+			if len(t.Columns) > 0 {
+				padX = t.Columns[0].PadX
+			}
+			contentW := maxW - 2*gtx.Dp(padX)
+			if contentW < 0 {
+				contentW = 0
+			}
+			txt, st := m.Cell(row, 0)
+			if aware, ok := m.(WidthAwareModel); ok {
+				txt, st = aware.CellWithWidth(row, 0, contentW)
+			}
+			if row == t.Selected && t.SelectedFg != nil {
+				st.Color = *t.SelectedFg
+			}
+
+			lbl := material.Label(th, t.TextSize, txt)
+			lbl.MaxLines = 1
+			lbl.Truncator = "…"
+			lbl.Color = st.Color
+			lbl.Font.Weight = st.Weight
+			lbl.Alignment = text.Start
+
+			cellGtx := gtx
+			cellGtx.Constraints = layout.Exact(image.Pt(maxW, cellH))
+			_ = layout.Inset{Left: padX, Right: padX}.Layout(cellGtx, lbl.Layout)
+
+			return layout.Dimensions{Size: image.Pt(maxW, rowHpx)}
 		})
 	})
 }

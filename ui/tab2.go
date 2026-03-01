@@ -219,7 +219,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 			// Row 3 list
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return card(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						flat := flattenAllWithKeys(st.lastRes.Spans)
 
 						sort.Slice(flat, func(i, j int) bool {
@@ -305,7 +305,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 								line += "  " + sp.Name
 
 								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-									return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 										lbl := material.Body2(th, line)
 										lbl.Font.Typeface = "Fira Code"
 										lbl.TextSize = unit.Sp(12)
