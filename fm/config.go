@@ -49,12 +49,21 @@ type SortConfig struct {
 	DirectoriesFirst bool   `yaml:"directories_first"`
 }
 
+type FontConfig struct {
+	Typeface    string `yaml:"typeface"`
+	SizeSp      float32 `yaml:"size_sp"`
+	RegularPath string `yaml:"regular_path"`
+	MediumPath  string `yaml:"medium_path"`
+	BoldPath    string `yaml:"bold_path"`
+}
+
 type Config struct {
 	DateFormats []string     `yaml:"date_formats"`
 	NameCompact NameCompact  `yaml:"name_compact"`
 	Columns     ColumnWidths `yaml:"columns"`
 	KeyBindings KeyBindings  `yaml:"key_bindings"`
 	Sort        SortConfig   `yaml:"sort"`
+	Font        FontConfig   `yaml:"font"`
 }
 
 func DefaultConfig() *Config {
@@ -103,6 +112,13 @@ func DefaultConfig() *Config {
 			DefaultKey:       "name",
 			Descending:       false,
 			DirectoriesFirst: true,
+		},
+		Font: FontConfig{
+			Typeface:    "Fira Code",
+			SizeSp:      14,
+			RegularPath: "assets/FiraCode-Regular.ttf",
+			MediumPath:  "assets/FiraCode-Medium.ttf",
+			BoldPath:    "assets/FiraCode-Bold.ttf",
 		},
 	}
 	cfg.normalize()
@@ -245,5 +261,21 @@ func (c *Config) normalize() {
 
 	if c.Sort.DefaultKey == "" {
 		c.Sort.DefaultKey = "name"
+	}
+
+	if c.Font.Typeface == "" {
+		c.Font.Typeface = "Fira Code"
+	}
+	if c.Font.SizeSp <= 0 {
+		c.Font.SizeSp = 14
+	}
+	if c.Font.RegularPath == "" {
+		c.Font.RegularPath = "assets/FiraCode-Regular.ttf"
+	}
+	if c.Font.MediumPath == "" {
+		c.Font.MediumPath = "assets/FiraCode-Medium.ttf"
+	}
+	if c.Font.BoldPath == "" {
+		c.Font.BoldPath = "assets/FiraCode-Bold.ttf"
 	}
 }

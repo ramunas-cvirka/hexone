@@ -20,7 +20,7 @@ func (ui *UI) layoutTab0(th *material.Theme, gtx layout.Context) layout.Dimensio
 							ed := material.Editor(th, &ui.LeftEd, "Left text...")
 							ed.Color = txtColor
 							ed.HintColor = hintColor
-							ed.TextSize = unit.Sp(15)
+							ed.TextSize = scaleThemeFontSize(th, 15)
 							gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
 							return ed.Layout(gtx)
 						})
@@ -48,7 +48,7 @@ func (ui *UI) layoutTab0(th *material.Theme, gtx layout.Context) layout.Dimensio
 							ed := material.Editor(th, &ui.RightEd, "Right text...")
 							ed.Color = txtColor
 							ed.HintColor = hintColor
-							ed.TextSize = unit.Sp(15)
+							ed.TextSize = scaleThemeFontSize(th, 15)
 							gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
 							return ed.Layout(gtx)
 						})

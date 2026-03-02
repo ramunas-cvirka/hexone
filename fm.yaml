@@ -42,3 +42,10 @@ sort:
   default_key: "name"
   descending: false
   directories_first: true
+
+font:
+  typeface: "Fira Code"
+  size_sp: 16
+  regular_path: "assets/FiraCode-Regular.ttf"
+  medium_path: "assets/FiraCode-Medium.ttf"
+  bold_path: "assets/FiraCode-Bold.ttf"

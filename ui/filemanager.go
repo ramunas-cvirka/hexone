@@ -4,7 +4,9 @@ import (
 	"hexone/filesys"
 	"hexone/fm"
 	"hexone/ui/widget/table"
+	"image"
 	"image/color"
+	"math"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -176,18 +178,26 @@ func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
 type filePaneState struct {
 	table           *table.Table
 	model           *filePaneModel
-	headerClick     widget.Clickable
-	pathAreaClick   widget.Clickable
 	pathSegClicks   []widget.Clickable
 	pathEdit        widget.Editor
 	pathEditing     bool
 	pathEditFocus   bool
+	pathClickKey    string
+	pathClickAt     time.Time
+	pendingPathNav  string
+	pendingPathAt   time.Time
+	pathRowClick    widget.Clickable
 	modeClick       widget.Clickable
 	sortClick       widget.Clickable
 	tablePointerTag struct{}
-	sortPointerTag  struct{}
 	sortOptionBtns  [4]widget.Clickable
 	sortMenuOpen    bool
+	ctxPointerTag   struct{}
+	ctxMenuClicks   []widget.Clickable
+	ctxMenuOpen     bool
+	ctxMenuRow      int
+	ctxMenuPos      image.Point
+	ctxMenuRect     image.Rectangle
 	sortKey         fileSortKey
 	sortDesc        bool
 	dirsFirst       bool
@@ -201,17 +211,20 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	if cfg == nil {
 		cfg = fm.DefaultConfig()
 	}
+	scaleDp := func(v int) unit.Dp {
+		return scaleFilePaneDp(cfg, v)
+	}
 	cols := []table.Column{
-		{Width: unit.Dp(cfg.Columns.NameWidthDp), MinWidth: unit.Dp(cfg.Columns.NameMinWidthDp), Flex: true, Align: table.AlignStart, PadX: unit.Dp(2)},
+		{Width: scaleDp(cfg.Columns.NameWidthDp), MinWidth: scaleDp(cfg.Columns.NameMinWidthDp), Flex: true, Align: table.AlignStart, PadX: unit.Dp(2)},
 	}
 	if cfg.Columns.ShowPermissions {
 		cols = append(cols, table.Column{
-			Width: unit.Dp(cfg.Columns.PermWidthDp), MinWidth: unit.Dp(cfg.Columns.PermMinWidthDp), Flex: false, Align: table.AlignStart, PadX: unit.Dp(4),
+			Width: scaleDp(cfg.Columns.PermWidthDp), MinWidth: scaleDp(cfg.Columns.PermMinWidthDp), Flex: false, Align: table.AlignStart, PadX: unit.Dp(4),
 		})
 	}
 	cols = append(cols,
-		table.Column{Width: unit.Dp(cfg.Columns.SizeWidthDp), MinWidth: unit.Dp(cfg.Columns.SizeMinWidthDp), Flex: false, Align: table.AlignEnd, PadX: unit.Dp(2)},
-		table.Column{Width: unit.Dp(cfg.Columns.DateWidthDp), MinWidth: unit.Dp(cfg.Columns.DateMinWidthDp), Flex: false, Align: table.AlignStart, PadX: unit.Dp(6)},
+		table.Column{Width: scaleDp(cfg.Columns.SizeWidthDp), MinWidth: scaleDp(cfg.Columns.SizeMinWidthDp), Flex: false, Align: table.AlignEnd, PadX: unit.Dp(2)},
+		table.Column{Width: scaleDp(cfg.Columns.DateWidthDp), MinWidth: scaleDp(cfg.Columns.DateMinWidthDp), Flex: false, Align: table.AlignStart, PadX: unit.Dp(6)},
 	)
 
 	pane := &filePaneState{
@@ -224,14 +237,46 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	}
 	pane.pathEdit.SingleLine = true
 	pane.pathEdit.Submit = true
-	pane.table.TextSize = unit.Sp(13)
-	pane.table.RowHeight = unit.Dp(18)
+	pane.ctxMenuRow = -1
+	pane.table.TextSize = scaleConfigFontSize(cfg, 13)
+	pane.table.RowHeight = scaleDp(18)
 	pane.table.RowPadY = unit.Dp(0)
-	pane.table.BriefColumnWidth = unit.Dp(cfg.Columns.BriefWidthDp)
-	pane.table.BriefGap = unit.Dp(cfg.Columns.BriefGapDp)
+	pane.table.BriefColumnWidth = scaleDp(cfg.Columns.BriefWidthDp)
+	pane.table.BriefGap = scaleDp(cfg.Columns.BriefGapDp)
 	pane.table.SelectedFg = &color.NRGBA{R: 230, G: 230, B: 255, A: 255}
 	_ = pane.load(dir)
 	return pane
+}
+
+func filePaneFontScale(cfg *fm.Config) float32 {
+	size := float32(fontSizeFromConfig(cfg))
+	base := float32(defaultUIFontSp)
+	if size <= 0 || base <= 0 {
+		return 1
+	}
+	return size / base
+}
+
+func scaleFilePaneDp(cfg *fm.Config, v int) unit.Dp {
+	if v <= 0 {
+		return unit.Dp(v)
+	}
+	scaled := int(math.Round(float64(float32(v) * filePaneFontScale(cfg))))
+	if scaled < 1 {
+		scaled = 1
+	}
+	return unit.Dp(scaled)
+}
+
+func scaleFilePanePx(cfg *fm.Config, v int) int {
+	if v <= 0 {
+		return v
+	}
+	scaled := int(math.Round(float64(float32(v) * filePaneFontScale(cfg))))
+	if scaled < 1 {
+		scaled = 1
+	}
+	return scaled
 }
 
 func (p *filePaneState) load(dir string) error {
@@ -244,6 +289,8 @@ func (p *filePaneState) load(dir string) error {
 	p.err = ""
 	p.noticeText = ""
 	p.noticeUntil = time.Time{}
+	p.clearPathClickState()
+	p.clearPendingPathNavigate()
 	p.model.entries = listing.Entries
 	p.applySort("")
 	p.table.Selected = 0
@@ -264,6 +311,8 @@ func (p *filePaneState) beginPathEdit() {
 	if p == nil {
 		return
 	}
+	p.clearPathClickState()
+	p.clearPendingPathNavigate()
 	p.pathEditing = true
 	p.pathEditFocus = true
 	p.pathEdit.SetText(p.dir)
@@ -276,6 +325,72 @@ func (p *filePaneState) stopPathEdit() {
 	}
 	p.pathEditing = false
 	p.pathEditFocus = false
+}
+
+func (p *filePaneState) clearPendingPathNavigate() {
+	if p == nil {
+		return
+	}
+	p.pendingPathNav = ""
+	p.pendingPathAt = time.Time{}
+}
+
+func (p *filePaneState) queuePathNavigate(path string, at time.Time) {
+	if p == nil {
+		return
+	}
+	p.pendingPathNav = path
+	p.pendingPathAt = at
+}
+
+func (p *filePaneState) clearPathClickState() {
+	if p == nil {
+		return
+	}
+	p.pathClickKey = ""
+	p.pathClickAt = time.Time{}
+}
+
+func (p *filePaneState) registerPathClick(key string, now time.Time, window time.Duration) bool {
+	if p == nil {
+		return false
+	}
+	if key != "" && p.pathClickKey == key && !p.pathClickAt.IsZero() && now.Sub(p.pathClickAt) <= window {
+		p.clearPathClickState()
+		return true
+	}
+	p.pathClickKey = key
+	p.pathClickAt = now
+	return false
+}
+
+func (p *filePaneState) closeContextMenu() {
+	if p == nil {
+		return
+	}
+	p.ctxMenuOpen = false
+	p.ctxMenuRow = -1
+	p.ctxMenuRect = image.Rectangle{}
+}
+
+func (p *filePaneState) openContextMenu(row int, pos image.Point) {
+	if p == nil {
+		return
+	}
+	p.ctxMenuOpen = true
+	p.ctxMenuRow = row
+	p.ctxMenuPos = pos
+	p.ctxMenuRect = image.Rectangle{}
+}
+
+func (p *filePaneState) ensureContextMenuClicks(n int) {
+	if n <= cap(p.ctxMenuClicks) {
+		p.ctxMenuClicks = p.ctxMenuClicks[:n]
+		return
+	}
+	old := p.ctxMenuClicks
+	p.ctxMenuClicks = make([]widget.Clickable, n)
+	copy(p.ctxMenuClicks, old)
 }
 
 func (p *filePaneState) ensurePathClicks(n int) {
@@ -353,6 +468,83 @@ func (p *filePaneState) selectedEntry() *filesys.Entry {
 	return p.model.Entry(p.table.Selected)
 }
 
+func (p *filePaneState) contextMenuEntry() *filesys.Entry {
+	if p == nil || p.model == nil || p.ctxMenuRow < 0 {
+		return nil
+	}
+	return p.model.Entry(p.ctxMenuRow)
+}
+
+type fileContextMenuSpec struct {
+	title string
+	items []string
+}
+
+func (p *filePaneState) contextMenuSpec() fileContextMenuSpec {
+	entry := p.contextMenuEntry()
+	if entry == nil {
+		return fileContextMenuSpec{
+			title: "This Folder",
+			items: []string{
+				"New Folder",
+				"New File",
+				"Paste",
+				"Refresh",
+				"Properties",
+			},
+		}
+	}
+
+	title := entry.DisplayName
+	if title == "" {
+		title = entry.Name
+	}
+	if title == "" {
+		title = entry.Path
+	}
+
+	switch entry.Kind {
+	case filesys.EntryParent:
+		return fileContextMenuSpec{
+			title: title,
+			items: []string{
+				"Open",
+				"Open in Other Pane",
+				"Copy Path",
+				"Properties",
+			},
+		}
+	case filesys.EntryDir:
+		return fileContextMenuSpec{
+			title: title,
+			items: []string{
+				"Open",
+				"Open in Other Pane",
+				"Rename",
+				"Copy",
+				"Cut",
+				"Delete",
+				"Copy Path",
+				"Properties",
+			},
+		}
+	default:
+		return fileContextMenuSpec{
+			title: title,
+			items: []string{
+				"Open",
+				"Open With...",
+				"Rename",
+				"Copy",
+				"Cut",
+				"Delete",
+				"Copy Path",
+				"Properties",
+			},
+		}
+	}
+}
+
 func (p *filePaneState) findEntryIndex(name string) int {
 	if p == nil || p.model == nil {
 		return -1
@@ -381,7 +573,7 @@ func (m *filePaneModel) approxCharPx() int {
 	if m == nil || m.cfg == nil || m.cfg.NameCompact.ApproxCharPx < 1 {
 		return 7
 	}
-	return m.cfg.NameCompact.ApproxCharPx
+	return scaleFilePanePx(m.cfg, m.cfg.NameCompact.ApproxCharPx)
 }
 
 func (m *filePaneModel) approxChars(widthPx, reservePx int) int {
@@ -808,7 +1000,9 @@ func (ui *UI) setActiveFilePane(idx int) {
 	ui.activeFilePane = idx
 	ui.rep.active = false
 	ui.rep.pane = -1
+	ui.stopPathEditExcept(idx)
 	ui.closeSortMenusExcept(idx)
+	ui.closeContextMenusExcept(idx)
 }
 
 func (ui *UI) cycleActiveFilePane(step int) {
@@ -835,6 +1029,24 @@ func (ui *UI) closeSortMenusExcept(active int) {
 	}
 }
 
+func (ui *UI) closeContextMenusExcept(active int) {
+	for i, pane := range ui.filePanes {
+		if pane == nil || i == active {
+			continue
+		}
+		pane.closeContextMenu()
+	}
+}
+
+func (ui *UI) stopPathEditExcept(active int) {
+	for i, pane := range ui.filePanes {
+		if pane == nil || i == active {
+			continue
+		}
+		pane.stopPathEdit()
+	}
+}
+
 func (ui *UI) pathEditActive() bool {
 	for _, pane := range ui.filePanes {
 		if pane != nil && pane.pathEditing {
@@ -858,6 +1070,7 @@ func (ui *UI) loadPaneDir(idx int, dir string) bool {
 		return false
 	}
 	pane.sortMenuOpen = false
+	pane.closeContextMenu()
 	pane.stopPathEdit()
 	return true
 }
@@ -902,6 +1115,7 @@ func (ui *UI) cyclePaneSort(idx int) {
 	}
 	pane.cycleSortKey()
 	pane.applySort(preserve)
+	pane.closeContextMenu()
 }
 
 func (ui *UI) togglePaneSortDirection(idx int) {
@@ -920,6 +1134,7 @@ func (ui *UI) togglePaneSortDirection(idx int) {
 	pane.sortDesc = !pane.sortDesc
 	pane.applySort(preserve)
 	pane.sortMenuOpen = false
+	pane.closeContextMenu()
 }
 
 func (ui *UI) choosePaneSort(idx int, key fileSortKey) {
@@ -940,6 +1155,7 @@ func (ui *UI) choosePaneSort(idx int, key fileSortKey) {
 		pane.applySort(preserve)
 	}
 	pane.sortMenuOpen = false
+	pane.closeContextMenu()
 }
 
 func (ui *UI) togglePaneMode(idx int) {
@@ -951,6 +1167,7 @@ func (ui *UI) togglePaneMode(idx int) {
 		return
 	}
 	ui.setActiveFilePane(idx)
+	pane.closeContextMenu()
 	if pane.table.Mode == table.ModeFull {
 		pane.table.SetMode(table.ModeBrief)
 		return
@@ -997,6 +1214,7 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 		return false
 	}
 	pane.sortMenuOpen = false
+	pane.closeContextMenu()
 	pane.stopPathEdit()
 	if entry.Kind == filesys.EntryParent {
 		childName := filepath.Base(filepath.Clean(prevDir))
@@ -1007,4 +1225,19 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 		}
 	}
 	return true
+}
+
+func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point) {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return
+	}
+	ui.setActiveFilePane(idx)
+	ui.closeSortMenusExcept(idx)
+	ui.closeContextMenusExcept(idx)
+	pane.sortMenuOpen = false
+	pane.openContextMenu(row, pos)
 }

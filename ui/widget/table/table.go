@@ -117,6 +117,11 @@ type Table struct {
 	lastClickRow  int
 	lastClickAt   time.Time
 	scrollCarry   float32
+	hitOffset     image.Point
+	hitSize       image.Point
+	rowHeightPx   int
+	briefColPx    int
+	briefGapPx    int
 }
 
 const doubleClickWindow = 400 * time.Millisecond
@@ -631,11 +636,61 @@ func (t *Table) HandleScrollSelection(deltaY float32, n int) bool {
 	return prev != t.Selected
 }
 
+func (t *Table) HitRow(pos image.Point, n int) int {
+	if n <= 0 || t.rowHeightPx <= 0 {
+		return -1
+	}
+
+	pos = pos.Sub(t.hitOffset)
+	if pos.X < 0 || pos.Y < 0 || pos.X >= t.hitSize.X || pos.Y >= t.hitSize.Y {
+		return -1
+	}
+
+	if t.Mode != ModeBrief {
+		row := t.List.Position.First + pos.Y/t.rowHeightPx
+		if row < 0 || row >= n {
+			return -1
+		}
+		return row
+	}
+
+	colStride := t.briefColPx + t.briefGapPx
+	if colStride <= 0 || t.briefRowsPerCol <= 0 {
+		return -1
+	}
+	col := pos.X / colStride
+	if col < 0 || col >= t.briefVisibleCols {
+		return -1
+	}
+	if pos.X%colStride >= t.briefColPx {
+		return -1
+	}
+
+	rowInCol := pos.Y / t.rowHeightPx
+	if rowInCol < 0 || rowInCol >= t.briefRowsPerCol {
+		return -1
+	}
+
+	itemCol := t.List.Position.First + col
+	row := itemCol*t.briefRowsPerCol + rowInCol
+	if row < 0 || row >= n {
+		return -1
+	}
+	return row
+}
+
 func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.Dimensions {
 	n := 0
 	if m != nil {
 		n = m.Len()
 	}
+
+	insetPx := gtx.Dp(unit.Dp(2))
+	t.hitOffset = image.Pt(insetPx, insetPx)
+	t.hitSize = image.Point{}
+	t.rowHeightPx = 0
+	t.briefColPx = 0
+	t.briefGapPx = 0
 
 	t.ensureClicks(n)
 	t.clampSelection(n)
@@ -653,6 +708,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 		if rowHpx < 1 {
 			rowHpx = 1
 		}
+		t.rowHeightPx = rowHpx
 
 		if t.Mode == ModeBrief {
 			t.List.Axis = layout.Horizontal
@@ -676,6 +732,8 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 			if gapW < 0 {
 				gapW = 0
 			}
+			t.briefColPx = colW
+			t.briefGapPx = gapW
 			itemW := colW + gapW
 			if itemW < 1 {
 				itemW = 1
@@ -694,6 +752,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 			if briefViewportW < 1 {
 				briefViewportW = gtx.Constraints.Max.X
 			}
+			t.hitSize = image.Pt(briefViewportW, gtx.Constraints.Max.Y)
 		}
 
 		itemCount := t.listItemCount(n)
@@ -719,6 +778,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 		if listH < 1 {
 			listH = gtx.Constraints.Max.Y
 		}
+		t.hitSize = image.Pt(gtx.Constraints.Max.X, listH)
 		spareH := gtx.Constraints.Max.Y - listH
 
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -840,7 +900,7 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 					cellGtx.Constraints = layout.Exact(image.Pt(w, cellH))
 
 					tr := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-					hideIfTruncated := t.Mode == ModeFull && col == 0 && txt != ""
+					hideIfTruncated := false
 					_ = layout.Inset{Left: c.PadX, Right: c.PadX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
 						if hasIcon && icon.Kind != IconNone {
 							return layoutCellLabelWithIcon(gtx, th, th.Face, t.TextSize, txt, st, align, hideIfTruncated, icon)

@@ -19,10 +19,14 @@ import (
 	"gioui.org/widget/material"
 )
 
-func newTab2State() *tab2State {
+func newTab2State(typeface font.Typeface) *tab2State {
+	if typeface == "" {
+		typeface = font.Typeface("Fira Code")
+	}
 	st := &tab2State{
-		list:   layout.List{Axis: layout.Vertical},
-		clicks: map[string]*widget.Clickable{},
+		list:     layout.List{Axis: layout.Vertical},
+		clicks:   map[string]*widget.Clickable{},
+		typeface: typeface,
 	}
 	st.hexEd.SingleLine = true
 	st.hexEd.Submit = false
@@ -36,7 +40,9 @@ func (ui *UI) ensureTab2Loaded(specYAML []byte) {
 		return
 	}
 	if ui.tab2State == nil {
-		ui.tab2State = newTab2State()
+		ui.tab2State = newTab2State(ui.mainTypeface())
+	} else if ui.tab2State.typeface == "" {
+		ui.tab2State.typeface = ui.mainTypeface()
 	}
 	sp, err := protocols.LoadSpecYAML(specYAML)
 	if err != nil {
@@ -50,7 +56,7 @@ func (ui *UI) ensureTab2Loaded(specYAML []byte) {
 
 func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	if ui.tab2State == nil {
-		ui.tab2State = newTab2State()
+		ui.tab2State = newTab2State(ui.mainTypeface())
 	}
 	st := ui.tab2State
 
@@ -113,7 +119,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 					return layout.Dimensions{}
 				}
 				lbl := material.Body2(th, msg)
-				lbl.Font.Typeface = "Fira Code"
+				lbl.Font.Typeface = st.typeface
 				lbl.Color = color.NRGBA{R: 240, G: 90, B: 90, A: 255}
 				lbl.MaxLines = 2
 				return lbl.Layout(gtx)
@@ -132,8 +138,8 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 					const row2Sp = 18
 					// Estimate card height: measure one text line height.
 					sampleLbl := material.Body1(th, "00")
-					sampleLbl.TextSize = unit.Sp(row2Sp)
-					sampleLbl.Font.Typeface = "Fira Code"
+					sampleLbl.TextSize = scaleThemeFontSize(th, row2Sp)
+					sampleLbl.Font.Typeface = st.typeface
 					sampleLbl.MaxLines = 1
 					lineH := measureLabelUnconstrained(gtx, sampleLbl).Size.Y + gtx.Dp(unit.Dp(8)) // +padding
 					padV := gtx.Dp(unit.Dp(10))
@@ -143,8 +149,8 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 					if b := st.lastBytes; len(b) > 0 {
 						// measure tokenW same way as buildRow2HexLines
 						tok := material.Body1(th, "00 ")
-						tok.TextSize = unit.Sp(row2Sp)
-						tok.Font.Typeface = "Fira Code"
+						tok.TextSize = scaleThemeFontSize(th, row2Sp)
+						tok.Font.Typeface = st.typeface
 						tok.MaxLines = 1
 						tokenW := measureLabelUnconstrained(gtx, tok).Size.X
 						if tokenW < 1 {
@@ -178,7 +184,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 					if len(lines) == 0 {
 						inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Body1(th, "(no data)")
-							lbl.Font.Typeface = "Fira Code"
+							lbl.Font.Typeface = st.typeface
 							lbl.Color = txtColor
 							lbl.MaxLines = 1
 							return lbl.Layout(gtx)
@@ -211,7 +217,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 				if sp == nil && st.selectedSpanKey != "" {
 					sp = findSpanByKey(st.lastRes.Spans, st.selectedSpanKey)
 				}
-				return hintCardFixed(th, gtx, sp)
+				return hintCardFixed(th, gtx, st.typeface, sp)
 			}),
 
 			layout.Rigid(layout.Spacer{Height: gap}.Layout),
@@ -245,7 +251,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 
 						if len(flat) == 0 {
 							lbl := material.Body1(th, "No decoded fields.")
-							lbl.Font.Typeface = "Fira Code"
+							lbl.Font.Typeface = st.typeface
 							lbl.Color = txtColor
 							lbl.MaxLines = 1
 							return lbl.Layout(gtx)
@@ -307,8 +313,8 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 									return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 										lbl := material.Body2(th, line)
-										lbl.Font.Typeface = "Fira Code"
-										lbl.TextSize = unit.Sp(12)
+										lbl.Font.Typeface = st.typeface
+										lbl.TextSize = scaleThemeFontSize(th, 12)
 										lbl.Color = colorForSpanText(it.Span, st.lastRes.Spans)
 										lbl.MaxLines = 1
 										lbl.Font.Weight = font.Medium
@@ -353,8 +359,8 @@ func row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *tab2State,
 	dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			ed := material.Editor(th, &st.hexEd, "Paste hex (spaces/commas ok)")
-			ed.TextSize = unit.Sp(14)
-			ed.Font.Typeface = "Fira Code"
+			ed.TextSize = scaleThemeFontSize(th, 14)
+			ed.Font.Typeface = st.typeface
 			ed.Font.Weight = font.Medium
 			ed.Color = txtColor
 			ed.HintColor = hintColor
@@ -419,8 +425,8 @@ func protocolDropdownButton(th *material.Theme, gtx layout.Context, st *tab2Stat
 			return fillRoundedBox(gtx, gtx.Dp(unit.Dp(10)), bg, bd, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, txt)
-					lbl.Font.Typeface = "Fira Code"
-					lbl.TextSize = unit.Sp(12)
+					lbl.Font.Typeface = st.typeface
+					lbl.TextSize = scaleThemeFontSize(th, 12)
 					lbl.Color = txtColor
 					lbl.MaxLines = 1
 					return lbl.Layout(gtx)
@@ -458,7 +464,7 @@ func protocolDropdownPopup(th *material.Theme, gtx layout.Context, st *tab2State
 				opt := opt
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					click := st.click("proto:" + opt.Name)
-					return dropdownItem(th, gtx, click, opt.Label, st.protoChoice.Value == opt.Name, hoverSeen)
+					return dropdownItem(th, gtx, st.typeface, click, opt.Label, st.protoChoice.Value == opt.Name, hoverSeen)
 				}))
 			}
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
@@ -549,7 +555,7 @@ func protocolLabel(name string) string {
 	return strings.Join(parts, " ")
 }
 
-func dropdownItem(th *material.Theme, gtx layout.Context, c *widget.Clickable, label string, selected bool, hoverSeen *bool) layout.Dimensions {
+func dropdownItem(th *material.Theme, gtx layout.Context, typeface font.Typeface, c *widget.Clickable, label string, selected bool, hoverSeen *bool) layout.Dimensions {
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		if c.Hovered() {
 			*hoverSeen = true
@@ -563,8 +569,8 @@ func dropdownItem(th *material.Theme, gtx layout.Context, c *widget.Clickable, l
 		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = "Fira Code"
-				lbl.TextSize = unit.Sp(12)
+				lbl.Font.Typeface = typeface
+				lbl.TextSize = scaleThemeFontSize(th, 12)
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Font.Weight = font.Medium
@@ -598,8 +604,8 @@ func buildRow2HexLines(th *material.Theme, gtx layout.Context, st *tab2State, ho
 
 	// measure "00 " cell width
 	token := material.Body1(th, "00 ")
-	token.TextSize = unit.Sp(row2Sp)
-	token.Font.Typeface = "Fira Code"
+	token.TextSize = scaleThemeFontSize(th, row2Sp)
+	token.Font.Typeface = st.typeface
 	token.Font.Weight = font.Medium
 	token.Color = txtColor
 	token.MaxLines = 1
@@ -757,8 +763,8 @@ func buildRow2HexLines(th *material.Theme, gtx layout.Context, st *tab2State, ho
 
 					// Build label style (no layout yet).
 					lbl := material.Body1(th, seg.txt)
-					lbl.TextSize = unit.Sp(row2Sp)
-					lbl.Font.Typeface = "Fira Code"
+					lbl.TextSize = scaleThemeFontSize(th, row2Sp)
+					lbl.Font.Typeface = st.typeface
 					lbl.MaxLines = 1
 					lbl.Color = txtColor
 					lbl.Font.Weight = font.Medium
@@ -865,7 +871,7 @@ func drawDottedBorder(gtx layout.Context, sz image.Point, c color.NRGBA) {
 
 // ---------- Hint ----------
 
-func hintCardFixed(th *material.Theme, gtx layout.Context, sp *protocols.Span) layout.Dimensions {
+func hintCardFixed(th *material.Theme, gtx layout.Context, typeface font.Typeface, sp *protocols.Span) layout.Dimensions {
 	return card(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			title := "Hover a field"
@@ -881,8 +887,8 @@ func hintCardFixed(th *material.Theme, gtx layout.Context, sp *protocols.Span) l
 			}
 
 			l1 := material.Body2(th, title)
-			l1.Font.Typeface = "Fira Code"
-			l1.TextSize = unit.Sp(12)
+			l1.Font.Typeface = typeface
+			l1.TextSize = scaleThemeFontSize(th, 12)
 			l1.MaxLines = 1
 			l1.Color = txtColor
 			if sp == nil {
@@ -890,14 +896,14 @@ func hintCardFixed(th *material.Theme, gtx layout.Context, sp *protocols.Span) l
 			}
 
 			l2 := material.Caption(th, line2)
-			l2.Font.Typeface = "Fira Code"
-			l2.TextSize = unit.Sp(11)
+			l2.Font.Typeface = typeface
+			l2.TextSize = scaleThemeFontSize(th, 11)
 			l2.MaxLines = 1
 			l2.Color = hintColor
 
 			l3 := material.Caption(th, line3)
-			l3.Font.Typeface = "Fira Code"
-			l3.TextSize = unit.Sp(11)
+			l3.Font.Typeface = typeface
+			l3.TextSize = scaleThemeFontSize(th, 11)
 			l3.MaxLines = 2
 			l3.Color = txtColor
 

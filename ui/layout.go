@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -26,6 +27,7 @@ const (
 	repeatSlow       = 80 * time.Millisecond
 	repeatFast       = 25 * time.Millisecond
 	repeatAccelAfter = 120 * time.Millisecond
+	defaultUIFontSp  = unit.Sp(14)
 )
 
 type KeyRepeat struct {
@@ -59,6 +61,7 @@ type FieldSpan struct {
 type tab2State struct {
 	hexEd       widget.Editor
 	protoChoice widget.Enum // "gt06" | "teltonika_tcp"
+	typeface    font.Typeface
 
 	spec *protocols.Spec
 	reg  *protocols.DefaultHookRegistry
@@ -107,13 +110,22 @@ type UI struct {
 	tab0, tab1, tab2 widget.Clickable
 	filePanes        []*filePaneState
 	fmCfg            *fm.Config
+	typeface         font.Typeface
+	textSize         unit.Sp
 	fileKeys         fileKeyMap
 	activeFilePane   int
 	pendingFileOpen  *fileOpenRequest
 }
 
-func NewUI() *UI {
-	ui := &UI{}
+func NewUI(cfg *fm.Config) *UI {
+	if cfg == nil {
+		cfg = fm.DefaultConfig()
+	}
+	ui := &UI{
+		fmCfg:    cfg,
+		typeface: font.Typeface(cfg.Font.Typeface),
+		textSize: fontSizeFromConfig(cfg),
+	}
 	ui.Tabs.Value = "tab0"
 
 	ui.LeftEd.SingleLine = false
@@ -128,7 +140,6 @@ func NewUI() *UI {
 	data, _ := os.ReadFile("protocols.yaml")
 
 	ui.ensureTab2Loaded(data)
-	ui.fmCfg = fm.LoadConfig("fm.yaml")
 	ui.fileKeys = newFileKeyMap(ui.fmCfg)
 
 	cwd, err := os.Getwd()
@@ -163,6 +174,59 @@ func (ui *UI) resetKeys() {
 	for k := range ui.held {
 		ui.held[k] = false
 	}
+}
+
+func (ui *UI) mainTypeface() font.Typeface {
+	if ui == nil || ui.typeface == "" {
+		return font.Typeface("Fira Code")
+	}
+	return ui.typeface
+}
+
+func (ui *UI) mainTextSize() unit.Sp {
+	if ui == nil {
+		return defaultUIFontSp
+	}
+	return normalizeUIFontSize(ui.textSize)
+}
+
+func normalizeUIFontSize(size unit.Sp) unit.Sp {
+	if size <= 0 {
+		return defaultUIFontSp
+	}
+	return size
+}
+
+func fontSizeFromConfig(cfg *fm.Config) unit.Sp {
+	if cfg == nil {
+		return defaultUIFontSp
+	}
+	return normalizeUIFontSize(unit.Sp(cfg.Font.SizeSp))
+}
+
+func themeFontSize(th *material.Theme) unit.Sp {
+	if th == nil {
+		return defaultUIFontSp
+	}
+	return normalizeUIFontSize(th.TextSize)
+}
+
+func scaleFontSize(base, size unit.Sp) unit.Sp {
+	base = normalizeUIFontSize(base)
+	size = normalizeUIFontSize(size)
+	scaled := unit.Sp(float32(size) * float32(base) / float32(defaultUIFontSp))
+	if scaled < 1 {
+		return 1
+	}
+	return scaled
+}
+
+func scaleThemeFontSize(th *material.Theme, size unit.Sp) unit.Sp {
+	return scaleFontSize(themeFontSize(th), size)
+}
+
+func scaleConfigFontSize(cfg *fm.Config, size unit.Sp) unit.Sp {
+	return scaleFontSize(fontSizeFromConfig(cfg), size)
 }
 
 // Top tabs row: centered, closer together.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"hexone/fm"
 	"hexone/ui"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"gioui.org/font/opentype"
 	"gioui.org/op"
 	"gioui.org/text"
+	"gioui.org/unit"
 	"gioui.org/widget/material"
 )
 
@@ -38,20 +40,23 @@ func mustFont(path string) font.Face {
 }
 
 func run(window *app.Window) error {
+	cfg := fm.LoadConfig("fm.yaml")
 	th := material.NewTheme()
 
-	regular := mustFont("assets/FiraCode-Regular.ttf")
-	medium := mustFont("assets/FiraCode-Medium.ttf")
-	bold := mustFont("assets/FiraCode-Bold.ttf")
+	regular := mustFont(cfg.Font.RegularPath)
+	medium := mustFont(cfg.Font.MediumPath)
+	bold := mustFont(cfg.Font.BoldPath)
 
 	th.Shaper = text.NewShaper(text.WithCollection([]text.FontFace{
-		{Font: font.Font{Typeface: "Fira Code", Weight: font.Normal}, Face: regular},
-		{Font: font.Font{Typeface: "Fira Code", Weight: font.Medium}, Face: medium},
-		{Font: font.Font{Typeface: "Fira Code", Weight: font.Bold}, Face: bold},
+		{Font: font.Font{Typeface: font.Typeface(cfg.Font.Typeface), Weight: font.Normal}, Face: regular},
+		{Font: font.Font{Typeface: font.Typeface(cfg.Font.Typeface), Weight: font.Medium}, Face: medium},
+		{Font: font.Font{Typeface: font.Typeface(cfg.Font.Typeface), Weight: font.Bold}, Face: bold},
 	}))
+	th.Face = font.Typeface(cfg.Font.Typeface)
+	th.TextSize = unit.Sp(cfg.Font.SizeSp)
 
 	var ops op.Ops
-	mainUI := ui.NewUI()
+	mainUI := ui.NewUI(cfg)
 
 	for {
 		switch typ := window.Event().(type) {
