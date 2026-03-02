@@ -20,6 +20,8 @@ const (
 type Entry struct {
 	Name        string
 	DisplayName string
+	PermText    string
+	PermOctal   string
 	SizeText    string
 	SizeBytes   int64
 	DateText    string
@@ -55,9 +57,11 @@ func ReadDir(dir string) (Listing, error) {
 	if parent != abs {
 		out.Entries = append(out.Entries, Entry{
 			Name:        "..",
-			DisplayName: "../",
-			SizeText:    "<DIR>",
-			DateText:    "—",
+			DisplayName: "..",
+			PermText:    "",
+			PermOctal:   "",
+			SizeText:    "",
+			DateText:    "",
 			Kind:        EntryParent,
 			Path:        parent,
 			CanEnter:    true,
@@ -75,18 +79,19 @@ func ReadDir(dir string) (Listing, error) {
 		name := item.Name()
 		full := filepath.Join(abs, name)
 		row := Entry{
-			Name:     name,
-			Path:     full,
-			Kind:     EntryFile,
-			SizeText: "—",
-			DateText: "—",
+			Name:      name,
+			Path:      full,
+			Kind:      EntryFile,
+			PermText:  "—",
+			PermOctal: "—",
+			SizeText:  "",
+			DateText:  "—",
 		}
 
 		info, err := os.Lstat(full)
 		if err != nil {
 			row.Kind = EntryBroken
 			row.DisplayName = name
-			row.SizeText = "0 B"
 			rows = append(rows, sortable{entry: row, key: strings.ToLower(name), group: 2})
 			continue
 		}
@@ -98,16 +103,17 @@ func ReadDir(dir string) (Listing, error) {
 			} else {
 				row.Kind = EntryBroken
 				row.DisplayName = name
-				row.SizeText = "0 B"
 				rows = append(rows, sortable{entry: row, key: strings.ToLower(name), group: 2})
 				continue
 			}
 		}
 
+		row.PermText = formatPerms(targetInfo.Mode())
+		row.PermOctal = formatPermOctal(targetInfo.Mode())
 		if targetInfo.IsDir() {
 			row.Kind = EntryDir
-			row.DisplayName = name + "/"
-			row.SizeText = "<DIR>"
+			row.DisplayName = name
+			row.SizeText = ""
 			row.CanEnter = true
 		} else {
 			row.DisplayName = name
@@ -176,6 +182,35 @@ func formatDate(ts time.Time) string {
 		return "—"
 	}
 	return ts.Format("Jan 02 2006")
+}
+
+func formatPerms(mode os.FileMode) string {
+	const chars = "rwxrwxrwx"
+	bits := []os.FileMode{
+		0o400, 0o200, 0o100,
+		0o040, 0o020, 0o010,
+		0o004, 0o002, 0o001,
+	}
+
+	out := make([]byte, len(bits))
+	for i, bit := range bits {
+		if mode&bit != 0 {
+			out[i] = chars[i]
+		} else {
+			out[i] = '-'
+		}
+	}
+	return string(out)
+}
+
+func formatPermOctal(mode os.FileMode) string {
+	perm := int64(mode.Perm())
+	var out [4]byte
+	for i := 3; i >= 0; i-- {
+		out[i] = byte('0' + perm%8)
+		perm /= 8
+	}
+	return string(out[:])
 }
 
 func itoa(v int64) string {

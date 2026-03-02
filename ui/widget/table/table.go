@@ -3,6 +3,7 @@ package table
 import (
 	"image"
 	"image/color"
+	"sync"
 	"time"
 
 	"gioui.org/font"
@@ -14,6 +15,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
+	mdicons "golang.org/x/exp/shiny/materialdesign/icons"
 )
 
 type Align uint8
@@ -53,6 +56,33 @@ type WidthAwareModel interface {
 	CellWithWidth(row, col, widthPx int) (string, CellStyle)
 }
 
+type IconKind uint8
+
+const (
+	IconNone IconKind = iota
+	IconFile
+	IconFolder
+	IconParent
+	IconBroken
+)
+
+type LeadingIcon struct {
+	Kind  IconKind
+	Color color.NRGBA
+}
+
+type LeadingIconModel interface {
+	LeadingIcon(row, col int) (LeadingIcon, bool)
+}
+
+var leadingIconSet struct {
+	once   sync.Once
+	file   *widget.Icon
+	folder *widget.Icon
+	parent *widget.Icon
+	broken *widget.Icon
+}
+
 type Table struct {
 	List widget.List
 
@@ -86,6 +116,7 @@ type Table struct {
 	pendingEnsure bool
 	lastClickRow  int
 	lastClickAt   time.Time
+	scrollCarry   float32
 }
 
 const doubleClickWindow = 400 * time.Millisecond
@@ -177,9 +208,9 @@ func (t *Table) pageStep() int {
 		if rowsPerCol < 1 {
 			rowsPerCol = 1
 		}
-		cols := t.List.Position.Count
+		cols := t.briefVisibleCols
 		if cols < 1 {
-			cols = t.briefVisibleCols
+			cols = t.List.Position.Count
 		}
 		if cols < 1 {
 			cols = 1
@@ -216,9 +247,9 @@ func (t *Table) ensureVisible(n int) {
 	}
 
 	if t.Mode == ModeBrief {
-		visible := t.List.Position.Count
+		visible := t.briefVisibleCols
 		if visible < 1 {
-			visible = t.briefVisibleCols
+			visible = t.List.Position.Count
 		}
 		if visible < 1 {
 			visible = 1
@@ -292,6 +323,106 @@ func layoutCellLabel(gtx layout.Context, th *material.Theme, face font.Typeface,
 	return dims
 }
 
+func leadingIconMetrics(cellH int) (size, gap int) {
+	size = cellH - 6
+	if size < 7 {
+		size = 7
+	}
+	if size > 10 {
+		size = 10
+	}
+	gap = 4
+	return size, gap
+}
+
+func canShowLeadingIcon(contentW, cellH int) bool {
+	iconW, gapW := leadingIconMetrics(cellH)
+	const minTextPx = 8
+	return contentW >= iconW+gapW+minTextPx
+}
+
+func mustIcon(ic *widget.Icon, err error) *widget.Icon {
+	if err != nil {
+		panic(err)
+	}
+	return ic
+}
+
+func loadLeadingIcons() {
+	leadingIconSet.file = mustIcon(widget.NewIcon(mdicons.EditorInsertDriveFile))
+	leadingIconSet.folder = mustIcon(widget.NewIcon(mdicons.FileFolder))
+	leadingIconSet.parent = mustIcon(widget.NewIcon(mdicons.NavigationArrowBack))
+	leadingIconSet.broken = mustIcon(widget.NewIcon(mdicons.AlertErrorOutline))
+}
+
+func leadingWidgetIcon(kind IconKind) *widget.Icon {
+	leadingIconSet.once.Do(loadLeadingIcons)
+	switch kind {
+	case IconFile:
+		return leadingIconSet.file
+	case IconFolder:
+		return leadingIconSet.folder
+	case IconParent:
+		return leadingIconSet.parent
+	case IconBroken:
+		return leadingIconSet.broken
+	default:
+		return nil
+	}
+}
+
+func layoutCellLabelWithIcon(gtx layout.Context, th *material.Theme, face font.Typeface, size unit.Sp, txt string, st CellStyle, align text.Alignment, hideIfTruncated bool, icon LeadingIcon) layout.Dimensions {
+	if icon.Kind == IconNone || align != text.Start {
+		return layoutCellLabel(gtx, th, face, size, txt, st, align, hideIfTruncated)
+	}
+
+	iconPx, gapPx := leadingIconMetrics(gtx.Constraints.Max.Y)
+	if iconPx > gtx.Constraints.Max.X {
+		iconPx = gtx.Constraints.Max.X
+	}
+	reserve := iconPx
+	if reserve > 0 {
+		reserve += gapPx
+	}
+	if reserve < 0 {
+		reserve = 0
+	}
+
+	if reserve > 0 {
+		if ic := leadingWidgetIcon(icon.Kind); ic != nil {
+			iconGtx := gtx
+			iconGtx.Constraints = layout.Exact(image.Pt(iconPx, iconPx))
+			y := (gtx.Constraints.Max.Y - iconPx) / 2
+			if y < 0 {
+				y = 0
+			}
+			tr := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+			ic.Layout(iconGtx, icon.Color)
+			tr.Pop()
+		}
+	}
+
+	labelW := gtx.Constraints.Max.X - reserve
+	if labelW < 0 {
+		labelW = 0
+	}
+
+	labelGtx := gtx
+	labelGtx.Constraints = layout.Exact(image.Pt(labelW, gtx.Constraints.Max.Y))
+	tr := op.Offset(image.Pt(reserve, 0)).Push(gtx.Ops)
+	dims := layoutCellLabel(labelGtx, th, face, size, txt, st, align, hideIfTruncated)
+	tr.Pop()
+	if dims.Size.X+reserve > gtx.Constraints.Max.X {
+		dims.Size.X = gtx.Constraints.Max.X
+	} else {
+		dims.Size.X += reserve
+	}
+	if dims.Size.Y < gtx.Constraints.Max.Y {
+		dims.Size.Y = gtx.Constraints.Max.Y
+	}
+	return dims
+}
+
 func (t *Table) columnWidthPx(gtx layout.Context, c Column) (base, min int) {
 	base = gtx.Dp(c.Width)
 	min = gtx.Dp(c.MinWidth)
@@ -354,16 +485,36 @@ func (t *Table) computeColumnWidths(gtx layout.Context, maxW int) []int {
 		deficit -= cut
 	}
 
-	for i := len(t.Columns) - 1; i >= 0 && deficit > 0; i-- {
+	for i := len(t.Columns) - 1; i >= 1 && deficit > 0; i-- {
 		if widths[i] <= 0 {
 			continue
 		}
-		cut := widths[i]
-		if cut > deficit {
-			cut = deficit
+		deficit -= widths[i]
+		widths[i] = 0
+	}
+
+	total := 0
+	for _, w := range widths {
+		total += w
+	}
+	if total < maxW && len(flexIdx) > 0 {
+		extra := maxW - total
+		share := extra / len(flexIdx)
+		rem := extra % len(flexIdx)
+		for _, idx := range flexIdx {
+			widths[idx] += share
+			if rem > 0 {
+				widths[idx]++
+				rem--
+			}
 		}
-		widths[i] -= cut
-		deficit -= cut
+		total = maxW
+	}
+	if total > maxW && len(widths) > 0 {
+		widths[0] -= total - maxW
+		if widths[0] < 0 {
+			widths[0] = 0
+		}
 	}
 
 	return widths
@@ -436,6 +587,50 @@ func (t *Table) HandleKey(name string, n int) bool {
 	return true
 }
 
+func (t *Table) HandleScrollSelection(deltaY float32, n int) bool {
+	if n <= 0 || deltaY == 0 {
+		if n <= 0 {
+			t.scrollCarry = 0
+		}
+		return false
+	}
+
+	// Gio delivers wheel delta magnitudes that vary a lot by platform/device
+	// (for example 120 on Windows, ~10 on X11, fractional on touchpads).
+	// Normalize each event to at most a single logical step and only accumulate
+	// sub-unit trackpad deltas.
+	if deltaY > 1 {
+		deltaY = 1
+	} else if deltaY < -1 {
+		deltaY = -1
+	}
+	if (deltaY > 0 && t.scrollCarry < 0) || (deltaY < 0 && t.scrollCarry > 0) {
+		t.scrollCarry = 0
+	}
+
+	t.scrollCarry += deltaY
+
+	steps := 0
+	for t.scrollCarry >= 1 {
+		steps++
+		t.scrollCarry -= 1
+	}
+	for t.scrollCarry <= -1 {
+		steps--
+		t.scrollCarry += 1
+	}
+	if steps == 0 {
+		return false
+	}
+
+	prev := t.Selected
+	t.Selected += steps
+	t.clampSelection(n)
+	t.ensureVisible(n)
+	t.notifySelect(prev)
+	return prev != t.Selected
+}
+
 func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.Dimensions {
 	n := 0
 	if m != nil {
@@ -471,14 +666,33 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 		}
 		t.briefRowsPerCol = t.viewRows
 		t.briefVisibleCols = 1
+		briefViewportW := gtx.Constraints.Max.X
 		if t.Mode == ModeBrief {
-			itemW := gtx.Dp(t.BriefColumnWidth) + gtx.Dp(t.BriefGap)
+			colW := gtx.Dp(t.BriefColumnWidth)
+			if colW < 1 {
+				colW = 1
+			}
+			gapW := gtx.Dp(t.BriefGap)
+			if gapW < 0 {
+				gapW = 0
+			}
+			itemW := colW + gapW
 			if itemW < 1 {
 				itemW = 1
 			}
-			t.briefVisibleCols = gtx.Constraints.Max.X / itemW
+			t.briefVisibleCols = (gtx.Constraints.Max.X + gapW) / itemW
 			if t.briefVisibleCols < 1 {
 				t.briefVisibleCols = 1
+			}
+			briefViewportW = t.briefVisibleCols * colW
+			if t.briefVisibleCols > 1 {
+				briefViewportW += (t.briefVisibleCols - 1) * gapW
+			}
+			if briefViewportW > gtx.Constraints.Max.X {
+				briefViewportW = gtx.Constraints.Max.X
+			}
+			if briefViewportW < 1 {
+				briefViewportW = gtx.Constraints.Max.X
 			}
 		}
 
@@ -492,7 +706,10 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 		}
 
 		if t.Mode == ModeBrief {
-			return t.layoutBrief(th, gtx, m, n, rowHpx, itemCount)
+			listGtx := gtx
+			listGtx.Constraints.Min.X = briefViewportW
+			listGtx.Constraints.Max.X = briefViewportW
+			return t.layoutBrief(th, listGtx, m, n, rowHpx, itemCount)
 		}
 
 		listH := t.viewRows * rowHpx
@@ -571,6 +788,7 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 
 				widths := t.computeColumnWidths(gtx, maxW)
 				aware, awareOK := m.(WidthAwareModel)
+				iconModel, iconOK := m.(LeadingIconModel)
 				x := 0
 				for col := 0; col < len(t.Columns); col++ {
 					c := t.Columns[col]
@@ -582,6 +800,25 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 					contentW := w - 2*gtx.Dp(c.PadX)
 					if contentW < 0 {
 						contentW = 0
+					}
+					icon := LeadingIcon{}
+					hasIcon := false
+					if col == 0 && iconOK {
+						icon, hasIcon = iconModel.LeadingIcon(row, col)
+						if hasIcon && icon.Kind != IconNone {
+							if !canShowLeadingIcon(contentW, cellH) {
+								hasIcon = false
+							}
+						}
+						if hasIcon && icon.Kind != IconNone {
+							iconW, gapW := leadingIconMetrics(cellH)
+							reserve := iconW + gapW
+							if reserve > contentW {
+								contentW = 0
+							} else {
+								contentW -= reserve
+							}
+						}
 					}
 					txt, st := m.Cell(row, col)
 					if awareOK {
@@ -605,6 +842,9 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 					tr := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
 					hideIfTruncated := t.Mode == ModeFull && col == 0 && txt != ""
 					_ = layout.Inset{Left: c.PadX, Right: c.PadX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
+						if hasIcon && icon.Kind != IconNone {
+							return layoutCellLabelWithIcon(gtx, th, th.Face, t.TextSize, txt, st, align, hideIfTruncated, icon)
+						}
 						return layoutCellLabel(gtx, th, th.Face, t.TextSize, txt, st, align, hideIfTruncated)
 					})
 					tr.Pop()
@@ -721,6 +961,25 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 			if contentW < 0 {
 				contentW = 0
 			}
+			icon := LeadingIcon{}
+			hasIcon := false
+			if withIcon, ok := m.(LeadingIconModel); ok {
+				icon, hasIcon = withIcon.LeadingIcon(row, 0)
+				if hasIcon && icon.Kind != IconNone {
+					if !canShowLeadingIcon(contentW, cellH) {
+						hasIcon = false
+					}
+				}
+				if hasIcon && icon.Kind != IconNone {
+					iconW, gapW := leadingIconMetrics(cellH)
+					reserve := iconW + gapW
+					if reserve > contentW {
+						contentW = 0
+					} else {
+						contentW -= reserve
+					}
+				}
+			}
 			txt, st := m.Cell(row, 0)
 			if aware, ok := m.(WidthAwareModel); ok {
 				txt, st = aware.CellWithWidth(row, 0, contentW)
@@ -738,7 +997,12 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 
 			cellGtx := gtx
 			cellGtx.Constraints = layout.Exact(image.Pt(maxW, cellH))
-			_ = layout.Inset{Left: padX, Right: padX}.Layout(cellGtx, lbl.Layout)
+			_ = layout.Inset{Left: padX, Right: padX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
+				if hasIcon && icon.Kind != IconNone {
+					return layoutCellLabelWithIcon(gtx, th, th.Face, t.TextSize, txt, st, text.Start, false, icon)
+				}
+				return lbl.Layout(gtx)
+			})
 
 			return layout.Dimensions{Size: image.Pt(maxW, rowHpx)}
 		})

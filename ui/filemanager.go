@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"gioui.org/font"
@@ -53,14 +54,28 @@ func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 		st.Color = color.NRGBA{R: 170, G: 200, B: 255, A: 255}
 	case filesys.EntryBroken:
 		st.Color = color.NRGBA{R: 255, G: 120, B: 120, A: 255}
-		st.Weight = font.Bold
+	}
+	if c == 0 {
+		switch entry.Kind {
+		case filesys.EntryDir, filesys.EntryParent, filesys.EntryBroken:
+			st.Weight = font.Bold
+		}
 	}
 
+	showPerms := m.showPermissionColumn()
 	switch c {
 	case 0:
 		return entry.DisplayName, st
 	case 1:
+		if showPerms {
+			return m.defaultPermissionText(entry), st
+		}
 		return entry.SizeText, st
+	case 2:
+		if showPerms {
+			return entry.SizeText, st
+		}
+		return entry.DateText, st
 	default:
 		return entry.DateText, st
 	}
@@ -69,33 +84,117 @@ func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 func (m *filePaneModel) CellWithWidth(r, c, widthPx int) (string, table.CellStyle) {
 	txt, st := m.Cell(r, c)
 	entry := m.entries[r]
+	showPerms := m.showPermissionColumn()
 
 	switch c {
 	case 0:
 		return m.nameOrEmpty(entry.DisplayName, widthPx), st
 	case 1:
+		if showPerms {
+			return m.formatPermissions(entry, widthPx), st
+		}
 		return m.formatSize(entry.SizeText, widthPx), st
 	case 2:
+		if showPerms {
+			return m.formatSize(entry.SizeText, widthPx), st
+		}
+		return m.formatDate(entry, widthPx), st
+	case 3:
 		return m.formatDate(entry, widthPx), st
 	default:
 		return txt, st
 	}
 }
 
+func (m *filePaneModel) showPermissionColumn() bool {
+	return m != nil && m.cfg != nil && m.cfg.Columns.ShowPermissions
+}
+
+func (m *filePaneModel) permissionFormat() string {
+	if m == nil || m.cfg == nil {
+		return "auto"
+	}
+	switch m.cfg.Columns.PermissionFormat {
+	case "symbolic", "octal":
+		return m.cfg.Columns.PermissionFormat
+	default:
+		return "auto"
+	}
+}
+
+func (m *filePaneModel) defaultPermissionText(entry filesys.Entry) string {
+	if m.permissionFormat() == "octal" {
+		return entry.PermOctal
+	}
+	return entry.PermText
+}
+
+func (m *filePaneModel) formatPermissions(entry filesys.Entry, widthPx int) string {
+	preferred := m.permissionFormat()
+	candidates := []string{entry.PermText, entry.PermOctal}
+	if preferred == "octal" {
+		candidates[0], candidates[1] = candidates[1], candidates[0]
+	}
+
+	for _, candidate := range candidates {
+		if m.fullOrEmpty(candidate, widthPx) != "" {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
+	if m == nil || c != 0 || r < 0 || r >= len(m.entries) {
+		return table.LeadingIcon{}, false
+	}
+	entry := m.entries[r]
+	switch entry.Kind {
+	case filesys.EntryParent:
+		return table.LeadingIcon{
+			Kind:  table.IconParent,
+			Color: color.NRGBA{R: 170, G: 200, B: 255, A: 255},
+		}, true
+	case filesys.EntryDir:
+		return table.LeadingIcon{
+			Kind:  table.IconFolder,
+			Color: color.NRGBA{R: 205, G: 176, B: 88, A: 255},
+		}, true
+	case filesys.EntryBroken:
+		return table.LeadingIcon{
+			Kind:  table.IconBroken,
+			Color: color.NRGBA{R: 220, G: 85, B: 85, A: 255},
+		}, true
+	default:
+		return table.LeadingIcon{
+			Kind:  table.IconFile,
+			Color: m.fileIconColor(entry.Name),
+		}, true
+	}
+}
+
 type filePaneState struct {
-	table          *table.Table
-	model          *filePaneModel
-	headerClick    widget.Clickable
-	modeClick      widget.Clickable
-	sortClick      widget.Clickable
-	sortPointerTag struct{}
-	sortOptionBtns [4]widget.Clickable
-	sortMenuOpen   bool
-	sortKey        fileSortKey
-	sortDesc       bool
-	dirsFirst      bool
-	dir            string
-	err            string
+	table           *table.Table
+	model           *filePaneModel
+	headerClick     widget.Clickable
+	pathAreaClick   widget.Clickable
+	pathSegClicks   []widget.Clickable
+	pathEdit        widget.Editor
+	pathEditing     bool
+	pathEditFocus   bool
+	modeClick       widget.Clickable
+	sortClick       widget.Clickable
+	tablePointerTag struct{}
+	sortPointerTag  struct{}
+	sortOptionBtns  [4]widget.Clickable
+	sortMenuOpen    bool
+	sortKey         fileSortKey
+	sortDesc        bool
+	dirsFirst       bool
+	dir             string
+	err             string
+	noticeText      string
+	noticeUntil     time.Time
 }
 
 func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
@@ -104,9 +203,16 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	}
 	cols := []table.Column{
 		{Width: unit.Dp(cfg.Columns.NameWidthDp), MinWidth: unit.Dp(cfg.Columns.NameMinWidthDp), Flex: true, Align: table.AlignStart, PadX: unit.Dp(2)},
-		{Width: unit.Dp(cfg.Columns.SizeWidthDp), MinWidth: unit.Dp(cfg.Columns.SizeMinWidthDp), Flex: false, Align: table.AlignEnd, PadX: unit.Dp(2)},
-		{Width: unit.Dp(cfg.Columns.DateWidthDp), MinWidth: unit.Dp(cfg.Columns.DateMinWidthDp), Flex: false, Align: table.AlignStart, PadX: unit.Dp(6)},
 	}
+	if cfg.Columns.ShowPermissions {
+		cols = append(cols, table.Column{
+			Width: unit.Dp(cfg.Columns.PermWidthDp), MinWidth: unit.Dp(cfg.Columns.PermMinWidthDp), Flex: false, Align: table.AlignStart, PadX: unit.Dp(4),
+		})
+	}
+	cols = append(cols,
+		table.Column{Width: unit.Dp(cfg.Columns.SizeWidthDp), MinWidth: unit.Dp(cfg.Columns.SizeMinWidthDp), Flex: false, Align: table.AlignEnd, PadX: unit.Dp(2)},
+		table.Column{Width: unit.Dp(cfg.Columns.DateWidthDp), MinWidth: unit.Dp(cfg.Columns.DateMinWidthDp), Flex: false, Align: table.AlignStart, PadX: unit.Dp(6)},
+	)
 
 	pane := &filePaneState{
 		table:     table.New(cols),
@@ -114,7 +220,10 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 		sortKey:   parseFileSortKey(cfg.Sort.DefaultKey),
 		sortDesc:  cfg.Sort.Descending,
 		dirsFirst: cfg.Sort.DirectoriesFirst,
+		dir:       dir,
 	}
+	pane.pathEdit.SingleLine = true
+	pane.pathEdit.Submit = true
 	pane.table.TextSize = unit.Sp(13)
 	pane.table.RowHeight = unit.Dp(18)
 	pane.table.RowPadY = unit.Dp(0)
@@ -128,19 +237,113 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 func (p *filePaneState) load(dir string) error {
 	listing, err := filesys.ReadDir(dir)
 	if err != nil {
-		p.dir = dir
-		p.err = err.Error()
-		p.model.entries = nil
 		return err
 	}
 
 	p.dir = listing.Dir
 	p.err = ""
+	p.noticeText = ""
+	p.noticeUntil = time.Time{}
 	p.model.entries = listing.Entries
 	p.applySort("")
 	p.table.Selected = 0
 	p.table.List.Position = layout.Position{}
 	return nil
+}
+
+func (p *filePaneState) setNotice(msg string, now time.Time) {
+	if p == nil || msg == "" {
+		return
+	}
+	p.err = ""
+	p.noticeText = msg
+	p.noticeUntil = now.Add(3 * time.Second)
+}
+
+func (p *filePaneState) beginPathEdit() {
+	if p == nil {
+		return
+	}
+	p.pathEditing = true
+	p.pathEditFocus = true
+	p.pathEdit.SetText(p.dir)
+	p.pathEdit.SetCaret(0, p.pathEdit.Len())
+}
+
+func (p *filePaneState) stopPathEdit() {
+	if p == nil {
+		return
+	}
+	p.pathEditing = false
+	p.pathEditFocus = false
+}
+
+func (p *filePaneState) ensurePathClicks(n int) {
+	if n <= cap(p.pathSegClicks) {
+		p.pathSegClicks = p.pathSegClicks[:n]
+		return
+	}
+	old := p.pathSegClicks
+	p.pathSegClicks = make([]widget.Clickable, n)
+	copy(p.pathSegClicks, old)
+}
+
+type filePathSegment struct {
+	label string
+	path  string
+}
+
+func splitFilePathSegments(dir string) []filePathSegment {
+	if dir == "" {
+		dir = "."
+	}
+	cleaned := filepath.Clean(dir)
+	sep := string(filepath.Separator)
+	vol := filepath.VolumeName(cleaned)
+	rest := cleaned[len(vol):]
+	hasRoot := strings.HasPrefix(rest, sep)
+	if hasRoot {
+		rest = strings.TrimLeft(rest, sep)
+	}
+
+	parts := make([]string, 0, 8)
+	if rest != "" {
+		parts = strings.FieldsFunc(rest, func(r rune) bool {
+			return r == rune(filepath.Separator)
+		})
+	}
+
+	out := make([]filePathSegment, 0, len(parts)+1)
+	current := ""
+	if hasRoot {
+		root := vol + sep
+		if root == "" {
+			root = sep
+		}
+		current = root
+		out = append(out, filePathSegment{label: root, path: current})
+	} else if vol != "" {
+		current = vol
+		out = append(out, filePathSegment{label: vol, path: current})
+	}
+
+	for i, part := range parts {
+		label := part
+		if len(out) > 0 && !(hasRoot && i == 0) {
+			label = sep + part
+		}
+		if current == "" {
+			current = part
+		} else {
+			current = filepath.Join(current, part)
+		}
+		out = append(out, filePathSegment{label: label, path: current})
+	}
+
+	if len(out) == 0 {
+		out = append(out, filePathSegment{label: cleaned, path: cleaned})
+	}
+	return out
 }
 
 func (p *filePaneState) selectedEntry() *filesys.Entry {
@@ -207,8 +410,11 @@ func (m *filePaneModel) compactName(text string, capacity int) string {
 	if len(runes) <= capacity {
 		return text
 	}
-	if capacity < 3 {
+	if capacity <= 0 {
 		return ""
+	}
+	if capacity < 3 {
+		return string(runes[:capacity])
 	}
 
 	marker := ".."
@@ -229,7 +435,10 @@ func (m *filePaneModel) compactName(text string, capacity int) string {
 	markerRunes := utf8.RuneCountInString(marker)
 	available := capacity - markerRunes
 	if available < 2 {
-		return ""
+		if capacity > len(runes) {
+			capacity = len(runes)
+		}
+		return string(runes[:capacity])
 	}
 
 	tail := m.preferredNameTail(runes, tailMin)
@@ -559,6 +768,26 @@ func compareStrings(a, b string) int {
 	return 0
 }
 
+func (m *filePaneModel) fileIconColor(name string) color.NRGBA {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+	switch ext {
+	case "go", "js", "ts", "tsx", "jsx", "py", "rb", "rs", "c", "cc", "cpp", "h", "hpp", "java", "cs", "swift", "kt", "php", "lua", "sh", "zsh", "bash":
+		return color.NRGBA{R: 92, G: 168, B: 255, A: 255}
+	case "md", "txt", "rtf", "doc", "docx", "pdf":
+		return color.NRGBA{R: 130, G: 210, B: 170, A: 255}
+	case "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tif", "tiff", "ico":
+		return color.NRGBA{R: 92, G: 210, B: 190, A: 255}
+	case "mp3", "wav", "flac", "aac", "ogg", "m4a", "mp4", "mkv", "mov", "avi", "webm":
+		return color.NRGBA{R: 190, G: 138, B: 255, A: 255}
+	case "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar":
+		return color.NRGBA{R: 220, G: 176, B: 96, A: 255}
+	case "exe", "dll", "app", "msi", "bat", "cmd", "com":
+		return color.NRGBA{R: 235, G: 150, B: 92, A: 255}
+	default:
+		return color.NRGBA{R: 170, G: 176, B: 190, A: 255}
+	}
+}
+
 func (ui *UI) activePane() *filePaneState {
 	if ui == nil || len(ui.filePanes) == 0 {
 		return nil
@@ -604,6 +833,58 @@ func (ui *UI) closeSortMenusExcept(active int) {
 		}
 		pane.sortMenuOpen = false
 	}
+}
+
+func (ui *UI) pathEditActive() bool {
+	for _, pane := range ui.filePanes {
+		if pane != nil && pane.pathEditing {
+			return true
+		}
+	}
+	return false
+}
+
+func (ui *UI) loadPaneDir(idx int, dir string) bool {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return false
+	}
+	ui.setActiveFilePane(idx)
+	if err := pane.load(dir); err != nil {
+		pane.setNotice(err.Error(), time.Now())
+		return false
+	}
+	pane.sortMenuOpen = false
+	pane.stopPathEdit()
+	return true
+}
+
+func (ui *UI) submitPanePathEdit(idx int, raw string) bool {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return false
+	}
+
+	target := strings.TrimSpace(raw)
+	if target == "" {
+		pane.setNotice("path is empty", time.Now())
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(pane.dir, target)
+	}
+	target = filepath.Clean(target)
+	if target == filepath.Clean(pane.dir) {
+		pane.stopPathEdit()
+		return true
+	}
+	return ui.loadPaneDir(idx, target)
 }
 
 func (ui *UI) cyclePaneSort(idx int) {
@@ -693,7 +974,8 @@ func (ui *UI) flushPendingFileOpen() bool {
 		return false
 	}
 	ui.pendingFileOpen = nil
-	return ui.activateFilePaneRow(req.pane, req.row)
+	_ = ui.activateFilePaneRow(req.pane, req.row)
+	return true
 }
 
 func (ui *UI) activateFilePaneRow(idx, row int) bool {
@@ -711,9 +993,11 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 		return false
 	}
 	if err := pane.load(entry.Path); err != nil {
+		pane.setNotice(err.Error(), time.Now())
 		return false
 	}
 	pane.sortMenuOpen = false
+	pane.stopPathEdit()
 	if entry.Kind == filesys.EntryParent {
 		childName := filepath.Base(filepath.Clean(prevDir))
 		if childName != "." && childName != string(filepath.Separator) {

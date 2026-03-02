@@ -15,14 +15,18 @@ type NameCompact struct {
 }
 
 type ColumnWidths struct {
-	NameWidthDp    int `yaml:"name_width_dp"`
-	NameMinWidthDp int `yaml:"name_min_width_dp"`
-	SizeWidthDp    int `yaml:"size_width_dp"`
-	SizeMinWidthDp int `yaml:"size_min_width_dp"`
-	DateWidthDp    int `yaml:"date_width_dp"`
-	DateMinWidthDp int `yaml:"date_min_width_dp"`
-	BriefWidthDp   int `yaml:"brief_width_dp"`
-	BriefGapDp     int `yaml:"brief_gap_dp"`
+	NameWidthDp      int    `yaml:"name_width_dp"`
+	NameMinWidthDp   int    `yaml:"name_min_width_dp"`
+	PermWidthDp      int    `yaml:"perm_width_dp"`
+	PermMinWidthDp   int    `yaml:"perm_min_width_dp"`
+	ShowPermissions  bool   `yaml:"show_permissions"`
+	PermissionFormat string `yaml:"permission_format"`
+	SizeWidthDp      int    `yaml:"size_width_dp"`
+	SizeMinWidthDp   int    `yaml:"size_min_width_dp"`
+	DateWidthDp      int    `yaml:"date_width_dp"`
+	DateMinWidthDp   int    `yaml:"date_min_width_dp"`
+	BriefWidthDp     int    `yaml:"brief_width_dp"`
+	BriefGapDp       int    `yaml:"brief_gap_dp"`
 }
 
 type KeyBindings struct {
@@ -69,14 +73,18 @@ func DefaultConfig() *Config {
 			Marker:       "..",
 		},
 		Columns: ColumnWidths{
-			NameWidthDp:    180,
-			NameMinWidthDp: 52,
-			SizeWidthDp:    92,
-			SizeMinWidthDp: 48,
-			DateWidthDp:    128,
-			DateMinWidthDp: 56,
-			BriefWidthDp:   180,
-			BriefGapDp:     4,
+			NameWidthDp:      180,
+			NameMinWidthDp:   52,
+			PermWidthDp:      92,
+			PermMinWidthDp:   44,
+			ShowPermissions:  true,
+			PermissionFormat: "auto",
+			SizeWidthDp:      92,
+			SizeMinWidthDp:   48,
+			DateWidthDp:      128,
+			DateMinWidthDp:   56,
+			BriefWidthDp:     180,
+			BriefGapDp:       4,
 		},
 		KeyBindings: KeyBindings{
 			FocusNextPane: "tab",
@@ -142,6 +150,17 @@ func (c *Config) normalize() {
 	if c.Columns.NameMinWidthDp < 1 {
 		c.Columns.NameMinWidthDp = 52
 	}
+	if c.Columns.PermWidthDp < 1 {
+		c.Columns.PermWidthDp = 92
+	}
+	if c.Columns.PermMinWidthDp < 1 {
+		c.Columns.PermMinWidthDp = 44
+	}
+	switch c.Columns.PermissionFormat {
+	case "symbolic", "octal", "auto":
+	default:
+		c.Columns.PermissionFormat = "auto"
+	}
 	if c.Columns.SizeWidthDp < 1 {
 		c.Columns.SizeWidthDp = 92
 	}
@@ -164,6 +183,15 @@ func (c *Config) normalize() {
 	sizeMin := c.NameCompact.ApproxCharPx*5 + 8
 	if c.Columns.SizeMinWidthDp < sizeMin {
 		c.Columns.SizeMinWidthDp = sizeMin
+	}
+
+	permChars := 4
+	if c.Columns.PermissionFormat == "symbolic" {
+		permChars = 9
+	}
+	permMin := c.NameCompact.ApproxCharPx*permChars + 12
+	if c.Columns.PermMinWidthDp < permMin {
+		c.Columns.PermMinWidthDp = permMin
 	}
 
 	shortestDate := 5

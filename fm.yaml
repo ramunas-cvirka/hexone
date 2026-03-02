@@ -14,6 +14,10 @@ name_compact:
 columns:
   name_width_dp: 180
   name_min_width_dp: 52
+  perm_width_dp: 92
+  perm_min_width_dp: 44
+  show_permissions: true
+  permission_format: "auto"
   size_width_dp: 92
   size_min_width_dp: 48
   date_width_dp: 128

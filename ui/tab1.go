@@ -4,6 +4,7 @@ import (
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/io/event"
@@ -17,6 +18,8 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 )
+
+const filePaneWheelRange = 1 << 30
 
 func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	dims := layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -32,6 +35,10 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 }
 
 func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
+	if ui.pathEditActive() {
+		return
+	}
+
 	filters := ui.fileKeys.Filters()
 	if len(filters) == 0 {
 		return
@@ -202,13 +209,105 @@ func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pa
 							return layout.Spacer{Height: unit.Dp(2)}.Layout(gtx)
 						}),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return pane.table.Layout(th, gtx, pane.model)
+							return ui.layoutFilePaneBody(th, gtx, idx, pane)
 						}),
 					)
 				})
 			},
 		)
 	})
+}
+
+func (ui *UI) layoutFilePaneBody(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePaneTable(th, gtx, idx, pane)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePaneNotice(th, gtx, pane)
+		}),
+	)
+}
+
+func (ui *UI) layoutFilePaneNotice(th *material.Theme, gtx layout.Context, pane *filePaneState) layout.Dimensions {
+	if pane == nil || pane.noticeText == "" {
+		return layout.Dimensions{}
+	}
+	if !gtx.Now.Before(pane.noticeUntil) {
+		pane.noticeText = ""
+		pane.noticeUntil = time.Time{}
+		return layout.Dimensions{}
+	}
+
+	gtx.Execute(op.InvalidateCmd{At: pane.noticeUntil})
+	return layout.Inset{Top: unit.Dp(6), Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.NW.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return fillRoundedBox(
+				gtx,
+				gtx.Dp(unit.Dp(10)),
+				color.NRGBA{R: 56, G: 20, B: 20, A: 242},
+				color.NRGBA{R: 170, G: 70, B: 70, A: 180},
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, pane.noticeText)
+						lbl.Font.Typeface = "Fira Code"
+						lbl.TextSize = unit.Sp(12)
+						lbl.Color = color.NRGBA{R: 255, G: 180, B: 180, A: 255}
+						lbl.MaxLines = 2
+						lbl.Truncator = "…"
+						return lbl.Layout(gtx)
+					})
+				},
+			)
+		})
+	})
+}
+
+func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
+	if pane == nil || pane.table == nil || pane.model == nil {
+		return layout.Dimensions{}
+	}
+
+	total := pane.model.Len()
+	dims := pane.table.Layout(th, gtx, pane.model)
+
+	selectionChanged := false
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &pane.tablePointerTag,
+			Kinds:  pointer.Scroll,
+			ScrollY: pointer.ScrollRange{
+				Min: -filePaneWheelRange,
+				Max: filePaneWheelRange,
+			},
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok || pe.Kind != pointer.Scroll || pe.Scroll.Y == 0 {
+			continue
+		}
+		if idx != ui.activeFilePane {
+			ui.setActiveFilePane(idx)
+		}
+		if pane.table.HandleScrollSelection(pe.Scroll.Y, total) {
+			selectionChanged = true
+		}
+	}
+
+	if selectionChanged {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		return dims
+	}
+
+	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &pane.tablePointerTag)
+	pass.Pop()
+	return dims
 }
 
 func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
@@ -228,21 +327,13 @@ func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx i
 		}
 	}
 
-	title := material.Body2(th, pane.dir)
-	title.Font.Typeface = "Fira Code"
-	title.Font.Weight = font.Medium
-	title.TextSize = unit.Sp(12)
-	title.Color = txtColor
-	if active {
-		title.Color = color.NRGBA{R: 220, G: 230, B: 255, A: 255}
-	}
-	title.MaxLines = 1
-	title.Truncator = "…"
-
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if pane.pathEditing {
+				return ui.layoutFilePanePathEditor(th, gtx, idx, pane, active)
+			}
 			if !pane.sortMenuOpen {
-				return title.Layout(gtx)
+				return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
 			}
 
 			children := make([]layout.FlexChild, 0, len(sortOptions)*2)
@@ -266,6 +357,153 @@ func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx i
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFilePaneSortBadge(th, gtx, idx, pane)
 		}),
+	)
+}
+
+func (ui *UI) layoutFilePanePathArea(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
+	if pane == nil {
+		return layout.Dimensions{}
+	}
+	for {
+		ev, ok := pane.pathAreaClick.Update(gtx)
+		if !ok {
+			break
+		}
+		if ev.NumClicks >= 2 {
+			ui.setActiveFilePane(idx)
+			pane.sortMenuOpen = false
+			pane.beginPathEdit()
+		}
+	}
+	if pane.pathEditing {
+		return ui.layoutFilePanePathEditor(th, gtx, idx, pane, active)
+	}
+
+	return pane.pathAreaClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		dims := ui.layoutFilePanePath(th, gtx, idx, pane, active)
+		if dims.Size.X < gtx.Constraints.Max.X {
+			dims.Size.X = gtx.Constraints.Max.X
+		}
+		return dims
+	})
+}
+
+func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
+	if pane == nil {
+		return layout.Dimensions{}
+	}
+	segments := splitFilePathSegments(pane.dir)
+	pane.ensurePathClicks(len(segments))
+	pathChanged := false
+
+	for i := range segments {
+		click := &pane.pathSegClicks[i]
+		for {
+			ev, ok := click.Update(gtx)
+			if !ok {
+				break
+			}
+			ui.setActiveFilePane(idx)
+			pane.sortMenuOpen = false
+			if i == len(segments)-1 && ev.NumClicks >= 2 {
+				pane.beginPathEdit()
+				break
+			}
+			if ev.NumClicks == 1 && i != len(segments)-1 {
+				if ui.loadPaneDir(idx, segments[i].path) {
+					pathChanged = true
+				}
+			}
+		}
+		if pane.pathEditing {
+			return ui.layoutFilePanePathEditor(th, gtx, idx, pane, active)
+		}
+	}
+	if pathChanged {
+		return ui.layoutFilePanePath(th, gtx, idx, pane, active)
+	}
+
+	children := make([]layout.FlexChild, 0, len(segments))
+	baseColor := txtColor
+	hoverColor := color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+	if active {
+		baseColor = color.NRGBA{R: 220, G: 230, B: 255, A: 255}
+	}
+	for i := range segments {
+		i := i
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			click := &pane.pathSegClicks[i]
+			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				bg := color.NRGBA{}
+				lblColor := baseColor
+				if click.Hovered() {
+					bg = color.NRGBA{R: 44, G: 52, B: 74, A: 255}
+					lblColor = hoverColor
+				}
+				if i == len(segments)-1 {
+					lblColor = color.NRGBA{R: 205, G: 220, B: 255, A: 255}
+					if click.Hovered() {
+						lblColor = color.NRGBA{R: 240, G: 244, B: 255, A: 255}
+					}
+				}
+				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, segments[i].label)
+					lbl.Font.Typeface = "Fira Code"
+					lbl.Font.Weight = font.Normal
+					if i == len(segments)-1 {
+						lbl.Font.Weight = font.Medium
+					}
+					lbl.TextSize = unit.Sp(11)
+					lbl.Color = lblColor
+					lbl.MaxLines = 1
+					return lbl.Layout(gtx)
+				})
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
+func (ui *UI) layoutFilePanePathEditor(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
+	if pane == nil {
+		return layout.Dimensions{}
+	}
+	for {
+		ev, ok := pane.pathEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		if submit, ok := ev.(widget.SubmitEvent); ok {
+			if ui.submitPanePathEdit(idx, submit.Text) {
+				break
+			}
+		}
+	}
+	if !pane.pathEditing {
+		return ui.layoutFilePanePath(th, gtx, idx, pane, active)
+	}
+	if pane.pathEditFocus {
+		pane.pathEditFocus = false
+		gtx.Execute(key.FocusCmd{Tag: &pane.pathEdit})
+	}
+
+	ed := material.Editor(th, &pane.pathEdit, "")
+	ed.Font.Typeface = "Fira Code"
+	ed.TextSize = unit.Sp(12)
+	ed.Color = txtColor
+	if active {
+		ed.Color = color.NRGBA{R: 220, G: 230, B: 255, A: 255}
+	}
+	ed.HintColor = hintColor
+
+	return fillRoundedBox(
+		gtx,
+		gtx.Dp(unit.Dp(8)),
+		color.NRGBA{R: 22, G: 28, B: 40, A: 255},
+		color.NRGBA{R: 110, G: 132, B: 190, A: 120},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, ed.Layout)
+		},
 	)
 }
 
