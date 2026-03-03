@@ -113,15 +113,16 @@ type Table struct {
 	rowClicks []widget.Clickable
 
 	// internal: request ensureVisible next frame (after list updated Count)
-	pendingEnsure bool
-	lastClickRow  int
-	lastClickAt   time.Time
-	scrollCarry   float32
-	hitOffset     image.Point
-	hitSize       image.Point
-	rowHeightPx   int
-	briefColPx    int
-	briefGapPx    int
+	pendingEnsure       bool
+	lastClickRow        int
+	lastClickAt         time.Time
+	scrollCarry         float32
+	hitOffset           image.Point
+	hitSize             image.Point
+	rowHeightPx         int
+	briefColPx          int
+	briefGapPx          int
+	briefLastColExtraPx int
 }
 
 const doubleClickWindow = 400 * time.Millisecond
@@ -654,15 +655,31 @@ func (t *Table) HitRow(pos image.Point, n int) int {
 		return row
 	}
 
-	colStride := t.briefColPx + t.briefGapPx
-	if colStride <= 0 || t.briefRowsPerCol <= 0 {
+	if t.briefColPx <= 0 || t.briefRowsPerCol <= 0 {
 		return -1
 	}
-	col := pos.X / colStride
-	if col < 0 || col >= t.briefVisibleCols {
-		return -1
+
+	col := -1
+	x := pos.X
+	for i := 0; i < t.briefVisibleCols; i++ {
+		colW := t.briefColPx
+		if i == t.briefVisibleCols-1 {
+			colW += t.briefLastColExtraPx
+		}
+		if x < colW {
+			col = i
+			break
+		}
+		x -= colW
+		if i == t.briefVisibleCols-1 {
+			break
+		}
+		if x < t.briefGapPx {
+			return -1
+		}
+		x -= t.briefGapPx
 	}
-	if pos.X%colStride >= t.briefColPx {
+	if col < 0 {
 		return -1
 	}
 
@@ -691,6 +708,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 	t.rowHeightPx = 0
 	t.briefColPx = 0
 	t.briefGapPx = 0
+	t.briefLastColExtraPx = 0
 
 	t.ensureClicks(n)
 	t.clampSelection(n)
@@ -724,34 +742,10 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 		t.briefVisibleCols = 1
 		briefViewportW := gtx.Constraints.Max.X
 		if t.Mode == ModeBrief {
-			colW := gtx.Dp(t.BriefColumnWidth)
-			if colW < 1 {
-				colW = 1
-			}
-			gapW := gtx.Dp(t.BriefGap)
-			if gapW < 0 {
-				gapW = 0
-			}
-			t.briefColPx = colW
-			t.briefGapPx = gapW
-			itemW := colW + gapW
-			if itemW < 1 {
-				itemW = 1
-			}
-			t.briefVisibleCols = (gtx.Constraints.Max.X + gapW) / itemW
-			if t.briefVisibleCols < 1 {
-				t.briefVisibleCols = 1
-			}
-			briefViewportW = t.briefVisibleCols * colW
-			if t.briefVisibleCols > 1 {
-				briefViewportW += (t.briefVisibleCols - 1) * gapW
-			}
-			if briefViewportW > gtx.Constraints.Max.X {
-				briefViewportW = gtx.Constraints.Max.X
-			}
 			if briefViewportW < 1 {
 				briefViewportW = gtx.Constraints.Max.X
 			}
+			t.computeBriefLayout(gtx, n, briefViewportW)
 			t.hitSize = image.Pt(briefViewportW, gtx.Constraints.Max.Y)
 		}
 
@@ -923,10 +917,6 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 
 func (t *Table) layoutBrief(th *material.Theme, gtx layout.Context, m Model, n, rowHpx, itemCount int) layout.Dimensions {
 	rowsPerCol := t.columnStep()
-	colW := gtx.Dp(t.BriefColumnWidth)
-	if colW < 1 {
-		colW = 1
-	}
 
 	return t.List.Layout(gtx, itemCount, func(gtx layout.Context, col int) layout.Dimensions {
 		start := col * rowsPerCol
@@ -939,7 +929,7 @@ func (t *Table) layoutBrief(th *material.Theme, gtx layout.Context, m Model, n, 
 		}
 
 		return layout.Inset{Right: t.BriefGap}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			innerW := colW
+			innerW := t.briefColumnWidthPx(col)
 			if gtx.Constraints.Max.X < innerW {
 				innerW = gtx.Constraints.Max.X
 			}
@@ -965,6 +955,111 @@ func (t *Table) layoutBrief(th *material.Theme, gtx layout.Context, m Model, n, 
 			return dims
 		})
 	})
+}
+
+func (t *Table) computeBriefLayout(gtx layout.Context, n, viewportW int) {
+	colW := gtx.Dp(t.BriefColumnWidth)
+	if colW < 1 {
+		colW = 1
+	}
+	gapW := gtx.Dp(t.BriefGap)
+	if gapW < 0 {
+		gapW = 0
+	}
+	if viewportW < 1 {
+		viewportW = 1
+	}
+
+	rowsPerCol := t.briefRowsPerCol
+	if rowsPerCol < 1 {
+		rowsPerCol = 1
+	}
+
+	totalCols := 0
+	if n > 0 {
+		totalCols = (n + rowsPerCol - 1) / rowsPerCol
+	}
+
+	visibleCols := 1
+	if totalCols > 0 {
+		visibleCols = totalCols
+		preferred := (viewportW + gapW) / maxInt(1, colW+gapW)
+		if preferred < 1 {
+			preferred = 1
+		}
+		if visibleCols > preferred {
+			maxAtMin := (viewportW + gapW) / maxInt(1, t.briefMinColumnWidthPx(gtx)+gapW)
+			if maxAtMin < 1 {
+				maxAtMin = 1
+			}
+			if maxAtMin > totalCols {
+				maxAtMin = totalCols
+			}
+			visibleCols = maxAtMin
+		}
+	}
+
+	gapCount := visibleCols - 1
+	if gapCount < 0 {
+		gapCount = 0
+	}
+	totalGap := gapCount * gapW
+	available := viewportW - totalGap
+	if available < visibleCols {
+		available = visibleCols
+	}
+	dynamicColW := available / maxInt(1, visibleCols)
+	if dynamicColW < 1 {
+		dynamicColW = 1
+	}
+	extra := available - dynamicColW*visibleCols
+	if extra < 0 {
+		extra = 0
+	}
+
+	t.briefVisibleCols = visibleCols
+	t.briefColPx = dynamicColW
+	t.briefGapPx = gapW
+	t.briefLastColExtraPx = extra
+}
+
+func (t *Table) briefMinColumnWidthPx(gtx layout.Context) int {
+	base := gtx.Dp(t.BriefColumnWidth)
+	if base < 1 {
+		base = 1
+	}
+	minW := base / 2
+	if minW < 1 {
+		minW = 1
+	}
+	if len(t.Columns) > 0 {
+		if colMin := gtx.Dp(t.Columns[0].MinWidth); colMin > minW {
+			minW = colMin
+		}
+	}
+	if minW > base {
+		minW = base
+	}
+	return minW
+}
+
+func (t *Table) briefColumnWidthPx(col int) int {
+	w := t.briefColPx
+	if w < 1 {
+		w = 1
+	}
+	visible := col - t.List.Position.First
+	if visible == t.briefVisibleCols-1 {
+		w += t.briefLastColExtraPx
+	}
+	return w
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, row, n, rowHpx int) layout.Dimensions {
