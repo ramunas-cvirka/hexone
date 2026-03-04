@@ -115,6 +115,8 @@ type UI struct {
 	fileKeys         fileKeyMap
 	activeFilePane   int
 	pendingFileOpen  *fileOpenRequest
+	fileCopy         *fileCopyState
+	fileDelete       *fileDeleteState
 }
 
 func NewUI(cfg *fm.Config) *UI {

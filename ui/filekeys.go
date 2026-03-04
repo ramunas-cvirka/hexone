@@ -22,6 +22,8 @@ const (
 	fileActionHome
 	fileActionEnd
 	fileActionActivate
+	fileActionCopy
+	fileActionDelete
 )
 
 type fileKeyBinding struct {
@@ -61,6 +63,8 @@ func newFileKeyMap(cfg *fm.Config) fileKeyMap {
 		{action: fileActionHome, raw: source.Home, fallback: "home"},
 		{action: fileActionEnd, raw: source.End, fallback: "end"},
 		{action: fileActionActivate, raw: source.Activate, fallback: "enter"},
+		{action: fileActionCopy, raw: source.Copy, fallback: "f5"},
+		{action: fileActionDelete, raw: source.Delete, fallback: "f8"},
 	}
 
 	out := fileKeyMap{
@@ -179,6 +183,30 @@ func fileKeyName(part string) (key.Name, bool) {
 		return key.NameEnter, true
 	case "tab":
 		return key.NameTab, true
+	case "f1":
+		return key.NameF1, true
+	case "f2":
+		return key.NameF2, true
+	case "f3":
+		return key.NameF3, true
+	case "f4":
+		return key.NameF4, true
+	case "f5":
+		return key.NameF5, true
+	case "f6":
+		return key.NameF6, true
+	case "f7":
+		return key.NameF7, true
+	case "f8":
+		return key.NameF8, true
+	case "f9":
+		return key.NameF9, true
+	case "f10":
+		return key.NameF10, true
+	case "f11":
+		return key.NameF11, true
+	case "f12":
+		return key.NameF12, true
 	default:
 		return "", false
 	}
@@ -208,6 +236,10 @@ func fileActionKey(action fileAction) string {
 		return "end"
 	case fileActionActivate:
 		return "activate"
+	case fileActionCopy:
+		return "copy"
+	case fileActionDelete:
+		return "delete"
 	default:
 		return ""
 	}
@@ -251,6 +283,10 @@ func fileActionCommand(action fileAction) string {
 		return "⇲"
 	case fileActionActivate:
 		return "⏎"
+	case fileActionCopy:
+		return "F5"
+	case fileActionDelete:
+		return "F8"
 	default:
 		return ""
 	}

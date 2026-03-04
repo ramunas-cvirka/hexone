@@ -41,6 +41,8 @@ type KeyBindings struct {
 	Home          string `yaml:"home"`
 	End           string `yaml:"end"`
 	Activate      string `yaml:"activate"`
+	Copy          string `yaml:"copy"`
+	Delete        string `yaml:"delete"`
 }
 
 type SortConfig struct {
@@ -50,11 +52,11 @@ type SortConfig struct {
 }
 
 type FontConfig struct {
-	Typeface    string `yaml:"typeface"`
+	Typeface    string  `yaml:"typeface"`
 	SizeSp      float32 `yaml:"size_sp"`
-	RegularPath string `yaml:"regular_path"`
-	MediumPath  string `yaml:"medium_path"`
-	BoldPath    string `yaml:"bold_path"`
+	RegularPath string  `yaml:"regular_path"`
+	MediumPath  string  `yaml:"medium_path"`
+	BoldPath    string  `yaml:"bold_path"`
 }
 
 type Config struct {
@@ -107,6 +109,8 @@ func DefaultConfig() *Config {
 			Home:          "home",
 			End:           "end",
 			Activate:      "enter",
+			Copy:          "f5",
+			Delete:        "f8",
 		},
 		Sort: SortConfig{
 			DefaultKey:       "name",
@@ -257,6 +261,12 @@ func (c *Config) normalize() {
 	}
 	if c.KeyBindings.Activate == "" {
 		c.KeyBindings.Activate = "enter"
+	}
+	if c.KeyBindings.Copy == "" {
+		c.KeyBindings.Copy = "f5"
+	}
+	if c.KeyBindings.Delete == "" {
+		c.KeyBindings.Delete = "f8"
 	}
 
 	if c.Sort.DefaultKey == "" {

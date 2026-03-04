@@ -37,6 +37,8 @@ key_bindings:
   home: "home"
   end: "end"
   activate: "enter"
+  copy: "f5"
+  delete: "f8"
 
 sort:
   default_key: "name"

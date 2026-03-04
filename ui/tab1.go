@@ -29,9 +29,22 @@ const (
 )
 
 func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensions {
-	dims := layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return ui.layoutFilePanes(th, gtx)
-	})
+	ui.pumpFileCopyState(gtx)
+	ui.pumpFileDeleteState(gtx)
+
+	dims := layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFilePanes(th, gtx)
+			})
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFileCopyDialog(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFileDeleteDialog(th, gtx)
+		}),
+	)
 
 	ui.handleFileManagerKeys(gtx)
 	if ui.flushPendingFileOpen() {
@@ -42,6 +55,9 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 }
 
 func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
+	if ui.fileCopy != nil || ui.fileDelete != nil {
+		return
+	}
 	if ui.pathEditActive() {
 		return
 	}
@@ -82,6 +98,14 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 				continue
 			case fileActionFocusPrevPane:
 				ui.cycleActiveFilePane(-1)
+				continue
+			case fileActionCopy:
+				ui.startFileCopyDialog(ui.activeFilePane, gtx.Now)
+				ui.rep.active = false
+				continue
+			case fileActionDelete:
+				ui.startFileDeleteDialog(ui.activeFilePane, gtx.Now)
+				ui.rep.active = false
 				continue
 			}
 

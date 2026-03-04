@@ -1,0 +1,436 @@
+package ui
+
+import (
+	"hexone/filesys"
+	"image"
+	"image/color"
+	"os"
+	"path/filepath"
+	"time"
+
+	"gioui.org/font"
+	"gioui.org/io/key"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
+)
+
+type fileDeleteState struct {
+	pane int
+	row  int
+
+	targetPath string
+	targetName string
+	targetInfo fileCopyPathInfo
+
+	backdropClick widget.Clickable
+	confirmClick  widget.Clickable
+	cancelClick   widget.Clickable
+
+	running bool
+	lastErr string
+
+	doneCh chan error
+}
+
+func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil || pane.model == nil || pane.table == nil {
+		return
+	}
+
+	row := pane.table.Selected
+	entry := pane.model.Entry(row)
+	if entry == nil || entry.Path == "" {
+		pane.setNotice("nothing selected to delete", now)
+		return
+	}
+	if entry.Kind == filesys.EntryParent {
+		pane.setNotice("cannot delete parent entry", now)
+		return
+	}
+
+	ui.setActiveFilePane(idx)
+	pane.stopPathEdit()
+	pane.sortMenuOpen = false
+	pane.closeContextMenu()
+	ui.closeSortMenusExcept(idx)
+	ui.closeContextMenusExcept(idx)
+
+	info, err := buildCopyPathInfo(entry.Path)
+	if err != nil {
+		pane.setNotice(err.Error(), now)
+		return
+	}
+
+	ui.fileDelete = &fileDeleteState{
+		pane:       idx,
+		row:        row,
+		targetPath: entry.Path,
+		targetName: entry.DisplayName,
+		targetInfo: info,
+	}
+	ui.rep.active = false
+	ui.rep.pane = -1
+	ui.clearFileDeleteHotkeyHold()
+}
+
+func (ui *UI) clearFileDeleteHotkeyHold() {
+	if ui == nil || ui.held == nil {
+		return
+	}
+	ui.held[fileActionKey(fileActionDelete)] = false
+}
+
+func (ui *UI) submitFileDeleteDialog(now time.Time) {
+	st := ui.fileDelete
+	if st == nil || st.running {
+		return
+	}
+	st.lastErr = ""
+	st.running = true
+	doneCh := make(chan error, 1)
+	st.doneCh = doneCh
+
+	target := st.targetPath
+	go func() {
+		doneCh <- filesys.DeletePath(target)
+	}()
+
+	_ = now
+}
+
+func (ui *UI) pumpFileDeleteState(gtx layout.Context) {
+	st := ui.fileDelete
+	if st == nil || !st.running || st.doneCh == nil {
+		return
+	}
+
+	select {
+	case err := <-st.doneCh:
+		st.running = false
+		st.doneCh = nil
+		if err != nil {
+			st.lastErr = err.Error()
+			gtx.Execute(op.InvalidateCmd{})
+			return
+		}
+		ui.finishFileDelete(gtx.Now)
+	default:
+		gtx.Execute(op.InvalidateCmd{})
+	}
+}
+
+func (ui *UI) finishFileDelete(now time.Time) {
+	st := ui.fileDelete
+	if st == nil {
+		return
+	}
+	paneIdx := st.pane
+	deletedPath := filepath.Clean(st.targetPath)
+	preferRow := st.row
+
+	ui.fileDelete = nil
+	ui.clearFileDeleteHotkeyHold()
+
+	for i, pane := range ui.filePanes {
+		if pane == nil || pane.model == nil || pane.table == nil {
+			continue
+		}
+		curDir := filepath.Clean(pane.dir)
+		if !samePath(curDir, filepath.Clean(filepath.Dir(deletedPath))) {
+			continue
+		}
+
+		selectedPath := ""
+		if sel := pane.selectedEntry(); sel != nil {
+			selectedPath = filepath.Clean(sel.Path)
+		}
+		if err := pane.load(pane.dir); err != nil {
+			pane.setNotice(err.Error(), now)
+			continue
+		}
+
+		if selectedPath != "" && !samePath(selectedPath, deletedPath) {
+			if idx := pane.findEntryPathIndex(selectedPath); idx >= 0 {
+				pane.table.SetSelected(idx, pane.model.Len(), false)
+				continue
+			}
+		}
+
+		row := 0
+		if i == paneIdx {
+			row = preferRow
+		} else {
+			row = pane.table.Selected
+		}
+		if row < 0 {
+			row = 0
+		}
+		if pane.model.Len() > 0 {
+			if row >= pane.model.Len() {
+				row = pane.model.Len() - 1
+			}
+			pane.table.SetSelected(row, pane.model.Len(), false)
+		}
+	}
+}
+
+func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	st := ui.fileDelete
+	if st == nil {
+		return layout.Dimensions{}
+	}
+
+	for _, name := range []key.Name{key.NameEscape, key.NameEnter, key.NameReturn} {
+		for {
+			ev, ok := gtx.Event(key.Filter{Name: name})
+			if !ok {
+				break
+			}
+			ke, ok := ev.(key.Event)
+			if !ok || ke.State != key.Press {
+				continue
+			}
+			switch name {
+			case key.NameEscape:
+				if !st.running {
+					ui.fileDelete = nil
+					ui.clearFileDeleteHotkeyHold()
+				}
+			case key.NameEnter, key.NameReturn:
+				if !st.running {
+					ui.submitFileDeleteDialog(gtx.Now)
+				}
+			}
+		}
+	}
+
+	if st.cancelClick.Clicked(gtx) && !st.running {
+		ui.fileDelete = nil
+		ui.clearFileDeleteHotkeyHold()
+		return layout.Dimensions{}
+	}
+	if st.confirmClick.Clicked(gtx) && !st.running {
+		ui.submitFileDeleteDialog(gtx.Now)
+	}
+	for st.backdropClick.Clicked(gtx) {
+	}
+
+	return st.backdropClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+		paint.FillShape(gtx.Ops, color.NRGBA{A: 120}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
+
+		paneRect := ui.filePaneRectForOverlay(gtx, st.pane)
+		width := gtx.Dp(unit.Dp(300))
+		maxWidth := paneRect.Dx() - gtx.Dp(unit.Dp(16))
+		if maxWidth < 220 {
+			maxWidth = 220
+		}
+		if width > maxWidth {
+			width = maxWidth
+		}
+		if width < 220 {
+			width = 220
+		}
+
+		m := op.Record(gtx.Ops)
+		dialog := fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+			return fillRoundedBox(
+				gtx,
+				gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+				color.NRGBA{R: 36, G: 18, B: 20, A: 252},
+				color.NRGBA{R: 185, G: 86, B: 92, A: 120},
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileDeleteDialogBody(th, gtx, st)
+					})
+				},
+			)
+		})
+		call := m.Stop()
+
+		x := paneRect.Min.X + (paneRect.Dx()-dialog.Size.X)/2
+		y := paneRect.Min.Y + (paneRect.Dy()-dialog.Size.Y)/2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		offset := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		offset.Pop()
+
+		if st.running {
+			gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+		}
+		return layout.Dimensions{Size: gtx.Constraints.Max, Baseline: dialog.Baseline}
+	})
+}
+
+func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context, st *fileDeleteState) layout.Dimensions {
+	title := material.Body1(th, "Delete")
+	title.Font.Typeface = ui.mainTypeface()
+	title.Font.Weight = font.Bold
+	title.TextSize = scaleThemeFontSize(th, 12)
+	title.Color = color.NRGBA{R: 255, G: 188, B: 188, A: 255}
+
+	desc := material.Caption(th, "This action cannot be undone.")
+	desc.Font.Typeface = ui.mainTypeface()
+	desc.TextSize = scaleThemeFontSize(th, 9)
+	desc.Color = color.NRGBA{R: 232, G: 170, B: 170, A: 255}
+
+	target := st.targetName
+	if target == "" {
+		target = filepath.Base(st.targetPath)
+	}
+	targetLabel := material.Body2(th, target)
+	targetLabel.Font.Typeface = ui.mainTypeface()
+	targetLabel.TextSize = scaleThemeFontSize(th, 10)
+	targetLabel.Font.Weight = font.Medium
+	targetLabel.Color = color.NRGBA{R: 248, G: 220, B: 220, A: 255}
+	targetLabel.MaxLines = 1
+	targetLabel.Truncator = "…"
+
+	pathLabel := material.Caption(th, st.targetPath)
+	pathLabel.Font.Typeface = ui.mainTypeface()
+	pathLabel.TextSize = scaleThemeFontSize(th, 9)
+	pathLabel.Color = color.NRGBA{R: 210, G: 182, B: 182, A: 255}
+	pathLabel.MaxLines = 1
+	pathLabel.Truncator = "…"
+
+	meta := material.Caption(th, formatCopyPathInfo(st.targetInfo))
+	meta.Font.Typeface = ui.mainTypeface()
+	meta.TextSize = scaleThemeFontSize(th, 9)
+	meta.Color = color.NRGBA{R: 235, G: 198, B: 166, A: 255}
+	meta.MaxLines = 1
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(title.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(desc.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
+		layout.Rigid(targetLabel.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(pathLabel.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(meta.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.lastErr == "" {
+				return layout.Dimensions{}
+			}
+			lbl := material.Caption(th, st.lastErr)
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.Color = color.NRGBA{R: 255, G: 140, B: 140, A: 255}
+			lbl.MaxLines = 2
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !st.running {
+				return layout.Dimensions{}
+			}
+			lbl := material.Caption(th, "Deleting...")
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.Color = hintColor
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutFileCopyDialogButton(th, gtx, ui.mainTypeface(), &st.cancelClick, "Cancel", false, st.running)
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						label := "Delete"
+						if st.running {
+							label = "Deleting..."
+						}
+						return layoutFileCopyDialogButton(th, gtx, ui.mainTypeface(), &st.confirmClick, label, true, st.running)
+					}),
+				)
+			})
+		}),
+	)
+}
+
+func buildCopyPathInfo(path string) (fileCopyPathInfo, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return fileCopyPathInfo{}, err
+	}
+	abs = filepath.Clean(abs)
+	st, err := os.Lstat(abs)
+	if err != nil {
+		return fileCopyPathInfo{}, err
+	}
+	info := fileCopyPathInfo{
+		Path:    abs,
+		Exists:  true,
+		IsDir:   st.IsDir(),
+		ModTime: st.ModTime(),
+	}
+	if st.Mode().IsRegular() {
+		info.Size = st.Size()
+	}
+	return info, nil
+}
+
+func (ui *UI) filePaneRectForOverlay(gtx layout.Context, paneIdx int) image.Rectangle {
+	inset := gtx.Dp(unit.Dp(8))
+	max := gtx.Constraints.Max
+	contentW := max.X - inset*2
+	contentH := max.Y - inset*2
+	if contentW < 1 {
+		contentW = max.X
+	}
+	if contentH < 1 {
+		contentH = max.Y
+	}
+
+	n := len(ui.filePanes)
+	if n < 1 {
+		return image.Rect(inset, inset, inset+contentW, inset+contentH)
+	}
+	if paneIdx < 0 {
+		paneIdx = 0
+	}
+	if paneIdx >= n {
+		paneIdx = n - 1
+	}
+
+	gap := gtx.Dp(unit.Dp(4))
+	totalGap := gap * (n - 1)
+	usable := contentW - totalGap
+	if usable < n {
+		usable = n
+	}
+	base := usable / n
+	rem := usable % n
+
+	x := inset
+	for i := 0; i < paneIdx; i++ {
+		w := base
+		if i < rem {
+			w++
+		}
+		x += w + gap
+	}
+	w := base
+	if paneIdx < rem {
+		w++
+	}
+	return image.Rect(x, inset, x+w, inset+contentH)
+}
