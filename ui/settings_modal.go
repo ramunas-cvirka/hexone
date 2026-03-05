@@ -1,0 +1,1081 @@
+package ui
+
+import (
+	"fmt"
+	"hexone/fm"
+	"hexone/ui/widget/table"
+	"image"
+	"image/color"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"gioui.org/font"
+	"gioui.org/io/key"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
+	"go.yaml.in/yaml/v4"
+)
+
+type settingsModalState struct {
+	backdropClick widget.Clickable
+	closeClick    widget.Clickable
+	saveClick     widget.Clickable
+	cancelClick   widget.Clickable
+
+	tabGeneralClick widget.Clickable
+	tabViewerClick  widget.Clickable
+	tabConfigClick  widget.Clickable
+	activeTab       string
+	navPrevTab      string
+	navAnimAt       time.Time
+	navHoverKey     string
+	navHoverPrev    string
+	navHoverAt      time.Time
+	navPulseKey     string
+	navPulseAt      time.Time
+
+	viewModeFileClick    widget.Clickable
+	viewModeCommandClick widget.Clickable
+	viewMode             string
+	viewModePrev         string
+	viewModeAnimAt       time.Time
+	viewModeHoverKey     string
+	viewModeHoverPrev    string
+	viewModeHoverAt      time.Time
+	viewModePulseKey     string
+	viewModePulseAt      time.Time
+	viewCommandEdit      widget.Editor
+	viewFontSizeEdit     widget.Editor
+
+	footerHoverKey  string
+	footerHoverPrev string
+	footerHoverAt   time.Time
+	footerPulseKey  string
+	footerPulseAt   time.Time
+
+	configEdit widget.Editor
+
+	errText string
+}
+
+func (ui *UI) openSettingsModal() {
+	if ui == nil {
+		return
+	}
+	if ui.fmCfg == nil {
+		ui.fmCfg = fm.DefaultConfig()
+	}
+	st := ui.settingsModal
+	if st == nil {
+		st = &settingsModalState{activeTab: "viewer"}
+		st.viewCommandEdit.SingleLine = true
+		st.viewCommandEdit.Submit = false
+		st.viewFontSizeEdit.SingleLine = true
+		st.viewFontSizeEdit.Submit = false
+		st.configEdit.SingleLine = false
+		st.configEdit.Submit = false
+	}
+	st.loadFromConfig(ui.fmCfg)
+	ui.settingsModal = st
+}
+
+func (ui *UI) closeSettingsModal() {
+	ui.settingsModal = nil
+}
+
+func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
+	if st == nil || cfg == nil {
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(cfg.Viewer.Mode))
+	if mode != "command" {
+		mode = "file"
+	}
+	st.viewMode = mode
+	st.viewCommandEdit.SetText(cfg.Viewer.Command)
+	st.viewFontSizeEdit.SetText(formatConfigFloat(cfg.Viewer.FontSizeSp))
+	if raw, err := yaml.Marshal(cfg); err == nil {
+		st.configEdit.SetText(string(raw))
+	}
+	st.errText = ""
+}
+
+func (st *settingsModalState) setActiveTab(next string, now time.Time) {
+	if st == nil || next == "" || st.activeTab == next {
+		return
+	}
+	st.navPrevTab = st.activeTab
+	st.navAnimAt = now
+	st.activeTab = next
+}
+
+func (st *settingsModalState) tabFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" {
+		return 0, false
+	}
+	if st.navPrevTab == "" || st.navAnimAt.IsZero() || st.navPrevTab == st.activeTab {
+		if key == st.activeTab {
+			return 1, false
+		}
+		return 0, false
+	}
+	elapsed := now.Sub(st.navAnimAt)
+	if elapsed >= toolbarAnimDur {
+		st.navPrevTab = ""
+		st.navAnimAt = time.Time{}
+		if key == st.activeTab {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := smoothstep01(float32(elapsed) / float32(toolbarAnimDur))
+	if key == st.activeTab {
+		return t, true
+	}
+	if key == st.navPrevTab {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func (st *settingsModalState) setHover(key string, now time.Time) {
+	if st == nil || st.navHoverKey == key {
+		return
+	}
+	st.navHoverPrev = st.navHoverKey
+	st.navHoverKey = key
+	st.navHoverAt = now
+}
+
+func (st *settingsModalState) hoverFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" {
+		return 0, false
+	}
+	if st.navHoverAt.IsZero() || st.navHoverPrev == st.navHoverKey {
+		if st.navHoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	elapsed := now.Sub(st.navHoverAt)
+	if elapsed >= toolbarHoverDur {
+		st.navHoverPrev = ""
+		st.navHoverAt = time.Time{}
+		if st.navHoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarHoverDur))
+	if key == st.navHoverKey {
+		return t, true
+	}
+	if key == st.navHoverPrev {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func (st *settingsModalState) setPulse(key string, now time.Time) {
+	if st == nil || key == "" {
+		return
+	}
+	st.navPulseKey = key
+	st.navPulseAt = now
+}
+
+func (st *settingsModalState) pulseFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" || st.navPulseKey != key || st.navPulseAt.IsZero() {
+		return 0, false
+	}
+	elapsed := now.Sub(st.navPulseAt)
+	if elapsed >= toolbarClickDur {
+		st.navPulseKey = ""
+		st.navPulseAt = time.Time{}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarClickDur))
+	return 1 - t, true
+}
+
+func (st *settingsModalState) setViewMode(next string, now time.Time) {
+	if st == nil || next == "" || st.viewMode == next {
+		return
+	}
+	st.viewModePrev = st.viewMode
+	st.viewModeAnimAt = now
+	st.viewMode = next
+}
+
+func (st *settingsModalState) viewModeFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" {
+		return 0, false
+	}
+	if st.viewModePrev == "" || st.viewModeAnimAt.IsZero() || st.viewModePrev == st.viewMode {
+		if key == st.viewMode {
+			return 1, false
+		}
+		return 0, false
+	}
+	elapsed := now.Sub(st.viewModeAnimAt)
+	if elapsed >= toolbarAnimDur {
+		st.viewModePrev = ""
+		st.viewModeAnimAt = time.Time{}
+		if key == st.viewMode {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := smoothstep01(float32(elapsed) / float32(toolbarAnimDur))
+	if key == st.viewMode {
+		return t, true
+	}
+	if key == st.viewModePrev {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func (st *settingsModalState) setViewModeHover(key string, now time.Time) {
+	if st == nil || st.viewModeHoverKey == key {
+		return
+	}
+	st.viewModeHoverPrev = st.viewModeHoverKey
+	st.viewModeHoverKey = key
+	st.viewModeHoverAt = now
+}
+
+func (st *settingsModalState) viewModeHoverFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" {
+		return 0, false
+	}
+	if st.viewModeHoverAt.IsZero() || st.viewModeHoverPrev == st.viewModeHoverKey {
+		if st.viewModeHoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	elapsed := now.Sub(st.viewModeHoverAt)
+	if elapsed >= toolbarHoverDur {
+		st.viewModeHoverPrev = ""
+		st.viewModeHoverAt = time.Time{}
+		if st.viewModeHoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarHoverDur))
+	if key == st.viewModeHoverKey {
+		return t, true
+	}
+	if key == st.viewModeHoverPrev {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func (st *settingsModalState) setViewModePulse(key string, now time.Time) {
+	if st == nil || key == "" {
+		return
+	}
+	st.viewModePulseKey = key
+	st.viewModePulseAt = now
+}
+
+func (st *settingsModalState) viewModePulseFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" || st.viewModePulseKey != key || st.viewModePulseAt.IsZero() {
+		return 0, false
+	}
+	elapsed := now.Sub(st.viewModePulseAt)
+	if elapsed >= toolbarClickDur {
+		st.viewModePulseKey = ""
+		st.viewModePulseAt = time.Time{}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarClickDur))
+	return 1 - t, true
+}
+
+func (st *settingsModalState) setFooterHover(key string, now time.Time) {
+	if st == nil || st.footerHoverKey == key {
+		return
+	}
+	st.footerHoverPrev = st.footerHoverKey
+	st.footerHoverKey = key
+	st.footerHoverAt = now
+}
+
+func (st *settingsModalState) footerHoverFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" {
+		return 0, false
+	}
+	if st.footerHoverAt.IsZero() || st.footerHoverPrev == st.footerHoverKey {
+		if st.footerHoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	elapsed := now.Sub(st.footerHoverAt)
+	if elapsed >= toolbarHoverDur {
+		st.footerHoverPrev = ""
+		st.footerHoverAt = time.Time{}
+		if st.footerHoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarHoverDur))
+	if key == st.footerHoverKey {
+		return t, true
+	}
+	if key == st.footerHoverPrev {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func (st *settingsModalState) setFooterPulse(key string, now time.Time) {
+	if st == nil || key == "" {
+		return
+	}
+	st.footerPulseKey = key
+	st.footerPulseAt = now
+}
+
+func (st *settingsModalState) footerPulseFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" || st.footerPulseKey != key || st.footerPulseAt.IsZero() {
+		return 0, false
+	}
+	elapsed := now.Sub(st.footerPulseAt)
+	if elapsed >= toolbarClickDur {
+		st.footerPulseKey = ""
+		st.footerPulseAt = time.Time{}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarClickDur))
+	return 1 - t, true
+}
+
+func (ui *UI) saveSettingsModal(now time.Time) error {
+	st := ui.settingsModal
+	if st == nil {
+		return nil
+	}
+	if ui.fmCfg == nil {
+		ui.fmCfg = fm.DefaultConfig()
+	}
+	if st.activeTab == "config" {
+		next := fm.DefaultConfig()
+		raw := strings.TrimSpace(st.configEdit.Text())
+		if raw == "" {
+			return fmt.Errorf("config yaml is empty")
+		}
+		if err := yaml.Unmarshal([]byte(raw), next); err != nil {
+			return fmt.Errorf("invalid config yaml: %w", err)
+		}
+		ui.fmCfg = next
+		if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
+			return err
+		}
+		ui.applyConfigRuntime(now)
+		st.loadFromConfig(ui.fmCfg)
+		return nil
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(st.viewMode))
+	switch mode {
+	case "file", "command":
+	default:
+		return fmt.Errorf("viewer mode is invalid")
+	}
+
+	cmd := strings.TrimSpace(st.viewCommandEdit.Text())
+	if mode == "command" && cmd == "" {
+		return fmt.Errorf("viewer command is required in command mode")
+	}
+	if cmd == "" {
+		cmd = "cat {path}"
+	}
+
+	viewerFontSize, err := strconv.ParseFloat(strings.TrimSpace(st.viewFontSizeEdit.Text()), 32)
+	if err != nil || viewerFontSize < 6 {
+		return fmt.Errorf("viewer font size must be at least 6")
+	}
+
+	ui.fmCfg.Viewer.Mode = mode
+	ui.fmCfg.Viewer.Command = cmd
+	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
+	if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
+		return err
+	}
+	ui.refreshFileViewerNow(now)
+	st.loadFromConfig(ui.fmCfg)
+	return nil
+}
+
+func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	st := ui.settingsModal
+	if st == nil {
+		return layout.Dimensions{}
+	}
+
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if ok && ke.State == key.Press && ke.Name == key.NameEscape {
+			ui.closeSettingsModal()
+			return layout.Dimensions{}
+		}
+	}
+
+	for st.backdropClick.Clicked(gtx) {
+	}
+	if st.closeClick.Clicked(gtx) {
+		ui.closeSettingsModal()
+		return layout.Dimensions{}
+	}
+	if st.cancelClick.Clicked(gtx) {
+		st.setFooterPulse("cancel", gtx.Now)
+		ui.closeSettingsModal()
+		return layout.Dimensions{}
+	}
+	if st.saveClick.Clicked(gtx) {
+		st.setFooterPulse("save", gtx.Now)
+		if err := ui.saveSettingsModal(gtx.Now); err != nil {
+			st.errText = err.Error()
+		} else {
+			ui.closeSettingsModal()
+			return layout.Dimensions{}
+		}
+	}
+	if st.tabGeneralClick.Clicked(gtx) {
+		st.setActiveTab("general", gtx.Now)
+		st.setPulse("general", gtx.Now)
+	}
+	if st.tabViewerClick.Clicked(gtx) {
+		st.setActiveTab("viewer", gtx.Now)
+		st.setPulse("viewer", gtx.Now)
+	}
+	if st.tabConfigClick.Clicked(gtx) {
+		st.setActiveTab("config", gtx.Now)
+		st.setPulse("config", gtx.Now)
+	}
+	if st.viewModeFileClick.Clicked(gtx) {
+		st.setViewMode("file", gtx.Now)
+		st.setViewModePulse("file", gtx.Now)
+	}
+	if st.viewModeCommandClick.Clicked(gtx) {
+		st.setViewMode("command", gtx.Now)
+		st.setViewModePulse("command", gtx.Now)
+	}
+
+	return st.backdropClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+		paint.FillShape(gtx.Ops, color.NRGBA{A: 140}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
+
+		width := gtx.Dp(unit.Dp(760))
+		height := gtx.Dp(unit.Dp(460))
+		maxW := gtx.Constraints.Max.X - gtx.Dp(unit.Dp(20))
+		maxH := gtx.Constraints.Max.Y - gtx.Dp(unit.Dp(20))
+		if width > maxW {
+			width = maxW
+		}
+		if height > maxH {
+			height = maxH
+		}
+		if width < 520 {
+			width = 520
+		}
+		if height < 320 {
+			height = 320
+		}
+
+		m := op.Record(gtx.Ops)
+		card := fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+			return minHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+				return fillRoundedBox(
+					gtx,
+					gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+					color.NRGBA{R: 20, G: 24, B: 34, A: 252},
+					color.NRGBA{R: 255, G: 255, B: 255, A: 30},
+					func(gtx layout.Context) layout.Dimensions {
+						return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsModalHeader(th, gtx, st)
+								}),
+								layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsModalBody(th, gtx, st)
+								}),
+								layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsModalFooter(th, gtx, st)
+								}),
+							)
+						})
+					},
+				)
+			})
+		})
+		call := m.Stop()
+
+		x := (gtx.Constraints.Max.X - card.Size.X) / 2
+		y := (gtx.Constraints.Max.Y - card.Size.Y) / 2
+		if x < 0 {
+			x = 0
+		}
+		if y < 0 {
+			y = 0
+		}
+		offset := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		offset.Pop()
+		return layout.Dimensions{Size: gtx.Constraints.Max}
+	})
+}
+
+func (ui *UI) layoutSettingsModalHeader(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body1(th, "Global Settings")
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.Font.Weight = font.Bold
+			lbl.TextSize = scaleThemeFontSize(th, 12)
+			lbl.Color = txtColor
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutTinyIconModeButton(th, gtx, &st.closeClick, uiCloseIcon(), false)
+		}),
+	)
+}
+
+func fillSettingsNavSegmentBg(gtx layout.Context, bg color.NRGBA, radius int, roundTop, roundBottom bool, w layout.Widget) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := m.Stop()
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		call.Add(gtx.Ops)
+		return dims
+	}
+	if bg.A != 0 {
+		rr := clip.RRect{Rect: image.Rect(0, 0, dims.Size.X, dims.Size.Y)}
+		if roundTop {
+			rr.NW = radius
+			rr.NE = radius
+		}
+		if roundBottom {
+			rr.SW = radius
+			rr.SE = radius
+		}
+		paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+	}
+	call.Add(gtx.Ops)
+	return dims
+}
+
+func (ui *UI) layoutSettingsNavSegment(th *material.Theme, gtx layout.Context, c *widget.Clickable, label string, activeFill, hoverFill, pulseFill float32, roundTop, roundBottom bool) layout.Dimensions {
+	if c == nil {
+		return layout.Dimensions{}
+	}
+	dims := c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		activeFill = clamp01(activeFill)
+		hoverFill = clamp01(hoverFill)
+		pulseFill = clamp01(pulseFill)
+		if c.Pressed() && pulseFill < 0.5 {
+			pulseFill = 0.5
+		}
+
+		baseBlue := color.NRGBA{R: 68, G: 92, B: 180, A: 255}
+		hoverDark := color.NRGBA{R: 34, G: 44, B: 66, A: 255}
+		hoverLight := color.NRGBA{R: 86, G: 112, B: 204, A: 255}
+		pulseCol := color.NRGBA{R: 126, G: 154, B: 255, A: 255}
+
+		bg := mixNRGBA(color.NRGBA{}, baseBlue, activeFill)
+		darkMix := hoverFill * (1 - activeFill)
+		lightMix := hoverFill * activeFill * 0.25
+		bg = mixNRGBA(bg, hoverDark, darkMix)
+		bg = mixNRGBA(bg, hoverLight, lightMix)
+		bg = mixNRGBA(bg, pulseCol, pulseFill*0.35)
+
+		fg := mixNRGBA(txtColor, color.NRGBA{R: 240, G: 246, B: 255, A: 255}, activeFill)
+		fg = mixNRGBA(fg, color.NRGBA{R: 230, G: 236, B: 255, A: 255}, hoverFill*0.75)
+		fg = mixNRGBA(fg, color.NRGBA{R: 245, G: 250, B: 255, A: 255}, pulseFill*0.25)
+		radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
+		return fillSettingsNavSegmentBg(gtx, bg, radius, roundTop, roundBottom, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, label)
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Weight = font.Medium
+					lbl.TextSize = scaleThemeFontSize(th, 10)
+					lbl.Color = fg
+					lbl.MaxLines = 1
+					return lbl.Layout(gtx)
+				})
+			})
+		})
+	})
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		return dims
+	}
+
+	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+	pointer.CursorPointer.Add(gtx.Ops)
+	return dims
+}
+
+func layoutSettingsNavSeparator(gtx layout.Context) layout.Dimensions {
+	h := gtx.Dp(unit.Dp(1))
+	if h < 1 {
+		h = 1
+	}
+	w := gtx.Constraints.Max.X
+	if w < 1 {
+		w = 1
+	}
+	paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 22}, clip.Rect(image.Rect(0, 0, w, h)).Op())
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+func (ui *UI) layoutSettingsHSegment(th *material.Theme, gtx layout.Context, c *widget.Clickable, label string, activeFill, hoverFill, pulseFill float32, stripH int, roundLeft, roundRight bool) layout.Dimensions {
+	if c == nil {
+		return layout.Dimensions{}
+	}
+	dims := fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			activeFill = clamp01(activeFill)
+			hoverFill = clamp01(hoverFill)
+			pulseFill = clamp01(pulseFill)
+			if c.Pressed() && pulseFill < 0.5 {
+				pulseFill = 0.5
+			}
+
+			baseBlue := color.NRGBA{R: 68, G: 92, B: 180, A: 255}
+			hoverDark := color.NRGBA{R: 34, G: 44, B: 66, A: 255}
+			hoverLight := color.NRGBA{R: 86, G: 112, B: 204, A: 255}
+			pulseCol := color.NRGBA{R: 126, G: 154, B: 255, A: 255}
+
+			bg := mixNRGBA(color.NRGBA{}, baseBlue, activeFill)
+			darkMix := hoverFill * (1 - activeFill)
+			lightMix := hoverFill * activeFill * 0.25
+			bg = mixNRGBA(bg, hoverDark, darkMix)
+			bg = mixNRGBA(bg, hoverLight, lightMix)
+			bg = mixNRGBA(bg, pulseCol, pulseFill*0.35)
+
+			fg := mixNRGBA(txtColor, color.NRGBA{R: 240, G: 246, B: 255, A: 255}, activeFill)
+			fg = mixNRGBA(fg, color.NRGBA{R: 230, G: 236, B: 255, A: 255}, hoverFill*0.75)
+			fg = mixNRGBA(fg, color.NRGBA{R: 245, G: 250, B: 255, A: 255}, pulseFill*0.25)
+
+			radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
+			return fillSegmentBg(gtx, bg, radius, roundLeft, roundRight, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(9), Right: unit.Dp(9)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, label)
+						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.Font.Weight = font.Medium
+						lbl.TextSize = scaleThemeFontSize(th, 10)
+						lbl.Color = fg
+						lbl.MaxLines = 1
+						return lbl.Layout(gtx)
+					})
+				})
+			})
+		})
+	})
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		return dims
+	}
+	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+	pointer.CursorPointer.Add(gtx.Ops)
+	return dims
+}
+
+func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	fillViewer, animViewer := st.tabFill(gtx.Now, "viewer")
+	fillGeneral, animGeneral := st.tabFill(gtx.Now, "general")
+	fillConfig, animConfig := st.tabFill(gtx.Now, "config")
+	hoverKey := ""
+	if st.tabViewerClick.Hovered() {
+		hoverKey = "viewer"
+	}
+	if st.tabGeneralClick.Hovered() {
+		hoverKey = "general"
+	}
+	if st.tabConfigClick.Hovered() {
+		hoverKey = "config"
+	}
+	st.setHover(hoverKey, gtx.Now)
+	hoverViewer, hoverAnimViewer := st.hoverFill(gtx.Now, "viewer")
+	hoverGeneral, hoverAnimGeneral := st.hoverFill(gtx.Now, "general")
+	hoverConfig, hoverAnimConfig := st.hoverFill(gtx.Now, "config")
+	pulseViewer, pulseAnimViewer := st.pulseFill(gtx.Now, "viewer")
+	pulseGeneral, pulseAnimGeneral := st.pulseFill(gtx.Now, "general")
+	pulseConfig, pulseAnimConfig := st.pulseFill(gtx.Now, "config")
+	if animViewer || animGeneral || animConfig ||
+		hoverAnimViewer || hoverAnimGeneral || hoverAnimConfig ||
+		pulseAnimViewer || pulseAnimGeneral || pulseAnimConfig {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, gtx.Dp(unit.Dp(146)), func(gtx layout.Context) layout.Dimensions {
+				return fillRoundedBox(
+					gtx,
+					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+					color.NRGBA{R: 16, G: 20, B: 30, A: 255},
+					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
+					func(gtx layout.Context) layout.Dimensions {
+						return layout.UniformInset(unit.Dp(2)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsNavSegment(th, gtx, &st.tabViewerClick, "Viewer", fillViewer, hoverViewer, pulseViewer, true, false)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return layoutSettingsNavSeparator(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsNavSegment(th, gtx, &st.tabGeneralClick, "General", fillGeneral, hoverGeneral, pulseGeneral, false, false)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return layoutSettingsNavSeparator(gtx)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsNavSegment(th, gtx, &st.tabConfigClick, "Config", fillConfig, hoverConfig, pulseConfig, false, true)
+								}),
+							)
+						})
+					},
+				)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			switch st.activeTab {
+			case "general":
+				lbl := material.Body2(th, "Favorites are managed from the '*' menu. Use the Config tab for full fm.yaml editing.")
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.TextSize = scaleThemeFontSize(th, 11)
+				lbl.Color = hintColor
+				return lbl.Layout(gtx)
+			case "config":
+				return ui.layoutSettingsConfigTab(th, gtx, st)
+			default:
+				return ui.layoutSettingsViewerTab(th, gtx, st)
+			}
+		}),
+	)
+}
+
+func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	fillFile, animFile := st.viewModeFill(gtx.Now, "file")
+	fillCommand, animCommand := st.viewModeFill(gtx.Now, "command")
+	hoverModeKey := ""
+	if st.viewModeFileClick.Hovered() {
+		hoverModeKey = "file"
+	}
+	if st.viewModeCommandClick.Hovered() {
+		hoverModeKey = "command"
+	}
+	st.setViewModeHover(hoverModeKey, gtx.Now)
+	hoverFile, hoverAnimFile := st.viewModeHoverFill(gtx.Now, "file")
+	hoverCommand, hoverAnimCommand := st.viewModeHoverFill(gtx.Now, "command")
+	pulseFile, pulseAnimFile := st.viewModePulseFill(gtx.Now, "file")
+	pulseCommand, pulseAnimCommand := st.viewModePulseFill(gtx.Now, "command")
+	if animFile || animCommand || hoverAnimFile || hoverAnimCommand || pulseAnimFile || pulseAnimCommand {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	commandEnabled := st.viewMode == "command"
+	rowLabel := func(txt string, enabled bool) layout.Widget {
+		return func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, txt)
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.Color = hintColor
+			if !enabled {
+				lbl.Color = color.NRGBA{R: 104, G: 110, B: 124, A: 255}
+			}
+			return lbl.Layout(gtx)
+		}
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(rowLabel("Mode", true)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = 0
+			stripH := gtx.Dp(unit.Dp(22))
+			if stripH < 1 {
+				stripH = 1
+			}
+			m := op.Record(gtx.Ops)
+			stripDims := fillRoundedBox(
+				gtx,
+				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+				color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+				color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsHSegment(th, gtx, &st.viewModeFileClick, "File", fillFile, hoverFile, pulseFile, stripH, true, false)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return toolbarSeparator(gtx, stripH)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsHSegment(th, gtx, &st.viewModeCommandClick, "Command", fillCommand, hoverCommand, pulseCommand, stripH, false, true)
+								}),
+							)
+						})
+					})
+				},
+			)
+			stripCall := m.Stop()
+			fillH := stripDims.Size.Y
+			if fillH < 1 {
+				fillH = stripH + gtx.Dp(unit.Dp(2))
+			}
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					stripCall.Add(gtx.Ops)
+					return stripDims
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, fillH)}
+				}),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(rowLabel("Command template ({filename} {fullpath} {path})", commandEnabled)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			st.viewCommandEdit.ReadOnly = !commandEnabled
+			ed := material.Editor(th, &st.viewCommandEdit, "cat {path}")
+			ed.Font.Typeface = ui.mainTypeface()
+			ed.TextSize = scaleThemeFontSize(th, 10)
+			ed.Color = txtColor
+			ed.HintColor = hintColor
+			bg := color.NRGBA{R: 16, G: 20, B: 30, A: 255}
+			border := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
+			if !commandEnabled {
+				ed.Color = color.NRGBA{R: 128, G: 136, B: 152, A: 255}
+				ed.HintColor = color.NRGBA{R: 95, G: 101, B: 114, A: 255}
+				bg = color.NRGBA{R: 13, G: 16, B: 24, A: 255}
+				border = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
+			}
+			return fillRoundedBox(
+				gtx,
+				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+				bg,
+				border,
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, ed.Layout)
+				},
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(rowLabel("Viewer font size (sp)", true)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			ed := material.Editor(th, &st.viewFontSizeEdit, "13")
+			ed.Font.Typeface = ui.mainTypeface()
+			ed.TextSize = scaleThemeFontSize(th, 10)
+			ed.Color = txtColor
+			ed.HintColor = hintColor
+			return fillRoundedBox(
+				gtx,
+				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+				color.NRGBA{R: 16, G: 20, B: 30, A: 255},
+				color.NRGBA{R: 255, G: 255, B: 255, A: 18},
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, ed.Layout)
+				},
+			)
+		}),
+	)
+}
+
+func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	hoverFooterKey := ""
+	if st.cancelClick.Hovered() {
+		hoverFooterKey = "cancel"
+	}
+	if st.saveClick.Hovered() {
+		hoverFooterKey = "save"
+	}
+	st.setFooterHover(hoverFooterKey, gtx.Now)
+	hoverCancel, hoverAnimCancel := st.footerHoverFill(gtx.Now, "cancel")
+	hoverSave, hoverAnimSave := st.footerHoverFill(gtx.Now, "save")
+	pulseCancel, pulseAnimCancel := st.footerPulseFill(gtx.Now, "cancel")
+	pulseSave, pulseAnimSave := st.footerPulseFill(gtx.Now, "save")
+	if hoverAnimCancel || hoverAnimSave || pulseAnimCancel || pulseAnimSave {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if st.errText == "" {
+				return layout.Dimensions{}
+			}
+			lbl := material.Caption(th, st.errText)
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
+			lbl.MaxLines = 2
+			lbl.Truncator = "..."
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			stripH := gtx.Dp(unit.Dp(22))
+			if stripH < 1 {
+				stripH = 1
+			}
+			return fillRoundedBox(
+				gtx,
+				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+				color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+				color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsHSegment(th, gtx, &st.cancelClick, "Cancel", 0, hoverCancel, pulseCancel, stripH, true, false)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return toolbarSeparator(gtx, stripH)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsHSegment(th, gtx, &st.saveClick, "Save", 0, hoverSave, pulseSave, stripH, false, true)
+								}),
+							)
+						})
+					})
+				},
+			)
+		}),
+	)
+}
+
+func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "Full fm.yaml (all config fields)")
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.Color = hintColor
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			ed := material.Editor(th, &st.configEdit, "")
+			ed.Font.Typeface = ui.mainTypeface()
+			ed.TextSize = scaleThemeFontSize(th, 10)
+			ed.Color = txtColor
+			ed.HintColor = hintColor
+			return fillRoundedBox(
+				gtx,
+				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+				color.NRGBA{R: 16, G: 20, B: 30, A: 255},
+				color.NRGBA{R: 255, G: 255, B: 255, A: 18},
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, ed.Layout)
+				},
+			)
+		}),
+	)
+}
+
+func formatConfigFloat(v float32) string {
+	if v <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(float64(v), 'f', -1, 32)
+}
+
+func (ui *UI) applyConfigRuntime(now time.Time) {
+	if ui == nil {
+		return
+	}
+	if ui.fmCfg == nil {
+		ui.fmCfg = fm.DefaultConfig()
+	}
+	ui.fileKeys = newFileKeyMap(ui.fmCfg)
+	ui.typeface = font.Typeface(ui.fmCfg.Font.Typeface)
+	ui.textSize = fontSizeFromConfig(ui.fmCfg)
+	if ui.tab2State != nil {
+		ui.tab2State.typeface = ui.mainTypeface()
+	}
+	ui.reloadFilePanesForConfig(now)
+	ui.refreshFileViewerNow(now)
+}
+
+func (ui *UI) reloadFilePanesForConfig(now time.Time) {
+	if ui == nil || ui.fmCfg == nil || len(ui.filePanes) == 0 {
+		return
+	}
+	active := ui.activeFilePane
+	next := make([]*filePaneState, len(ui.filePanes))
+	for i, old := range ui.filePanes {
+		if old == nil {
+			continue
+		}
+		dir := old.dir
+		selectedPath := ""
+		mode := table.ModeFull
+		if old.table != nil {
+			mode = old.table.Mode
+		}
+		if sel := old.selectedEntry(); sel != nil {
+			selectedPath = sel.Path
+		}
+
+		pane := newFilePaneState(dir, ui.fmCfg)
+		pane.table.SetMode(mode)
+		idx := i
+		pane.table.OnClick = func(row int) {
+			_ = row
+			ui.setActiveFilePane(idx)
+		}
+		pane.table.OnDoubleClick = func(row int) {
+			ui.queueFilePaneOpen(idx, row)
+		}
+		pane.table.OnActivate = func(row int) {
+			ui.queueFilePaneOpen(idx, row)
+		}
+		if err := pane.load(filepath.Clean(dir)); err != nil {
+			pane.setNotice(err.Error(), now)
+		}
+		if selectedPath != "" && pane.table != nil && pane.model != nil {
+			if sel := pane.findEntryPathIndex(selectedPath); sel >= 0 {
+				pane.table.SetSelected(sel, pane.model.Len(), false)
+			}
+		}
+		next[i] = pane
+	}
+	ui.filePanes = next
+	if active < 0 {
+		active = 0
+	}
+	if active >= len(ui.filePanes) {
+		active = len(ui.filePanes) - 1
+	}
+	ui.setActiveFilePane(active)
+}

@@ -176,35 +176,46 @@ func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
 }
 
 type filePaneState struct {
-	table           *table.Table
-	model           *filePaneModel
-	pathSegClicks   []widget.Clickable
-	pathEdit        widget.Editor
-	pathEditing     bool
-	pathEditFocus   bool
-	pathClickKey    string
-	pathClickAt     time.Time
-	pendingPathNav  string
-	pendingPathAt   time.Time
-	pathRowClick    widget.Clickable
-	modeClick       widget.Clickable
-	sortClick       widget.Clickable
-	tablePointerTag struct{}
-	sortOptionBtns  [4]widget.Clickable
-	sortMenuOpen    bool
-	ctxPointerTag   struct{}
-	ctxMenuClicks   []widget.Clickable
-	ctxMenuOpen     bool
-	ctxMenuRow      int
-	ctxMenuPos      image.Point
-	ctxMenuRect     image.Rectangle
-	sortKey         fileSortKey
-	sortDesc        bool
-	dirsFirst       bool
-	dir             string
-	err             string
-	noticeText      string
-	noticeUntil     time.Time
+	table                *table.Table
+	model                *filePaneModel
+	pathSegClicks        []widget.Clickable
+	pathEdit             widget.Editor
+	pathEditing          bool
+	pathEditFocus        bool
+	pathClickKey         string
+	pathClickAt          time.Time
+	pendingPathNav       string
+	pendingPathAt        time.Time
+	pathRowClick         widget.Clickable
+	modeClick            widget.Clickable
+	sortClick            widget.Clickable
+	favoriteClick        widget.Clickable
+	tablePointerTag      struct{}
+	sortOptionBtns       [4]widget.Clickable
+	sortMenuOpen         bool
+	favoritePointerTag   struct{}
+	favoriteMenuClick    widget.Clickable
+	favoriteOptionClicks []widget.Clickable
+	favoriteRemoveClicks []widget.Clickable
+	favoriteMenuOpen     bool
+	favoriteMenuRect     image.Rectangle
+	favoriteHoverKey     string
+	favoriteHoverLabel   string
+	favoriteHoverAt      time.Time
+	headerHeight         int
+	ctxPointerTag        struct{}
+	ctxMenuClicks        []widget.Clickable
+	ctxMenuOpen          bool
+	ctxMenuRow           int
+	ctxMenuPos           image.Point
+	ctxMenuRect          image.Rectangle
+	sortKey              fileSortKey
+	sortDesc             bool
+	dirsFirst            bool
+	dir                  string
+	err                  string
+	noticeText           string
+	noticeUntil          time.Time
 }
 
 func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
@@ -373,6 +384,17 @@ func (p *filePaneState) closeContextMenu() {
 	p.ctxMenuRect = image.Rectangle{}
 }
 
+func (p *filePaneState) closeFavoriteMenu() {
+	if p == nil {
+		return
+	}
+	p.favoriteMenuOpen = false
+	p.favoriteMenuRect = image.Rectangle{}
+	p.favoriteHoverKey = ""
+	p.favoriteHoverLabel = ""
+	p.favoriteHoverAt = time.Time{}
+}
+
 func (p *filePaneState) openContextMenu(row int, pos image.Point) {
 	if p == nil {
 		return
@@ -391,6 +413,26 @@ func (p *filePaneState) ensureContextMenuClicks(n int) {
 	old := p.ctxMenuClicks
 	p.ctxMenuClicks = make([]widget.Clickable, n)
 	copy(p.ctxMenuClicks, old)
+}
+
+func (p *filePaneState) ensureFavoriteOptionClicks(n int) {
+	if n <= cap(p.favoriteOptionClicks) {
+		p.favoriteOptionClicks = p.favoriteOptionClicks[:n]
+		return
+	}
+	old := p.favoriteOptionClicks
+	p.favoriteOptionClicks = make([]widget.Clickable, n)
+	copy(p.favoriteOptionClicks, old)
+}
+
+func (p *filePaneState) ensureFavoriteRemoveClicks(n int) {
+	if n <= cap(p.favoriteRemoveClicks) {
+		p.favoriteRemoveClicks = p.favoriteRemoveClicks[:n]
+		return
+	}
+	old := p.favoriteRemoveClicks
+	p.favoriteRemoveClicks = make([]widget.Clickable, n)
+	copy(p.favoriteRemoveClicks, old)
 }
 
 func (p *filePaneState) ensurePathClicks(n int) {
@@ -480,6 +522,15 @@ type fileContextMenuSpec struct {
 	items []string
 }
 
+type fileFavoriteItem struct {
+	label      string
+	targetDir  string
+	addCurrent bool
+	active     bool
+	disabled   bool
+	removable  bool
+}
+
 func (p *filePaneState) contextMenuSpec() fileContextMenuSpec {
 	entry := p.contextMenuEntry()
 	if entry == nil {
@@ -543,6 +594,159 @@ func (p *filePaneState) contextMenuSpec() fileContextMenuSpec {
 			},
 		}
 	}
+}
+
+func normalizeFavoriteLocation(raw string) string {
+	loc := strings.TrimSpace(raw)
+	if loc == "" {
+		return ""
+	}
+	if filepath.IsAbs(loc) {
+		return filepath.Clean(loc)
+	}
+	return loc
+}
+
+func favoriteLocationEqual(a, b string) bool {
+	a = normalizeFavoriteLocation(a)
+	b = normalizeFavoriteLocation(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if filepath.IsAbs(a) && filepath.IsAbs(b) {
+		return samePath(a, b)
+	}
+	return a == b
+}
+
+func (ui *UI) paneFavoriteItems(pane *filePaneState) []fileFavoriteItem {
+	if ui == nil || ui.fmCfg == nil {
+		return []fileFavoriteItem{{label: "Add current dir", addCurrent: true}}
+	}
+	items := make([]fileFavoriteItem, 0, 2+len(ui.fmCfg.FavoriteLocations))
+	items = append(items, fileFavoriteItem{
+		label:      "Add current dir",
+		addCurrent: true,
+	})
+
+	hasFavorites := false
+	current := ""
+	if pane != nil {
+		current = normalizeFavoriteLocation(pane.dir)
+	}
+	for _, raw := range ui.fmCfg.FavoriteLocations {
+		loc := normalizeFavoriteLocation(raw)
+		if loc == "" {
+			continue
+		}
+		hasFavorites = true
+		items = append(items, fileFavoriteItem{
+			label:     loc,
+			targetDir: loc,
+			active:    current != "" && favoriteLocationEqual(loc, current),
+			removable: true,
+		})
+	}
+	if !hasFavorites {
+		items = append(items, fileFavoriteItem{
+			label:    "No favorites saved",
+			disabled: true,
+		})
+	}
+	return items
+}
+
+func (ui *UI) addFavoriteLocation(raw string) (string, bool, error) {
+	if ui == nil {
+		return "", false, nil
+	}
+	if ui.fmCfg == nil {
+		ui.fmCfg = fm.DefaultConfig()
+	}
+	loc := normalizeFavoriteLocation(raw)
+	if loc == "" {
+		return "", false, nil
+	}
+	for _, existing := range ui.fmCfg.FavoriteLocations {
+		if favoriteLocationEqual(existing, loc) {
+			return loc, false, nil
+		}
+	}
+	ui.fmCfg.FavoriteLocations = append(ui.fmCfg.FavoriteLocations, loc)
+	if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
+		ui.fmCfg.FavoriteLocations = ui.fmCfg.FavoriteLocations[:len(ui.fmCfg.FavoriteLocations)-1]
+		return loc, false, err
+	}
+	return loc, true, nil
+}
+
+func (ui *UI) addPaneCurrentDirFavorite(idx int, now time.Time) {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return
+	}
+	_, added, err := ui.addFavoriteLocation(pane.dir)
+	if err != nil {
+		pane.setNotice("failed to save favorites: "+err.Error(), now)
+		return
+	}
+	if !added {
+		return
+	}
+}
+
+func (ui *UI) removeFavoriteLocation(raw string) (bool, error) {
+	if ui == nil || ui.fmCfg == nil {
+		return false, nil
+	}
+	loc := normalizeFavoriteLocation(raw)
+	if loc == "" || len(ui.fmCfg.FavoriteLocations) == 0 {
+		return false, nil
+	}
+
+	next := make([]string, 0, len(ui.fmCfg.FavoriteLocations))
+	removed := false
+	for _, existing := range ui.fmCfg.FavoriteLocations {
+		if !removed && favoriteLocationEqual(existing, loc) {
+			removed = true
+			continue
+		}
+		next = append(next, existing)
+	}
+	if !removed {
+		return false, nil
+	}
+
+	prev := ui.fmCfg.FavoriteLocations
+	ui.fmCfg.FavoriteLocations = next
+	if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
+		ui.fmCfg.FavoriteLocations = prev
+		return false, err
+	}
+	return true, nil
+}
+
+func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return false
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	if favoriteLocationEqual(target, pane.dir) {
+		pane.closeFavoriteMenu()
+		return true
+	}
+	pane.closeFavoriteMenu()
+	return ui.loadPaneDir(idx, target)
 }
 
 func (p *filePaneState) findEntryIndex(name string) int {
@@ -1002,6 +1206,7 @@ func (ui *UI) setActiveFilePane(idx int) {
 	ui.rep.pane = -1
 	ui.stopPathEditExcept(idx)
 	ui.closeSortMenusExcept(idx)
+	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
 }
 
@@ -1026,6 +1231,15 @@ func (ui *UI) closeSortMenusExcept(active int) {
 			continue
 		}
 		pane.sortMenuOpen = false
+	}
+}
+
+func (ui *UI) closeFavoriteMenusExcept(active int) {
+	for i, pane := range ui.filePanes {
+		if pane == nil || i == active {
+			continue
+		}
+		pane.closeFavoriteMenu()
 	}
 }
 
@@ -1070,6 +1284,7 @@ func (ui *UI) loadPaneDir(idx int, dir string) bool {
 		return false
 	}
 	pane.sortMenuOpen = false
+	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
 	return true
@@ -1115,6 +1330,7 @@ func (ui *UI) cyclePaneSort(idx int) {
 	}
 	pane.cycleSortKey()
 	pane.applySort(preserve)
+	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 }
 
@@ -1134,6 +1350,7 @@ func (ui *UI) togglePaneSortDirection(idx int) {
 	pane.sortDesc = !pane.sortDesc
 	pane.applySort(preserve)
 	pane.sortMenuOpen = false
+	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 }
 
@@ -1155,6 +1372,7 @@ func (ui *UI) choosePaneSort(idx int, key fileSortKey) {
 		pane.applySort(preserve)
 	}
 	pane.sortMenuOpen = false
+	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 }
 
@@ -1167,6 +1385,7 @@ func (ui *UI) togglePaneMode(idx int) {
 		return
 	}
 	ui.setActiveFilePane(idx)
+	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	if pane.table.Mode == table.ModeFull {
 		pane.table.SetMode(table.ModeBrief)
@@ -1214,6 +1433,7 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 		return false
 	}
 	pane.sortMenuOpen = false
+	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
 	if entry.Kind == filesys.EntryParent {
@@ -1237,7 +1457,9 @@ func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point) {
 	}
 	ui.setActiveFilePane(idx)
 	ui.closeSortMenusExcept(idx)
+	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
 	pane.sortMenuOpen = false
+	pane.closeFavoriteMenu()
 	pane.openContextMenu(row, pos)
 }

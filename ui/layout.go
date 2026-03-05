@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -28,6 +31,9 @@ const (
 	repeatFast       = 25 * time.Millisecond
 	repeatAccelAfter = 120 * time.Millisecond
 	defaultUIFontSp  = unit.Sp(14)
+	toolbarAnimDur   = 260 * time.Millisecond
+	toolbarHoverDur  = 120 * time.Millisecond
+	toolbarClickDur  = 140 * time.Millisecond
 )
 
 type KeyRepeat struct {
@@ -108,6 +114,14 @@ type UI struct {
 
 	// Tab buttons
 	tab0, tab1, tab2 widget.Clickable
+	settingsClick    widget.Clickable
+	toolbarPrevTab   string
+	toolbarAnimAt    time.Time
+	toolbarHoverKey  string
+	toolbarHoverPrev string
+	toolbarHoverAt   time.Time
+	toolbarPulseKey  string
+	toolbarPulseAt   time.Time
 	filePanes        []*filePaneState
 	fmCfg            *fm.Config
 	typeface         font.Typeface
@@ -117,6 +131,8 @@ type UI struct {
 	pendingFileOpen  *fileOpenRequest
 	fileCopy         *fileCopyState
 	fileDelete       *fileDeleteState
+	fileViewer       *fileViewerState
+	settingsModal    *settingsModalState
 }
 
 func NewUI(cfg *fm.Config) *UI {
@@ -231,29 +247,320 @@ func scaleConfigFontSize(cfg *fm.Config, size unit.Sp) unit.Sp {
 	return scaleFontSize(fontSizeFromConfig(cfg), size)
 }
 
-// Top tabs row: centered, closer together.
-func (ui *UI) layoutTabs(th *material.Theme, gtx layout.Context) layout.Dimensions {
-	tabBtn := func(gtx layout.Context, c *widget.Clickable, key, label string) layout.Dimensions {
-		if c.Clicked(gtx) {
-			ui.Tabs.Value = key
+func clamp01(v float32) float32 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func smoothstep01(t float32) float32 {
+	t = clamp01(t)
+	return t * t * (3 - 2*t)
+}
+
+func mixNRGBA(a, b color.NRGBA, t float32) color.NRGBA {
+	t = clamp01(t)
+	return color.NRGBA{
+		R: uint8(float32(a.R) + (float32(b.R)-float32(a.R))*t),
+		G: uint8(float32(a.G) + (float32(b.G)-float32(a.G))*t),
+		B: uint8(float32(a.B) + (float32(b.B)-float32(a.B))*t),
+		A: uint8(float32(a.A) + (float32(b.A)-float32(a.A))*t),
+	}
+}
+
+func (ui *UI) setActiveTab(key string, now time.Time) {
+	if ui == nil || key == "" || ui.Tabs.Value == key {
+		return
+	}
+	ui.toolbarPrevTab = ui.Tabs.Value
+	ui.toolbarAnimAt = now
+	ui.Tabs.Value = key
+}
+
+func (ui *UI) toolbarTabHighlight(now time.Time, key string) (float32, bool) {
+	if ui == nil || key == "" {
+		return 0, false
+	}
+	if ui.toolbarPrevTab == "" || ui.toolbarAnimAt.IsZero() || ui.toolbarPrevTab == ui.Tabs.Value {
+		if key == ui.Tabs.Value {
+			return 1, false
 		}
-		return material.Button(th, c, label).Layout(gtx)
+		return 0, false
+	}
+	elapsed := now.Sub(ui.toolbarAnimAt)
+	if elapsed >= toolbarAnimDur {
+		ui.toolbarPrevTab = ""
+		ui.toolbarAnimAt = time.Time{}
+		if key == ui.Tabs.Value {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarAnimDur))
+	t = smoothstep01(t)
+	if key == ui.Tabs.Value {
+		return t, true
+	}
+	if key == ui.toolbarPrevTab {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func fixedHeight(gtx layout.Context, h int, w layout.Widget) layout.Dimensions {
+	if h < 1 {
+		h = 1
+	}
+	gtx2 := gtx
+	gtx2.Constraints.Min.Y = h
+	gtx2.Constraints.Max.Y = h
+	return w(gtx2)
+}
+
+func (ui *UI) toolbarLabelSize(th *material.Theme) unit.Sp {
+	if ui == nil {
+		return scaleThemeFontSize(th, 13)
+	}
+	return scaleConfigFontSize(ui.fmCfg, 13)
+}
+
+func fillSegmentBg(gtx layout.Context, bg color.NRGBA, radius int, roundLeft, roundRight bool, w layout.Widget) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := m.Stop()
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		call.Add(gtx.Ops)
+		return dims
+	}
+	if bg.A != 0 {
+		rr := clip.RRect{Rect: image.Rect(0, 0, dims.Size.X, dims.Size.Y)}
+		if roundLeft {
+			rr.NW = radius
+			rr.SW = radius
+		}
+		if roundRight {
+			rr.NE = radius
+			rr.SE = radius
+		}
+		paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+	}
+	call.Add(gtx.Ops)
+	return dims
+}
+
+func (ui *UI) setToolbarHover(key string, now time.Time) {
+	if ui == nil {
+		return
+	}
+	if key == ui.toolbarHoverKey {
+		return
+	}
+	ui.toolbarHoverPrev = ui.toolbarHoverKey
+	ui.toolbarHoverKey = key
+	ui.toolbarHoverAt = now
+}
+
+func (ui *UI) toolbarHoverLevel(now time.Time, key string) (float32, bool) {
+	if ui == nil || key == "" {
+		return 0, false
+	}
+	if ui.toolbarHoverAt.IsZero() || ui.toolbarHoverPrev == ui.toolbarHoverKey {
+		if ui.toolbarHoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	elapsed := now.Sub(ui.toolbarHoverAt)
+	if elapsed >= toolbarHoverDur {
+		ui.toolbarHoverPrev = ""
+		ui.toolbarHoverAt = time.Time{}
+		if ui.toolbarHoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarHoverDur))
+	if key == ui.toolbarHoverKey {
+		return t, true
+	}
+	if key == ui.toolbarHoverPrev {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func (ui *UI) setToolbarPulse(key string, now time.Time) {
+	if ui == nil || key == "" {
+		return
+	}
+	ui.toolbarPulseKey = key
+	ui.toolbarPulseAt = now
+}
+
+func (ui *UI) toolbarPulseLevel(now time.Time, key string) (float32, bool) {
+	if ui == nil || key == "" || ui.toolbarPulseKey != key || ui.toolbarPulseAt.IsZero() {
+		return 0, false
+	}
+	elapsed := now.Sub(ui.toolbarPulseAt)
+	if elapsed >= toolbarClickDur {
+		ui.toolbarPulseKey = ""
+		ui.toolbarPulseAt = time.Time{}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarClickDur))
+	return 1 - t, true
+}
+
+func (ui *UI) layoutToolbarSegment(th *material.Theme, gtx layout.Context, c *widget.Clickable, label string, activeFill, hoverFill, pulseFill float32, stripH int, roundLeft, roundRight bool) layout.Dimensions {
+	if c == nil {
+		return layout.Dimensions{}
+	}
+	dims := fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			activeFill = clamp01(activeFill)
+			hoverFill = clamp01(hoverFill)
+			pulseFill = clamp01(pulseFill)
+			if c.Pressed() && pulseFill < 0.5 {
+				pulseFill = 0.5
+			}
+
+			baseBlue := color.NRGBA{R: 68, G: 92, B: 180, A: 255}
+			hoverDark := color.NRGBA{R: 34, G: 44, B: 66, A: 255}
+			hoverLight := color.NRGBA{R: 86, G: 112, B: 204, A: 255}
+			pulseCol := color.NRGBA{R: 126, G: 154, B: 255, A: 255}
+
+			bg := mixNRGBA(color.NRGBA{}, baseBlue, activeFill)
+			// Inactive tabs darken on hover; active tabs only brighten a bit.
+			darkMix := hoverFill * (1 - activeFill)
+			lightMix := hoverFill * activeFill * 0.25
+			bg = mixNRGBA(bg, hoverDark, darkMix)
+			bg = mixNRGBA(bg, hoverLight, lightMix)
+			bg = mixNRGBA(bg, pulseCol, pulseFill*0.35)
+
+			fg := mixNRGBA(txtColor, color.NRGBA{R: 240, G: 246, B: 255, A: 255}, activeFill)
+			fg = mixNRGBA(fg, color.NRGBA{R: 230, G: 236, B: 255, A: 255}, hoverFill*0.75)
+			fg = mixNRGBA(fg, color.NRGBA{R: 245, G: 250, B: 255, A: 255}, pulseFill*0.25)
+
+			radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
+			return fillSegmentBg(gtx, bg, radius, roundLeft, roundRight, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, label)
+						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.Font.Weight = font.Medium
+						lbl.TextSize = ui.toolbarLabelSize(th)
+						lbl.Color = fg
+						lbl.MaxLines = 1
+						return lbl.Layout(gtx)
+					})
+				})
+			})
+		})
+	})
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		return dims
 	}
 
-	in := layout.Inset{Top: unit.Dp(10), Bottom: unit.Dp(10), Left: unit.Dp(12), Right: unit.Dp(12)}
+	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+	pointer.CursorPointer.Add(gtx.Ops)
+	return dims
+}
+
+func toolbarSeparator(gtx layout.Context, stripH int) layout.Dimensions {
+	w := gtx.Dp(unit.Dp(1))
+	if w < 1 {
+		w = 1
+	}
+	h := stripH
+	if h < 1 {
+		h = 1
+	}
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 22}, clip.Rect(image.Rect(0, 0, w, h)).Op())
+		return layout.Dimensions{Size: image.Pt(w, h)}
+	})
+}
+
+// Top toolbar row: compact connected segments.
+func (ui *UI) layoutTabs(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	for ui.tab1.Clicked(gtx) {
+		ui.setActiveTab("tab1", gtx.Now)
+	}
+	for ui.tab2.Clicked(gtx) {
+		ui.setActiveTab("tab2", gtx.Now)
+	}
+	for ui.settingsClick.Clicked(gtx) {
+		ui.setToolbarPulse("settings", gtx.Now)
+		ui.openSettingsModal()
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	fillHex, animHex := ui.toolbarTabHighlight(gtx.Now, "tab1")
+	fillProto, animProto := ui.toolbarTabHighlight(gtx.Now, "tab2")
+	hoverKey := ""
+	if ui.tab1.Hovered() {
+		hoverKey = "tab1"
+	}
+	if ui.tab2.Hovered() {
+		hoverKey = "tab2"
+	}
+	if ui.settingsClick.Hovered() {
+		hoverKey = "settings"
+	}
+	ui.setToolbarHover(hoverKey, gtx.Now)
+	hoverHex, hoverAnimHex := ui.toolbarHoverLevel(gtx.Now, "tab1")
+	hoverProto, hoverAnimProto := ui.toolbarHoverLevel(gtx.Now, "tab2")
+	hoverSettings, hoverAnimSettings := ui.toolbarHoverLevel(gtx.Now, "settings")
+	pulseHex, pulseAnimHex := ui.toolbarPulseLevel(gtx.Now, "tab1")
+	pulseProto, pulseAnimProto := ui.toolbarPulseLevel(gtx.Now, "tab2")
+	pulseSettings, pulseAnimSettings := ui.toolbarPulseLevel(gtx.Now, "settings")
+	if animHex || animProto || hoverAnimHex || hoverAnimProto || hoverAnimSettings || pulseAnimHex || pulseAnimProto || pulseAnimSettings {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	fillSettings := float32(0)
+	if ui.settingsModal != nil {
+		fillSettings = 1
+	}
+	stripH := gtx.Dp(unit.Dp(24))
+	if stripH < 1 {
+		stripH = 1
+	}
+
+	in := layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(2), Left: unit.Dp(8), Right: unit.Dp(8)}
 	return in.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			gap := func(gtx layout.Context) layout.Dimensions {
-				return layout.Spacer{Width: unit.Dp(8)}.Layout(gtx)
-			}
-			return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceSides}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return tabBtn(gtx, &ui.tab0, "tab0", "hex-to-ascii") }),
-				layout.Rigid(gap),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return tabBtn(gtx, &ui.tab1, "tab1", "file manager") }),
-				layout.Rigid(gap),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions { return tabBtn(gtx, &ui.tab2, "tab2", "protocol analyzer") }),
-			)
-		})
+		return fillRoundedBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+			color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+			color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutToolbarSegment(th, gtx, &ui.tab1, "hex-to-ascii", fillHex, hoverHex, pulseHex, stripH, true, false)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return toolbarSeparator(gtx, stripH)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutToolbarSegment(th, gtx, &ui.tab2, "protocol analyzer", fillProto, hoverProto, pulseProto, stripH, false, false)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return toolbarSeparator(gtx, stripH)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutToolbarSegment(th, gtx, &ui.settingsClick, "settings", fillSettings, hoverSettings, pulseSettings, stripH, false, true)
+							}),
+						)
+					})
+				})
+			},
+		)
 	})
 }
 
@@ -270,36 +577,147 @@ func vRule(gtx layout.Context, w unit.Dp) layout.Dimensions {
 }
 
 func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	ui.handleGlobalFunctionKeys(gtx)
+	ui.handleGlobalEscapeToFileManager(gtx)
 
 	r := image.Rectangle{Max: gtx.Constraints.Max}
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 32, G: 32, B: 32, A: 255}, clip.Rect(r).Op())
 
 	ui.handleEditorChanges()
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutTabs(th, gtx)
+	dims := layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutTabs(th, gtx)
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					switch ui.Tabs.Value {
+					case "tab0":
+						ui.wantFocusTable = true
+						return ui.layoutTab1(th, gtx)
+					case "tab1":
+						ui.closeFileViewer()
+						ui.resetKeys()
+						return ui.layoutTab0(th, gtx)
+					case "tab2":
+						ui.closeFileViewer()
+						ui.resetKeys()
+						return ui.layoutTab2(th, gtx)
+					default:
+						ui.wantFocusTable = true
+						return ui.layoutTab1(th, gtx)
+					}
+				}),
+			)
 		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			switch ui.Tabs.Value {
-			case "tab0":
-				ui.resetKeys()
-				return ui.layoutTab0(th, gtx)
-			case "tab1":
-				ui.wantFocusTable = true
-				return ui.layoutTab1(th, gtx)
-			case "tab2":
-				ui.resetKeys()
-				return ui.layoutTab2(th, gtx)
-			default:
-				ui.resetKeys()
-				return ui.layoutTab0(th, gtx)
-			}
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsModal(th, gtx)
 		}),
 	)
+	ui.consumeUnusedFunctionKeys(gtx)
+	return dims
+}
+
+func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
+	if ui == nil || ui.settingsModal != nil || ui.Tabs.Value == "tab0" {
+		return
+	}
+	switched := false
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press || ke.Name != key.NameEscape {
+			continue
+		}
+		ui.setActiveTab("tab0", gtx.Now)
+		ui.closeFileViewer()
+		ui.resetKeys()
+		switched = true
+	}
+	if switched {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+}
+
+func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
+	anyMods := ^key.Modifiers(0)
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameF3, Optional: anyMods})
+		if !ok {
+			return
+		}
+		ke, ok := ev.(key.Event)
+		if !ok {
+			continue
+		}
+		if ke.State == key.Release {
+			ui.clearFileViewHotkeyHold()
+			continue
+		}
+		if ke.State != key.Press {
+			continue
+		}
+		// Swallow modified/unknown-flag F3 to prevent system beep, but don't trigger actions.
+		if ke.Modifiers != 0 {
+			continue
+		}
+		if ui == nil || ui.Tabs.Value != "tab0" {
+			continue
+		}
+		if ui.settingsModal != nil {
+			continue
+		}
+		if ui.fileViewer != nil {
+			ui.startFileViewerLoad(gtx.Now)
+			continue
+		}
+		if ui.fileCopy != nil || ui.fileDelete != nil {
+			continue
+		}
+		if ui.pathEditActive() {
+			continue
+		}
+		ui.startFileViewer(ui.activeFilePane, gtx.Now)
+	}
 }
 
 func (ui *UI) layoutTabPlaceholder(th *material.Theme, gtx layout.Context, name string) layout.Dimensions {
 	in := layout.UniformInset(unit.Dp(16))
 	return in.Layout(gtx, material.H6(th, name).Layout)
+}
+
+func (ui *UI) consumeUnusedFunctionKeys(gtx layout.Context) {
+	anyMods := ^key.Modifiers(0)
+	for {
+		_, ok := gtx.Event(
+			key.Filter{Name: key.NameF1, Optional: anyMods},
+			key.Filter{Name: key.NameF2, Optional: anyMods},
+			key.Filter{Name: key.NameF3, Optional: anyMods},
+			key.Filter{Name: key.NameF4, Optional: anyMods},
+			key.Filter{Name: key.NameF5, Optional: anyMods},
+			key.Filter{Name: key.NameF6, Optional: anyMods},
+			key.Filter{Name: key.NameF7, Optional: anyMods},
+			key.Filter{Name: key.NameF8, Optional: anyMods},
+			key.Filter{Name: key.NameF9, Optional: anyMods},
+			key.Filter{Name: key.NameF10, Optional: anyMods},
+			key.Filter{Name: key.NameF11, Optional: anyMods},
+			key.Filter{Name: key.NameF12, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+	}
+
+	// Fallback: drain any remaining unhandled key events to avoid system beep
+	// on macOS when a key press is not claimed by other handlers.
+	for {
+		_, ok := gtx.Event(key.Filter{Optional: anyMods})
+		if !ok {
+			return
+		}
+	}
 }

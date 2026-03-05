@@ -28,13 +28,15 @@ type fileDeleteState struct {
 	targetInfo fileCopyPathInfo
 
 	backdropClick widget.Clickable
+	closeClick    widget.Clickable
 	confirmClick  widget.Clickable
 	cancelClick   widget.Clickable
 
 	running bool
 	lastErr string
 
-	doneCh chan error
+	doneCh      chan error
+	actionsAnim segmentedAnimState
 }
 
 func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
@@ -60,8 +62,10 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 	ui.setActiveFilePane(idx)
 	pane.stopPathEdit()
 	pane.sortMenuOpen = false
+	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	ui.closeSortMenusExcept(idx)
+	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
 
 	info, err := buildCopyPathInfo(entry.Path)
@@ -207,6 +211,7 @@ func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) lay
 				}
 			case key.NameEnter, key.NameReturn:
 				if !st.running {
+					st.actionsAnim.setPulse("confirm", gtx.Now)
 					ui.submitFileDeleteDialog(gtx.Now)
 				}
 			}
@@ -218,8 +223,18 @@ func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) lay
 		ui.clearFileDeleteHotkeyHold()
 		return layout.Dimensions{}
 	}
+	if st.closeClick.Clicked(gtx) && !st.running {
+		ui.fileDelete = nil
+		ui.clearFileDeleteHotkeyHold()
+		return layout.Dimensions{}
+	}
 	if st.confirmClick.Clicked(gtx) && !st.running {
+		st.actionsAnim.setPulse("confirm", gtx.Now)
 		ui.submitFileDeleteDialog(gtx.Now)
+	}
+	if st.running {
+		for st.closeClick.Clicked(gtx) {
+		}
 	}
 	for st.backdropClick.Clicked(gtx) {
 	}
@@ -277,11 +292,21 @@ func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) lay
 }
 
 func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context, st *fileDeleteState) layout.Dimensions {
-	title := material.Body1(th, "Delete")
-	title.Font.Typeface = ui.mainTypeface()
-	title.Font.Weight = font.Bold
-	title.TextSize = scaleThemeFontSize(th, 12)
-	title.Color = color.NRGBA{R: 255, G: 188, B: 188, A: 255}
+	hoverActionKey := ""
+	if !st.running && st.cancelClick.Hovered() {
+		hoverActionKey = "cancel"
+	}
+	if !st.running && st.confirmClick.Hovered() {
+		hoverActionKey = "confirm"
+	}
+	st.actionsAnim.setHover(hoverActionKey, gtx.Now)
+	hoverCancel, hoverAnimCancel := st.actionsAnim.hoverFill(gtx.Now, "cancel")
+	hoverConfirm, hoverAnimConfirm := st.actionsAnim.hoverFill(gtx.Now, "confirm")
+	pulseCancel, pulseAnimCancel := st.actionsAnim.pulseFill(gtx.Now, "cancel")
+	pulseConfirm, pulseAnimConfirm := st.actionsAnim.pulseFill(gtx.Now, "confirm")
+	if hoverAnimCancel || hoverAnimConfirm || pulseAnimCancel || pulseAnimConfirm {
+		gtx.Execute(op.InvalidateCmd{})
+	}
 
 	desc := material.Caption(th, "This action cannot be undone.")
 	desc.Font.Typeface = ui.mainTypeface()
@@ -314,7 +339,21 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 	meta.MaxLines = 1
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(title.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					title := material.Body1(th, "Delete")
+					title.Font.Typeface = ui.mainTypeface()
+					title.Font.Weight = font.Bold
+					title.TextSize = scaleThemeFontSize(th, 12)
+					title.Color = color.NRGBA{R: 255, G: 188, B: 188, A: 255}
+					return title.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uiCloseIcon(), false)
+				}),
+			)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
 		layout.Rigid(desc.Layout),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
@@ -348,18 +387,14 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutFileCopyDialogButton(th, gtx, ui.mainTypeface(), &st.cancelClick, "Cancel", false, st.running)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						label := "Delete"
-						if st.running {
-							label = "Deleting..."
-						}
-						return layoutFileCopyDialogButton(th, gtx, ui.mainTypeface(), &st.confirmClick, label, true, st.running)
-					}),
+				label := "Delete"
+				if st.running {
+					label = "Deleting..."
+				}
+				return ui.layoutDialogActionPair(
+					th, gtx,
+					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, st.running,
+					&st.confirmClick, label, hoverConfirm, pulseConfirm, st.running,
 				)
 			})
 		}),

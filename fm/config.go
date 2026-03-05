@@ -2,6 +2,8 @@ package fm
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v4"
@@ -41,6 +43,7 @@ type KeyBindings struct {
 	Home          string `yaml:"home"`
 	End           string `yaml:"end"`
 	Activate      string `yaml:"activate"`
+	View          string `yaml:"view"`
 	Copy          string `yaml:"copy"`
 	Delete        string `yaml:"delete"`
 }
@@ -59,13 +62,21 @@ type FontConfig struct {
 	BoldPath    string  `yaml:"bold_path"`
 }
 
+type ViewerConfig struct {
+	Mode       string  `yaml:"mode"`
+	Command    string  `yaml:"command"`
+	FontSizeSp float32 `yaml:"font_size_sp"`
+}
+
 type Config struct {
-	DateFormats []string     `yaml:"date_formats"`
-	NameCompact NameCompact  `yaml:"name_compact"`
-	Columns     ColumnWidths `yaml:"columns"`
-	KeyBindings KeyBindings  `yaml:"key_bindings"`
-	Sort        SortConfig   `yaml:"sort"`
-	Font        FontConfig   `yaml:"font"`
+	DateFormats       []string     `yaml:"date_formats"`
+	FavoriteLocations []string     `yaml:"favorite_locations"`
+	NameCompact       NameCompact  `yaml:"name_compact"`
+	Columns           ColumnWidths `yaml:"columns"`
+	KeyBindings       KeyBindings  `yaml:"key_bindings"`
+	Sort              SortConfig   `yaml:"sort"`
+	Font              FontConfig   `yaml:"font"`
+	Viewer            ViewerConfig `yaml:"viewer"`
 }
 
 func DefaultConfig() *Config {
@@ -77,6 +88,7 @@ func DefaultConfig() *Config {
 			"Jan 02",
 			"01-02",
 		},
+		FavoriteLocations: []string{},
 		NameCompact: NameCompact{
 			ApproxCharPx: 8,
 			MinHead:      6,
@@ -109,6 +121,7 @@ func DefaultConfig() *Config {
 			Home:          "home",
 			End:           "end",
 			Activate:      "enter",
+			View:          "f3",
 			Copy:          "f5",
 			Delete:        "f8",
 		},
@@ -124,9 +137,26 @@ func DefaultConfig() *Config {
 			MediumPath:  "assets/FiraCode-Medium.ttf",
 			BoldPath:    "assets/FiraCode-Bold.ttf",
 		},
+		Viewer: ViewerConfig{
+			Mode:       "file",
+			Command:    "cat {path}",
+			FontSizeSp: 13,
+		},
 	}
 	cfg.normalize()
 	return cfg
+}
+
+func SaveConfig(path string, cfg *Config) error {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+	cfg.normalize()
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func LoadConfig(path string) *Config {
@@ -151,6 +181,7 @@ func (c *Config) normalize() {
 	if len(c.DateFormats) == 0 {
 		c.DateFormats = DefaultConfig().DateFormats
 	}
+	c.normalizeFavoriteLocations()
 	if c.NameCompact.ApproxCharPx < 4 {
 		c.NameCompact.ApproxCharPx = 8
 	}
@@ -262,6 +293,9 @@ func (c *Config) normalize() {
 	if c.KeyBindings.Activate == "" {
 		c.KeyBindings.Activate = "enter"
 	}
+	if c.KeyBindings.View == "" {
+		c.KeyBindings.View = "f3"
+	}
 	if c.KeyBindings.Copy == "" {
 		c.KeyBindings.Copy = "f5"
 	}
@@ -288,4 +322,60 @@ func (c *Config) normalize() {
 	if c.Font.BoldPath == "" {
 		c.Font.BoldPath = "assets/FiraCode-Bold.ttf"
 	}
+
+	switch c.Viewer.Mode {
+	case "file", "command":
+	default:
+		c.Viewer.Mode = "file"
+	}
+	if c.Viewer.Command == "" {
+		c.Viewer.Command = "cat {path}"
+	}
+	if c.Viewer.FontSizeSp < 6 {
+		c.Viewer.FontSizeSp = c.Font.SizeSp * (13.0 / 14.0)
+		if c.Viewer.FontSizeSp < 6 {
+			c.Viewer.FontSizeSp = 13
+		}
+	}
+}
+
+func (c *Config) normalizeFavoriteLocations() {
+	if c == nil {
+		return
+	}
+	if len(c.FavoriteLocations) == 0 {
+		c.FavoriteLocations = nil
+		return
+	}
+	out := make([]string, 0, len(c.FavoriteLocations))
+	for _, raw := range c.FavoriteLocations {
+		loc := strings.TrimSpace(raw)
+		if loc == "" {
+			continue
+		}
+		duplicate := false
+		for _, existing := range out {
+			if sameFavoriteLocation(existing, loc) {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		out = append(out, loc)
+	}
+	c.FavoriteLocations = out
+}
+
+func sameFavoriteLocation(a, b string) bool {
+	if filepath.IsAbs(a) && filepath.IsAbs(b) {
+		a = filepath.Clean(a)
+		b = filepath.Clean(b)
+		if os.PathSeparator == '\\' {
+			return strings.EqualFold(a, b)
+		}
+		return a == b
+	}
+	return a == b
 }

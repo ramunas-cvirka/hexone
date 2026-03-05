@@ -12,6 +12,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -32,6 +33,7 @@ type fileCopyState struct {
 	dstEditWant bool
 
 	backdropClick widget.Clickable
+	closeClick    widget.Clickable
 	confirmClick  widget.Clickable
 	cancelClick   widget.Clickable
 
@@ -42,8 +44,9 @@ type fileCopyState struct {
 	srcInfo fileCopyPathInfo
 	dstInfo fileCopyPathInfo
 
-	progressCh chan filesys.CopyProgress
-	doneCh     chan error
+	progressCh  chan filesys.CopyProgress
+	doneCh      chan error
+	actionsAnim segmentedAnimState
 }
 
 type fileCopyPathInfo struct {
@@ -52,6 +55,74 @@ type fileCopyPathInfo struct {
 	IsDir   bool
 	Size    int64
 	ModTime time.Time
+}
+
+type segmentedAnimState struct {
+	hoverKey  string
+	hoverPrev string
+	hoverAt   time.Time
+	pulseKey  string
+	pulseAt   time.Time
+}
+
+func (st *segmentedAnimState) setHover(key string, now time.Time) {
+	if st == nil || st.hoverKey == key {
+		return
+	}
+	st.hoverPrev = st.hoverKey
+	st.hoverKey = key
+	st.hoverAt = now
+}
+
+func (st *segmentedAnimState) hoverFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" {
+		return 0, false
+	}
+	if st.hoverAt.IsZero() || st.hoverPrev == st.hoverKey {
+		if st.hoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	elapsed := now.Sub(st.hoverAt)
+	if elapsed >= toolbarHoverDur {
+		st.hoverPrev = ""
+		st.hoverAt = time.Time{}
+		if st.hoverKey == key {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarHoverDur))
+	if key == st.hoverKey {
+		return t, true
+	}
+	if key == st.hoverPrev {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func (st *segmentedAnimState) setPulse(key string, now time.Time) {
+	if st == nil || key == "" {
+		return
+	}
+	st.pulseKey = key
+	st.pulseAt = now
+}
+
+func (st *segmentedAnimState) pulseFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" || st.pulseKey != key || st.pulseAt.IsZero() {
+		return 0, false
+	}
+	elapsed := now.Sub(st.pulseAt)
+	if elapsed >= toolbarClickDur {
+		st.pulseKey = ""
+		st.pulseAt = time.Time{}
+		return 0, false
+	}
+	t := clamp01(float32(elapsed) / float32(toolbarClickDur))
+	return 1 - t, true
 }
 
 func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
@@ -76,8 +147,10 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	ui.setActiveFilePane(idx)
 	pane.stopPathEdit()
 	pane.sortMenuOpen = false
+	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	ui.closeSortMenusExcept(idx)
+	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
 
 	dstDir := pane.dir
@@ -353,12 +426,20 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 			ui.clearFileCopyHotkeyHold()
 			return layout.Dimensions{}
 		}
+		if st.closeClick.Clicked(gtx) {
+			ui.fileCopy = nil
+			ui.clearFileCopyHotkeyHold()
+			return layout.Dimensions{}
+		}
 		if st.confirmClick.Clicked(gtx) {
+			st.actionsAnim.setPulse("confirm", gtx.Now)
 			ui.submitFileCopyDialog(gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	} else {
 		for st.cancelClick.Clicked(gtx) {
+		}
+		for st.closeClick.Clicked(gtx) {
 		}
 		for st.confirmClick.Clicked(gtx) {
 		}
@@ -419,11 +500,21 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 }
 
 func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, st *fileCopyState) layout.Dimensions {
-	title := material.Body1(th, "Copy")
-	title.Font.Typeface = ui.mainTypeface()
-	title.Font.Weight = font.Bold
-	title.TextSize = scaleThemeFontSize(th, 12)
-	title.Color = txtColor
+	hoverActionKey := ""
+	if !st.running && st.cancelClick.Hovered() {
+		hoverActionKey = "cancel"
+	}
+	if !st.running && st.confirmClick.Hovered() {
+		hoverActionKey = "confirm"
+	}
+	st.actionsAnim.setHover(hoverActionKey, gtx.Now)
+	hoverCancel, hoverAnimCancel := st.actionsAnim.hoverFill(gtx.Now, "cancel")
+	hoverConfirm, hoverAnimConfirm := st.actionsAnim.hoverFill(gtx.Now, "confirm")
+	pulseCancel, pulseAnimCancel := st.actionsAnim.pulseFill(gtx.Now, "cancel")
+	pulseConfirm, pulseAnimConfirm := st.actionsAnim.pulseFill(gtx.Now, "confirm")
+	if hoverAnimCancel || hoverAnimConfirm || pulseAnimCancel || pulseAnimConfirm {
+		gtx.Execute(op.InvalidateCmd{})
+	}
 
 	srcHdr := material.Caption(th, "Source")
 	srcHdr.Font.Typeface = ui.mainTypeface()
@@ -452,7 +543,21 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(title.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					title := material.Body1(th, "Copy")
+					title.Font.Typeface = ui.mainTypeface()
+					title.Font.Weight = font.Bold
+					title.TextSize = scaleThemeFontSize(th, 12)
+					title.Color = txtColor
+					return title.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uiCloseIcon(), false)
+				}),
+			)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(srcHdr.Layout),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
@@ -531,20 +636,16 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutFileCopyDialogButton(th, gtx, ui.mainTypeface(), &st.cancelClick, "Cancel", false, st.running)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						label := "Copy"
-						if st.running {
-							label = "Copying..."
-						} else if st.dstInfo.Exists {
-							label = "Overwrite"
-						}
-						return layoutFileCopyDialogButton(th, gtx, ui.mainTypeface(), &st.confirmClick, label, true, st.running)
-					}),
+				label := "Copy"
+				if st.running {
+					label = "Copying..."
+				} else if st.dstInfo.Exists {
+					label = "Overwrite"
+				}
+				return ui.layoutDialogActionPair(
+					th, gtx,
+					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, st.running,
+					&st.confirmClick, label, hoverConfirm, pulseConfirm, st.running,
 				)
 			})
 		}),
@@ -623,45 +724,92 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 	)
 }
 
-func layoutFileCopyDialogButton(th *material.Theme, gtx layout.Context, typeface font.Typeface, click *widget.Clickable, label string, primary, disabled bool) layout.Dimensions {
+func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, hoverFill, pulseFill float32, stripH int, roundLeft, roundRight, disabled bool) layout.Dimensions {
 	if click == nil {
 		return layout.Dimensions{}
 	}
-	return fixedWidth(gtx, gtx.Dp(unit.Dp(82)), func(gtx layout.Context) layout.Dimensions {
-		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			bg := color.NRGBA{R: 30, G: 36, B: 50, A: 255}
-			border := color.NRGBA{R: 255, G: 255, B: 255, A: 24}
-			fg := txtColor
-			if primary {
-				bg = color.NRGBA{R: 68, G: 96, B: 186, A: 255}
-				border = color.NRGBA{R: 120, G: 150, B: 255, A: 96}
-				fg = color.NRGBA{R: 238, G: 244, B: 255, A: 255}
-			}
-			if click.Hovered() && !disabled {
-				if primary {
-					bg = color.NRGBA{R: 76, G: 104, B: 194, A: 255}
-				} else {
-					bg = color.NRGBA{R: 36, G: 42, B: 58, A: 255}
+	hoverFill = clamp01(hoverFill)
+	pulseFill = clamp01(pulseFill)
+	if disabled {
+		hoverFill = 0
+		pulseFill = 0
+	}
+	dims := fixedWidth(gtx, gtx.Dp(unit.Dp(82)), func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if click.Pressed() && !disabled && pulseFill < 0.5 {
+					pulseFill = 0.5
 				}
-			}
-			if disabled {
-				bg.A = 160
-				border.A = 40
-				fg = color.NRGBA{R: 170, G: 170, B: 180, A: 255}
-			}
-			return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, border, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, label)
-					lbl.Font.Typeface = typeface
-					lbl.Font.Weight = font.Medium
-					lbl.TextSize = scaleThemeFontSize(th, 10)
-					lbl.Color = fg
-					lbl.MaxLines = 1
-					return layout.Center.Layout(gtx, lbl.Layout)
+
+				hoverDark := color.NRGBA{R: 34, G: 44, B: 66, A: 255}
+				pulseCol := color.NRGBA{R: 126, G: 154, B: 255, A: 255}
+
+				bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
+				bg = mixNRGBA(bg, hoverDark, hoverFill)
+				bg = mixNRGBA(bg, pulseCol, pulseFill*0.3)
+				fg := mixNRGBA(txtColor, color.NRGBA{R: 230, G: 236, B: 255, A: 255}, hoverFill*0.75)
+				fg = mixNRGBA(fg, color.NRGBA{R: 245, G: 250, B: 255, A: 255}, pulseFill*0.25)
+
+				if disabled {
+					bg = color.NRGBA{R: 18, G: 22, B: 30, A: 170}
+					fg = color.NRGBA{R: 160, G: 166, B: 180, A: 255}
+				}
+
+				radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
+				return fillSegmentBg(gtx, bg, radius, roundLeft, roundRight, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(9), Right: unit.Dp(9)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(th, label)
+							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Weight = font.Medium
+							lbl.TextSize = scaleThemeFontSize(th, 10)
+							lbl.Color = fg
+							lbl.MaxLines = 1
+							return lbl.Layout(gtx)
+						})
+					})
 				})
 			})
 		})
 	})
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		return dims
+	}
+	if !disabled {
+		defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
+	}
+	return dims
+}
+
+func (ui *UI) layoutDialogActionPair(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool) layout.Dimensions {
+	stripH := gtx.Dp(unit.Dp(22))
+	if stripH < 1 {
+		stripH = 1
+	}
+	return fillRoundedBox(
+		gtx,
+		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+		color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, stripH, true, false, leftDisabled)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return toolbarSeparator(gtx, stripH)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, stripH, false, true, rightDisabled)
+						}),
+					)
+				})
+			})
+		},
+	)
 }
 
 func layoutProgressBar(gtx layout.Context, frac float32) layout.Dimensions {
