@@ -469,8 +469,8 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 			return fillRoundedBox(
 				gtx,
 				gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-				color.NRGBA{R: 20, G: 24, B: 34, A: 252},
-				color.NRGBA{R: 255, G: 255, B: 255, A: 28},
+				color.NRGBA{R: 20, G: 20, B: 20, A: 252},
+				color.NRGBA{R: 255, G: 255, B: 255, A: 18},
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutFileCopyDialogBody(th, gtx, st)
@@ -524,7 +524,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 	srcText := material.Body2(th, st.srcPath)
 	srcText.Font.Typeface = ui.mainTypeface()
 	srcText.TextSize = scaleThemeFontSize(th, 10)
-	srcText.Color = color.NRGBA{R: 210, G: 220, B: 245, A: 255}
+	srcText.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 	srcText.MaxLines = 1
 	srcText.Truncator = "…"
 
@@ -576,7 +576,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 				return fillRoundedBox(
 					gtx,
 					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-					color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
 					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
 					func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
@@ -588,15 +588,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			ed.TextSize = scaleThemeFontSize(th, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
-			return fillRoundedBox(
-				gtx,
-				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-				color.NRGBA{R: 18, G: 22, B: 30, A: 255},
-				color.NRGBA{R: 110, G: 132, B: 190, A: 120},
-				func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, ed.Layout)
-				},
-			)
+			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.dstEdit), true, ed.Layout)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -613,7 +605,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 				lbl := material.Caption(th, overwriteLabel)
 				lbl.Font.Typeface = ui.mainTypeface()
 				lbl.TextSize = scaleThemeFontSize(th, 9)
-				lbl.Color = color.NRGBA{R: 245, G: 195, B: 120, A: 255}
+				lbl.Color = color.NRGBA{R: 196, G: 196, B: 196, A: 255}
 				lbl.MaxLines = 2
 				return lbl.Layout(gtx)
 			})
@@ -629,7 +621,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			lbl := material.Body2(th, st.lastErr)
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleThemeFontSize(th, 10)
-			lbl.Color = color.NRGBA{R: 240, G: 100, B: 100, A: 255}
+			lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
 		}),
@@ -673,7 +665,7 @@ func (ui *UI) layoutFileCopyProgress(th *material.Theme, gtx layout.Context, fra
 			lbl := material.Caption(th, current)
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleThemeFontSize(th, 9)
-			lbl.Color = color.NRGBA{R: 170, G: 180, B: 205, A: 255}
+			lbl.Color = color.NRGBA{R: 168, G: 168, B: 168, A: 255}
 			lbl.MaxLines = 1
 			lbl.Truncator = "…"
 			return lbl.Layout(gtx)
@@ -687,8 +679,8 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 	return fillRoundedBox(
 		gtx,
 		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 28, G: 26, B: 20, A: 255},
-		color.NRGBA{R: 160, G: 130, B: 76, A: 120},
+		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+		color.NRGBA{R: 255, G: 255, B: 255, A: 18},
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -696,7 +688,7 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 						lbl := material.Caption(th, "Overwrite Details")
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.TextSize = scaleThemeFontSize(th, 9)
-						lbl.Color = color.NRGBA{R: 236, G: 210, B: 162, A: 255}
+						lbl.Color = color.NRGBA{R: 208, G: 208, B: 208, A: 255}
 						return lbl.Layout(gtx)
 					}),
 					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
@@ -704,7 +696,7 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 						lbl := material.Caption(th, "src: "+srcMeta)
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.TextSize = scaleThemeFontSize(th, 9)
-						lbl.Color = color.NRGBA{R: 210, G: 220, B: 245, A: 255}
+						lbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
 						lbl.MaxLines = 1
 						lbl.Truncator = "…"
 						return lbl.Layout(gtx)
@@ -713,7 +705,7 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 						lbl := material.Caption(th, "dst: "+dstMeta)
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.TextSize = scaleThemeFontSize(th, 9)
-						lbl.Color = color.NRGBA{R: 240, G: 200, B: 170, A: 255}
+						lbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
 						lbl.MaxLines = 1
 						lbl.Truncator = "…"
 						return lbl.Layout(gtx)
@@ -741,17 +733,17 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 					pulseFill = 0.5
 				}
 
-				hoverDark := color.NRGBA{R: 34, G: 44, B: 66, A: 255}
-				pulseCol := color.NRGBA{R: 126, G: 154, B: 255, A: 255}
+				hoverDark := color.NRGBA{R: 34, G: 34, B: 34, A: 255}
+				pulseCol := color.NRGBA{R: 48, G: 48, B: 48, A: 255}
 
-				bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
+				bg := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
 				bg = mixNRGBA(bg, hoverDark, hoverFill)
 				bg = mixNRGBA(bg, pulseCol, pulseFill*0.3)
-				fg := mixNRGBA(txtColor, color.NRGBA{R: 230, G: 236, B: 255, A: 255}, hoverFill*0.75)
-				fg = mixNRGBA(fg, color.NRGBA{R: 245, G: 250, B: 255, A: 255}, pulseFill*0.25)
+				fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, hoverFill*0.75)
+				fg = mixNRGBA(fg, color.NRGBA{R: 248, G: 248, B: 248, A: 255}, pulseFill*0.25)
 
 				if disabled {
-					bg = color.NRGBA{R: 18, G: 22, B: 30, A: 170}
+					bg = color.NRGBA{R: 24, G: 24, B: 24, A: 170}
 					fg = color.NRGBA{R: 160, G: 166, B: 180, A: 255}
 				}
 
@@ -790,7 +782,7 @@ func (ui *UI) layoutDialogActionPair(th *material.Theme, gtx layout.Context, lef
 	return fillRoundedBox(
 		gtx,
 		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
 		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -837,10 +829,10 @@ func layoutProgressBar(gtx layout.Context, frac float32) layout.Dimensions {
 	}
 
 	bg := image.Rect(0, 0, width, height)
-	paint.FillShape(gtx.Ops, color.NRGBA{R: 34, G: 40, B: 56, A: 255}, clip.Rect(bg).Op())
+	paint.FillShape(gtx.Ops, color.NRGBA{R: 34, G: 34, B: 34, A: 255}, clip.Rect(bg).Op())
 	if fillW > 0 {
 		fg := image.Rect(0, 0, fillW, height)
-		paint.FillShape(gtx.Ops, color.NRGBA{R: 110, G: 150, B: 245, A: 255}, clip.Rect(fg).Op())
+		paint.FillShape(gtx.Ops, color.NRGBA{R: 140, G: 140, B: 140, A: 255}, clip.Rect(fg).Op())
 	}
 	return layout.Dimensions{Size: image.Pt(width, height)}
 }

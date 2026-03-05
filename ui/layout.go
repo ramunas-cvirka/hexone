@@ -140,6 +140,7 @@ type UI struct {
 	fileDelete       *fileDeleteState
 	fileViewer       *fileViewerState
 	settingsModal    *settingsModalState
+	sshModal         *sshModalState
 
 	protoDropGlobalPointerTag struct{}
 }
@@ -623,6 +624,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsModal(th, gtx)
 		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSSHModal(th, gtx)
+		}),
 	)
 	ui.handleProtocolDropdownOutsideClick(gtx)
 	if ui != nil && ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
@@ -682,7 +686,7 @@ func (ui *UI) handleProtocolDropdownOutsideClick(gtx layout.Context) {
 }
 
 func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
-	if ui == nil || ui.settingsModal != nil || ui.Tabs.Value == "tab0" {
+	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil || ui.Tabs.Value == "tab0" {
 		return
 	}
 	switched := false
@@ -714,7 +718,10 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 	anyMods := ^key.Modifiers(0)
 	for {
-		ev, ok := gtx.Event(key.Filter{Name: key.NameF3, Optional: anyMods})
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameF3, Optional: anyMods},
+			key.Filter{Name: "F", Required: key.ModCtrl, Optional: key.ModCtrl},
+		)
 		if !ok {
 			return
 		}
@@ -722,34 +729,55 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		if !ok {
 			continue
 		}
-		if ke.State == key.Release {
-			ui.clearFileViewHotkeyHold()
-			continue
+		switch ke.Name {
+		case key.NameF3:
+			if ke.State == key.Release {
+				ui.clearFileViewHotkeyHold()
+				continue
+			}
+			if ke.State != key.Press {
+				continue
+			}
+			// Swallow modified/unknown-flag F3 to prevent system beep, but don't trigger actions.
+			if ke.Modifiers != 0 {
+				continue
+			}
+			if ui == nil || ui.Tabs.Value != "tab0" {
+				continue
+			}
+			if ui.settingsModal != nil || ui.sshModal != nil {
+				continue
+			}
+			if ui.fileViewer != nil {
+				ui.startFileViewerLoad(gtx.Now)
+				continue
+			}
+			if ui.fileCopy != nil || ui.fileDelete != nil {
+				continue
+			}
+			if ui.pathEditActive() {
+				continue
+			}
+			ui.startFileViewer(ui.activeFilePane, gtx.Now)
+		case "F":
+			if ke.State != key.Press || ke.Modifiers != key.ModCtrl {
+				continue
+			}
+			if ui == nil || ui.Tabs.Value != "tab0" {
+				continue
+			}
+			if ui.settingsModal != nil || ui.sshModal != nil {
+				continue
+			}
+			if ui.fileViewer != nil || ui.fileCopy != nil || ui.fileDelete != nil {
+				continue
+			}
+			if ui.pathEditActive() {
+				continue
+			}
+			ui.openSSHModal()
+			gtx.Execute(op.InvalidateCmd{})
 		}
-		if ke.State != key.Press {
-			continue
-		}
-		// Swallow modified/unknown-flag F3 to prevent system beep, but don't trigger actions.
-		if ke.Modifiers != 0 {
-			continue
-		}
-		if ui == nil || ui.Tabs.Value != "tab0" {
-			continue
-		}
-		if ui.settingsModal != nil {
-			continue
-		}
-		if ui.fileViewer != nil {
-			ui.startFileViewerLoad(gtx.Now)
-			continue
-		}
-		if ui.fileCopy != nil || ui.fileDelete != nil {
-			continue
-		}
-		if ui.pathEditActive() {
-			continue
-		}
-		ui.startFileViewer(ui.activeFilePane, gtx.Now)
 	}
 }
 

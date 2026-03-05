@@ -64,8 +64,23 @@ type FontConfig struct {
 
 type ViewerConfig struct {
 	Mode       string  `yaml:"mode"`
+	Shell      string  `yaml:"shell"`
 	Command    string  `yaml:"command"`
 	FontSizeSp float32 `yaml:"font_size_sp"`
+}
+
+type SSHSetup struct {
+	Name          string `yaml:"name"`
+	Host          string `yaml:"host"`
+	Port          int    `yaml:"port"`
+	User          string `yaml:"user"`
+	Password      string `yaml:"password"`
+	KeyPath       string `yaml:"key_path"`
+	KeyPassphrase string `yaml:"key_passphrase"`
+}
+
+type SSHConfig struct {
+	Setups []SSHSetup `yaml:"setups"`
 }
 
 type Config struct {
@@ -77,6 +92,7 @@ type Config struct {
 	Sort              SortConfig   `yaml:"sort"`
 	Font              FontConfig   `yaml:"font"`
 	Viewer            ViewerConfig `yaml:"viewer"`
+	SSH               SSHConfig    `yaml:"ssh"`
 }
 
 func DefaultConfig() *Config {
@@ -139,8 +155,12 @@ func DefaultConfig() *Config {
 		},
 		Viewer: ViewerConfig{
 			Mode:       "file",
+			Shell:      "auto",
 			Command:    "cat {path}",
 			FontSizeSp: 13,
+		},
+		SSH: SSHConfig{
+			Setups: []SSHSetup{},
 		},
 	}
 	cfg.normalize()
@@ -328,6 +348,16 @@ func (c *Config) normalize() {
 	default:
 		c.Viewer.Mode = "file"
 	}
+	switch strings.ToLower(strings.TrimSpace(c.Viewer.Shell)) {
+	case "", "auto":
+		c.Viewer.Shell = "auto"
+	case "sh":
+		c.Viewer.Shell = "sh"
+	case "pwsh", "powershell":
+		c.Viewer.Shell = "powershell"
+	default:
+		c.Viewer.Shell = "auto"
+	}
 	if c.Viewer.Command == "" {
 		c.Viewer.Command = "cat {path}"
 	}
@@ -337,6 +367,8 @@ func (c *Config) normalize() {
 			c.Viewer.FontSizeSp = 13
 		}
 	}
+
+	c.normalizeSSHSetups()
 }
 
 func (c *Config) normalizeFavoriteLocations() {
@@ -378,4 +410,31 @@ func sameFavoriteLocation(a, b string) bool {
 		return a == b
 	}
 	return a == b
+}
+
+func (c *Config) normalizeSSHSetups() {
+	if c == nil {
+		return
+	}
+	if len(c.SSH.Setups) == 0 {
+		c.SSH.Setups = nil
+		return
+	}
+	out := make([]SSHSetup, 0, len(c.SSH.Setups))
+	for _, raw := range c.SSH.Setups {
+		setup := SSHSetup{
+			Name:          strings.TrimSpace(raw.Name),
+			Host:          strings.TrimSpace(raw.Host),
+			Port:          raw.Port,
+			User:          strings.TrimSpace(raw.User),
+			Password:      raw.Password,
+			KeyPath:       strings.TrimSpace(raw.KeyPath),
+			KeyPassphrase: raw.KeyPassphrase,
+		}
+		if setup.Port <= 0 {
+			setup.Port = 22
+		}
+		out = append(out, setup)
+	}
+	c.SSH.Setups = out
 }

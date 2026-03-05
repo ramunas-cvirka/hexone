@@ -25,6 +25,10 @@ var errOutOfDate = errors.New("app: GPU surface out of date")
 type Config struct {
 	// Size is the window dimensions (Width, Height).
 	Size image.Point
+	// Position is the window top-left position in screen coordinates.
+	Position image.Point
+	// HasPosition reports whether Position should be applied.
+	HasPosition bool
 	// MaxSize is the window maximum allowed dimensions.
 	MaxSize image.Point
 	// MinSize is the window minimum allowed dimensions.

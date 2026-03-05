@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/io/key"
@@ -52,6 +53,11 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 	if st.refreshClick.Clicked(gtx) {
 		ui.startFileViewerLoad(gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
+	}
+	if st.loading {
+		// Keep frames ticking while background load is running, otherwise
+		// results can remain pending until an external event (e.g. resize).
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
 	}
 
 	ui.scheduleFileViewerWatch(gtx)

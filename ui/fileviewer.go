@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -166,6 +168,7 @@ func (ui *UI) startFileViewerLoad(now time.Time) {
 
 	cfg := fm.ViewerConfig{
 		Mode:    "file",
+		Shell:   "auto",
 		Command: "cat {path}",
 	}
 	if ui != nil && ui.fmCfg != nil {
@@ -359,7 +362,7 @@ func readViewerContent(path string, cfg fm.ViewerConfig, maxBytes int) (string, 
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
 	switch mode {
 	case "command":
-		return readViewerCommand(path, cfg.Command, maxBytes, start)
+		return readViewerCommand(path, cfg.Command, cfg.Shell, maxBytes, start)
 	default:
 		return readViewerFile(path, maxBytes, start)
 	}
@@ -395,46 +398,159 @@ func readViewerFile(path string, maxBytes int, started time.Time) (string, strin
 	return content, status, ""
 }
 
-func readViewerCommand(path, template string, maxBytes int, started time.Time) (string, string, string) {
+func readViewerCommand(path, template, shellMode string, maxBytes int, started time.Time) (string, string, string) {
 	cmdline := strings.TrimSpace(template)
 	if cmdline == "" {
 		return "", "", "viewer command is empty"
 	}
-	cmdline = expandViewerCommandTemplate(cmdline, path)
+	shell := resolveViewerShell(shellMode)
+	cmdline = expandViewerCommandTemplate(cmdline, path, shell.quoteFn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", cmdline)
+	args := append(append([]string{}, shell.args...), cmdline)
+	cmd := exec.CommandContext(ctx, shell.program, args...)
+	configureViewerCommandProcess(cmd)
 	cmd.Dir = filepath.Clean(filepath.Dir(path))
-	out, err := cmd.CombinedOutput()
-	truncated := false
-	if len(out) > maxBytes {
-		truncated = true
-		out = out[:maxBytes]
-	}
+	buf := newViewerCommandBuffer(maxBytes, cancel)
+	cmd.Stdout = buf
+	cmd.Stderr = buf
+	err := cmd.Run()
+	out := buf.Bytes()
+	truncated := buf.Truncated()
 	content := string(bytes.ToValidUTF8(out, []byte("\xef\xbf\xbd")))
 	content = sanitizeViewerContent(content)
 	if truncated {
 		content += "\n\n[truncated]"
 	}
-	status := "command"
+	status := fmt.Sprintf("command (%s)", shell.name)
 	if truncated {
 		status += " (truncated)"
 	}
 	status += fmt.Sprintf(" | %s", time.Since(started).Round(time.Millisecond))
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return content, status, "viewer command timed out"
+		}
+		if ctx.Err() == context.Canceled && truncated {
+			return content, status, ""
+		}
 		return content, status, err.Error()
 	}
 	return content, status, ""
 }
 
-func expandViewerCommandTemplate(template, fullpath string) string {
+type viewerCommandBuffer struct {
+	mu         sync.Mutex
+	data       []byte
+	max        int
+	cancel     context.CancelFunc
+	cancelOnce sync.Once
+	truncated  bool
+}
+
+func newViewerCommandBuffer(maxBytes int, cancel context.CancelFunc) *viewerCommandBuffer {
+	if maxBytes < 1 {
+		maxBytes = 1
+	}
+	return &viewerCommandBuffer{
+		data:   make([]byte, 0, maxBytes),
+		max:    maxBytes,
+		cancel: cancel,
+	}
+}
+
+func (b *viewerCommandBuffer) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	triggerCancel := false
+	b.mu.Lock()
+	remain := b.max - len(b.data)
+	if remain > 0 {
+		if len(p) <= remain {
+			b.data = append(b.data, p...)
+		} else {
+			b.data = append(b.data, p[:remain]...)
+			b.truncated = true
+			triggerCancel = true
+		}
+	} else {
+		b.truncated = true
+		triggerCancel = true
+	}
+	b.mu.Unlock()
+
+	if triggerCancel && b.cancel != nil {
+		b.cancelOnce.Do(b.cancel)
+	}
+	return len(p), nil
+}
+
+func (b *viewerCommandBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]byte, len(b.data))
+	copy(out, b.data)
+	return out
+}
+
+func (b *viewerCommandBuffer) Truncated() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.truncated
+}
+
+type viewerShellSpec struct {
+	name    string
+	program string
+	args    []string
+	quoteFn func(string) string
+}
+
+func resolveViewerShell(raw string) viewerShellSpec {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	if mode == "" || mode == "auto" {
+		if runtime.GOOS == "windows" {
+			mode = "powershell"
+		} else {
+			mode = "sh"
+		}
+	}
+	switch mode {
+	case "sh":
+		return viewerShellSpec{
+			name:    "sh",
+			program: "/bin/sh",
+			args:    []string{"-lc"},
+			quoteFn: shellQuote,
+		}
+	case "pwsh", "powershell":
+		program := "pwsh"
+		if runtime.GOOS == "windows" {
+			program = "powershell"
+		}
+		return viewerShellSpec{
+			name:    "powershell",
+			program: program,
+			args:    []string{"-NoProfile", "-NonInteractive", "-Command"},
+			quoteFn: powerShellQuote,
+		}
+	default:
+		return resolveViewerShell("auto")
+	}
+}
+
+func expandViewerCommandTemplate(template, fullpath string, quoteFn func(string) string) string {
 	filename := filepath.Base(fullpath)
 	cmdline := strings.TrimSpace(template)
-	cmdline = strings.ReplaceAll(cmdline, "{fullpath}", shellQuote(fullpath))
-	cmdline = strings.ReplaceAll(cmdline, "{path}", shellQuote(fullpath))
-	cmdline = strings.ReplaceAll(cmdline, "{filename}", shellQuote(filename))
+	if quoteFn == nil {
+		quoteFn = shellQuote
+	}
+	cmdline = strings.ReplaceAll(cmdline, "{fullpath}", quoteFn(fullpath))
+	cmdline = strings.ReplaceAll(cmdline, "{path}", quoteFn(fullpath))
+	cmdline = strings.ReplaceAll(cmdline, "{filename}", quoteFn(filename))
 	return cmdline
 }
 
@@ -443,6 +559,13 @@ func shellQuote(raw string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(raw, "'", "'\"'\"'") + "'"
+}
+
+func powerShellQuote(raw string) string {
+	if raw == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(raw, "'", "''") + "'"
 }
 
 func sanitizeViewerContent(raw string) string {

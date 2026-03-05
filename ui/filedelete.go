@@ -261,8 +261,8 @@ func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) lay
 			return fillRoundedBox(
 				gtx,
 				gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-				color.NRGBA{R: 36, G: 18, B: 20, A: 252},
-				color.NRGBA{R: 185, G: 86, B: 92, A: 120},
+				color.NRGBA{R: 20, G: 20, B: 20, A: 252},
+				color.NRGBA{R: 255, G: 255, B: 255, A: 18},
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutFileDeleteDialogBody(th, gtx, st)
@@ -311,7 +311,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 	desc := material.Caption(th, "This action cannot be undone.")
 	desc.Font.Typeface = ui.mainTypeface()
 	desc.TextSize = scaleThemeFontSize(th, 9)
-	desc.Color = color.NRGBA{R: 232, G: 170, B: 170, A: 255}
+	desc.Color = color.NRGBA{R: 206, G: 186, B: 148, A: 255}
 
 	target := st.targetName
 	if target == "" {
@@ -321,21 +321,21 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 	targetLabel.Font.Typeface = ui.mainTypeface()
 	targetLabel.TextSize = scaleThemeFontSize(th, 10)
 	targetLabel.Font.Weight = font.Medium
-	targetLabel.Color = color.NRGBA{R: 248, G: 220, B: 220, A: 255}
+	targetLabel.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 	targetLabel.MaxLines = 1
 	targetLabel.Truncator = "…"
 
 	pathLabel := material.Caption(th, st.targetPath)
 	pathLabel.Font.Typeface = ui.mainTypeface()
 	pathLabel.TextSize = scaleThemeFontSize(th, 9)
-	pathLabel.Color = color.NRGBA{R: 210, G: 182, B: 182, A: 255}
+	pathLabel.Color = color.NRGBA{R: 172, G: 172, B: 172, A: 255}
 	pathLabel.MaxLines = 1
 	pathLabel.Truncator = "…"
 
 	meta := material.Caption(th, formatCopyPathInfo(st.targetInfo))
 	meta.Font.Typeface = ui.mainTypeface()
 	meta.TextSize = scaleThemeFontSize(th, 9)
-	meta.Color = color.NRGBA{R: 235, G: 198, B: 166, A: 255}
+	meta.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
 	meta.MaxLines = 1
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -346,7 +346,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 					title.Font.Typeface = ui.mainTypeface()
 					title.Font.Weight = font.Bold
 					title.TextSize = scaleThemeFontSize(th, 12)
-					title.Color = color.NRGBA{R: 255, G: 188, B: 188, A: 255}
+					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -370,7 +370,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 			lbl := material.Caption(th, st.lastErr)
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleThemeFontSize(th, 9)
-			lbl.Color = color.NRGBA{R: 255, G: 140, B: 140, A: 255}
+			lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
 		}),

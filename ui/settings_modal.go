@@ -53,6 +53,7 @@ type settingsModalState struct {
 	viewModePulseKey     string
 	viewModePulseAt      time.Time
 	viewCommandEdit      widget.Editor
+	viewShellEdit        widget.Editor
 	viewFontSizeEdit     widget.Editor
 
 	footerHoverKey  string
@@ -78,6 +79,8 @@ func (ui *UI) openSettingsModal() {
 		st = &settingsModalState{activeTab: "viewer"}
 		st.viewCommandEdit.SingleLine = true
 		st.viewCommandEdit.Submit = false
+		st.viewShellEdit.SingleLine = true
+		st.viewShellEdit.Submit = false
 		st.viewFontSizeEdit.SingleLine = true
 		st.viewFontSizeEdit.Submit = false
 		st.configEdit.SingleLine = false
@@ -101,6 +104,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	}
 	st.viewMode = mode
 	st.viewCommandEdit.SetText(cfg.Viewer.Command)
+	st.viewShellEdit.SetText(normalizeViewerShellInput(cfg.Viewer.Shell))
 	st.viewFontSizeEdit.SetText(formatConfigFloat(cfg.Viewer.FontSizeSp))
 	if raw, err := yaml.Marshal(cfg); err == nil {
 		st.configEdit.SetText(string(raw))
@@ -404,6 +408,12 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if cmd == "" {
 		cmd = "cat {path}"
 	}
+	shell := normalizeViewerShellInput(st.viewShellEdit.Text())
+	switch shell {
+	case "auto", "sh", "powershell":
+	default:
+		return fmt.Errorf("viewer shell must be auto, sh, or powershell")
+	}
 
 	viewerFontSize, err := strconv.ParseFloat(strings.TrimSpace(st.viewFontSizeEdit.Text()), 32)
 	if err != nil || viewerFontSize < 6 {
@@ -412,6 +422,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 
 	ui.fmCfg.Viewer.Mode = mode
 	ui.fmCfg.Viewer.Command = cmd
+	ui.fmCfg.Viewer.Shell = shell
 	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
 	if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
 		return err
@@ -507,8 +518,8 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 				return fillRoundedBox(
 					gtx,
 					gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-					color.NRGBA{R: 20, G: 24, B: 34, A: 252},
-					color.NRGBA{R: 255, G: 255, B: 255, A: 30},
+					color.NRGBA{R: 20, G: 20, B: 20, A: 252},
+					color.NRGBA{R: 255, G: 255, B: 255, A: 18},
 					func(gtx layout.Context) layout.Dimensions {
 						return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -598,10 +609,10 @@ func (ui *UI) layoutSettingsNavSegment(th *material.Theme, gtx layout.Context, c
 			pulseFill = 0.5
 		}
 
-		baseBlue := color.NRGBA{R: 68, G: 92, B: 180, A: 255}
-		hoverDark := color.NRGBA{R: 34, G: 44, B: 66, A: 255}
-		hoverLight := color.NRGBA{R: 86, G: 112, B: 204, A: 255}
-		pulseCol := color.NRGBA{R: 126, G: 154, B: 255, A: 255}
+		baseBlue := color.NRGBA{R: 40, G: 40, B: 40, A: 255}
+		hoverDark := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
+		hoverLight := color.NRGBA{R: 54, G: 54, B: 54, A: 255}
+		pulseCol := color.NRGBA{R: 72, G: 72, B: 72, A: 255}
 
 		bg := mixNRGBA(color.NRGBA{}, baseBlue, activeFill)
 		darkMix := hoverFill * (1 - activeFill)
@@ -610,9 +621,9 @@ func (ui *UI) layoutSettingsNavSegment(th *material.Theme, gtx layout.Context, c
 		bg = mixNRGBA(bg, hoverLight, lightMix)
 		bg = mixNRGBA(bg, pulseCol, pulseFill*0.35)
 
-		fg := mixNRGBA(txtColor, color.NRGBA{R: 240, G: 246, B: 255, A: 255}, activeFill)
-		fg = mixNRGBA(fg, color.NRGBA{R: 230, G: 236, B: 255, A: 255}, hoverFill*0.75)
-		fg = mixNRGBA(fg, color.NRGBA{R: 245, G: 250, B: 255, A: 255}, pulseFill*0.25)
+		fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, activeFill)
+		fg = mixNRGBA(fg, color.NRGBA{R: 228, G: 228, B: 228, A: 255}, hoverFill*0.75)
+		fg = mixNRGBA(fg, color.NRGBA{R: 246, G: 246, B: 246, A: 255}, pulseFill*0.25)
 		radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
 		return fillSettingsNavSegmentBg(gtx, bg, radius, roundTop, roundBottom, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -663,10 +674,10 @@ func (ui *UI) layoutSettingsHSegment(th *material.Theme, gtx layout.Context, c *
 				pulseFill = 0.5
 			}
 
-			baseBlue := color.NRGBA{R: 68, G: 92, B: 180, A: 255}
-			hoverDark := color.NRGBA{R: 34, G: 44, B: 66, A: 255}
-			hoverLight := color.NRGBA{R: 86, G: 112, B: 204, A: 255}
-			pulseCol := color.NRGBA{R: 126, G: 154, B: 255, A: 255}
+			baseBlue := color.NRGBA{R: 40, G: 40, B: 40, A: 255}
+			hoverDark := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
+			hoverLight := color.NRGBA{R: 54, G: 54, B: 54, A: 255}
+			pulseCol := color.NRGBA{R: 72, G: 72, B: 72, A: 255}
 
 			bg := mixNRGBA(color.NRGBA{}, baseBlue, activeFill)
 			darkMix := hoverFill * (1 - activeFill)
@@ -675,9 +686,9 @@ func (ui *UI) layoutSettingsHSegment(th *material.Theme, gtx layout.Context, c *
 			bg = mixNRGBA(bg, hoverLight, lightMix)
 			bg = mixNRGBA(bg, pulseCol, pulseFill*0.35)
 
-			fg := mixNRGBA(txtColor, color.NRGBA{R: 240, G: 246, B: 255, A: 255}, activeFill)
-			fg = mixNRGBA(fg, color.NRGBA{R: 230, G: 236, B: 255, A: 255}, hoverFill*0.75)
-			fg = mixNRGBA(fg, color.NRGBA{R: 245, G: 250, B: 255, A: 255}, pulseFill*0.25)
+			fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, activeFill)
+			fg = mixNRGBA(fg, color.NRGBA{R: 228, G: 228, B: 228, A: 255}, hoverFill*0.75)
+			fg = mixNRGBA(fg, color.NRGBA{R: 246, G: 246, B: 246, A: 255}, pulseFill*0.25)
 
 			radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
 			return fillSegmentBg(gtx, bg, radius, roundLeft, roundRight, func(gtx layout.Context) layout.Dimensions {
@@ -736,8 +747,8 @@ func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st
 				return fillRoundedBox(
 					gtx,
 					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-					color.NRGBA{R: 16, G: 20, B: 30, A: 255},
-					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
+					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+					color.NRGBA{R: 255, G: 255, B: 255, A: 18},
 					func(gtx layout.Context) layout.Dimensions {
 						return layout.UniformInset(unit.Dp(2)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -807,7 +818,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 			lbl.TextSize = scaleThemeFontSize(th, 9)
 			lbl.Color = hintColor
 			if !enabled {
-				lbl.Color = color.NRGBA{R: 104, G: 110, B: 124, A: 255}
+				lbl.Color = color.NRGBA{R: 102, G: 102, B: 102, A: 255}
 			}
 			return lbl.Layout(gtx)
 		}
@@ -826,7 +837,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 			stripDims := fillRoundedBox(
 				gtx,
 				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-				color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+				color.NRGBA{R: 24, G: 24, B: 24, A: 255},
 				color.NRGBA{R: 255, G: 255, B: 255, A: 22},
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -871,23 +882,22 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 			ed.TextSize = scaleThemeFontSize(th, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
-			bg := color.NRGBA{R: 16, G: 20, B: 30, A: 255}
-			border := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
 			if !commandEnabled {
 				ed.Color = color.NRGBA{R: 128, G: 136, B: 152, A: 255}
 				ed.HintColor = color.NRGBA{R: 95, G: 101, B: 114, A: 255}
-				bg = color.NRGBA{R: 13, G: 16, B: 24, A: 255}
-				border = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
 			}
-			return fillRoundedBox(
-				gtx,
-				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-				bg,
-				border,
-				func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, ed.Layout)
-				},
-			)
+			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewCommandEdit), commandEnabled, ed.Layout)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(rowLabel("Shell (auto | sh | powershell)", true)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			ed := material.Editor(th, &st.viewShellEdit, "auto")
+			ed.Font.Typeface = ui.mainTypeface()
+			ed.TextSize = scaleThemeFontSize(th, 10)
+			ed.Color = txtColor
+			ed.HintColor = hintColor
+			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewShellEdit), true, ed.Layout)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(rowLabel("Viewer font size (sp)", true)),
@@ -898,15 +908,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 			ed.TextSize = scaleThemeFontSize(th, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
-			return fillRoundedBox(
-				gtx,
-				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-				color.NRGBA{R: 16, G: 20, B: 30, A: 255},
-				color.NRGBA{R: 255, G: 255, B: 255, A: 18},
-				func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, ed.Layout)
-				},
-			)
+			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewFontSizeEdit), true, ed.Layout)
 		}),
 	)
 }
@@ -950,7 +952,7 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 			return fillRoundedBox(
 				gtx,
 				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-				color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+				color.NRGBA{R: 24, G: 24, B: 24, A: 255},
 				color.NRGBA{R: 255, G: 255, B: 255, A: 22},
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -990,15 +992,7 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 			ed.TextSize = scaleThemeFontSize(th, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
-			return fillRoundedBox(
-				gtx,
-				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-				color.NRGBA{R: 16, G: 20, B: 30, A: 255},
-				color.NRGBA{R: 255, G: 255, B: 255, A: 18},
-				func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, ed.Layout)
-				},
-			)
+			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.configEdit), true, ed.Layout)
 		}),
 	)
 }
@@ -1008,6 +1002,20 @@ func formatConfigFloat(v float32) string {
 		return ""
 	}
 	return strconv.FormatFloat(float64(v), 'f', -1, 32)
+}
+
+func normalizeViewerShellInput(raw string) string {
+	shell := strings.ToLower(strings.TrimSpace(raw))
+	switch shell {
+	case "", "auto":
+		return "auto"
+	case "sh":
+		return "sh"
+	case "pwsh", "powershell":
+		return "powershell"
+	default:
+		return shell
+	}
 }
 
 func (ui *UI) applyConfigRuntime(now time.Time) {

@@ -898,6 +898,17 @@ func Size(w, h unit.Dp) Option {
 	}
 }
 
+// Position sets the top-left position of the window in screen coordinates.
+func Position(x, y unit.Dp) Option {
+	return func(m unit.Metric, cnf *Config) {
+		cnf.Position = image.Point{
+			X: m.Dp(x),
+			Y: m.Dp(y),
+		}
+		cnf.HasPosition = true
+	}
+}
+
 // MaxSize sets the maximum size of the window.
 func MaxSize(w, h unit.Dp) Option {
 	if w <= 0 {

@@ -15,6 +15,8 @@ import (
 	"gioui.org/widget/material"
 )
 
+const sessionPath = "fm.session.yaml"
+
 func main() {
 	go func() {
 		window := new(app.Window)
@@ -41,6 +43,8 @@ func mustFont(path string) font.Face {
 
 func run(window *app.Window) error {
 	cfg := fm.LoadConfig("fm.yaml")
+	session := fm.LoadSession(sessionPath)
+	applyWindowOptionsFromSession(window, session)
 	th := material.NewTheme()
 
 	regular := mustFont(cfg.Font.RegularPath)
@@ -57,15 +61,32 @@ func run(window *app.Window) error {
 
 	var ops op.Ops
 	mainUI := ui.NewUI(cfg)
+	windowTracker := newWindowStateTracker(session)
+	sessionApplied := false
 
 	for {
 		switch typ := window.Event().(type) {
 		case app.DestroyEvent:
+			snapshot := mainUI.SnapshotSession()
+			windowTracker.ApplyToSession(snapshot)
+			if err := fm.SaveSession(sessionPath, snapshot); err != nil {
+				log.Printf("save session: %v", err)
+			}
 			os.Exit(0)
+		case app.ViewEvent:
+			windowTracker.ObserveView(typ)
+		case app.ConfigEvent:
+			windowTracker.ObserveConfig(typ.Config)
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, typ)
 			mainUI.Layout(th, gtx)
 			typ.Frame(gtx.Ops)
+			windowTracker.ObserveFrame()
+			if !sessionApplied {
+				sessionApplied = true
+				mainUI.ApplySession(session)
+				window.Invalidate()
+			}
 		}
 	}
 }

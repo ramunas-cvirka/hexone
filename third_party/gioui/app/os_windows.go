@@ -736,9 +736,14 @@ func (w *window) Configure(options []Option) {
 		width = int32(cnf.Size.X)
 		height = int32(cnf.Size.Y)
 		// Get the current window size and position.
-		wr := windows.GetWindowRect(w.hwnd)
-		x = wr.Left
-		y = wr.Top
+		if cnf.HasPosition {
+			x = int32(cnf.Position.X)
+			y = int32(cnf.Position.Y)
+		} else {
+			wr := windows.GetWindowRect(w.hwnd)
+			x = wr.Left
+			y = wr.Top
+		}
 		if cnf.Decorated {
 			// Compute client size and position. Note that the client size is
 			// equal to the window size when we are in control of decorations.

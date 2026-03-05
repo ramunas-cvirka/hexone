@@ -1,0 +1,14 @@
+window:
+    x: 564
+    "y": 455
+    has_position: true
+    width: 1342
+    height: 666
+    mode: windowed
+active_tab: tab0
+active_pane: 0
+panes:
+    - dir: C:\Users\ramuc\go\src
+      selected_path: C:\Users\ramuc\go\src\hexone
+    - dir: C:\Users\ramuc\go\src\hexone
+      selected_path: C:\Users\ramuc\go\src\hexone\fm.session.yaml

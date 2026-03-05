@@ -52,6 +52,16 @@ font:
     medium_path: assets/FiraCode-Medium.ttf
     bold_path: assets/FiraCode-Bold.ttf
 viewer:
-    mode: file
+    mode: command
+    shell: auto
     command: cat {path}
     font_size_sp: 13
+ssh:
+    setups:
+        - name: rocky-test
+          host: 157.11.1.1
+          port: 22
+          user: root
+          password: daddy
+          key_path: ""
+          key_passphrase: ""

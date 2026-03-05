@@ -66,7 +66,7 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 }
 
 func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
-	if ui.settingsModal != nil {
+	if ui.settingsModal != nil || ui.sshModal != nil {
 		return
 	}
 	if ui.fileViewer != nil {
