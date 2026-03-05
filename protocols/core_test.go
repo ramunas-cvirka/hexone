@@ -22,23 +22,8 @@ func TestLoadRepositorySpecYAML(t *testing.T) {
 	if _, ok := sp.ProtocolByName("gt06"); !ok {
 		t.Fatalf("expected gt06 protocol")
 	}
-	if _, ok := sp.ProtocolByName("teltonika_tcp"); !ok {
-		t.Fatalf("expected teltonika_tcp protocol")
-	}
-	if _, ok := sp.ProtocolByName("teltonika_imei_tcp"); !ok {
-		t.Fatalf("expected teltonika_imei_tcp protocol")
-	}
-	if _, ok := sp.ProtocolByName("teltonika_udp"); !ok {
-		t.Fatalf("expected teltonika_udp protocol")
-	}
-	if _, ok := sp.ProtocolByName("teltonika_codec12"); !ok {
-		t.Fatalf("expected teltonika_codec12 protocol")
-	}
-	if _, ok := sp.ProtocolByName("teltonika_codec13"); !ok {
-		t.Fatalf("expected teltonika_codec13 protocol")
-	}
-	if _, ok := sp.ProtocolByName("teltonika_codec14"); !ok {
-		t.Fatalf("expected teltonika_codec14 protocol")
+	if _, ok := sp.ProtocolByName("teltonika"); !ok {
+		t.Fatalf("expected teltonika protocol")
 	}
 }
 
@@ -115,6 +100,130 @@ protocols:
 	}
 	if fail.Start != 1 || fail.End != 4 {
 		t.Fatalf("expected failure span to cover unread payload, got [%d..%d)", fail.Start, fail.End)
+	}
+}
+
+func TestPeekChooseSetSyntax(t *testing.T) {
+	const specYAML = `
+version: 1
+protocols:
+  - name: demo_peek_choose
+    endian: be
+    layout:
+      - peek: { name: hdr, type: u8, at: 0, when: "size >= 1", default: 0 }
+      - peek:
+          name: tail_digits
+          type: bytes
+          at: 1
+          len_expr: "size - 1"
+          check: ascii_digits
+          when: "size >= 2"
+          default: false
+      - choose:
+          branches:
+            - when: "hdr == 0xAA && tail_digits"
+              body:
+                - set: { name: kind, expr: "1" }
+            - when: "hdr == 0xBB"
+              body:
+                - set: { name: kind, expr: "2" }
+          default:
+            - set: { name: kind, expr: "0" }
+      - switch:
+          expr: "kind"
+          cases:
+            1:
+              - field: { name: marker, type: u8, value_fmt: hex }
+            2:
+              - field: { name: marker, type: u8, value_fmt: hex }
+          default:
+            - assert: { expr: "0 == 1", message: "unknown demo frame" }
+`
+
+	sp, err := LoadSpecYAML([]byte(specYAML))
+	if err != nil {
+		t.Fatalf("LoadSpecYAML: %v", err)
+	}
+
+	okFrame := []byte{0xAA, '1', '2'}
+	res, err := sp.Decode("demo_peek_choose", okFrame, NewDefaultHookRegistry())
+	if err != nil {
+		t.Fatalf("Decode ok frame: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("unexpected errors for ok frame: %#v", res.Errors)
+	}
+	marker := findSpanNamed(res.Spans, "marker")
+	if marker == nil || marker.Value != "0xAA" {
+		t.Fatalf("unexpected marker span: %+v", marker)
+	}
+
+	badFrame := []byte{0xCC, 0x00}
+	res, err = sp.Decode("demo_peek_choose", badFrame, NewDefaultHookRegistry())
+	if err != nil {
+		t.Fatalf("Decode bad frame: %v", err)
+	}
+	if len(res.Errors) == 0 || res.Errors[0] != "unknown demo frame" {
+		t.Fatalf("expected unknown-frame assert, got: %#v", res.Errors)
+	}
+}
+
+func TestRouteSyntax(t *testing.T) {
+	const specYAML = `
+version: 1
+protocols:
+  - name: demo_route
+    endian: be
+    layout:
+      - route:
+          peek:
+            - { name: hdr, type: u8, at: 0, when: "size >= 1", default: 0 }
+            - name: tail_digits
+              type: bytes
+              at: 1
+              len_expr: "size - 1"
+              check: ascii_digits
+              when: "size >= 2"
+              default: false
+          branches:
+            - when: "hdr == 0xAA && tail_digits"
+              to: aa_digits
+            - when: "hdr == 0xBB"
+              to: bb_any
+          targets:
+            aa_digits:
+              - field: { name: marker, type: u8, value_fmt: hex }
+            bb_any:
+              - field: { name: marker, type: u8, value_fmt: hex }
+          default:
+            - assert: { expr: "0 == 1", message: "unknown demo route frame" }
+`
+
+	sp, err := LoadSpecYAML([]byte(specYAML))
+	if err != nil {
+		t.Fatalf("LoadSpecYAML: %v", err)
+	}
+
+	okFrame := []byte{0xAA, '1', '2'}
+	res, err := sp.Decode("demo_route", okFrame, NewDefaultHookRegistry())
+	if err != nil {
+		t.Fatalf("Decode ok frame: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("unexpected errors for ok frame: %#v", res.Errors)
+	}
+	marker := findSpanNamed(res.Spans, "marker")
+	if marker == nil || marker.Value != "0xAA" {
+		t.Fatalf("unexpected marker span: %+v", marker)
+	}
+
+	badFrame := []byte{0xCC, 0x00}
+	res, err = sp.Decode("demo_route", badFrame, NewDefaultHookRegistry())
+	if err != nil {
+		t.Fatalf("Decode bad frame: %v", err)
+	}
+	if len(res.Errors) == 0 || res.Errors[0] != "unknown demo route frame" {
+		t.Fatalf("expected unknown-frame assert, got: %#v", res.Errors)
 	}
 }
 
@@ -201,7 +310,7 @@ func TestRepositoryTeltonikaIMEITCPPacket(t *testing.T) {
 		t.Fatalf("unexpected decode errors: %#v", res.Errors)
 	}
 
-	imei := findSpanNamed(res.Spans, "imei")
+	imei := findSpanNamed(res.Spans, "imei.value")
 	if imei == nil || imei.Value != "356307042441013" {
 		t.Fatalf("unexpected imei span: %+v", imei)
 	}
@@ -223,11 +332,11 @@ func TestRepositoryTeltonikaCodec12CommandPacket(t *testing.T) {
 		t.Fatalf("unexpected decode errors: %#v", res.Errors)
 	}
 
-	body := findSpanNamed(res.Spans, "data_field")
+	body := findSpanNamed(res.Spans, "tcp.data_field")
 	if body == nil {
-		t.Fatalf("missing data_field span")
+		t.Fatalf("missing tcp.data_field span")
 	}
-	msg := findSpanNamed(body.Children, "message")
+	msg := findSpanNamed(body.Children, "command.payload")
 	if msg == nil || msg.Value != "getinfo" {
 		t.Fatalf("unexpected message span: %+v", msg)
 	}

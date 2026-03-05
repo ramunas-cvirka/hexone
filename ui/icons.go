@@ -11,6 +11,7 @@ var (
 	uiIconsOnce    sync.Once
 	uiCloseIconRef *widget.Icon
 	uiRefreshIcon  *widget.Icon
+	uiCopyIcon     *widget.Icon
 )
 
 func uiCloseIcon() *widget.Icon {
@@ -23,10 +24,16 @@ func uiRefreshGlyphIcon() *widget.Icon {
 	return uiRefreshIcon
 }
 
+func uiCopyGlyphIcon() *widget.Icon {
+	initUIIcons()
+	return uiCopyIcon
+}
+
 func initUIIcons() {
 	uiIconsOnce.Do(func() {
 		uiCloseIconRef = mustUIIcon(widget.NewIcon(mdicons.NavigationClose))
 		uiRefreshIcon = mustUIIcon(widget.NewIcon(mdicons.NavigationRefresh))
+		uiCopyIcon = mustUIIcon(widget.NewIcon(mdicons.ContentContentCopy))
 	})
 }
 

@@ -38,6 +38,10 @@ type Node struct {
 	Repeat *RepeatNode `yaml:"repeat,omitempty"`
 	Hook   *HookNode   `yaml:"hook,omitempty"`
 	Align  *AlignNode  `yaml:"align,omitempty"`
+	Peek   *PeekNode   `yaml:"peek,omitempty"`
+	Choose *ChooseNode `yaml:"choose,omitempty"`
+	Set    *SetNode    `yaml:"set,omitempty"`
+	Route  *RouteNode  `yaml:"route,omitempty"`
 }
 
 type FieldNode struct {
@@ -96,6 +100,61 @@ type AlignNode struct {
 	Desc  string `yaml:"desc,omitempty"`
 }
 
+type PeekNode struct {
+	Name    string `yaml:"name"`
+	Type    string `yaml:"type"`
+	At      int    `yaml:"at"`
+	Len     *int   `yaml:"len,omitempty"`
+	LenExpr string `yaml:"len_expr,omitempty"`
+	Endian  string `yaml:"endian,omitempty"` // optional override: be/le
+	Check   string `yaml:"check,omitempty"`  // optional: ascii_digits
+	When    string `yaml:"when,omitempty"`   // optional condition
+	Default any    `yaml:"default,omitempty"`
+
+	lenExpr           Expr
+	whenExpr          Expr
+	typeInfo          TypeInfo
+	hasDefault        bool
+	defaultValue      Value
+	endianOverride    binary.ByteOrder
+	hasEndianOverride bool
+}
+
+type ChooseNode struct {
+	Branches []ChooseBranch `yaml:"branches"`
+	Default  []Node         `yaml:"default,omitempty"`
+}
+
+type ChooseBranch struct {
+	When string `yaml:"when"`
+	Body []Node `yaml:"body"`
+
+	whenExpr Expr
+}
+
+type SetNode struct {
+	Name string `yaml:"name"`
+	Expr string `yaml:"expr"`
+
+	exprC Expr
+}
+
+type RouteNode struct {
+	Peek     []PeekNode        `yaml:"peek,omitempty"`
+	Branches []RouteBranch     `yaml:"branches"`
+	Targets  map[string][]Node `yaml:"targets"`
+	Default  []Node            `yaml:"default,omitempty"`
+
+	targetsC map[string][]Node
+}
+
+type RouteBranch struct {
+	When string `yaml:"when"`
+	To   string `yaml:"to"`
+
+	whenExpr Expr
+}
+
 //
 // -------- Output types --------
 //
@@ -151,55 +210,11 @@ func (s *Spec) ProtocolByName(name string) (*Protocol, bool) {
 }
 
 func (s *Spec) Decode(protocolName string, input []byte, hooks HookRegistry) (Result, error) {
-	if protocolName == "teltonika" {
-		return s.decodeTeltonikaAuto(input, hooks)
-	}
 	p, ok := s.ProtocolByName(protocolName)
 	if !ok {
 		return Result{}, fmt.Errorf("unknown protocol: %s", protocolName)
 	}
 	return DecodeProtocol(*p, input, hooks)
-}
-
-func (s *Spec) decodeTeltonikaAuto(input []byte, hooks HookRegistry) (Result, error) {
-	name := classifyTeltonikaProtocol(input)
-	if name == "" {
-		name = "teltonika_tcp"
-	}
-	p, ok := s.ProtocolByName(name)
-	if !ok {
-		return Result{}, fmt.Errorf("unknown protocol: %s", name)
-	}
-	return DecodeProtocol(*p, input, hooks)
-}
-
-func classifyTeltonikaProtocol(input []byte) string {
-	if len(input) == 0 {
-		return ""
-	}
-	if len(input) == 1 {
-		return "teltonika_imei_ack"
-	}
-	if len(input) == 4 {
-		return "teltonika_tcp_ack"
-	}
-	if len(input) >= 2 {
-		n := int(binary.BigEndian.Uint16(input[:2]))
-		if n == len(input)-2 {
-			switch {
-			case len(input) > 2 && isASCIIDigits(input[2:]):
-				return "teltonika_imei_tcp"
-			case len(input) == 7 && input[4] == 0x01:
-				return "teltonika_udp_ack"
-			default:
-				return "teltonika_udp"
-			}
-		}
-	}
-	if len(input) >= 12 && binary.BigEndian.Uint32(input[:4]) == 0 {
-		return "teltonika_tcp"
-	}
-	return ""
 }
 
 func DecodeProtocol(p Protocol, input []byte, hooks HookRegistry) (Result, error) {
@@ -265,6 +280,14 @@ func compileNode(n *Node) error {
 		return n.Switch.compile()
 	case n.Repeat != nil:
 		return n.Repeat.compile()
+	case n.Peek != nil:
+		return n.Peek.compile()
+	case n.Choose != nil:
+		return n.Choose.compile()
+	case n.Set != nil:
+		return n.Set.compile()
+	case n.Route != nil:
+		return n.Route.compile()
 	case n.Align != nil:
 		if n.Align.To <= 0 {
 			return fmt.Errorf("align.to must be > 0")
@@ -383,6 +406,182 @@ func (s *SwitchNode) compile() error {
 	return nil
 }
 
+func (p *PeekNode) compile() error {
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("peek.name is required")
+	}
+	ti, ok := typeInfos[p.Type]
+	if !ok {
+		return fmt.Errorf("peek %q: unknown type %q", p.Name, p.Type)
+	}
+	p.typeInfo = ti
+
+	if strings.TrimSpace(p.When) != "" {
+		ex, err := ParseExpr(p.When)
+		if err != nil {
+			return fmt.Errorf("peek %q when: %w", p.Name, err)
+		}
+		p.whenExpr = ex
+	}
+
+	switch strings.ToLower(strings.TrimSpace(p.Endian)) {
+	case "":
+		// Use protocol/context endian.
+	case "be", "big", "bigendian":
+		p.endianOverride = binary.BigEndian
+		p.hasEndianOverride = true
+	case "le", "little", "littleendian":
+		p.endianOverride = binary.LittleEndian
+		p.hasEndianOverride = true
+	default:
+		return fmt.Errorf("peek %q: invalid endian %q", p.Name, p.Endian)
+	}
+
+	p.Check = strings.ToLower(strings.TrimSpace(p.Check))
+
+	if ti.Kind == KindBytes {
+		if p.Len == nil && strings.TrimSpace(p.LenExpr) == "" {
+			return fmt.Errorf("peek %q bytes requires len or len_expr", p.Name)
+		}
+		if p.Len != nil && *p.Len < 0 {
+			return fmt.Errorf("peek %q len must be >=0", p.Name)
+		}
+		if strings.TrimSpace(p.LenExpr) != "" {
+			ex, err := ParseExpr(p.LenExpr)
+			if err != nil {
+				return fmt.Errorf("peek %q len_expr: %w", p.Name, err)
+			}
+			p.lenExpr = ex
+		}
+		if p.Check == "" {
+			return fmt.Errorf("peek %q bytes requires check (supported: ascii_digits)", p.Name)
+		}
+		if p.Check != "ascii_digits" {
+			return fmt.Errorf("peek %q: unknown check %q", p.Name, p.Check)
+		}
+	} else {
+		if p.Len != nil || strings.TrimSpace(p.LenExpr) != "" {
+			return fmt.Errorf("peek %q numeric must not set len/len_expr", p.Name)
+		}
+		if p.Check != "" {
+			return fmt.Errorf("peek %q numeric must not set check", p.Name)
+		}
+	}
+
+	if p.Default != nil {
+		p.hasDefault = true
+		v, err := parsePeekDefault(p)
+		if err != nil {
+			return err
+		}
+		p.defaultValue = v
+	} else {
+		p.defaultValue = inferPeekDefault(p)
+	}
+
+	return nil
+}
+
+func (c *ChooseNode) compile() error {
+	if len(c.Branches) == 0 {
+		return fmt.Errorf("choose.branches must not be empty")
+	}
+	for i := range c.Branches {
+		w := strings.TrimSpace(c.Branches[i].When)
+		if w == "" {
+			return fmt.Errorf("choose branch %d missing when", i)
+		}
+		ex, err := ParseExpr(w)
+		if err != nil {
+			return fmt.Errorf("choose branch %d when: %w", i, err)
+		}
+		c.Branches[i].whenExpr = ex
+		for j := range c.Branches[i].Body {
+			if err := compileNode(&c.Branches[i].Body[j]); err != nil {
+				return err
+			}
+		}
+	}
+	for i := range c.Default {
+		if err := compileNode(&c.Default[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SetNode) compile() error {
+	if strings.TrimSpace(s.Name) == "" {
+		return fmt.Errorf("set.name is required")
+	}
+	if strings.TrimSpace(s.Expr) == "" {
+		return fmt.Errorf("set %q expr is required", s.Name)
+	}
+	ex, err := ParseExpr(s.Expr)
+	if err != nil {
+		return fmt.Errorf("set %q expr: %w", s.Name, err)
+	}
+	s.exprC = ex
+	return nil
+}
+
+func (r *RouteNode) compile() error {
+	if len(r.Branches) == 0 {
+		return fmt.Errorf("route.branches must not be empty")
+	}
+
+	for i := range r.Peek {
+		if err := r.Peek[i].compile(); err != nil {
+			return err
+		}
+	}
+
+	if len(r.Targets) == 0 {
+		return fmt.Errorf("route.targets must not be empty")
+	}
+	r.targetsC = make(map[string][]Node, len(r.Targets))
+	for name, body := range r.Targets {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return fmt.Errorf("route target name must not be empty")
+		}
+		for i := range body {
+			if err := compileNode(&body[i]); err != nil {
+				return err
+			}
+		}
+		r.targetsC[name] = body
+	}
+
+	for i := range r.Branches {
+		w := strings.TrimSpace(r.Branches[i].When)
+		if w == "" {
+			return fmt.Errorf("route branch %d missing when", i)
+		}
+		ex, err := ParseExpr(w)
+		if err != nil {
+			return fmt.Errorf("route branch %d when: %w", i, err)
+		}
+		r.Branches[i].whenExpr = ex
+
+		to := strings.TrimSpace(r.Branches[i].To)
+		if to == "" {
+			return fmt.Errorf("route branch %d missing to", i)
+		}
+		if _, ok := r.targetsC[to]; !ok {
+			return fmt.Errorf("route branch %d: unknown target %q", i, to)
+		}
+	}
+
+	for i := range r.Default {
+		if err := compileNode(&r.Default[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 //
 // -------- Interpreter core --------
 //
@@ -471,6 +670,22 @@ func execNodesMode(ctx *Ctx, cur *Cursor, nodes []Node, parent *Span, stopOnErro
 
 		case n.Repeat != nil:
 			rs, es := execRepeat(ctx, cur, n.Repeat, parent)
+			spans = append(spans, rs...)
+			nodeErrs = es
+
+		case n.Peek != nil:
+			nodeErrs = execPeek(ctx, cur, n.Peek)
+
+		case n.Choose != nil:
+			cs, es := execChoose(ctx, cur, n.Choose, parent)
+			spans = append(spans, cs...)
+			nodeErrs = es
+
+		case n.Set != nil:
+			nodeErrs = execSet(ctx, cur, n.Set)
+
+		case n.Route != nil:
+			rs, es := execRoute(ctx, cur, n.Route, parent)
 			spans = append(spans, rs...)
 			nodeErrs = es
 
@@ -632,6 +847,139 @@ func execRepeat(ctx *Ctx, cur *Cursor, r *RepeatNode, parent *Span) ([]*Span, []
 	return spans, errs
 }
 
+func execPeek(ctx *Ctx, cur *Cursor, p *PeekNode) []string {
+	if p.whenExpr != nil {
+		ok, err := EvalBool(ctx, cur, p.whenExpr)
+		if err != nil {
+			return []string{fmt.Sprintf("peek %s when: %v", p.Name, err)}
+		}
+		if !ok {
+			ctx.Values[p.Name] = p.defaultValue
+			return nil
+		}
+	}
+
+	switch p.typeInfo.Kind {
+	case KindNum:
+		start := p.At
+		end := start + p.typeInfo.Size
+		if start < 0 || end < start || end > cur.Limit {
+			return []string{
+				fmt.Sprintf(
+					"peek %s: out of range at=%d size=%d frame_size=%d",
+					p.Name, p.At, p.typeInfo.Size, cur.Limit,
+				),
+			}
+		}
+		raw := cur.Input[cur.Base+start : cur.Base+end]
+		bo := cur.Endian
+		if p.hasEndianOverride {
+			bo = p.endianOverride
+		}
+		i64, u64 := readNumber(bo, raw, p.typeInfo.Signed)
+		if p.typeInfo.Signed {
+			ctx.Values[p.Name] = Value{Kind: VKInt, I64: i64}
+		} else {
+			ctx.Values[p.Name] = Value{Kind: VKUint, U64: u64}
+		}
+		return nil
+
+	case KindBytes:
+		n := 0
+		if p.Len != nil {
+			n = *p.Len
+		} else {
+			v, err := EvalInt(ctx, cur, p.lenExpr)
+			if err != nil {
+				return []string{fmt.Sprintf("peek %s len_expr: %v", p.Name, err)}
+			}
+			n = v
+		}
+		if n < 0 {
+			return []string{fmt.Sprintf("peek %s: negative length %d", p.Name, n)}
+		}
+		start := p.At
+		end := start + n
+		if start < 0 || end < start || end > cur.Limit {
+			return []string{
+				fmt.Sprintf(
+					"peek %s: out of range at=%d len=%d frame_size=%d",
+					p.Name, p.At, n, cur.Limit,
+				),
+			}
+		}
+		raw := cur.Input[cur.Base+start : cur.Base+end]
+		switch p.Check {
+		case "ascii_digits":
+			ctx.Values[p.Name] = Value{Kind: VKBool, Bool: isASCIIDigits(raw)}
+		default:
+			// Should be prevented by compile().
+			ctx.Values[p.Name] = Value{Kind: VKBytesLen, U64: uint64(len(raw))}
+		}
+		return nil
+	}
+
+	return []string{fmt.Sprintf("peek %s: unsupported type kind", p.Name)}
+}
+
+func execChoose(ctx *Ctx, cur *Cursor, c *ChooseNode, parent *Span) ([]*Span, []string) {
+	for _, br := range c.Branches {
+		ok, err := EvalBool(ctx, cur, br.whenExpr)
+		if err != nil {
+			return nil, []string{fmt.Sprintf("choose when: %v", err)}
+		}
+		if !ok {
+			continue
+		}
+		return execNodes(ctx, cur, br.Body, parent)
+	}
+	if len(c.Default) == 0 {
+		return nil, nil
+	}
+	return execNodes(ctx, cur, c.Default, parent)
+}
+
+func execSet(ctx *Ctx, cur *Cursor, s *SetNode) []string {
+	v, err := s.exprC.Eval(ctx, cur)
+	if err != nil {
+		return []string{fmt.Sprintf("set %s: %v", s.Name, err)}
+	}
+	ctx.Values[s.Name] = v
+	return nil
+}
+
+func execRoute(ctx *Ctx, cur *Cursor, r *RouteNode, parent *Span) ([]*Span, []string) {
+	var errs []string
+	for i := range r.Peek {
+		errs = append(errs, execPeek(ctx, cur, &r.Peek[i])...)
+	}
+	if len(errs) > 0 {
+		return nil, errs
+	}
+
+	for _, br := range r.Branches {
+		ok, err := EvalBool(ctx, cur, br.whenExpr)
+		if err != nil {
+			return nil, append(errs, fmt.Sprintf("route when: %v", err))
+		}
+		if !ok {
+			continue
+		}
+		body := r.targetsC[br.To]
+		if len(body) == 0 {
+			return nil, errs
+		}
+		ss, es := execNodes(ctx, cur, body, parent)
+		return ss, append(errs, es...)
+	}
+
+	if len(r.Default) == 0 {
+		return nil, errs
+	}
+	ss, es := execNodes(ctx, cur, r.Default, parent)
+	return ss, append(errs, es...)
+}
+
 func execAlign(ctx *Ctx, cur *Cursor, a *AlignNode) (*Span, []string) {
 	start := cur.Offset()
 	if a.To <= 1 {
@@ -654,12 +1002,6 @@ func execHook(ctx *Ctx, cur *Cursor, h *HookNode, parent *Span) ([]*Span, []stri
 	// Built-in: enter_field_reader
 	if h.Name == "enter_field_reader" {
 		return hookEnterFieldReader(ctx, cur, h, parent)
-	}
-	if h.Name == "gt06_normalize_length" {
-		return hookGT06NormalizeLength(ctx, cur, h, parent)
-	}
-	if h.Name == "teltonika_classify_frame" {
-		return hookTeltonikaClassifyFrame(ctx, cur, h, parent)
 	}
 	if vf := ctx.Hooks.GetVerify(h.Name); vf != nil {
 		if err := vf(ctx, VerifyHookInput{Args: h.Args}); err != nil {
@@ -746,97 +1088,6 @@ func hookEnterFieldReader(ctx *Ctx, cur *Cursor, h *HookNode, parent *Span) ([]*
 		})
 	}
 	return nil, errs
-}
-
-func hookGT06NormalizeLength(ctx *Ctx, cur *Cursor, h *HookNode, parent *Span) ([]*Span, []string) {
-	lengthField := nz(argString(h.Args, "length_field"), "length")
-	payloadLenKey := nz(argString(h.Args, "payload_len_key"), "gt06.payload_len")
-	modeKey := nz(argString(h.Args, "mode_key"), "gt06.length_mode")
-
-	v, ok := ctx.Values[lengthField]
-	if !ok {
-		return nil, []string{fmt.Sprintf("gt06 length: missing field %q", lengthField)}
-	}
-	length, err := toInt64(v)
-	if err != nil {
-		return nil, []string{fmt.Sprintf("gt06 length: %v", err)}
-	}
-	if length < 0 {
-		return nil, []string{fmt.Sprintf("gt06 length invalid: negative length %d", length)}
-	}
-
-	remaining := cur.Remaining()
-	payloadLen := -1
-	mode := uint64(0)
-
-	switch {
-	case int(length)+2 == remaining:
-		// Standard GT06: length includes protocol + payload + serial + CRC.
-		payloadLen = int(length) - 5
-		mode = 1
-	case int(length)+4 == remaining:
-		// Some variants omit CRC from the advertised length.
-		payloadLen = int(length) - 3
-	default:
-		return nil, []string{
-			fmt.Sprintf(
-				"GT06 length invalid: len=%d remaining=%d (expected len+2 or len+4 bytes after length)",
-				length, remaining,
-			),
-		}
-	}
-
-	if payloadLen < 0 {
-		return nil, []string{
-			fmt.Sprintf("GT06 length invalid: len=%d produces negative payload length %d", length, payloadLen),
-		}
-	}
-
-	ctx.Values[payloadLenKey] = Value{Kind: VKInt, I64: int64(payloadLen)}
-	ctx.Values[modeKey] = Value{Kind: VKUint, U64: mode}
-	return nil, nil
-}
-
-func hookTeltonikaClassifyFrame(ctx *Ctx, cur *Cursor, h *HookNode, parent *Span) ([]*Span, []string) {
-	kindKey := nz(argString(h.Args, "kind_key"), "teltonika.frame_kind")
-
-	raw := cur.Input[cur.Base+cur.Pos : cur.Base+cur.Limit]
-	if len(raw) == 0 {
-		return nil, []string{"teltonika frame is empty"}
-	}
-
-	var kind uint64
-	switch {
-	case len(raw) == 1:
-		kind = 2 // TCP IMEI ack
-
-	case len(raw) >= 2:
-		frameLen := int(binary.BigEndian.Uint16(raw[:2]))
-		if frameLen == len(raw)-2 {
-			switch {
-			case len(raw) >= 3 && isASCIIDigits(raw[2:]):
-				kind = 1 // TCP IMEI handshake
-			case frameLen == 5 && len(raw) == 7 && raw[4] == 0x01:
-				kind = 6 // UDP ack
-			case frameLen >= 3:
-				kind = 5 // UDP AVL packet
-			}
-		}
-	}
-
-	if kind == 0 {
-		switch {
-		case len(raw) >= 8 && binary.BigEndian.Uint32(raw[:4]) == 0:
-			kind = 3 // TCP framed packet (AVL / Codec 12/13/14)
-		case len(raw) == 4:
-			kind = 4 // TCP AVL ack
-		default:
-			return nil, []string{"unknown Teltonika frame shape"}
-		}
-	}
-
-	ctx.Values[kindKey] = Value{Kind: VKUint, U64: kind}
-	return nil, nil
 }
 
 func isASCIIDigits(b []byte) bool {
@@ -1894,6 +2145,43 @@ func parseIntString(s string) (u uint64, i int64, isU bool, err error) {
 		return 0, 0, false, err
 	}
 	return u, int64(u), true, nil
+}
+
+func inferPeekDefault(p *PeekNode) Value {
+	if p == nil {
+		return Value{Kind: VKUint, U64: 0}
+	}
+	if p.typeInfo.Kind == KindBytes && p.Check == "ascii_digits" {
+		return Value{Kind: VKBool, Bool: false}
+	}
+	if p.typeInfo.Signed {
+		return Value{Kind: VKInt, I64: 0}
+	}
+	return Value{Kind: VKUint, U64: 0}
+}
+
+func parsePeekDefault(p *PeekNode) (Value, error) {
+	if p == nil {
+		return Value{}, fmt.Errorf("internal: nil peek node")
+	}
+	if p.typeInfo.Kind == KindBytes && p.Check == "ascii_digits" {
+		b, ok := p.Default.(bool)
+		if !ok {
+			return Value{}, fmt.Errorf("peek %q default for ascii_digits must be bool", p.Name)
+		}
+		return Value{Kind: VKBool, Bool: b}, nil
+	}
+	u, i, isU, err := parseIntAny(p.Default)
+	if err != nil {
+		return Value{}, fmt.Errorf("peek %q default: %w", p.Name, err)
+	}
+	if p.typeInfo.Signed && !isU {
+		return Value{Kind: VKInt, I64: i}, nil
+	}
+	if p.typeInfo.Signed && isU {
+		return Value{Kind: VKInt, I64: int64(u)}, nil
+	}
+	return Value{Kind: VKUint, U64: u}, nil
 }
 
 //

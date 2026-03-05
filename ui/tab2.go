@@ -5,11 +5,14 @@ import (
 	"hexone/protocols"
 	"image"
 	"image/color"
+	"io"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"gioui.org/font"
+	"gioui.org/io/clipboard"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -24,9 +27,10 @@ func newTab2State(typeface font.Typeface) *tab2State {
 		typeface = font.Typeface("Fira Code")
 	}
 	st := &tab2State{
-		list:     layout.List{Axis: layout.Vertical},
-		clicks:   map[string]*widget.Clickable{},
-		typeface: typeface,
+		list:            layout.List{Axis: layout.Vertical},
+		clicks:          map[string]*widget.Clickable{},
+		typeface:        typeface,
+		selectPressHeld: map[string]bool{},
 	}
 	st.hexEd.SingleLine = true
 	st.hexEd.Submit = false
@@ -73,6 +77,10 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 		st.lastErr = ""
 		st.lastRes = protocols.Result{}
 		st.lastBytes = nil
+		st.selectedHint = nil
+		for k := range st.selectPressHeld {
+			delete(st.selectPressHeld, k)
+		}
 
 		b, err := parseHexLine(hexText)
 		if err != nil {
@@ -99,6 +107,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 		st.hoverSpanKey = ""
 		st.hoverSpan = nil
 		st.hoverRowID = ""
+		st.hoverFromBytes = false
 
 		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 
@@ -129,12 +138,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 
 			// Row 2: hex grid. Paint card bg before cells to avoid recording-layer ordering issues.
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				hexAreaClick := st.click("hexarea:bg")
-				for hexAreaClick.Clicked(gtx) {
-					st.selectedSpanKey = ""
-					st.selectedRowID = ""
-				}
-				return hexAreaClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return func(gtx layout.Context) layout.Dimensions {
 					const row2Sp = 18
 					// Estimate card height: measure one text line height.
 					sampleLbl := material.Body1(th, "00")
@@ -180,44 +184,38 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 						Left: unit.Dp(16), Right: unit.Dp(16),
 						Top: unit.Dp(10), Bottom: unit.Dp(10),
 					}
-					lines := buildRow2HexLines(th, gtx, st, &hoverSeen)
-					if len(lines) == 0 {
-						inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lines := buildRow2HexLines(th, gtx, st, &hoverSeen)
+						if len(lines) == 0 {
 							lbl := material.Body1(th, "(no data)")
 							lbl.Font.Typeface = st.typeface
 							lbl.Color = txtColor
 							lbl.MaxLines = 1
 							return lbl.Layout(gtx)
-						})
-					} else {
-						inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-								func() []layout.FlexChild {
-									fc := make([]layout.FlexChild, len(lines))
-									for i, ln := range lines {
-										line := ln
-										fc[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, line...)
-										})
-									}
-									return fc
-								}()...)
-						})
-					}
+						}
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							func() []layout.FlexChild {
+								fc := make([]layout.FlexChild, len(lines))
+								for i, ln := range lines {
+									line := ln
+									fc[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, line...)
+									})
+								}
+								return fc
+							}()...)
+					})
 
 					return layout.Dimensions{Size: image.Pt(fullW, cardH)}
-				})
+				}(gtx)
 			}),
 
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 
 			// Hint
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				sp := st.hoverSpan
-				if sp == nil && st.selectedSpanKey != "" {
-					sp = findSpanByKey(st.lastRes.Spans, st.selectedSpanKey)
-				}
-				return hintCardFixed(th, gtx, st.typeface, sp)
+				sp := currentHintSpan(st)
+				return hintCardFixed(th, gtx, st, st.typeface, sp)
 			}),
 
 			layout.Rigid(layout.Spacer{Height: gap}.Layout),
@@ -280,15 +278,13 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 							click := st.click("row3:" + rowID)
 
 							return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								for click.Clicked(gtx) {
-									st.selectedSpanKey = spanKey
-									st.selectedRowID = rowID
-								}
+								st.handleSelectTogglePress("row3:"+rowID, click, spanKey, rowID, it.Span)
 								if click.Hovered() {
 									// Last item that reports Hovered() wins (bottom-most under cursor).
 									st.hoverRowID = rowID
 									st.hoverSpanKey = spanKey
 									st.hoverSpan = it.Span
+									st.hoverFromBytes = false
 									hoverSeen = true
 								}
 
@@ -310,15 +306,21 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 								}
 								line += "  " + sp.Name
 
-								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-									return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										lbl := material.Body2(th, line)
-										lbl.Font.Typeface = st.typeface
-										lbl.TextSize = scaleThemeFontSize(th, 12)
-										lbl.Color = colorForSpanText(it.Span, st.lastRes.Spans)
-										lbl.MaxLines = 1
-										lbl.Font.Weight = font.Medium
-										return lbl.Layout(gtx)
+								rowW := gtx.Constraints.Max.X
+								if rowW < 1 {
+									rowW = 1
+								}
+								return fixedWidth(gtx, rowW, func(gtx layout.Context) layout.Dimensions {
+									return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+										return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											lbl := material.Body2(th, line)
+											lbl.Font.Typeface = st.typeface
+											lbl.TextSize = scaleThemeFontSize(th, 12)
+											lbl.Color = colorForSpanText(it.Span, st.lastRes.Spans)
+											lbl.MaxLines = 1
+											lbl.Font.Weight = font.Medium
+											return lbl.Layout(gtx)
+										})
 									})
 								})
 							})
@@ -346,13 +348,22 @@ func row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *tab2State,
 		btnW    int
 	)
 
-	// Process backdrop click before laying out (so click is consumed this frame).
+	// Consume option clicks before backdrop clicks, so item selection wins.
 	if st.protoDropOpen {
-		back := st.click("proto:backdrop")
-		for back.Clicked(gtx) {
-			st.protoDropOpen = false
+		opts := protocolOptions(st)
+		for _, opt := range opts {
+			click := st.click("proto:" + opt.Name)
+			for click.Clicked(gtx) {
+				st.protoChoice.Value = opt.Name
+				st.protoDropOpen = false
+			}
 		}
-		// Full-screen hit area for backdrop — drawn via defer below.
+		if st.protoDropOpen {
+			back := st.click("proto:backdrop")
+			for back.Clicked(gtx) {
+				st.protoDropOpen = false
+			}
+		}
 	}
 
 	// Base row.
@@ -414,7 +425,7 @@ func protocolDropdownButton(th *material.Theme, gtx layout.Context, st *tab2Stat
 	label := protocolLabel(st.protoChoice.Value)
 	txt := label + "  ▾"
 
-	w := gtx.Dp(unit.Dp(260))
+	w := protocolDropdownWidth(th, gtx, st)
 	return fixedWidth(gtx, w, func(gtx layout.Context) layout.Dimensions {
 		return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			if btn.Hovered() {
@@ -439,13 +450,6 @@ func protocolDropdownButton(th *material.Theme, gtx layout.Context, st *tab2Stat
 // Popup ONLY draws the option box. Backdrop is handled in stacked overlay.
 func protocolDropdownPopup(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool, width int) layout.Dimensions {
 	opts := protocolOptions(st)
-	for _, opt := range opts {
-		click := st.click("proto:" + opt.Name)
-		for click.Clicked(gtx) {
-			st.protoChoice.Value = opt.Name
-			st.protoDropOpen = false
-		}
-	}
 
 	// Hard clamp popup height (prevents “stretches to bottom”).
 	gtx2 := gtx
@@ -470,6 +474,40 @@ func protocolDropdownPopup(th *material.Theme, gtx layout.Context, st *tab2State
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 		})
 	})
+}
+
+func protocolDropdownWidth(th *material.Theme, gtx layout.Context, st *tab2State) int {
+	opts := protocolOptions(st)
+	maxTextW := 0
+	for _, opt := range opts {
+		lbl := material.Body2(th, opt.Label+"  ▾")
+		lbl.Font.Typeface = st.typeface
+		lbl.TextSize = scaleThemeFontSize(th, 12)
+		lbl.MaxLines = 1
+		w := measureLabelUnconstrained(gtx, lbl).Size.X
+		if w > maxTextW {
+			maxTextW = w
+		}
+	}
+	if maxTextW == 0 {
+		lbl := material.Body2(th, protocolLabel(st.protoChoice.Value)+"  ▾")
+		lbl.Font.Typeface = st.typeface
+		lbl.TextSize = scaleThemeFontSize(th, 12)
+		lbl.MaxLines = 1
+		maxTextW = measureLabelUnconstrained(gtx, lbl).Size.X
+	}
+	w := maxTextW + gtx.Dp(unit.Dp(24)) // button horizontal inset
+	minW := gtx.Dp(unit.Dp(96))
+	if w < minW {
+		w = minW
+	}
+	if max := gtx.Constraints.Max.X; max > 0 && w > max {
+		w = max
+	}
+	if w < 1 {
+		w = 1
+	}
+	return w
 }
 
 type protoOption struct {
@@ -525,24 +563,6 @@ func protocolLabel(name string) string {
 		return "GT06"
 	case "teltonika":
 		return "Teltonika"
-	case "teltonika_tcp":
-		return "Teltonika AVL TCP"
-	case "teltonika_imei_tcp":
-		return "Teltonika IMEI TCP"
-	case "teltonika_imei_ack":
-		return "Teltonika IMEI ACK"
-	case "teltonika_tcp_ack":
-		return "Teltonika AVL ACK"
-	case "teltonika_udp":
-		return "Teltonika AVL UDP"
-	case "teltonika_udp_ack":
-		return "Teltonika UDP ACK"
-	case "teltonika_codec12":
-		return "Teltonika Codec 12"
-	case "teltonika_codec13":
-		return "Teltonika Codec 13"
-	case "teltonika_codec14":
-		return "Teltonika Codec 14"
 	}
 
 	parts := strings.Split(name, "_")
@@ -730,22 +750,21 @@ func buildRow2HexLines(th *material.Theme, gtx layout.Context, st *tab2State, ho
 
 				return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					// Process events inside click.Layout.
-					for click.Clicked(gtx) {
-						if seg.owner.key != "" {
-							st.selectedSpanKey = seg.owner.key
-							st.selectedRowID = ""
-							for _, f := range flattenAllWithKeys(st.lastRes.Spans) {
-								if rangeKey(f.Span.Start, f.Span.End) == seg.owner.key {
-									st.selectedRowID = f.Key
-									break
-								}
+					rowID := ""
+					if seg.owner.key != "" {
+						for _, f := range flattenAllWithKeys(st.lastRes.Spans) {
+							if rangeKey(f.Span.Start, f.Span.End) == seg.owner.key {
+								rowID = f.Key
+								break
 							}
 						}
 					}
+					st.handleSelectTogglePress("row2:"+rangeKey(seg.start, seg.end), click, seg.owner.key, rowID, seg.owner.sp)
 					if click.Hovered() && seg.owner.sp != nil {
 						*hoverSeen = true
 						st.hoverSpanKey = seg.owner.key
 						st.hoverSpan = seg.owner.sp
+						st.hoverFromBytes = true
 						// Sync list hover.
 						if st.hoverRowID == "" {
 							for _, f := range flattenAllWithKeys(st.lastRes.Spans) {
@@ -800,6 +819,16 @@ func buildRow2HexLines(th *material.Theme, gtx layout.Context, st *tab2State, ho
 					// Border on top.
 					sz := image.Pt(cellW, cellH)
 					if isSel {
+						ulH := gtx.Dp(unit.Dp(2))
+						if ulH < 1 {
+							ulH = 1
+						}
+						ulY := cellH - ulH
+						if ulY < 0 {
+							ulY = 0
+						}
+						paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 180},
+							clip.Rect{Min: image.Pt(0, ulY), Max: image.Pt(cellW, ulY+ulH)}.Op())
 						drawDottedBorder(gtx, sz, color.NRGBA{R: 255, G: 255, B: 255, A: 170})
 					} else if isHover {
 						drawRectBorder(gtx, sz, color.NRGBA{R: 255, G: 255, B: 255, A: 70}, 1)
@@ -871,7 +900,7 @@ func drawDottedBorder(gtx layout.Context, sz image.Point, c color.NRGBA) {
 
 // ---------- Hint ----------
 
-func hintCardFixed(th *material.Theme, gtx layout.Context, typeface font.Typeface, sp *protocols.Span) layout.Dimensions {
+func hintCardFixed(th *material.Theme, gtx layout.Context, st *tab2State, typeface font.Typeface, sp *protocols.Span) layout.Dimensions {
 	return card(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			title := "Hover a field"
@@ -907,9 +936,77 @@ func hintCardFixed(th *material.Theme, gtx layout.Context, typeface font.Typefac
 			l3.MaxLines = 2
 			l3.Color = txtColor
 
+			copyBtn := st.click("hint:copy")
+			for copyBtn.Clicked(gtx) {
+				text := hintClipboardText(sp)
+				if text != "" {
+					gtx.Execute(clipboard.WriteCmd{
+						Type: "application/text",
+						Data: io.NopCloser(strings.NewReader(text)),
+					})
+					st.hintCopyPulseAt = gtx.Now
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
+
+			copyGlyph := func(gtx layout.Context) layout.Dimensions {
+				const pulseDur = 220 * time.Millisecond
+				pulseAge := gtx.Now.Sub(st.hintCopyPulseAt)
+				pulseActive := pulseAge >= 0 && pulseAge < pulseDur
+				if pulseActive || copyBtn.Hovered() || copyBtn.Pressed() {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+
+				return fixedWidth(gtx, gtx.Dp(unit.Dp(34)), func(gtx layout.Context) layout.Dimensions {
+					return copyBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
+						border := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
+						iconColor := txtColor
+
+						if sp == nil {
+							iconColor = hintColor
+						}
+						if copyBtn.Hovered() {
+							bg = color.NRGBA{R: 28, G: 38, B: 56, A: 255}
+							border = color.NRGBA{R: 130, G: 170, B: 255, A: 100}
+						}
+						if copyBtn.Pressed() {
+							bg = color.NRGBA{R: 55, G: 80, B: 130, A: 255}
+							border = color.NRGBA{R: 160, G: 200, B: 255, A: 170}
+						}
+						if pulseActive {
+							bg = color.NRGBA{R: 58, G: 88, B: 148, A: 255}
+							border = color.NRGBA{R: 175, G: 210, B: 255, A: 190}
+						}
+
+						return fillRoundedBox(gtx, gtx.Dp(unit.Dp(8)), bg, border, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								size := gtx.Dp(unit.Dp(16))
+								if size < 1 {
+									size = 1
+								}
+								return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									if ic := uiCopyGlyphIcon(); ic != nil {
+										iconGtx := gtx
+										iconGtx.Constraints = layout.Exact(image.Pt(size, size))
+										ic.Layout(iconGtx, iconColor)
+									}
+									return layout.Dimensions{Size: image.Pt(size, size)}
+								})
+							})
+						})
+					})
+				})
+			}
+
 			return minHeight(gtx, gtx.Dp(unit.Dp(60)), func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(l1.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Flexed(1, l1.Layout),
+							layout.Rigid(copyGlyph),
+						)
+					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						if line2 == "" {
 							return layout.Dimensions{}
@@ -926,6 +1023,41 @@ func hintCardFixed(th *material.Theme, gtx layout.Context, typeface font.Typefac
 			})
 		})
 	})
+}
+
+func currentHintSpan(st *tab2State) *protocols.Span {
+	if st == nil {
+		return nil
+	}
+	if st.hoverFromBytes && st.hoverSpan != nil {
+		return st.hoverSpan
+	}
+	if st.selectedSpanKey != "" {
+		if sp := findSpanByKey(st.lastRes.Spans, st.selectedSpanKey); sp != nil {
+			return sp
+		}
+	}
+	if st.selectedHint != nil {
+		return st.selectedHint
+	}
+	if st.hoverSpan != nil {
+		return st.hoverSpan
+	}
+	return nil
+}
+
+func hintClipboardText(sp *protocols.Span) string {
+	if sp == nil {
+		return ""
+	}
+	line2 := formatRange(sp.Start, sp.End)
+	if sp.Value != "" {
+		line2 += "   " + sp.Value
+	}
+	if sp.Desc == "" {
+		return sp.Name + "\n" + line2
+	}
+	return sp.Name + "\n" + line2 + "\n" + sp.Desc
 }
 
 // ---------- Flatten spans with unique keys ----------
@@ -1060,6 +1192,38 @@ func findSpanByKey(spans []*protocols.Span, key string) *protocols.Span {
 		return nil
 	}
 	return walk(spans)
+}
+
+func (st *tab2State) handleSelectTogglePress(pressID string, c *widget.Clickable, spanKey, rowID string, sp *protocols.Span) {
+	if st == nil || c == nil {
+		return
+	}
+	if st.selectPressHeld == nil {
+		st.selectPressHeld = map[string]bool{}
+	}
+	if c.Pressed() {
+		if !st.selectPressHeld[pressID] {
+			st.selectPressHeld[pressID] = true
+			st.toggleSelection(spanKey, rowID, sp)
+		}
+		return
+	}
+	delete(st.selectPressHeld, pressID)
+}
+
+func (st *tab2State) toggleSelection(spanKey, rowID string, sp *protocols.Span) {
+	if st == nil || spanKey == "" || sp == nil {
+		return
+	}
+	if st.selectedSpanKey == spanKey {
+		st.selectedSpanKey = ""
+		st.selectedRowID = ""
+		st.selectedHint = nil
+		return
+	}
+	st.selectedSpanKey = spanKey
+	st.selectedRowID = rowID
+	st.selectedHint = sp
 }
 
 func (st *tab2State) click(key string) *widget.Clickable {

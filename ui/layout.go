@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -80,8 +81,10 @@ type tab2State struct {
 
 	// selection/hover are by *span*, not by row2 piece.
 	selectedSpanKey string // "start:end"
+	selectedHint    *protocols.Span
 	hoverSpanKey    string // "start:end"
 	hoverSpan       *protocols.Span
+	hoverFromBytes  bool
 
 	protoDropOpen bool
 
@@ -93,6 +96,10 @@ type tab2State struct {
 
 	list   layout.List
 	clicks map[string]*widget.Clickable
+
+	selectPressHeld map[string]bool
+
+	hintCopyPulseAt time.Time
 }
 
 type UI struct {
@@ -133,6 +140,8 @@ type UI struct {
 	fileDelete       *fileDeleteState
 	fileViewer       *fileViewerState
 	settingsModal    *settingsModalState
+
+	protoDropGlobalPointerTag struct{}
 }
 
 func NewUI(cfg *fm.Config) *UI {
@@ -615,8 +624,61 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsModal(th, gtx)
 		}),
 	)
+	ui.handleProtocolDropdownOutsideClick(gtx)
+	if ui != nil && ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
+		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+		pass := pointer.PassOp{}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &ui.protoDropGlobalPointerTag)
+		pass.Pop()
+	}
 	ui.consumeUnusedFunctionKeys(gtx)
 	return dims
+}
+
+func (ui *UI) handleProtocolDropdownOutsideClick(gtx layout.Context) {
+	if ui == nil || ui.Tabs.Value != "tab2" || ui.tab2State == nil || !ui.tab2State.protoDropOpen {
+		return
+	}
+	st := ui.tab2State
+	closed := false
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &ui.protoDropGlobalPointerTag,
+			Kinds:  pointer.Press,
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok || pe.Kind != pointer.Press {
+			continue
+		}
+		if !pe.Buttons.Contain(pointer.ButtonPrimary) {
+			continue
+		}
+
+		// Keep dropdown open while user clicks dropdown controls;
+		// local handlers in tab2 own those interactions.
+		if st.click("proto:btn").Hovered() {
+			continue
+		}
+		overOption := false
+		for _, opt := range protocolOptions(st) {
+			if st.click("proto:" + opt.Name).Hovered() {
+				overOption = true
+				break
+			}
+		}
+		if overOption {
+			continue
+		}
+
+		st.protoDropOpen = false
+		closed = true
+	}
+	if closed {
+		gtx.Execute(op.InvalidateCmd{})
+	}
 }
 
 func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
@@ -624,6 +686,7 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 		return
 	}
 	switched := false
+	closedProtoDropdown := false
 	for {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
 		if !ok {
@@ -633,12 +696,17 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 		if !ok || ke.State != key.Press || ke.Name != key.NameEscape {
 			continue
 		}
+		if ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
+			ui.tab2State.protoDropOpen = false
+			closedProtoDropdown = true
+			continue
+		}
 		ui.setActiveTab("tab0", gtx.Now)
 		ui.closeFileViewer()
 		ui.resetKeys()
 		switched = true
 	}
-	if switched {
+	if switched || closedProtoDropdown {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 }
