@@ -1,15 +1,15 @@
 window:
-    x: 329
-    "y": 1221
+    x: 531
+    "y": 374
     has_position: true
-    width: 1314
-    height: 773
+    width: 1385
+    height: 764
     px_per_dp: 1
     mode: windowed
 active_tab: tab0
-active_pane: 0
+active_pane: 1
 panes:
-    - dir: /Users/ramunas/go/src/gpstrack-t800x/t800x
-      selected_path: ""
-    - dir: /Users/ramunas/go/src/hexone
-      selected_path: /Users/ramunas/go/src
+    - dir: C:\Users\ramuc
+      selected_path: C:\Users\ramuc\.jupyter
+    - dir: C:\
+      selected_path: C:\Users

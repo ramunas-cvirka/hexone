@@ -3,6 +3,7 @@ package table
 import (
 	"image"
 	"image/color"
+	"sort"
 	"sync"
 	"time"
 
@@ -33,6 +34,10 @@ type Column struct {
 	Flex     bool    // takes share of remaining width
 	Align    Align
 	PadX     unit.Dp
+	// DropPriority controls full-mode column drop order when width is too small.
+	// Smaller values are dropped earlier; ties drop rightmost columns first.
+	// Column 0 is always preserved.
+	DropPriority int
 }
 
 type CellStyle struct {
@@ -119,6 +124,7 @@ type Table struct {
 	scrollCarry         float32
 	hitOffset           image.Point
 	hitSize             image.Point
+	fullModeWidths      []int
 	rowHeightPx         int
 	briefColPx          int
 	briefGapPx          int
@@ -347,6 +353,21 @@ func canShowLeadingIcon(contentW, cellH int) bool {
 	return contentW >= iconW+gapW+minTextPx
 }
 
+func adaptiveCellPadX(gtx layout.Context, requested unit.Dp, cellW int) unit.Dp {
+	if requested <= 0 || cellW <= 0 {
+		return 0
+	}
+	pad := requested
+	const minContentPx = 8
+	for pad > 0 && cellW-2*gtx.Dp(pad) < minContentPx {
+		pad--
+	}
+	if pad < 0 {
+		return 0
+	}
+	return pad
+}
+
 func mustIcon(ic *widget.Icon, err error) *widget.Icon {
 	if err != nil {
 		panic(err)
@@ -477,9 +498,9 @@ func (t *Table) computeColumnWidths(gtx layout.Context, maxW int) []int {
 		return widths
 	}
 
-	for i := len(t.Columns) - 1; i >= 0 && deficit > 0; i-- {
-		base, min := t.columnWidthPx(gtx, t.Columns[i])
-		shrinkable := base - min
+	for i := len(t.Columns) - 1; i >= 1 && deficit > 0; i-- {
+		_, min := t.columnWidthPx(gtx, t.Columns[i])
+		shrinkable := widths[i] - min
 		if shrinkable <= 0 {
 			continue
 		}
@@ -491,12 +512,27 @@ func (t *Table) computeColumnWidths(gtx layout.Context, maxW int) []int {
 		deficit -= cut
 	}
 
-	for i := len(t.Columns) - 1; i >= 1 && deficit > 0; i-- {
+	for _, i := range t.columnDropOrder() {
+		if deficit <= 0 {
+			break
+		}
 		if widths[i] <= 0 {
 			continue
 		}
 		deficit -= widths[i]
 		widths[i] = 0
+	}
+	if deficit > 0 && len(widths) > 0 {
+		_, min := t.columnWidthPx(gtx, t.Columns[0])
+		shrinkable := widths[0] - min
+		if shrinkable > 0 {
+			cut := shrinkable
+			if cut > deficit {
+				cut = deficit
+			}
+			widths[0] -= cut
+			deficit -= cut
+		}
 	}
 
 	total := 0
@@ -524,6 +560,49 @@ func (t *Table) computeColumnWidths(gtx layout.Context, maxW int) []int {
 	}
 
 	return widths
+}
+
+func (t *Table) columnDropOrder() []int {
+	n := len(t.Columns)
+	if n <= 1 {
+		return nil
+	}
+
+	type dropSpec struct {
+		index    int
+		priority int
+	}
+
+	specs := make([]dropSpec, 0, n-1)
+	hasCustom := false
+	for i := 1; i < n; i++ {
+		prio := t.Columns[i].DropPriority
+		if prio != 0 {
+			hasCustom = true
+		}
+		specs = append(specs, dropSpec{index: i, priority: prio})
+	}
+
+	if !hasCustom {
+		order := make([]int, 0, n-1)
+		for i := n - 1; i >= 1; i-- {
+			order = append(order, i)
+		}
+		return order
+	}
+
+	sort.Slice(specs, func(i, j int) bool {
+		if specs[i].priority == specs[j].priority {
+			return specs[i].index > specs[j].index
+		}
+		return specs[i].priority < specs[j].priority
+	})
+
+	order := make([]int, 0, len(specs))
+	for _, spec := range specs {
+		order = append(order, spec.index)
+	}
+	return order
 }
 
 func (t *Table) isDoubleClick(row int, ev widget.Click, now time.Time) bool {
@@ -696,6 +775,34 @@ func (t *Table) HitRow(pos image.Point, n int) int {
 	return row
 }
 
+func (t *Table) HitColumn(pos image.Point) int {
+	pos = pos.Sub(t.hitOffset)
+	if pos.X < 0 || pos.Y < 0 || pos.X >= t.hitSize.X || pos.Y >= t.hitSize.Y {
+		return -1
+	}
+	if t.Mode != ModeFull {
+		if len(t.Columns) == 0 {
+			return -1
+		}
+		return 0
+	}
+	if len(t.fullModeWidths) == 0 {
+		return -1
+	}
+
+	x := 0
+	for col, w := range t.fullModeWidths {
+		if w <= 0 {
+			continue
+		}
+		if pos.X < x+w {
+			return col
+		}
+		x += w
+	}
+	return -1
+}
+
 func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.Dimensions {
 	n := 0
 	if m != nil {
@@ -705,6 +812,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 	insetPx := gtx.Dp(unit.Dp(2))
 	t.hitOffset = image.Pt(insetPx, insetPx)
 	t.hitSize = image.Point{}
+	t.fullModeWidths = nil
 	t.rowHeightPx = 0
 	t.briefColPx = 0
 	t.briefGapPx = 0
@@ -841,6 +949,7 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 				}
 
 				widths := t.computeColumnWidths(gtx, maxW)
+				t.fullModeWidths = append(t.fullModeWidths[:0], widths...)
 				aware, awareOK := m.(WidthAwareModel)
 				iconModel, iconOK := m.(LeadingIconModel)
 				x := 0
@@ -851,7 +960,8 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 						w = 0
 					}
 
-					contentW := w - 2*gtx.Dp(c.PadX)
+					padX := adaptiveCellPadX(gtx, c.PadX, w)
+					contentW := w - 2*gtx.Dp(padX)
 					if contentW < 0 {
 						contentW = 0
 					}
@@ -895,7 +1005,7 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 
 					tr := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
 					hideIfTruncated := false
-					_ = layout.Inset{Left: c.PadX, Right: c.PadX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
+					_ = layout.Inset{Left: padX, Right: padX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
 						if hasIcon && icon.Kind != IconNone {
 							return layoutCellLabelWithIcon(gtx, th, th.Face, t.TextSize, txt, st, align, hideIfTruncated, icon)
 						}
@@ -1112,6 +1222,7 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 			if len(t.Columns) > 0 {
 				padX = t.Columns[0].PadX
 			}
+			padX = adaptiveCellPadX(gtx, padX, maxW)
 			contentW := maxW - 2*gtx.Dp(padX)
 			if contentW < 0 {
 				contentW = 0

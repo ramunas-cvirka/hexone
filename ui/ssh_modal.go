@@ -484,7 +484,7 @@ func (ui *UI) layoutSSHModalHeader(th *material.Theme, gtx layout.Context, st *s
 			lbl := material.Body1(th, "SSH Sessions")
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.Font.Weight = font.Bold
-			lbl.TextSize = scaleThemeFontSize(th, 12)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
 			lbl.Color = txtColor
 			return lbl.Layout(gtx)
 		}),
@@ -522,7 +522,7 @@ func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *ss
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 								lbl := material.Caption(th, "Saved setups")
 								lbl.Font.Typeface = ui.mainTypeface()
-								lbl.TextSize = scaleThemeFontSize(th, 9)
+								lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 								lbl.Color = hintColor
 								return lbl.Layout(gtx)
 							}),
@@ -536,7 +536,7 @@ func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *ss
 						if len(st.setups) == 0 {
 							lbl := material.Body2(th, "No setups yet. Press + to add one.")
 							lbl.Font.Typeface = ui.mainTypeface()
-							lbl.TextSize = scaleThemeFontSize(th, 10)
+							lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 							lbl.Color = hintColor
 							lbl.MaxLines = 3
 							return lbl.Layout(gtx)
@@ -573,7 +573,7 @@ func (ui *UI) layoutSSHAddButton(th *material.Theme, gtx layout.Context, c *widg
 					lbl := material.Body1(th, "+")
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.Font.Weight = font.Bold
-					lbl.TextSize = scaleThemeFontSize(th, 12)
+					lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
 					lbl.Color = fg
 					return lbl.Layout(gtx)
 				})
@@ -609,7 +609,7 @@ func (ui *UI) layoutSSHSetupRow(th *material.Theme, gtx layout.Context, st *sshM
 							return st.setupClicks[index].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								lbl := material.Body2(th, label)
 								lbl.Font.Typeface = ui.mainTypeface()
-								lbl.TextSize = scaleThemeFontSize(th, 10)
+								lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 								lbl.Font.Weight = font.Medium
 								lbl.Color = txtColor
 								lbl.MaxLines = 1
@@ -642,7 +642,7 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, "Setup details")
 						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleThemeFontSize(th, 9)
+						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 						lbl.Color = hintColor
 						return lbl.Layout(gtx)
 					}),
@@ -650,7 +650,7 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 						lbl := material.Body2(th, identityLabel)
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.Font.Weight = font.Medium
-						lbl.TextSize = scaleThemeFontSize(th, 10)
+						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 						lbl.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 						lbl.MaxLines = 1
 						lbl.Truncator = "..."
@@ -703,13 +703,13 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 func (ui *UI) layoutSSHField(th *material.Theme, gtx layout.Context, label string, edState *widget.Editor, hint string, enabled bool) layout.Dimensions {
 	rowLabel := material.Caption(th, label)
 	rowLabel.Font.Typeface = ui.mainTypeface()
-	rowLabel.TextSize = scaleThemeFontSize(th, 9)
+	rowLabel.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 	rowLabel.Color = hintColor
 
 	edState.ReadOnly = !enabled
 	ed := material.Editor(th, edState, hint)
 	ed.Font.Typeface = ui.mainTypeface()
-	ed.TextSize = scaleThemeFontSize(th, 10)
+	ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 	ed.Color = txtColor
 	ed.HintColor = hintColor
 	if !enabled {
@@ -755,7 +755,7 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 			}
 			lbl := material.Caption(th, st.errText)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 			lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
 			lbl.MaxLines = 2
 			lbl.Truncator = "..."
@@ -829,7 +829,7 @@ func (ui *UI) layoutSSHFooterSegment(th *material.Theme, gtx layout.Context, c *
 						lbl := material.Body2(th, label)
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.Font.Weight = font.Medium
-						lbl.TextSize = scaleThemeFontSize(th, 10)
+						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 						lbl.Color = fg
 						lbl.MaxLines = 1
 						return lbl.Layout(gtx)

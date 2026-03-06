@@ -1,80 +1,152 @@
+# Format order for file timestamps in listings.
+# First matching format that fits available width is used.
+# Go time format tokens are used (reference date: Jan 02 2006 15:04:05).
 date_formats:
-    - Jan 02 2006 15:04
-    - Jan 02 15:04
-    - Jan 02 2006
-    - Jan 02
-    - 01-02
+  - Jan 02 2006 15:04
+  - Jan 02 15:04
+  - Jan 02 2006
+  - Jan 02
+  - 01-02
+
+# Optional quick-access locations for pane favorite menu.
+# Supports local paths and ssh:// URLs.
 favorite_locations:
-    - /Users/ramunas/go/src/hexone
-    - /Users/ramunas/Downloads/@protocol_doc
-    - /Users/ramunas/go/src/gpstrack-go
-    - ssh://root@157.180.68.247:22/opt/gpstrack/log
+  - /Users/ramunas/go/src/hexone
+  - /Users/ramunas/Downloads/@protocol_doc
+  - /Users/ramunas/go/src/gpstrack-go
+  - ssh://root@157.180.68.247:22/opt/gpstrack/log
+
 name_compact:
-    approx_char_px: 8
-    min_head: 6
-    min_tail: 3
-    marker: ..
+  # Estimated monospace glyph width in px at base size; used for fit heuristics.
+  approx_char_px: 8
+  # Minimum leading characters to keep when compacting long names.
+  min_head: 6
+  # Minimum trailing characters to keep when compacting long names.
+  min_tail: 3
+  # Marker inserted between kept head and tail of compacted names.
+  marker: ..
+
 columns:
-    name_width_dp: 180
-    name_min_width_dp: 52
-    perm_width_dp: 92
-    perm_min_width_dp: 44
-    show_permissions: true
-    permission_format: auto
-    size_width_dp: 92
-    size_min_width_dp: 48
-    date_width_dp: 128
-    date_min_width_dp: 56
-    brief_width_dp: 180
-    brief_gap_dp: 4
+  # Preferred full-mode name column width (dp). Can grow/shrink.
+  name_width_dp: 180
+  # Minimum full-mode name column width (dp). This is the main explicit minimum.
+  name_min_width_dp: 52
+  # Preferred permissions column width (dp).
+  perm_width_dp: 92
+  # Horizontal inner padding per full-mode cell (dp). Acts as max; may shrink adaptively when tight.
+  full_pad_dp: 8
+  # Full-mode column drop order when width is insufficient.
+  # Earliest item is dropped first.
+  # Finite canonical options: date, size, permissions, name
+  # (name is usually last so file name survives longest).
+  full_drop_priority:
+    - date
+    - size
+    - permissions
+    - name
+  # Toggle permissions column visibility in full mode.
+  show_permissions: true
+  # Permissions display format.
+  # Finite options: auto, symbolic, octal
+  # auto = prefer symbolic when possible, fallback to octal.
+  permission_format: auto
+  # Preferred size column width (dp).
+  size_width_dp: 92
+  # Preferred date column width (dp).
+  date_width_dp: 128
+  # Preferred brief-mode column width (dp).
+  brief_width_dp: 180
+  # Gap between brief-mode columns (dp).
+  brief_gap_dp: 4
+
 key_bindings:
-    focus_next_pane: tab
-    focus_prev_pane: shift+tab
-    move_up: up
-    move_down: down
-    move_left: left
-    move_right: right
-    page_up: pgup
-    page_down: pgdown
-    home: home
-    end: end
-    activate: enter
-    view: f3
-    copy: f5
-    rename_move: f6
-    create: f7
-    delete: f8
+  # Keyboard shortcut strings understood by Gio key events.
+  # Examples: tab, shift+tab, up, down, left, right, pgup, pgdown, home, end, enter, f3..f12
+  focus_next_pane: tab
+  focus_prev_pane: shift+tab
+  move_up: up
+  move_down: down
+  move_left: left
+  move_right: right
+  page_up: pgup
+  page_down: pgdown
+  home: home
+  end: end
+  activate: enter
+  view: f3
+  copy: f5
+  rename_move: f6
+  create: f7
+  delete: f8
+
 sort:
-    default_key: name
-    descending: false
-    directories_first: true
+  # Default sort key in file panes.
+  # Accepted values: name, ext (aliases: extension, type), size, date (aliases: time, datetime).
+  default_key: name
+  # false = ascending, true = descending.
+  descending: false
+  # true = directories listed before files.
+  directories_first: true
+
 font:
-    typeface: Fira Code
-    size_sp: 16
-    regular_path: assets/FiraCode-Regular.ttf
-    medium_path: assets/FiraCode-Medium.ttf
-    bold_path: assets/FiraCode-Bold.ttf
+  # UI typeface name (used in theme/label font selection).
+  typeface: Fira Code
+  # Base UI font size in sp.
+  size_sp: 16
+  # Shared modal/dialog font size baseline in sp (used by copy/move/delete/create/permissions/settings/ssh modals).
+  # Increase this to make all modals more readable without changing main UI size.
+  modal_size_sp: 17
+  # Font files for regular / medium / bold weights.
+  regular_path: assets/FiraCode-Regular.ttf
+  medium_path: assets/FiraCode-Medium.ttf
+  bold_path: assets/FiraCode-Bold.ttf
+
 viewer:
-    mode: command
-    shell: auto
-    command: tail -f {path} | grep --line-buffered 4a17100a
-    command_by_target:
-        ssh:root@157.180.68.247:22:/opt/gpstrack/log/gpstrack.log: tail -f {path} | grep --line-buffered 4a17100a
-    command_history:
-        - tail -f {path} | grep --line-buffered 4a17100a
-        - tail {path}
-    word_select_regex: '[a-zA-Z0-9]+'
-    font_size_sp: 13
-    word_wrap: false
-    max_read_mb: 6
-    command_auto_refresh: true
-    command_refresh_ms: 2500
+  # Viewer source mode.
+  # Finite options: file, command
+  mode: command
+  # Shell used for command mode.
+  # Finite options: auto, sh, powershell
+  # (pwsh/powershell aliases normalize to powershell).
+  shell: auto
+  # Command template for command mode; {path} is substituted with target path.
+  command: tail -f {path} | grep --line-buffered 4a17100a
+  # Optional per-target command overrides.
+  # Key format is target id (for example: ssh:user@host:port:/path/to/file).
+  command_by_target:
+    ssh:root@157.180.68.247:22:/opt/gpstrack/log/gpstrack.log: tail -f {path} | grep --line-buffered 4a17100a
+  # Recent commands shown in command picker/history.
+  command_history:
+    - tail -f {path} | grep --line-buffered 4a17100a
+    - tail {path}
+  # Regex used for double-click/selection word detection in viewer.
+  word_select_regex: "[a-zA-Z0-9]+"
+  # Viewer text size in sp (separate from main UI font size).
+  font_size_sp: 13
+  # true = wrap long lines, false = horizontal scrolling.
+  word_wrap: false
+  # Maximum file read size (MB) for file mode.
+  max_read_mb: 6
+  # Auto-refresh command output while command mode is active.
+  command_auto_refresh: true
+  # Command refresh interval in milliseconds.
+  # Values below internal minimum are normalized.
+  command_refresh_ms: 2500
+
 ssh:
-    setups:
-        - name: root@157.180.68.247:22
-          host: 157.180.68.247
-          port: 22
-          user: root
-          password: ""
-          key_path: /Users/ramunas/.ssh/id_ed25519
-          key_passphrase: ""
+  # Saved SSH connection presets.
+  setups:
+    - # Display name for this preset.
+      name: root@157.180.68.247:22
+      # Hostname or IP.
+      host: 157.180.68.247
+      # TCP port.
+      port: 22
+      # Username.
+      user: root
+      # Password auth secret (empty to disable password auth).
+      password: ""
+      # Private key path (empty to disable key auth).
+      key_path: C:\Users\ramuc\.ssh\id_ed25519
+      # Private key passphrase if key is encrypted.
+      key_passphrase: ""

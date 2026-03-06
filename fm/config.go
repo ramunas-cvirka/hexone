@@ -17,18 +17,23 @@ type NameCompact struct {
 }
 
 type ColumnWidths struct {
-	NameWidthDp      int    `yaml:"name_width_dp"`
-	NameMinWidthDp   int    `yaml:"name_min_width_dp"`
-	PermWidthDp      int    `yaml:"perm_width_dp"`
-	PermMinWidthDp   int    `yaml:"perm_min_width_dp"`
-	ShowPermissions  bool   `yaml:"show_permissions"`
-	PermissionFormat string `yaml:"permission_format"`
-	SizeWidthDp      int    `yaml:"size_width_dp"`
-	SizeMinWidthDp   int    `yaml:"size_min_width_dp"`
-	DateWidthDp      int    `yaml:"date_width_dp"`
-	DateMinWidthDp   int    `yaml:"date_min_width_dp"`
-	BriefWidthDp     int    `yaml:"brief_width_dp"`
-	BriefGapDp       int    `yaml:"brief_gap_dp"`
+	NameWidthDp    int `yaml:"name_width_dp"`
+	NameMinWidthDp int `yaml:"name_min_width_dp"`
+	PermWidthDp    int `yaml:"perm_width_dp"`
+	// Backward-compatible input key; normalized to a computed value.
+	PermMinWidthDp   int      `yaml:"perm_min_width_dp"`
+	FullPadDp        int      `yaml:"full_pad_dp"`
+	FullDropPriority []string `yaml:"full_drop_priority"`
+	ShowPermissions  bool     `yaml:"show_permissions"`
+	PermissionFormat string   `yaml:"permission_format"`
+	SizeWidthDp      int      `yaml:"size_width_dp"`
+	// Backward-compatible input key; normalized to a computed value.
+	SizeMinWidthDp int `yaml:"size_min_width_dp"`
+	DateWidthDp    int `yaml:"date_width_dp"`
+	// Backward-compatible input key; normalized to a computed value.
+	DateMinWidthDp int `yaml:"date_min_width_dp"`
+	BriefWidthDp   int `yaml:"brief_width_dp"`
+	BriefGapDp     int `yaml:"brief_gap_dp"`
 }
 
 type KeyBindings struct {
@@ -59,6 +64,7 @@ type SortConfig struct {
 type FontConfig struct {
 	Typeface    string  `yaml:"typeface"`
 	SizeSp      float32 `yaml:"size_sp"`
+	ModalSizeSp float32 `yaml:"modal_size_sp"`
 	RegularPath string  `yaml:"regular_path"`
 	MediumPath  string  `yaml:"medium_path"`
 	BoldPath    string  `yaml:"bold_path"`
@@ -125,6 +131,8 @@ func DefaultConfig() *Config {
 			NameMinWidthDp:   52,
 			PermWidthDp:      92,
 			PermMinWidthDp:   44,
+			FullPadDp:        4,
+			FullDropPriority: []string{"date", "size", "permissions", "name"},
 			ShowPermissions:  true,
 			PermissionFormat: "auto",
 			SizeWidthDp:      92,
@@ -160,6 +168,7 @@ func DefaultConfig() *Config {
 		Font: FontConfig{
 			Typeface:    "Fira Code",
 			SizeSp:      14,
+			ModalSizeSp: 15,
 			RegularPath: "assets/FiraCode-Regular.ttf",
 			MediumPath:  "assets/FiraCode-Medium.ttf",
 			BoldPath:    "assets/FiraCode-Bold.ttf",
@@ -242,9 +251,10 @@ func (c *Config) normalize() {
 	if c.Columns.PermWidthDp < 1 {
 		c.Columns.PermWidthDp = 92
 	}
-	if c.Columns.PermMinWidthDp < 1 {
-		c.Columns.PermMinWidthDp = 44
+	if c.Columns.FullPadDp < 1 {
+		c.Columns.FullPadDp = 4
 	}
+	c.Columns.FullDropPriority = normalizeFullDropPriority(c.Columns.FullDropPriority)
 	switch c.Columns.PermissionFormat {
 	case "symbolic", "octal", "auto":
 	default:
@@ -253,14 +263,8 @@ func (c *Config) normalize() {
 	if c.Columns.SizeWidthDp < 1 {
 		c.Columns.SizeWidthDp = 92
 	}
-	if c.Columns.SizeMinWidthDp < 1 {
-		c.Columns.SizeMinWidthDp = 44
-	}
 	if c.Columns.DateWidthDp < 1 {
 		c.Columns.DateWidthDp = 128
-	}
-	if c.Columns.DateMinWidthDp < 1 {
-		c.Columns.DateMinWidthDp = 44
 	}
 	if c.Columns.BriefWidthDp < 1 {
 		c.Columns.BriefWidthDp = 180
@@ -269,19 +273,17 @@ func (c *Config) normalize() {
 		c.Columns.BriefGapDp = 4
 	}
 
-	sizeMin := c.NameCompact.ApproxCharPx*5 + 8
-	if c.Columns.SizeMinWidthDp < sizeMin {
-		c.Columns.SizeMinWidthDp = sizeMin
-	}
+	padReserve := 2 * c.Columns.FullPadDp
+
+	sizeMin := c.NameCompact.ApproxCharPx*5 + 8 + padReserve
+	c.Columns.SizeMinWidthDp = sizeMin
 
 	permChars := 4
 	if c.Columns.PermissionFormat == "symbolic" {
 		permChars = 9
 	}
-	permMin := c.NameCompact.ApproxCharPx*permChars + 12
-	if c.Columns.PermMinWidthDp < permMin {
-		c.Columns.PermMinWidthDp = permMin
-	}
+	permMin := c.NameCompact.ApproxCharPx*permChars + 12 + padReserve
+	c.Columns.PermMinWidthDp = permMin
 
 	shortestDate := 5
 	if len(c.DateFormats) > 0 {
@@ -293,10 +295,8 @@ func (c *Config) normalize() {
 			}
 		}
 	}
-	dateMin := c.NameCompact.ApproxCharPx*shortestDate + 16
-	if c.Columns.DateMinWidthDp < dateMin {
-		c.Columns.DateMinWidthDp = dateMin
-	}
+	dateMin := c.NameCompact.ApproxCharPx*shortestDate + 16 + padReserve
+	c.Columns.DateMinWidthDp = dateMin
 
 	if c.KeyBindings.FocusNextPane == "" {
 		c.KeyBindings.FocusNextPane = "tab"
@@ -356,6 +356,12 @@ func (c *Config) normalize() {
 	}
 	if c.Font.SizeSp <= 0 {
 		c.Font.SizeSp = 14
+	}
+	if c.Font.ModalSizeSp < 6 {
+		c.Font.ModalSizeSp = c.Font.SizeSp * (15.0 / 14.0)
+		if c.Font.ModalSizeSp < 6 {
+			c.Font.ModalSizeSp = 15
+		}
 	}
 	if c.Font.RegularPath == "" {
 		c.Font.RegularPath = "assets/FiraCode-Regular.ttf"
@@ -518,4 +524,47 @@ func (c *Config) normalizeSSHSetups() {
 		out = append(out, setup)
 	}
 	c.SSH.Setups = out
+}
+
+func normalizeFullDropPriority(raw []string) []string {
+	defaultOrder := []string{"date", "size", "permissions", "name"}
+	if len(raw) == 0 {
+		return append([]string(nil), defaultOrder...)
+	}
+
+	normalize := func(v string) string {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "date", "time", "datetime":
+			return "date"
+		case "size":
+			return "size"
+		case "permissions", "permission", "perms", "perm":
+			return "permissions"
+		case "name", "filename", "file":
+			return "name"
+		default:
+			return ""
+		}
+	}
+
+	seen := make(map[string]struct{}, len(defaultOrder))
+	out := make([]string, 0, len(defaultOrder))
+	for _, item := range raw {
+		key := normalize(item)
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	for _, key := range defaultOrder {
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
 }

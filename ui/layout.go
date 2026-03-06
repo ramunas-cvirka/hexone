@@ -141,6 +141,7 @@ type UI struct {
 	fileDelete       *fileDeleteState
 	fileMove         *fileMoveState
 	fileCreate       *fileCreateState
+	filePerm         *filePermState
 	fileViewer       *fileViewerState
 	settingsModal    *settingsModalState
 	sshModal         *sshModalState
@@ -190,9 +191,7 @@ func NewUI(cfg *fm.Config) *UI {
 			_ = row
 			ui.setActiveFilePane(idx)
 		}
-		pane.table.OnDoubleClick = func(row int) {
-			ui.queueFilePaneOpen(idx, row)
-		}
+		pane.table.OnDoubleClick = nil
 		pane.table.OnActivate = func(row int) {
 			ui.queueFilePaneOpen(idx, row)
 		}
@@ -255,6 +254,22 @@ func scaleFontSize(base, size unit.Sp) unit.Sp {
 
 func scaleThemeFontSize(th *material.Theme, size unit.Sp) unit.Sp {
 	return scaleFontSize(themeFontSize(th), size)
+}
+
+func scaleModalThemeFontSize(th *material.Theme, cfg *fm.Config, size unit.Sp) unit.Sp {
+	scaled := scaleThemeFontSize(th, size)
+	if cfg == nil || cfg.Font.SizeSp <= 0 || cfg.Font.ModalSizeSp <= 0 {
+		return scaled
+	}
+	factor := cfg.Font.ModalSizeSp / cfg.Font.SizeSp
+	if factor <= 0 {
+		return scaled
+	}
+	out := unit.Sp(float32(scaled) * factor)
+	if out < 1 {
+		return 1
+	}
+	return out
 }
 
 func scaleConfigFontSize(cfg *fm.Config, size unit.Sp) unit.Sp {
@@ -759,7 +774,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				ui.startFileViewerLoad(gtx.Now)
 				continue
 			}
-			if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil {
+			if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil {
 				continue
 			}
 			if ui.pathEditActive() {
@@ -781,7 +796,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ui.settingsModal != nil || ui.sshModal != nil {
 				continue
 			}
-			if ui.fileViewer != nil || ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil {
+			if ui.fileViewer != nil || ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil {
 				continue
 			}
 			if ui.pathEditActive() {

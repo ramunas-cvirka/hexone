@@ -22,17 +22,18 @@ import (
 )
 
 const (
-	filePaneWheelRange            = 1 << 30
-	filePanePathDoubleClickWindow = 450 * time.Millisecond
-	filePanePathClickDelay        = filePanePathDoubleClickWindow
-	filePaneFavoriteTooltipDelay  = 2 * time.Second
-	filePaneCornerDp              = 8
-	filePaneControlCornerDp       = 6
-	filePaneOverlayCornerDp       = 6
-	filePaneNoticeVisibleDur      = 3 * time.Second
-	filePaneNoticeFadeInDur       = 180 * time.Millisecond
-	filePaneNoticeFadeOutDur      = 220 * time.Millisecond
-	filePaneNoticeSlideDp         = unit.Dp(6)
+	filePaneWheelRange             = 1 << 30
+	filePanePathDoubleClickWindow  = 450 * time.Millisecond
+	filePanePathClickDelay         = filePanePathDoubleClickWindow
+	filePaneFavoriteTooltipDelay   = 2 * time.Second
+	filePaneCornerDp               = 8
+	filePaneControlCornerDp        = 6
+	filePaneOverlayCornerDp        = 6
+	filePaneNoticeVisibleDur       = 3 * time.Second
+	filePaneNoticeFadeInDur        = 180 * time.Millisecond
+	filePaneNoticeFadeOutDur       = 220 * time.Millisecond
+	filePaneNoticeSlideDp          = unit.Dp(6)
+	filePaneTableDoubleClickWindow = 400 * time.Millisecond
 )
 
 type visiblePane struct {
@@ -46,6 +47,7 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 	ui.pumpFileDeleteState(gtx)
 	ui.pumpFileMoveState(gtx)
 	ui.pumpFileCreateState(gtx)
+	ui.pumpFilePermState(gtx)
 
 	dims := layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -64,6 +66,9 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFileCreateDialog(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePermDialog(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFileViewer(th, gtx)
@@ -86,7 +91,7 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 		ui.handleFileViewerKeys(gtx)
 		return
 	}
-	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil {
+	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil {
 		return
 	}
 	ui.handleFileManagerEscape(gtx)
@@ -681,10 +686,24 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 				pane.stopPathEdit()
 				pathEditClosed = true
 			}
+			pos := pe.Position.Round()
+			row := pane.table.HitRow(pos, total)
+			col := pane.table.HitColumn(pos)
+			if pe.Buttons.Contain(pointer.ButtonPrimary) && row >= 0 && col >= 0 {
+				if pane.registerTablePrimaryClick(row, col, gtx.Now, filePaneTableDoubleClickWindow) {
+					if col == pane.permissionColumnIndex() {
+						if ui.startFilePermDialog(idx, row, gtx.Now) {
+							selectionChanged = true
+						}
+					} else {
+						ui.queueFilePaneOpen(idx, row)
+					}
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
 			if !pe.Buttons.Contain(pointer.ButtonSecondary) {
 				continue
 			}
-			row := pane.table.HitRow(pe.Position.Round(), total)
 			if row >= 0 && row != pane.table.Selected {
 				prev := pane.table.Selected
 				pane.table.SetSelected(row, total, false)
@@ -693,7 +712,7 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 				}
 				selectionChanged = true
 			}
-			ui.openFilePaneContextMenu(idx, row, pe.Position.Round())
+			ui.openFilePaneContextMenu(idx, row, pos)
 		}
 	}
 

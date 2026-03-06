@@ -190,6 +190,9 @@ type filePaneState struct {
 	pathClickAt          time.Time
 	pendingPathNav       string
 	pendingPathAt        time.Time
+	tableClickRow        int
+	tableClickCol        int
+	tableClickAt         time.Time
 	pathRowClick         widget.Clickable
 	modeClick            widget.Clickable
 	sortClick            widget.Clickable
@@ -232,17 +235,48 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	scaleDp := func(v int) unit.Dp {
 		return scaleFilePaneDp(cfg, v)
 	}
+	fullPad := unit.Dp(cfg.Columns.FullPadDp)
+	if fullPad < 0 {
+		fullPad = 0
+	}
+	dropPriority := filePaneFullDropPriority(cfg)
 	cols := []table.Column{
-		{Width: scaleDp(cfg.Columns.NameWidthDp), MinWidth: scaleDp(cfg.Columns.NameMinWidthDp), Flex: true, Align: table.AlignStart, PadX: unit.Dp(2)},
+		{
+			Width:        scaleDp(cfg.Columns.NameWidthDp),
+			MinWidth:     scaleDp(cfg.Columns.NameMinWidthDp),
+			Flex:         true,
+			Align:        table.AlignStart,
+			PadX:         fullPad,
+			DropPriority: dropPriority["name"],
+		},
 	}
 	if cfg.Columns.ShowPermissions {
 		cols = append(cols, table.Column{
-			Width: scaleDp(cfg.Columns.PermWidthDp), MinWidth: scaleDp(cfg.Columns.PermMinWidthDp), Flex: false, Align: table.AlignStart, PadX: unit.Dp(4),
+			Width:        scaleDp(cfg.Columns.PermWidthDp),
+			MinWidth:     scaleDp(cfg.Columns.PermMinWidthDp),
+			Flex:         false,
+			Align:        table.AlignStart,
+			PadX:         fullPad,
+			DropPriority: dropPriority["permissions"],
 		})
 	}
 	cols = append(cols,
-		table.Column{Width: scaleDp(cfg.Columns.SizeWidthDp), MinWidth: scaleDp(cfg.Columns.SizeMinWidthDp), Flex: false, Align: table.AlignEnd, PadX: unit.Dp(2)},
-		table.Column{Width: scaleDp(cfg.Columns.DateWidthDp), MinWidth: scaleDp(cfg.Columns.DateMinWidthDp), Flex: false, Align: table.AlignStart, PadX: unit.Dp(6)},
+		table.Column{
+			Width:        scaleDp(cfg.Columns.SizeWidthDp),
+			MinWidth:     scaleDp(cfg.Columns.SizeMinWidthDp),
+			Flex:         false,
+			Align:        table.AlignEnd,
+			PadX:         fullPad,
+			DropPriority: dropPriority["size"],
+		},
+		table.Column{
+			Width:        scaleDp(cfg.Columns.DateWidthDp),
+			MinWidth:     scaleDp(cfg.Columns.DateMinWidthDp),
+			Flex:         false,
+			Align:        table.AlignStart,
+			PadX:         fullPad,
+			DropPriority: dropPriority["date"],
+		},
 	)
 
 	pane := &filePaneState{
@@ -256,6 +290,8 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	pane.pathEdit.SingleLine = true
 	pane.pathEdit.Submit = true
 	pane.ctxMenuRow = -1
+	pane.tableClickRow = -1
+	pane.tableClickCol = -1
 	pane.table.TextSize = scaleConfigFontSize(cfg, 13)
 	pane.table.RowHeight = scaleDp(18)
 	pane.table.RowPadY = unit.Dp(0)
@@ -267,6 +303,31 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 		pane.localDirBeforeRemote = pane.dir
 	}
 	return pane
+}
+
+func filePaneFullDropPriority(cfg *fm.Config) map[string]int {
+	out := map[string]int{
+		"name":        4,
+		"permissions": 3,
+		"size":        2,
+		"date":        1,
+	}
+	if cfg == nil {
+		return out
+	}
+	for i, key := range cfg.Columns.FullDropPriority {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "date", "time", "datetime":
+			out["date"] = i + 1
+		case "size":
+			out["size"] = i + 1
+		case "permissions", "permission", "perms", "perm":
+			out["permissions"] = i + 1
+		case "name", "filename", "file":
+			out["name"] = i + 1
+		}
+	}
+	return out
 }
 
 func filePaneFontScale(cfg *fm.Config) float32 {
@@ -387,6 +448,29 @@ func (p *filePaneState) clearPathClickState() {
 	}
 	p.pathClickKey = ""
 	p.pathClickAt = time.Time{}
+}
+
+func (p *filePaneState) registerTablePrimaryClick(row, col int, now time.Time, window time.Duration) bool {
+	if p == nil || row < 0 || col < 0 {
+		return false
+	}
+	if p.tableClickRow == row && p.tableClickCol == col && !p.tableClickAt.IsZero() && now.Sub(p.tableClickAt) <= window {
+		p.tableClickRow = -1
+		p.tableClickCol = -1
+		p.tableClickAt = time.Time{}
+		return true
+	}
+	p.tableClickRow = row
+	p.tableClickCol = col
+	p.tableClickAt = now
+	return false
+}
+
+func (p *filePaneState) permissionColumnIndex() int {
+	if p == nil || p.table == nil || p.table.Mode != table.ModeFull || p.model == nil || !p.model.showPermissionColumn() {
+		return -1
+	}
+	return 1
 }
 
 func (p *filePaneState) registerPathClick(key string, now time.Time, window time.Duration) bool {

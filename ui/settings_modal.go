@@ -564,7 +564,7 @@ func (ui *UI) layoutSettingsModalHeader(th *material.Theme, gtx layout.Context, 
 			lbl := material.Body1(th, "Global Settings")
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.Font.Weight = font.Bold
-			lbl.TextSize = scaleThemeFontSize(th, 12)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
 			lbl.Color = txtColor
 			return lbl.Layout(gtx)
 		}),
@@ -632,7 +632,7 @@ func (ui *UI) layoutSettingsNavSegment(th *material.Theme, gtx layout.Context, c
 					lbl := material.Body2(th, label)
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.Font.Weight = font.Medium
-					lbl.TextSize = scaleThemeFontSize(th, 10)
+					lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 					lbl.Color = fg
 					lbl.MaxLines = 1
 					return lbl.Layout(gtx)
@@ -698,7 +698,7 @@ func (ui *UI) layoutSettingsHSegment(th *material.Theme, gtx layout.Context, c *
 						lbl := material.Body2(th, label)
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.Font.Weight = font.Medium
-						lbl.TextSize = scaleThemeFontSize(th, 10)
+						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 						lbl.Color = fg
 						lbl.MaxLines = 1
 						return lbl.Layout(gtx)
@@ -780,7 +780,7 @@ func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st
 			case "general":
 				lbl := material.Body2(th, "Favorites are managed from the '*' menu. Use the Config tab for full fm.yaml editing.")
 				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleThemeFontSize(th, 11)
+				lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 11)
 				lbl.Color = hintColor
 				return lbl.Layout(gtx)
 			case "config":
@@ -816,7 +816,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, txt)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 			lbl.Color = hintColor
 			if !enabled {
 				lbl.Color = color.NRGBA{R: 102, G: 102, B: 102, A: 255}
@@ -880,7 +880,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 			st.viewCommandEdit.ReadOnly = !commandEnabled
 			ed := material.Editor(th, &st.viewCommandEdit, "cat {path}")
 			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleThemeFontSize(th, 10)
+			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			if !commandEnabled {
@@ -895,7 +895,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			ed := material.Editor(th, &st.viewShellEdit, "auto")
 			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleThemeFontSize(th, 10)
+			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewShellEdit), true, ed.Layout)
@@ -906,7 +906,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			ed := material.Editor(th, &st.viewFontSizeEdit, "13")
 			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleThemeFontSize(th, 10)
+			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewFontSizeEdit), true, ed.Layout)
@@ -938,7 +938,7 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 			}
 			lbl := material.Caption(th, st.errText)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 			lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
 			lbl.MaxLines = 2
 			lbl.Truncator = "..."
@@ -982,7 +982,7 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, "Full fm.yaml (all config fields)")
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
@@ -990,7 +990,7 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			ed := material.Editor(th, &st.configEdit, "")
 			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleThemeFontSize(th, 10)
+			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.configEdit), true, ed.Layout)

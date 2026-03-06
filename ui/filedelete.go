@@ -380,7 +380,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 
 	desc := material.Caption(th, "This action cannot be undone.")
 	desc.Font.Typeface = ui.mainTypeface()
-	desc.TextSize = scaleThemeFontSize(th, 9)
+	desc.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 	desc.Color = color.NRGBA{R: 206, G: 186, B: 148, A: 255}
 
 	target := st.targetName
@@ -393,7 +393,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 	}
 	targetLabel := material.Body2(th, target)
 	targetLabel.Font.Typeface = ui.mainTypeface()
-	targetLabel.TextSize = scaleThemeFontSize(th, 10)
+	targetLabel.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 	targetLabel.Font.Weight = font.Medium
 	targetLabel.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 	targetLabel.MaxLines = 1
@@ -401,14 +401,14 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 
 	pathLabel := material.Caption(th, st.targetPath)
 	pathLabel.Font.Typeface = ui.mainTypeface()
-	pathLabel.TextSize = scaleThemeFontSize(th, 9)
+	pathLabel.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 	pathLabel.Color = color.NRGBA{R: 172, G: 172, B: 172, A: 255}
 	pathLabel.MaxLines = 1
 	pathLabel.Truncator = "…"
 
 	meta := material.Caption(th, formatCopyPathInfo(st.targetInfo))
 	meta.Font.Typeface = ui.mainTypeface()
-	meta.TextSize = scaleThemeFontSize(th, 9)
+	meta.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 	meta.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
 	meta.MaxLines = 1
 
@@ -419,7 +419,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 					title := material.Body1(th, "Delete")
 					title.Font.Typeface = ui.mainTypeface()
 					title.Font.Weight = font.Bold
-					title.TextSize = scaleThemeFontSize(th, 12)
+					title.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
 					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
@@ -443,7 +443,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 			}
 			lbl := material.Caption(th, st.lastErr)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 			lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
@@ -454,7 +454,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 			}
 			lbl := material.Caption(th, "Deleting...")
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),

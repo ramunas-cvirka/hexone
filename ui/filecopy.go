@@ -494,19 +494,19 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 
 	srcHdr := material.Caption(th, "Source")
 	srcHdr.Font.Typeface = ui.mainTypeface()
-	srcHdr.TextSize = scaleThemeFontSize(th, 9)
+	srcHdr.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 	srcHdr.Color = hintColor
 
 	srcText := material.Body2(th, st.srcPath)
 	srcText.Font.Typeface = ui.mainTypeface()
-	srcText.TextSize = scaleThemeFontSize(th, 10)
+	srcText.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 	srcText.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 	srcText.MaxLines = 1
 	srcText.Truncator = "…"
 
 	dstHdr := material.Caption(th, "Destination")
 	dstHdr.Font.Typeface = ui.mainTypeface()
-	dstHdr.TextSize = scaleThemeFontSize(th, 9)
+	dstHdr.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 	dstHdr.Color = hintColor
 
 	progress := st.progress
@@ -525,7 +525,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 					title := material.Body1(th, "Copy")
 					title.Font.Typeface = ui.mainTypeface()
 					title.Font.Weight = font.Bold
-					title.TextSize = scaleThemeFontSize(th, 12)
+					title.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
 					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
@@ -545,7 +545,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			if st.running {
 				lbl := material.Body2(th, st.dstPath)
 				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleThemeFontSize(th, 10)
+				lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Truncator = "…"
@@ -561,7 +561,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			}
 			ed := material.Editor(th, &st.dstEdit, "")
 			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleThemeFontSize(th, 10)
+			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.dstEdit), true, ed.Layout)
@@ -580,7 +580,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			return layout.Inset{Top: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, overwriteLabel)
 				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleThemeFontSize(th, 9)
+				lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 				lbl.Color = color.NRGBA{R: 196, G: 196, B: 196, A: 255}
 				lbl.MaxLines = 2
 				return lbl.Layout(gtx)
@@ -596,7 +596,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			}
 			lbl := material.Body2(th, st.lastErr)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleThemeFontSize(th, 10)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 			lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
@@ -629,7 +629,7 @@ func (ui *UI) layoutFileCopyProgress(th *material.Theme, gtx layout.Context, fra
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, status)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 			lbl.Color = hintColor
 			lbl.MaxLines = 1
 			return lbl.Layout(gtx)
@@ -640,7 +640,7 @@ func (ui *UI) layoutFileCopyProgress(th *material.Theme, gtx layout.Context, fra
 			}
 			lbl := material.Caption(th, current)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 			lbl.Color = color.NRGBA{R: 168, G: 168, B: 168, A: 255}
 			lbl.MaxLines = 1
 			lbl.Truncator = "…"
@@ -663,7 +663,7 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, "Overwrite Details")
 						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleThemeFontSize(th, 9)
+						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 						lbl.Color = color.NRGBA{R: 208, G: 208, B: 208, A: 255}
 						return lbl.Layout(gtx)
 					}),
@@ -671,7 +671,7 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, "src: "+srcMeta)
 						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleThemeFontSize(th, 9)
+						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 						lbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
 						lbl.MaxLines = 1
 						lbl.Truncator = "…"
@@ -680,7 +680,7 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, "dst: "+dstMeta)
 						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleThemeFontSize(th, 9)
+						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 						lbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
 						lbl.MaxLines = 1
 						lbl.Truncator = "…"
@@ -731,7 +731,7 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 							lbl := material.Body2(th, label)
 							lbl.Font.Typeface = ui.mainTypeface()
 							lbl.Font.Weight = font.Medium
-							lbl.TextSize = scaleThemeFontSize(th, 10)
+							lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 							lbl.Color = fg
 							lbl.MaxLines = 1
 							return lbl.Layout(gtx)
