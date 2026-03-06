@@ -106,6 +106,10 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	if pane == nil {
 		return
 	}
+	if pane.remoteConnected() {
+		pane.setNotice("remote viewer is not implemented yet", now)
+		return
+	}
 	entry := pane.selectedEntry()
 	if entry == nil || entry.Path == "" {
 		pane.setNotice("nothing selected to view", now)

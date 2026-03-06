@@ -8,10 +8,11 @@ import (
 )
 
 var (
-	uiIconsOnce    sync.Once
-	uiCloseIconRef *widget.Icon
-	uiRefreshIcon  *widget.Icon
-	uiCopyIcon     *widget.Icon
+	uiIconsOnce      sync.Once
+	uiCloseIconRef   *widget.Icon
+	uiRefreshIcon    *widget.Icon
+	uiCopyIcon       *widget.Icon
+	uiDisconnectIcon *widget.Icon
 )
 
 func uiCloseIcon() *widget.Icon {
@@ -29,11 +30,17 @@ func uiCopyGlyphIcon() *widget.Icon {
 	return uiCopyIcon
 }
 
+func uiDisconnectGlyphIcon() *widget.Icon {
+	initUIIcons()
+	return uiDisconnectIcon
+}
+
 func initUIIcons() {
 	uiIconsOnce.Do(func() {
 		uiCloseIconRef = mustUIIcon(widget.NewIcon(mdicons.NavigationClose))
 		uiRefreshIcon = mustUIIcon(widget.NewIcon(mdicons.NavigationRefresh))
 		uiCopyIcon = mustUIIcon(widget.NewIcon(mdicons.ContentContentCopy))
+		uiDisconnectIcon = mustUIIcon(widget.NewIcon(mdicons.ActionExitToApp))
 	})
 }
 

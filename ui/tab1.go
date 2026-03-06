@@ -663,6 +663,9 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 }
 
 func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
+	if pane != nil && pane.remoteConnected() && pane.pathEditing {
+		pane.stopPathEdit()
+	}
 	sortOptions := []struct {
 		key   fileSortKey
 		label string
@@ -757,6 +760,10 @@ func (ui *UI) handleFilePanePathRowClicks(gtx layout.Context, idx int, pane *fil
 		pane.sortMenuOpen = false
 		pane.closeFavoriteMenu()
 		pane.closeContextMenu()
+		if pane.remoteConnected() {
+			pane.clearPendingPathNavigate()
+			continue
+		}
 		if pane.registerPathClick("row:"+pane.dir, gtx.Now, filePanePathDoubleClickWindow) {
 			pane.clearPendingPathNavigate()
 			pane.beginPathEdit()
@@ -771,6 +778,16 @@ func (ui *UI) layoutFilePanePathFill(gtx layout.Context, fillH int) layout.Dimen
 func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
 	if pane == nil {
 		return layout.Dimensions{}
+	}
+	if pane.remoteConnected() {
+		lbl := material.Body2(th, pane.displayDir())
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Weight = font.Medium
+		lbl.TextSize = scaleThemeFontSize(th, 11)
+		lbl.Color = color.NRGBA{R: 210, G: 220, B: 240, A: 255}
+		lbl.MaxLines = 1
+		lbl.Truncator = "..."
+		return lbl.Layout(gtx)
 	}
 	segments := splitFilePathSegments(pane.dir)
 	pane.ensurePathClicks(len(segments))
@@ -1055,6 +1072,17 @@ func (ui *UI) processFilePaneFavoriteBadgeInput(gtx layout.Context, idx int, pan
 	}
 }
 
+func (ui *UI) processFilePaneDisconnectInput(gtx layout.Context, idx int, pane *filePaneState) {
+	if pane == nil || !pane.remoteConnected() {
+		return
+	}
+	if pane.disconnectClick.Clicked(gtx) {
+		ui.setActiveFilePane(idx)
+		ui.disconnectPaneSSH(idx, gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+}
+
 func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
 	if pane == nil {
 		return layout.Dimensions{}
@@ -1062,6 +1090,7 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 	ui.processFileModeBadgeInput(gtx, idx, pane)
 	ui.processFilePaneSortBadgeInput(gtx, idx, pane)
 	ui.processFilePaneFavoriteBadgeInput(gtx, idx, pane)
+	ui.processFilePaneDisconnectInput(gtx, idx, pane)
 
 	stripH := gtx.Dp(unit.Dp(22))
 	if stripH < 1 {
@@ -1075,82 +1104,108 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return pane.modeClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								pointer.CursorPointer.Add(gtx.Ops)
-								bg := color.NRGBA{}
-								iconColor := color.NRGBA{R: 210, G: 210, B: 210, A: 255}
-								if pane.modeClick.Hovered() {
-									bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-									iconColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
-								}
-								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-									return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										iconGtx := gtx
-										iconGtx.Constraints = layout.Exact(image.Pt(gtx.Dp(unit.Dp(16)), gtx.Dp(unit.Dp(12))))
-										return layoutModeGlyph(iconGtx, pane.table.Mode, iconColor)
-									})
+					children := make([]layout.FlexChild, 0, 10)
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return pane.modeClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							pointer.CursorPointer.Add(gtx.Ops)
+							bg := color.NRGBA{}
+							iconColor := color.NRGBA{R: 210, G: 210, B: 210, A: 255}
+							if pane.modeClick.Hovered() {
+								bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
+								iconColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+							}
+							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									iconGtx := gtx
+									iconGtx.Constraints = layout.Exact(image.Pt(gtx.Dp(unit.Dp(16)), gtx.Dp(unit.Dp(12))))
+									return layoutModeGlyph(iconGtx, pane.table.Mode, iconColor)
 								})
 							})
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						})
+					}))
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutFilePaneControlDivider(gtx, stripH)
+					}))
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return pane.sortClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							pointer.CursorPointer.Add(gtx.Ops)
+							bg := color.NRGBA{}
+							fg := txtColor
+							if pane.sortMenuOpen {
+								bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
+								fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
+							} else if pane.sortClick.Hovered() {
+								bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
+								fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+							}
+							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(th, pane.sortBadgeText())
+									lbl.Font.Typeface = ui.mainTypeface()
+									lbl.Font.Weight = font.Medium
+									lbl.TextSize = scaleThemeFontSize(th, 11)
+									lbl.Color = fg
+									lbl.MaxLines = 1
+									return lbl.Layout(gtx)
+								})
+							})
+						})
+					}))
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutFilePaneControlDivider(gtx, stripH)
+					}))
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return pane.favoriteClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							pointer.CursorPointer.Add(gtx.Ops)
+							bg := color.NRGBA{}
+							fg := txtColor
+							if pane.favoriteMenuOpen {
+								bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
+								fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
+							} else if pane.favoriteClick.Hovered() {
+								bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
+								fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+							}
+							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(th, "*")
+									lbl.Font.Typeface = ui.mainTypeface()
+									lbl.Font.Weight = font.Medium
+									lbl.TextSize = scaleThemeFontSize(th, 10)
+									lbl.Color = fg
+									lbl.MaxLines = 1
+									return lbl.Layout(gtx)
+								})
+							})
+						})
+					}))
+					if pane.remoteConnected() {
+						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return layoutFilePaneControlDivider(gtx, stripH)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return pane.sortClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						}))
+						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return pane.disconnectClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								pointer.CursorPointer.Add(gtx.Ops)
 								bg := color.NRGBA{}
-								fg := txtColor
-								if pane.sortMenuOpen {
-									bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
-									fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
-								} else if pane.sortClick.Hovered() {
-									bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-									fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+								iconColor := txtColor
+								if pane.disconnectClick.Hovered() {
+									bg = color.NRGBA{R: 56, G: 38, B: 38, A: 255}
+									iconColor = color.NRGBA{R: 255, G: 208, B: 208, A: 255}
 								}
 								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-									return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										lbl := material.Body2(th, pane.sortBadgeText())
-										lbl.Font.Typeface = ui.mainTypeface()
-										lbl.Font.Weight = font.Medium
-										lbl.TextSize = scaleThemeFontSize(th, 11)
-										lbl.Color = fg
-										lbl.MaxLines = 1
-										return lbl.Layout(gtx)
+									return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										if ic := uiDisconnectGlyphIcon(); ic != nil {
+											iconGtx := gtx
+											iconGtx.Constraints = layout.Exact(image.Pt(gtx.Dp(unit.Dp(12)), gtx.Dp(unit.Dp(12))))
+											ic.Layout(iconGtx, iconColor)
+										}
+										return layout.Dimensions{Size: image.Pt(gtx.Dp(unit.Dp(12)), gtx.Dp(unit.Dp(12)))}
 									})
 								})
 							})
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutFilePaneControlDivider(gtx, stripH)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return pane.favoriteClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								pointer.CursorPointer.Add(gtx.Ops)
-								bg := color.NRGBA{}
-								fg := txtColor
-								if pane.favoriteMenuOpen {
-									bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
-									fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
-								} else if pane.favoriteClick.Hovered() {
-									bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-									fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
-								}
-								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-									return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										lbl := material.Body2(th, "*")
-										lbl.Font.Typeface = ui.mainTypeface()
-										lbl.Font.Weight = font.Medium
-										lbl.TextSize = scaleThemeFontSize(th, 10)
-										lbl.Color = fg
-										lbl.MaxLines = 1
-										return lbl.Layout(gtx)
-									})
-								})
-							})
-						}),
-					)
+						}))
+					}
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 				})
 			})
 		},

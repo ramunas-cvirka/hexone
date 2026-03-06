@@ -30,12 +30,21 @@ func (ui *UI) SnapshotSession() *fm.SessionState {
 		if pane == nil {
 			continue
 		}
-		selectedPath := ""
-		if sel := pane.selectedEntry(); sel != nil {
-			selectedPath = sel.Path
+
+		dir := pane.dir
+		if pane.remoteConnected() && strings.TrimSpace(pane.localDirBeforeRemote) != "" {
+			dir = pane.localDirBeforeRemote
 		}
+
+		selectedPath := ""
+		if !pane.remoteConnected() {
+			if sel := pane.selectedEntry(); sel != nil {
+				selectedPath = sel.Path
+			}
+		}
+
 		s.Panes[i] = fm.SessionPane{
-			Dir:          pane.dir,
+			Dir:          dir,
 			SelectedPath: selectedPath,
 		}
 	}

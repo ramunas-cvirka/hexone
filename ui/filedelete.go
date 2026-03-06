@@ -47,6 +47,10 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 	if pane == nil || pane.model == nil || pane.table == nil {
 		return
 	}
+	if pane.remoteConnected() {
+		pane.setNotice("remote delete is not implemented yet", now)
+		return
+	}
 
 	row := pane.table.Selected
 	entry := pane.model.Entry(row)

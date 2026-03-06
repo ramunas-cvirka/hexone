@@ -133,6 +133,10 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	if pane == nil {
 		return
 	}
+	if pane.remoteConnected() {
+		pane.setNotice("remote copy is not implemented yet", now)
+		return
+	}
 
 	entry := pane.selectedEntry()
 	if entry == nil || entry.Path == "" {
@@ -155,7 +159,7 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 
 	dstDir := pane.dir
 	for i, other := range ui.filePanes {
-		if i == idx || other == nil || other.dir == "" {
+		if i == idx || other == nil || other.dir == "" || other.remoteConnected() {
 			continue
 		}
 		dstDir = other.dir

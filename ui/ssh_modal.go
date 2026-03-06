@@ -24,6 +24,7 @@ type sshModalState struct {
 	backdropClick widget.Clickable
 	closeClick    widget.Clickable
 	saveClick     widget.Clickable
+	connectClick  widget.Clickable
 	cancelClick   widget.Clickable
 	addClick      widget.Clickable
 
@@ -327,6 +328,15 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 	if st.saveClick.Clicked(gtx) {
 		st.footerAnim.setPulse("save", gtx.Now)
 		if err := ui.saveSSHModal(); err != nil {
+			st.errText = err.Error()
+		} else {
+			ui.closeSSHModal()
+			return layout.Dimensions{}
+		}
+	}
+	if st.connectClick.Clicked(gtx) {
+		st.footerAnim.setPulse("connect", gtx.Now)
+		if err := ui.connectSSHModalToActivePane(gtx.Now); err != nil {
 			st.errText = err.Error()
 		} else {
 			ui.closeSSHModal()
@@ -710,12 +720,17 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 	if st.saveClick.Hovered() {
 		hoverFooterKey = "save"
 	}
+	if st.connectClick.Hovered() {
+		hoverFooterKey = "connect"
+	}
 	st.footerAnim.setHover(hoverFooterKey, gtx.Now)
 	hoverCancel, hoverAnimCancel := st.footerAnim.hoverFill(gtx.Now, "cancel")
 	hoverSave, hoverAnimSave := st.footerAnim.hoverFill(gtx.Now, "save")
+	hoverConnect, hoverAnimConnect := st.footerAnim.hoverFill(gtx.Now, "connect")
 	pulseCancel, pulseAnimCancel := st.footerAnim.pulseFill(gtx.Now, "cancel")
 	pulseSave, pulseAnimSave := st.footerAnim.pulseFill(gtx.Now, "save")
-	if hoverAnimCancel || hoverAnimSave || pulseAnimCancel || pulseAnimSave {
+	pulseConnect, pulseAnimConnect := st.footerAnim.pulseFill(gtx.Now, "connect")
+	if hoverAnimCancel || hoverAnimSave || hoverAnimConnect || pulseAnimCancel || pulseAnimSave || pulseAnimConnect {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
@@ -754,7 +769,13 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 									return toolbarSeparator(gtx, stripH)
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return ui.layoutSSHFooterSegment(th, gtx, &st.saveClick, "Save", hoverSave, pulseSave, stripH, false, true)
+									return ui.layoutSSHFooterSegment(th, gtx, &st.saveClick, "Save", hoverSave, pulseSave, stripH, false, false)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return toolbarSeparator(gtx, stripH)
+								}),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSSHFooterSegment(th, gtx, &st.connectClick, "Connect", hoverConnect, pulseConnect, stripH, false, true)
 								}),
 							)
 						})

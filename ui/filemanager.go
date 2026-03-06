@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -190,6 +191,7 @@ type filePaneState struct {
 	modeClick            widget.Clickable
 	sortClick            widget.Clickable
 	favoriteClick        widget.Clickable
+	disconnectClick      widget.Clickable
 	tablePointerTag      struct{}
 	sortOptionBtns       [4]widget.Clickable
 	sortMenuOpen         bool
@@ -212,6 +214,8 @@ type filePaneState struct {
 	sortKey              fileSortKey
 	sortDesc             bool
 	dirsFirst            bool
+	remote               *paneSSHSession
+	localDirBeforeRemote string
 	dir                  string
 	err                  string
 	noticeText           string
@@ -256,6 +260,9 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	pane.table.BriefGap = scaleDp(cfg.Columns.BriefGapDp)
 	pane.table.SelectedFg = &color.NRGBA{R: 230, G: 230, B: 255, A: 255}
 	_ = pane.load(dir)
+	if pane.dir != "" {
+		pane.localDirBeforeRemote = pane.dir
+	}
 	return pane
 }
 
@@ -291,12 +298,23 @@ func scaleFilePanePx(cfg *fm.Config, v int) int {
 }
 
 func (p *filePaneState) load(dir string) error {
-	listing, err := filesys.ReadDir(dir)
+	var (
+		listing filesys.Listing
+		err     error
+	)
+	if p.remote != nil {
+		listing, err = p.remote.readDir(dir)
+	} else {
+		listing, err = filesys.ReadDir(dir)
+	}
 	if err != nil {
 		return err
 	}
 
 	p.dir = listing.Dir
+	if p.remote == nil && p.dir != "" {
+		p.localDirBeforeRemote = p.dir
+	}
 	p.err = ""
 	p.noticeText = ""
 	p.noticeUntil = time.Time{}
@@ -320,6 +338,9 @@ func (p *filePaneState) setNotice(msg string, now time.Time) {
 
 func (p *filePaneState) beginPathEdit() {
 	if p == nil {
+		return
+	}
+	if p.remote != nil {
 		return
 	}
 	p.clearPathClickState()
@@ -508,6 +529,38 @@ func (p *filePaneState) selectedEntry() *filesys.Entry {
 		return nil
 	}
 	return p.model.Entry(p.table.Selected)
+}
+
+func (p *filePaneState) remoteConnected() bool {
+	return p != nil && p.remote != nil
+}
+
+func (p *filePaneState) displayDir() string {
+	if p == nil {
+		return ""
+	}
+	if p.remote == nil {
+		return p.dir
+	}
+	base := p.remote.displayPrefix()
+	if base == "" {
+		base = "ssh"
+	}
+	dir := p.dir
+	if strings.TrimSpace(dir) == "" {
+		dir = "/"
+	}
+	return base + ":" + dir
+}
+
+func (p *filePaneState) pathBaseName(raw string) string {
+	if p == nil {
+		return filepath.Base(filepath.Clean(raw))
+	}
+	if p.remoteConnected() {
+		return path.Base(path.Clean(raw))
+	}
+	return filepath.Base(filepath.Clean(raw))
 }
 
 func (p *filePaneState) contextMenuEntry() *filesys.Entry {
@@ -736,6 +789,13 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 	pane := ui.filePanes[idx]
 	if pane == nil {
 		return false
+	}
+	if pane.remoteConnected() {
+		ui.disconnectPaneSSH(idx, time.Now())
+		pane = ui.filePanes[idx]
+		if pane == nil {
+			return false
+		}
 	}
 	target = strings.TrimSpace(target)
 	if target == "" {
@@ -1304,6 +1364,21 @@ func (ui *UI) submitPanePathEdit(idx int, raw string) bool {
 		pane.setNotice("path is empty", time.Now())
 		return false
 	}
+	if pane.remoteConnected() {
+		if !strings.HasPrefix(target, "/") {
+			base := pane.dir
+			if strings.TrimSpace(base) == "" {
+				base = "/"
+			}
+			target = path.Join(base, target)
+		}
+		target = path.Clean(target)
+		if target == path.Clean(pane.dir) {
+			pane.stopPathEdit()
+			return true
+		}
+		return ui.loadPaneDir(idx, target)
+	}
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(pane.dir, target)
 	}
@@ -1437,8 +1512,8 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 	pane.closeContextMenu()
 	pane.stopPathEdit()
 	if entry.Kind == filesys.EntryParent {
-		childName := filepath.Base(filepath.Clean(prevDir))
-		if childName != "." && childName != string(filepath.Separator) {
+		childName := pane.pathBaseName(prevDir)
+		if childName != "." && childName != "/" && childName != string(filepath.Separator) {
 			if sel := pane.findEntryIndex(childName); sel >= 0 && pane.table != nil && pane.model != nil {
 				pane.table.SetSelected(sel, pane.model.Len(), true)
 			}
