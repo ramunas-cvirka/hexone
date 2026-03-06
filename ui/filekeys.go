@@ -24,6 +24,8 @@ const (
 	fileActionActivate
 	fileActionView
 	fileActionCopy
+	fileActionRenameMove
+	fileActionCreate
 	fileActionDelete
 )
 
@@ -66,6 +68,8 @@ func newFileKeyMap(cfg *fm.Config) fileKeyMap {
 		{action: fileActionActivate, raw: source.Activate, fallback: "enter"},
 		{action: fileActionView, raw: source.View, fallback: "f3"},
 		{action: fileActionCopy, raw: source.Copy, fallback: "f5"},
+		{action: fileActionRenameMove, raw: source.RenameMove, fallback: "f6"},
+		{action: fileActionCreate, raw: source.Create, fallback: "f7"},
 		{action: fileActionDelete, raw: source.Delete, fallback: "f8"},
 	}
 
@@ -242,6 +246,10 @@ func fileActionKey(action fileAction) string {
 		return "view"
 	case fileActionCopy:
 		return "copy"
+	case fileActionRenameMove:
+		return "rename-move"
+	case fileActionCreate:
+		return "create"
 	case fileActionDelete:
 		return "delete"
 	default:
@@ -289,6 +297,10 @@ func fileActionCommand(action fileAction) string {
 		return "⏎"
 	case fileActionCopy:
 		return "F5"
+	case fileActionRenameMove:
+		return "F6"
+	case fileActionCreate:
+		return "F7"
 	case fileActionView:
 		return "F3"
 	case fileActionDelete:

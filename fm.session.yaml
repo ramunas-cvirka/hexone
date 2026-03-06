@@ -1,14 +1,15 @@
 window:
-    x: 825
-    "y": 438
+    x: 329
+    "y": 1221
     has_position: true
-    width: 1342
-    height: 666
+    width: 1314
+    height: 773
+    px_per_dp: 1
     mode: windowed
 active_tab: tab0
 active_pane: 0
 panes:
-    - dir: C:\Users\ramuc\go\src
-      selected_path: C:\Users\ramuc\go\src\hexone
-    - dir: C:\Users\ramuc\go\src\hexone
-      selected_path: C:\Users\ramuc\go\src\hexone\fm.session.yaml
+    - dir: /Users/ramunas/go/src/gpstrack-t800x/t800x
+      selected_path: ""
+    - dir: /Users/ramunas/go/src/hexone
+      selected_path: /Users/ramunas/go/src

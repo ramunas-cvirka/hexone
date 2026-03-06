@@ -1,0 +1,1691 @@
+package ui
+
+import (
+	"fmt"
+	"image"
+	"image/color"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"gioui.org/font"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/text"
+	"gioui.org/unit"
+	"gioui.org/widget/material"
+	"golang.org/x/image/math/fixed"
+)
+
+type streamOutputView struct {
+	lines        []string
+	lineOffsets  []int
+	lineRunes    []int
+	totalBytes   int
+	maxCols      int
+	topLine      int
+	visibleLines int
+	scrollCarry  float32
+	hCol         int
+
+	pointerTag struct{}
+
+	trackRect  image.Rectangle
+	thumbRect  image.Rectangle
+	hTrackRect image.Rectangle
+	hThumbRect image.Rectangle
+	textRect   image.Rectangle
+	charW      int
+	lineH      int
+	textPad    int
+
+	metricsReady  bool
+	metricsTextSp unit.Sp
+	metricsPxDp   float32
+	metricsPxSp   float32
+
+	hoverTrack  bool
+	hoverThumb  bool
+	hoverHTrack bool
+	hoverHThumb bool
+
+	dragging      bool
+	dragID        pointer.ID
+	dragTopLine   int
+	hDragging     bool
+	hDragID       pointer.ID
+	hDragCol      int
+	selectingText bool
+	selectID      pointer.ID
+	selAnchor     int
+	selHead       int
+	selStart      int
+	selLen        int
+	selActive     bool
+
+	autoScrollActive bool
+	autoScrollDir    int
+	autoScrollStep   int
+	autoScrollAt     time.Time
+	autoScrollStopAt time.Time
+	cancelPending    bool
+	cancelUntil      time.Time
+	pointerOutside   bool
+	selectPos        image.Point
+	selectDirty      bool
+
+	wrapEnabled bool
+
+	lastPrimaryPressAt  time.Time
+	lastPrimaryPressPos image.Point
+	lastPrimaryPressed  bool
+}
+
+const (
+	streamAutoScrollTick   = 50 * time.Millisecond
+	streamAutoScrollStopIn = 180 * time.Millisecond
+	streamCancelGrace      = 320 * time.Millisecond
+	streamAutoScrollNearPx = 20
+	streamAutoScrollMidPx  = 64
+	streamDoubleClickDur   = 420 * time.Millisecond
+	streamDoubleClickDist  = 6
+)
+
+func (v *streamOutputView) SetContent(raw string) {
+	oldTotal := len(v.lines)
+	oldTop := v.topLine
+	v.lines = splitStreamLines(raw)
+	v.rebuildLineOffsets()
+	newTotal := len(v.lines)
+	if oldTotal > 1 && newTotal > 1 {
+		ratio := float64(oldTop) / float64(oldTotal-1)
+		v.topLine = int(ratio * float64(newTotal-1))
+	} else {
+		v.topLine = 0
+	}
+	v.clampTop()
+}
+
+func (v *streamOutputView) ensureTextMetrics(ui *UI, th *material.Theme, gtx layout.Context) {
+	textSize := ui.viewerTextSize()
+	if v.metricsReady &&
+		v.metricsTextSp == textSize &&
+		v.metricsPxDp == gtx.Metric.PxPerDp &&
+		v.metricsPxSp == gtx.Metric.PxPerSp &&
+		v.charW > 0 &&
+		v.lineH > 0 {
+		return
+	}
+	lineHeight := measureStreamLineHeight(ui, th, gtx)
+	if lineHeight < 1 {
+		lineHeight = 1
+	}
+	charW := measureStreamCharWidth(ui, th, gtx)
+	if charW < 1 {
+		charW = 1
+	}
+	v.lineH = lineHeight
+	v.charW = charW
+	v.metricsReady = true
+	v.metricsTextSp = textSize
+	v.metricsPxDp = gtx.Metric.PxPerDp
+	v.metricsPxSp = gtx.Metric.PxPerSp
+}
+
+func (v *streamOutputView) Append(chunk string) {
+	if chunk == "" {
+		return
+	}
+	if len(v.lines) == 0 {
+		v.lines = []string{""}
+		v.rebuildLineOffsets()
+	}
+	if len(v.lineOffsets) != len(v.lines) {
+		v.rebuildLineOffsets()
+	}
+	parts := strings.Split(chunk, "\n")
+	last := len(v.lines) - 1
+	v.lines[last] += parts[0]
+	updatedRunes := utf8.RuneCountInString(v.lines[last])
+	if len(v.lineRunes) == len(v.lines) {
+		v.lineRunes[last] = updatedRunes
+		if updatedRunes > v.maxCols {
+			v.maxCols = updatedRunes
+		}
+	}
+	v.totalBytes += len(parts[0])
+	for _, p := range parts[1:] {
+		v.totalBytes++
+		lineStart := v.totalBytes
+		v.lines = append(v.lines, p)
+		v.lineOffsets = append(v.lineOffsets, lineStart)
+		runes := utf8.RuneCountInString(p)
+		v.lineRunes = append(v.lineRunes, runes)
+		if runes > v.maxCols {
+			v.maxCols = runes
+		}
+		v.totalBytes += len(p)
+	}
+	v.clampTop()
+}
+
+func (v *streamOutputView) nearBottom() bool {
+	if len(v.lines) == 0 {
+		return true
+	}
+	vis := v.visibleLines
+	if vis <= 0 {
+		return true
+	}
+	maxTop := len(v.lines) - vis
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	return maxTop-v.topLine <= 1
+}
+
+func (v *streamOutputView) scrollToBottom() {
+	maxTop := len(v.lines) - v.visibleLines
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	v.topLine = maxTop
+}
+
+func (v *streamOutputView) clampTop() {
+	if v.topLine < 0 {
+		v.topLine = 0
+	}
+	maxTop := len(v.lines) - v.visibleLines
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	if v.topLine > maxTop {
+		v.topLine = maxTop
+	}
+	if v.dragTopLine < 0 {
+		v.dragTopLine = 0
+	}
+	if v.dragTopLine > maxTop {
+		v.dragTopLine = maxTop
+	}
+	v.clampSelection()
+}
+
+func (v *streamOutputView) clampSelection() {
+	if !v.selActive {
+		return
+	}
+	v.selAnchor = v.clampOffset(v.selAnchor)
+	v.selHead = v.clampOffset(v.selHead)
+	v.updateSelectionRange()
+}
+
+func (v *streamOutputView) rebuildLineOffsets() {
+	if len(v.lines) == 0 {
+		v.lines = []string{""}
+	}
+	v.lineOffsets = make([]int, len(v.lines))
+	v.lineRunes = make([]int, len(v.lines))
+	offset := 0
+	maxCols := 0
+	for i, line := range v.lines {
+		v.lineOffsets[i] = offset
+		runes := utf8.RuneCountInString(line)
+		v.lineRunes[i] = runes
+		if runes > maxCols {
+			maxCols = runes
+		}
+		offset += len(line)
+		if i+1 < len(v.lines) {
+			offset++
+		}
+	}
+	v.totalBytes = offset
+	v.maxCols = maxCols
+}
+
+func (v *streamOutputView) clampOffset(offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	if offset > v.totalBytes {
+		return v.totalBytes
+	}
+	return offset
+}
+
+func (v *streamOutputView) updateSelectionRange() {
+	start := v.selAnchor
+	end := v.selHead
+	if end < start {
+		start, end = end, start
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end < start {
+		end = start
+	}
+	if end > v.totalBytes {
+		end = v.totalBytes
+	}
+	v.selStart = start
+	v.selLen = end - start
+}
+
+func (v *streamOutputView) beginSelection(offset int) {
+	offset = v.clampOffset(offset)
+	v.selAnchor = offset
+	v.selHead = offset
+	v.selStart = offset
+	v.selLen = 0
+	v.selActive = true
+	v.selectDirty = false
+	v.cancelPending = false
+	v.cancelUntil = time.Time{}
+	v.pointerOutside = false
+}
+
+func (v *streamOutputView) updateSelection(offset int) {
+	if !v.selActive {
+		v.beginSelection(offset)
+		return
+	}
+	v.selHead = v.clampOffset(offset)
+	v.updateSelectionRange()
+}
+
+func (v *streamOutputView) selectAll() {
+	if len(v.lines) == 0 {
+		v.clearSelection()
+		return
+	}
+	v.selActive = true
+	v.selAnchor = 0
+	v.selHead = v.totalBytes
+	v.updateSelectionRange()
+	v.selectDirty = false
+}
+
+func (v *streamOutputView) hasSelection() bool {
+	return v.selActive && v.selLen > 0
+}
+
+func (v *streamOutputView) clearSelection() {
+	v.selActive = false
+	v.selAnchor = 0
+	v.selHead = 0
+	v.selStart = 0
+	v.selLen = 0
+	v.selectDirty = false
+	v.cancelPending = false
+	v.cancelUntil = time.Time{}
+	v.pointerOutside = false
+	v.stopAutoScroll()
+}
+
+func (v *streamOutputView) selectionBounds() (int, int, bool) {
+	if !v.hasSelection() {
+		return 0, 0, false
+	}
+	start := v.selStart
+	end := start + v.selLen
+	return start, end, true
+}
+
+func (v *streamOutputView) stopAutoScroll() {
+	v.autoScrollActive = false
+	v.autoScrollDir = 0
+	v.autoScrollStep = 0
+	v.autoScrollAt = time.Time{}
+	v.autoScrollStopAt = time.Time{}
+}
+
+func (v *streamOutputView) beginCancelGrace(now time.Time) {
+	v.cancelPending = true
+	v.cancelUntil = now.Add(streamCancelGrace)
+}
+
+func (v *streamOutputView) clearCancelGrace() {
+	v.cancelPending = false
+	v.cancelUntil = time.Time{}
+}
+
+func (v *streamOutputView) expireCancelGrace(now time.Time) bool {
+	if v.autoScrollActive && v.selectingText {
+		// While active autoscroll is running, cancel can be a transient outside
+		// state. Do not terminate selection on timeout.
+		return false
+	}
+	if !v.cancelPending || v.cancelUntil.IsZero() || now.Before(v.cancelUntil) {
+		return false
+	}
+	v.clearCancelGrace()
+	v.selectingText = false
+	v.selectDirty = false
+	v.stopAutoScroll()
+	return true
+}
+
+func (v *streamOutputView) autoScrollParams(pos image.Point) (int, int) {
+	if len(v.lines) == 0 || v.lineH <= 0 {
+		return 0, 0
+	}
+	rendered := v.renderedLineCount()
+	if rendered < 1 {
+		return 0, 0
+	}
+	top := v.textRect.Min.Y
+	bottom := v.textRect.Min.Y + rendered*v.lineH
+	dist := 0
+	dir := 0
+	switch {
+	case pos.Y < top:
+		dir = -1
+		dist = top - pos.Y
+	case pos.Y >= bottom:
+		dir = 1
+		dist = pos.Y - bottom + 1
+	default:
+		return 0, 0
+	}
+	step := 1
+	if dist > streamAutoScrollMidPx {
+		step = 7
+	} else if dist > streamAutoScrollNearPx {
+		step = 4
+	} else {
+		step = 2
+	}
+	return dir, step
+}
+
+func (v *streamOutputView) updateAutoScroll(pos image.Point, now time.Time) {
+	v.selectPos = pos
+	if !v.selectingText {
+		v.stopAutoScroll()
+		return
+	}
+	dir, step := v.autoScrollParams(pos)
+	if dir == 0 {
+		if v.autoScrollActive {
+			// Keep active autoscroll stable even if pointer updates momentarily
+			// report neutral coordinates while dragging outside.
+			return
+		}
+		v.stopAutoScroll()
+		return
+	}
+	v.autoScrollStopAt = time.Time{}
+	prevDir := v.autoScrollDir
+	prevStep := v.autoScrollStep
+	v.autoScrollActive = true
+	v.autoScrollDir = dir
+	v.autoScrollStep = step
+	if prevDir != dir || prevStep != step {
+		// React immediately when user changes drag side/distance.
+		v.autoScrollAt = now
+	} else if v.autoScrollAt.IsZero() || now.After(v.autoScrollAt) {
+		v.autoScrollAt = now.Add(streamAutoScrollTick)
+	}
+}
+
+func (v *streamOutputView) runAutoScroll(now time.Time) bool {
+	if !v.autoScrollActive || !v.selectingText || v.autoScrollDir == 0 || v.autoScrollStep <= 0 {
+		return false
+	}
+	if now.Before(v.autoScrollAt) {
+		return false
+	}
+	before := v.topLine
+	v.scrollByLines(v.autoScrollDir * v.autoScrollStep)
+	if v.selActive {
+		v.updateSelection(v.textOffsetFromPoint(v.selectPos))
+	}
+	if v.topLine == before {
+		// Hit top/bottom and can't continue.
+		v.stopAutoScroll()
+		return false
+	}
+	v.autoScrollAt = now.Add(streamAutoScrollTick)
+	return true
+}
+
+func (v *streamOutputView) applyPendingSelection() bool {
+	if !v.selectingText || !v.selActive || !v.selectDirty {
+		return false
+	}
+	beforeStart, beforeLen := v.selStart, v.selLen
+	v.updateSelection(v.textOffsetFromPoint(v.selectPos))
+	v.selectDirty = false
+	return beforeStart != v.selStart || beforeLen != v.selLen
+}
+
+func (v *streamOutputView) selectedText() string {
+	start, end, ok := v.selectionBounds()
+	if !ok || len(v.lines) == 0 {
+		return ""
+	}
+	raw := strings.Join(v.lines, "\n")
+	if start < 0 {
+		start = 0
+	}
+	if end > len(raw) {
+		end = len(raw)
+	}
+	if end <= start {
+		return ""
+	}
+	return raw[start:end]
+}
+
+func (v *streamOutputView) selectionColsForLine(line int) (int, int, bool) {
+	start, end, ok := v.selectionBounds()
+	if !ok || line < 0 || line >= len(v.lines) || len(v.lineOffsets) != len(v.lines) {
+		return 0, 0, false
+	}
+	lineText := v.lines[line]
+	lineStart := v.lineOffsets[line]
+	lineEnd := lineStart + len(lineText)
+	if end <= lineStart || start >= lineEnd {
+		return 0, 0, false
+	}
+	fromByte := 0
+	if start > lineStart {
+		fromByte = start - lineStart
+	}
+	toByte := len(lineText)
+	if end < lineEnd {
+		toByte = end - lineStart
+	}
+	if fromByte < 0 {
+		fromByte = 0
+	}
+	if toByte > len(lineText) {
+		toByte = len(lineText)
+	}
+	if toByte < fromByte {
+		toByte = fromByte
+	}
+	from := runeIndexAtByte(lineText, fromByte)
+	to := runeIndexAtByte(lineText, toByte)
+	if to <= from {
+		return 0, 0, false
+	}
+	return from, to, true
+}
+
+func (v *streamOutputView) lineByteStart(line int) int {
+	if line < 0 {
+		line = 0
+	}
+	if line >= len(v.lines) {
+		line = len(v.lines) - 1
+	}
+	if line < 0 {
+		return 0
+	}
+	if len(v.lineOffsets) == len(v.lines) {
+		return v.lineOffsets[line]
+	}
+	offset := 0
+	for i := 0; i < line && i < len(v.lines); i++ {
+		offset += len(v.lines[i])
+		if i+1 < len(v.lines) {
+			offset++
+		}
+	}
+	return offset
+}
+
+func (v *streamOutputView) lineByteEnd(line int) int {
+	start := v.lineByteStart(line)
+	if line < 0 || line >= len(v.lines) {
+		return start
+	}
+	return start + len(v.lines[line])
+}
+
+func (v *streamOutputView) renderedLineCount() int {
+	if len(v.lines) == 0 {
+		return 0
+	}
+	n := len(v.lines) - v.topLine
+	if n < 0 {
+		n = 0
+	}
+	maxRows := v.visibleLines
+	if maxRows < 1 {
+		maxRows = 1
+	}
+	if n > maxRows {
+		n = maxRows
+	}
+	return n
+}
+
+func (v *streamOutputView) rowFromPointY(y int) (int, bool) {
+	rendered := v.renderedLineCount()
+	if rendered < 1 {
+		return 0, false
+	}
+	if v.lineH <= 0 {
+		return 0, false
+	}
+	if y < v.textRect.Min.Y {
+		return 0, false
+	}
+	relY := y - v.textRect.Min.Y
+	maxY := rendered * v.lineH
+	if relY < 0 || relY >= maxY {
+		return 0, false
+	}
+	row := relY / v.lineH
+	if row < 0 {
+		row = 0
+	}
+	if row >= rendered {
+		row = rendered - 1
+	}
+	return row, true
+}
+
+func (v *streamOutputView) pointOverSelectableText(pos image.Point) bool {
+	if len(v.lines) == 0 || v.charW <= 0 || !viewerPointInRect(pos, v.textRect) {
+		return false
+	}
+	row, ok := v.rowFromPointY(pos.Y)
+	if !ok {
+		return false
+	}
+	line := v.topLine + row
+	if line < 0 || line >= len(v.lines) {
+		return false
+	}
+	x := pos.X - v.textRect.Min.X - v.textPad
+	if x < 0 {
+		return false
+	}
+	maxCol := v.lineCols(line)
+	if !v.wrapEnabled {
+		maxCol -= v.hCol
+	}
+	if maxCol <= 0 {
+		return false
+	}
+	return x < maxCol*v.charW
+}
+
+func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
+	if len(v.lines) == 0 {
+		return 0
+	}
+	rendered := v.renderedLineCount()
+	if rendered > 0 {
+		firstLine := v.topLine
+		if firstLine < 0 {
+			firstLine = 0
+		}
+		if firstLine >= len(v.lines) {
+			firstLine = len(v.lines) - 1
+		}
+		renderedBottom := v.textRect.Min.Y + rendered*v.lineH
+		if pos.Y < v.textRect.Min.Y {
+			return v.clampOffset(v.lineByteStart(firstLine))
+		}
+		if pos.Y >= renderedBottom {
+			lastLine := v.topLine + rendered - 1
+			if lastLine < 0 {
+				lastLine = 0
+			}
+			if lastLine >= len(v.lines) {
+				lastLine = len(v.lines) - 1
+			}
+			return v.clampOffset(v.lineByteEnd(lastLine))
+		}
+	}
+
+	row, ok := v.rowFromPointY(pos.Y)
+	if !ok {
+		row = 0
+		if row < 0 {
+			row = 0
+		}
+	}
+	line := v.topLine + row
+	if line < 0 {
+		line = 0
+	}
+	if line >= len(v.lines) {
+		line = len(v.lines) - 1
+	}
+	x := pos.X - v.textRect.Min.X - v.textPad
+	col := 0
+	if x > 0 && v.charW > 0 {
+		col = x / v.charW
+	}
+	if !v.wrapEnabled {
+		col += v.hCol
+	}
+	maxCol := v.lineCols(line)
+	if col < 0 {
+		col = 0
+	}
+	if col > maxCol {
+		col = maxCol
+	}
+	base := 0
+	if len(v.lineOffsets) == len(v.lines) {
+		base = v.lineOffsets[line]
+	}
+	offset := base + byteIndexAtRune(v.lines[line], col)
+	return v.clampOffset(offset)
+}
+
+func (v *streamOutputView) registerPrimaryPress(now time.Time, pos image.Point) bool {
+	if !v.lastPrimaryPressed {
+		v.lastPrimaryPressed = true
+		v.lastPrimaryPressAt = now
+		v.lastPrimaryPressPos = pos
+		return false
+	}
+	dt := now.Sub(v.lastPrimaryPressAt)
+	dx := pos.X - v.lastPrimaryPressPos.X
+	if dx < 0 {
+		dx = -dx
+	}
+	dy := pos.Y - v.lastPrimaryPressPos.Y
+	if dy < 0 {
+		dy = -dy
+	}
+	v.lastPrimaryPressAt = now
+	v.lastPrimaryPressPos = pos
+	if dt <= streamDoubleClickDur && dx <= streamDoubleClickDist && dy <= streamDoubleClickDist {
+		v.lastPrimaryPressed = false
+		return true
+	}
+	return false
+}
+
+func (v *streamOutputView) selectWordAtOffset(offset int, wordRE *regexp.Regexp) bool {
+	if v == nil || wordRE == nil || len(v.lines) == 0 {
+		return false
+	}
+	if len(v.lineOffsets) != len(v.lines) {
+		v.rebuildLineOffsets()
+	}
+	offset = v.clampOffset(offset)
+	line, local, ok := v.lineForOffset(offset)
+	if !ok {
+		return false
+	}
+	lineText := v.lines[line]
+	if lineText == "" {
+		return false
+	}
+	probe := local
+	if probe >= len(lineText) {
+		probe = len(lineText) - 1
+	}
+	if probe < 0 {
+		probe = 0
+	}
+
+	var targetStart, targetEnd int
+	for _, loc := range wordRE.FindAllStringIndex(lineText, -1) {
+		if len(loc) != 2 {
+			continue
+		}
+		if probe >= loc[0] && probe < loc[1] {
+			targetStart, targetEnd = loc[0], loc[1]
+			break
+		}
+		if probe > 0 && probe-1 >= loc[0] && probe-1 < loc[1] {
+			targetStart, targetEnd = loc[0], loc[1]
+			break
+		}
+	}
+	if targetEnd <= targetStart {
+		return false
+	}
+	lineStart := v.lineByteStart(line)
+	v.selActive = true
+	v.selAnchor = lineStart + targetStart
+	v.selHead = lineStart + targetEnd
+	v.updateSelectionRange()
+	v.selectingText = false
+	v.selectDirty = false
+	v.stopAutoScroll()
+	v.clearCancelGrace()
+	v.pointerOutside = false
+	return true
+}
+
+func (v *streamOutputView) lineForOffset(offset int) (line int, local int, ok bool) {
+	if v == nil || len(v.lines) == 0 {
+		return 0, 0, false
+	}
+	if len(v.lineOffsets) != len(v.lines) {
+		v.rebuildLineOffsets()
+	}
+	offset = v.clampOffset(offset)
+	idx := sort.Search(len(v.lineOffsets), func(i int) bool {
+		return v.lineOffsets[i] > offset
+	}) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(v.lines) {
+		idx = len(v.lines) - 1
+	}
+	local = offset - v.lineOffsets[idx]
+	if local < 0 {
+		local = 0
+	}
+	if local > len(v.lines[idx]) {
+		local = len(v.lines[idx])
+	}
+	return idx, local, true
+}
+
+func byteIndexAtRune(s string, runeIdx int) int {
+	if runeIdx <= 0 {
+		return 0
+	}
+	i := 0
+	for bytePos := range s {
+		if i == runeIdx {
+			return bytePos
+		}
+		i++
+	}
+	return len(s)
+}
+
+func runeIndexAtByte(s string, byteIdx int) int {
+	if byteIdx <= 0 {
+		return 0
+	}
+	if byteIdx >= len(s) {
+		return utf8.RuneCountInString(s)
+	}
+	runes := 0
+	for i := range s {
+		if i >= byteIdx {
+			break
+		}
+		runes++
+	}
+	return runes
+}
+
+func measureStreamCharWidth(ui *UI, th *material.Theme, gtx layout.Context) int {
+	fallback := int(float32(gtx.Sp(ui.viewerTextSize()))*0.62 + 0.5)
+	if fallback < 5 {
+		fallback = 5
+	}
+	if th == nil || th.Shaper == nil {
+		return fallback
+	}
+	const sample = "MMMMMMMMMM"
+	params := text.Parameters{
+		Font:             font.Font{Typeface: ui.mainTypeface(), Weight: font.Normal},
+		PxPerEm:          fixed.I(gtx.Sp(ui.viewerTextSize())),
+		MaxLines:         1,
+		MaxWidth:         1 << 20,
+		MinWidth:         0,
+		Locale:           gtx.Locale,
+		DisableSpaceTrim: true,
+	}
+	th.Shaper.LayoutString(params, sample)
+	var totalAdvance fixed.Int26_6
+	glyphs := 0
+	for g, ok := th.Shaper.NextGlyph(); ok; g, ok = th.Shaper.NextGlyph() {
+		if g.Flags&text.FlagLineBreak != 0 || g.Flags&text.FlagParagraphBreak != 0 {
+			continue
+		}
+		totalAdvance += g.Advance
+		if g.Flags&text.FlagClusterBreak != 0 {
+			glyphs++
+		}
+	}
+	if glyphs <= 0 || totalAdvance <= 0 {
+		return fallback
+	}
+	cw := int((float32(totalAdvance)/64.0)/float32(glyphs) + 0.5)
+	if cw < 5 {
+		return fallback
+	}
+	return cw
+}
+
+func measureStreamLineHeight(ui *UI, th *material.Theme, gtx layout.Context) int {
+	fallback := gtx.Sp(ui.viewerTextSize()) + gtx.Dp(unit.Dp(3))
+	if fallback < 12 {
+		fallback = 12
+	}
+	if th == nil {
+		return fallback
+	}
+	measureGTX := gtx
+	measureGTX.Constraints.Min = image.Point{}
+	measureGTX.Constraints.Max = image.Pt(1<<20, 1<<20)
+	lbl := material.Body2(th, "Mg")
+	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.Font.Weight = font.Normal
+	lbl.TextSize = ui.viewerTextSize()
+	lbl.MaxLines = 1
+	lbl.Truncator = ""
+	h := lbl.Layout(measureGTX).Size.Y + gtx.Dp(unit.Dp(2))
+	if h < 12 {
+		return 12
+	}
+	return h
+}
+
+func (v *streamOutputView) scrollByLines(lines int) {
+	if lines == 0 {
+		return
+	}
+	v.topLine += lines
+	v.clampTop()
+}
+
+func (v *streamOutputView) scrollByDelta(delta float32) {
+	if delta == 0 {
+		return
+	}
+	// Accelerate wheel/trackpad scrolling in the viewer so it matches
+	// file-list navigation better on long outputs.
+	delta *= 2.25
+	if delta > 3 {
+		delta = 3
+	} else if delta < -3 {
+		delta = -3
+	}
+	if (delta > 0 && v.scrollCarry < 0) || (delta < 0 && v.scrollCarry > 0) {
+		v.scrollCarry = 0
+	}
+	v.scrollCarry += delta
+
+	steps := 0
+	for v.scrollCarry >= 1 {
+		steps++
+		v.scrollCarry -= 1
+	}
+	for v.scrollCarry <= -1 {
+		steps--
+		v.scrollCarry += 1
+	}
+	if steps == 0 {
+		return
+	}
+	v.scrollByLines(steps)
+}
+
+func (v *streamOutputView) lineCols(line int) int {
+	if line < 0 || line >= len(v.lines) {
+		return 0
+	}
+	if len(v.lineRunes) == len(v.lines) {
+		return v.lineRunes[line]
+	}
+	return utf8.RuneCountInString(v.lines[line])
+}
+
+func (v *streamOutputView) visibleCols(textW int) int {
+	if textW <= 0 || v.charW <= 0 {
+		return 1
+	}
+	cols := (textW - v.textPad) / v.charW
+	if cols < 1 {
+		cols = 1
+	}
+	return cols
+}
+
+func (v *streamOutputView) maxHCol(textW int) int {
+	if v.wrapEnabled {
+		return 0
+	}
+	maxCols := v.maxCols
+	visible := v.visibleCols(textW)
+	maxH := maxCols - visible
+	if maxH < 0 {
+		maxH = 0
+	}
+	return maxH
+}
+
+func (v *streamOutputView) clampHCol(textW int) {
+	maxH := v.maxHCol(textW)
+	if v.hCol < 0 {
+		v.hCol = 0
+	}
+	if v.hCol > maxH {
+		v.hCol = maxH
+	}
+	if v.hDragCol < 0 {
+		v.hDragCol = 0
+	}
+	if v.hDragCol > maxH {
+		v.hDragCol = maxH
+	}
+}
+
+func (v *streamOutputView) scrollHByDelta(delta float32, textW int) {
+	if v.wrapEnabled || delta == 0 {
+		return
+	}
+	delta *= 2.0
+	if delta > 6 {
+		delta = 6
+	} else if delta < -6 {
+		delta = -6
+	}
+	steps := int(delta)
+	if steps == 0 {
+		if delta > 0 {
+			steps = 1
+		} else if delta < 0 {
+			steps = -1
+		}
+	}
+	// Positive horizontal wheel movement should scroll right.
+	v.hCol += steps
+	v.clampHCol(textW)
+}
+
+func (v *streamOutputView) computeScrollbar(size image.Point, viewportH, scrollbarW int) {
+	v.trackRect = image.Rectangle{}
+	v.thumbRect = image.Rectangle{}
+	if size.X <= 0 || viewportH <= 0 || scrollbarW <= 0 {
+		return
+	}
+	total := len(v.lines)
+	if total <= 0 {
+		total = 1
+	}
+	visible := v.visibleLines
+	if visible < 1 {
+		visible = 1
+	}
+	if visible > total {
+		visible = total
+	}
+	maxTop := total - visible
+	if maxTop < 0 {
+		maxTop = 0
+	}
+
+	trackX := size.X - scrollbarW
+	if trackX < 0 {
+		trackX = 0
+	}
+	v.trackRect = image.Rect(trackX, 0, size.X, viewportH)
+
+	thumbH := int(float32(viewportH) * float32(visible) / float32(total))
+	if thumbH < 18 {
+		thumbH = 18
+	}
+	if thumbH > viewportH {
+		thumbH = viewportH
+	}
+
+	topForThumb := v.topLine
+	if v.dragging {
+		topForThumb = v.dragTopLine
+	}
+	v.clampTop()
+	if topForThumb < 0 {
+		topForThumb = 0
+	}
+	if topForThumb > maxTop {
+		topForThumb = maxTop
+	}
+
+	thumbY := 0
+	if maxTop > 0 && viewportH > thumbH {
+		thumbY = int(float32(topForThumb) / float32(maxTop) * float32(viewportH-thumbH))
+	}
+	v.thumbRect = image.Rect(trackX+1, thumbY, size.X-1, thumbY+thumbH)
+}
+
+func (v *streamOutputView) estimatedTopFromY(y int) int {
+	total := len(v.lines)
+	if total <= 0 {
+		return 0
+	}
+	visible := v.visibleLines
+	if visible < 1 {
+		visible = 1
+	}
+	maxTop := total - visible
+	if maxTop <= 0 {
+		return 0
+	}
+	track := v.trackRect
+	thumb := v.thumbRect
+	maxTravel := track.Dy() - thumb.Dy()
+	if maxTravel <= 0 {
+		return 0
+	}
+	dragY := y - track.Min.Y - thumb.Dy()/2
+	if dragY < 0 {
+		dragY = 0
+	}
+	if dragY > maxTravel {
+		dragY = maxTravel
+	}
+	ratio := float32(dragY) / float32(maxTravel)
+	top := int(ratio*float32(maxTop) + 0.5)
+	if top < 0 {
+		top = 0
+	}
+	if top > maxTop {
+		top = maxTop
+	}
+	return top
+}
+
+func (v *streamOutputView) computeHorizontalScrollbar(size image.Point, barH int) {
+	v.hTrackRect = image.Rectangle{}
+	v.hThumbRect = image.Rectangle{}
+	if v.wrapEnabled || barH <= 0 || size.X <= 0 || size.Y <= 0 || v.charW <= 0 {
+		return
+	}
+	textW := v.textRect.Dx()
+	if textW <= 0 {
+		return
+	}
+	maxH := v.maxHCol(textW)
+	if maxH <= 0 {
+		return
+	}
+	y0 := v.textRect.Max.Y
+	if y0 >= size.Y {
+		return
+	}
+	y1 := y0 + barH
+	if y1 > size.Y {
+		y1 = size.Y
+	}
+	if y1 <= y0 {
+		return
+	}
+	v.hTrackRect = image.Rect(0, y0, textW, y1)
+	visible := v.visibleCols(textW)
+	total := v.maxCols
+	if total < 1 {
+		total = 1
+	}
+	thumbW := int(float32(textW) * float32(visible) / float32(total))
+	if thumbW < 18 {
+		thumbW = 18
+	}
+	if thumbW > textW {
+		thumbW = textW
+	}
+	left := v.hCol
+	if v.hDragging {
+		left = v.hDragCol
+	}
+	if left < 0 {
+		left = 0
+	}
+	if left > maxH {
+		left = maxH
+	}
+	thumbX := 0
+	if maxH > 0 && textW > thumbW {
+		thumbX = int(float32(left) / float32(maxH) * float32(textW-thumbW))
+	}
+	v.hThumbRect = image.Rect(thumbX, y0+1, thumbX+thumbW, y1-1)
+}
+
+func (v *streamOutputView) estimatedHColFromX(x int) int {
+	track := v.hTrackRect
+	thumb := v.hThumbRect
+	textW := v.textRect.Dx()
+	maxH := v.maxHCol(textW)
+	if track.Dx() <= 0 || thumb.Dx() <= 0 || maxH <= 0 {
+		return 0
+	}
+	maxTravel := track.Dx() - thumb.Dx()
+	if maxTravel <= 0 {
+		return 0
+	}
+	dragX := x - track.Min.X - thumb.Dx()/2
+	if dragX < 0 {
+		dragX = 0
+	}
+	if dragX > maxTravel {
+		dragX = maxTravel
+	}
+	ratio := float32(dragX) / float32(maxTravel)
+	col := int(ratio*float32(maxH) + 0.5)
+	if col < 0 {
+		col = 0
+	}
+	if col > maxH {
+		col = maxH
+	}
+	return col
+}
+
+func splitStreamLines(raw string) []string {
+	if raw == "" {
+		return []string{""}
+	}
+	return strings.Split(raw, "\n")
+}
+
+func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
+	if st == nil {
+		return layout.Dimensions{}
+	}
+	v := &st.stream
+	size := gtx.Constraints.Max
+	if size.X <= 0 || size.Y <= 0 {
+		return layout.Dimensions{Size: size}
+	}
+	if len(v.lines) == 0 {
+		v.lines = []string{""}
+	}
+	v.wrapEnabled = st.wrapEnabled
+
+	v.ensureTextMetrics(ui, th, gtx)
+	lineHeight := v.lineH
+
+	scrollbarW := gtx.Dp(unit.Dp(10))
+	if scrollbarW < 8 {
+		scrollbarW = 8
+	}
+	if scrollbarW > size.X {
+		scrollbarW = size.X
+	}
+	textW := size.X - scrollbarW
+	if textW < 1 {
+		textW = size.X
+		scrollbarW = 0
+	}
+	v.textPad = gtx.Dp(unit.Dp(2))
+	hbarH := 0
+	if !v.wrapEnabled && v.maxHCol(textW) > 0 {
+		hbarH = gtx.Dp(unit.Dp(10))
+		if hbarH < 8 {
+			hbarH = 8
+		}
+		if hbarH > size.Y/2 {
+			hbarH = size.Y / 2
+		}
+	}
+	textH := size.Y - hbarH
+	if textH < 1 {
+		textH = 1
+		hbarH = 0
+	}
+	v.textRect = image.Rect(0, 0, textW, textH)
+	v.visibleLines = textH / lineHeight
+	if v.visibleLines < 1 {
+		v.visibleLines = 1
+	}
+	v.clampTop()
+	v.clampHCol(textW)
+	v.clampSelection()
+
+	v.computeScrollbar(size, textH, scrollbarW)
+	v.computeHorizontalScrollbar(size, hbarH)
+	ui.handleStreamOutputEvents(gtx, st)
+	if v.expireCancelGrace(gtx.Now) {
+		st.markUserBrowsing(gtx.Now)
+	}
+	if v.applyPendingSelection() {
+		st.markUserBrowsing(gtx.Now)
+	}
+	if v.runAutoScroll(gtx.Now) {
+		st.markUserBrowsing(gtx.Now)
+	}
+	v.computeScrollbar(size, textH, scrollbarW)
+	v.computeHorizontalScrollbar(size, hbarH)
+	if v.autoScrollActive && !v.autoScrollAt.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: v.autoScrollAt})
+	}
+	if v.cancelPending && !v.cancelUntil.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: v.cancelUntil})
+	}
+
+	ui.drawStreamOutputText(th, gtx, st, v.textRect.Dx(), lineHeight)
+	ui.drawStreamOutputScrollbar(gtx, st)
+	ui.drawStreamOutputTooltip(th, gtx, st)
+	ui.applyStreamOutputCursor(gtx, st)
+
+	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &v.pointerTag)
+	pass.Pop()
+
+	return layout.Dimensions{Size: size}
+}
+
+func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) {
+	if st == nil {
+		return
+	}
+	v := &st.stream
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &v.pointerTag,
+			Kinds:  pointer.Scroll | pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel | pointer.Move | pointer.Enter | pointer.Leave,
+			ScrollX: pointer.ScrollRange{
+				Min: -120,
+				Max: 120,
+			},
+			ScrollY: pointer.ScrollRange{
+				Min: -120,
+				Max: 120,
+			},
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		if pe.Kind == pointer.Press || pe.Kind == pointer.Drag || pe.Kind == pointer.Move || pe.Kind == pointer.Enter || pe.Kind == pointer.Scroll {
+			v.clearCancelGrace()
+		}
+		pos := pe.Position.Round()
+		switch pe.Kind {
+		case pointer.Scroll:
+			if pe.Scroll.X != 0 {
+				v.scrollHByDelta(pe.Scroll.X, v.textRect.Dx())
+				st.markUserBrowsing(gtx.Now)
+			}
+			if pe.Scroll.Y != 0 {
+				v.scrollByDelta(pe.Scroll.Y)
+				st.markUserBrowsing(gtx.Now)
+			}
+		case pointer.Press:
+			v.pointerOutside = false
+			if pe.Buttons.Contain(pointer.ButtonSecondary) {
+				st.menuOpen = true
+				st.menuPos = pos
+				continue
+			}
+			if pe.Buttons.Contain(pointer.ButtonPrimary) && viewerPointInRect(pos, v.trackRect) {
+				v.dragging = true
+				v.dragID = pe.PointerID
+				v.dragTopLine = v.estimatedTopFromY(pos.Y)
+				gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
+				st.markUserBrowsing(gtx.Now)
+				continue
+			}
+			if pe.Buttons.Contain(pointer.ButtonPrimary) && viewerPointInRect(pos, v.hTrackRect) {
+				v.hDragging = true
+				v.hDragID = pe.PointerID
+				v.hDragCol = v.estimatedHColFromX(pos.X)
+				v.hCol = v.hDragCol
+				v.clampHCol(v.textRect.Dx())
+				gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
+				st.markUserBrowsing(gtx.Now)
+				continue
+			}
+			if pe.Buttons.Contain(pointer.ButtonPrimary) {
+				if st.menuOpen {
+					st.menuOpen = false
+				}
+				if viewerPointInRect(pos, v.textRect) {
+					doubleClick := v.registerPrimaryPress(gtx.Now, pos)
+					if doubleClick && v.selectWordAtOffset(v.textOffsetFromPoint(pos), st.wordSelectRE) {
+						st.markUserBrowsing(gtx.Now)
+						continue
+					}
+					v.selectingText = true
+					v.selectID = pe.PointerID
+					v.selectPos = pos
+					v.beginSelection(v.textOffsetFromPoint(pos))
+					v.updateAutoScroll(pos, gtx.Now)
+					gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
+				} else {
+					v.selectingText = false
+					v.clearSelection()
+				}
+				st.markUserBrowsing(gtx.Now)
+			}
+		case pointer.Drag:
+			if v.dragging && pe.PointerID == v.dragID {
+				v.dragTopLine = v.estimatedTopFromY(pos.Y)
+				st.markUserBrowsing(gtx.Now)
+			}
+			if v.hDragging && pe.PointerID == v.hDragID {
+				v.hDragCol = v.estimatedHColFromX(pos.X)
+				v.hCol = v.hDragCol
+				v.clampHCol(v.textRect.Dx())
+				st.markUserBrowsing(gtx.Now)
+			}
+			if v.selectingText && pe.PointerID == v.selectID {
+				v.selectPos = pos
+				v.selectDirty = true
+				v.updateAutoScroll(pos, gtx.Now)
+				st.markUserBrowsing(gtx.Now)
+			}
+			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
+			v.hoverThumb = viewerPointInRect(pos, v.thumbRect)
+			v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
+			v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
+		case pointer.Release:
+			if v.dragging && pe.PointerID == v.dragID {
+				v.topLine = v.dragTopLine
+				v.dragging = false
+				v.clampTop()
+			}
+			if v.hDragging && pe.PointerID == v.hDragID {
+				v.hDragging = false
+				v.clampHCol(v.textRect.Dx())
+			}
+			if v.selectingText && pe.PointerID == v.selectID {
+				if v.cancelPending {
+					// Release after cancel can be synthetic while pointer is
+					// outside. Let cancel grace decide finalization.
+					v.beginCancelGrace(gtx.Now)
+				} else {
+					v.selectingText = false
+					v.selectDirty = false
+					v.clearCancelGrace()
+					v.stopAutoScroll()
+				}
+			}
+			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
+			v.hoverThumb = viewerPointInRect(pos, v.thumbRect)
+			v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
+			v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
+		case pointer.Cancel:
+			v.pointerOutside = true
+			if v.selectingText && pe.PointerID == v.selectID {
+				// Don't abort immediately; cancellations can be transient while
+				// dragging beyond window bounds.
+				v.beginCancelGrace(gtx.Now)
+			} else {
+				v.clearCancelGrace()
+			}
+			if v.dragging && pe.PointerID == v.dragID {
+				v.dragging = false
+				v.clampTop()
+			}
+			if v.hDragging && pe.PointerID == v.hDragID {
+				v.hDragging = false
+				v.clampHCol(v.textRect.Dx())
+			}
+			v.hoverTrack = false
+			v.hoverThumb = false
+			v.hoverHTrack = false
+			v.hoverHThumb = false
+		case pointer.Move, pointer.Enter:
+			if pe.Kind == pointer.Enter {
+				v.pointerOutside = false
+			}
+			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
+			v.hoverThumb = viewerPointInRect(pos, v.thumbRect)
+			v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
+			v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
+		case pointer.Leave:
+			v.pointerOutside = true
+			v.hoverTrack = false
+			v.hoverThumb = false
+			v.hoverHTrack = false
+			v.hoverHThumb = false
+		}
+	}
+}
+
+func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *fileViewerState, textW, lineHeight int) {
+	if st == nil {
+		return
+	}
+	v := &st.stream
+	if textW <= 0 || lineHeight <= 0 {
+		return
+	}
+	textH := v.textRect.Dy()
+	if textH <= 0 {
+		return
+	}
+	textClip := clip.Rect(image.Rect(0, 0, textW, textH)).Push(gtx.Ops)
+	defer textClip.Pop()
+
+	start := v.topLine
+	if start < 0 {
+		start = 0
+	}
+	end := start + v.visibleLines
+	if end > len(v.lines) {
+		end = len(v.lines)
+	}
+	y := 0
+	for i := start; i < end; i++ {
+		line := v.lines[i]
+		lineDraw := line
+		lineGTX := gtx
+		lineGTX.Constraints = layout.Exact(image.Pt(textW, lineHeight))
+		offset := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+		if from, to, ok := v.selectionColsForLine(i); ok {
+			x0 := v.textPad + (from-v.hCol)*v.charW
+			x1 := v.textPad + (to-v.hCol)*v.charW
+			if x1 <= x0 {
+				x1 = x0 + v.charW
+			}
+			if x0 < textW {
+				if x0 < 0 {
+					x0 = 0
+				}
+				if x1 > textW {
+					x1 = textW
+				}
+				if x1 > x0 {
+					selRect := image.Rect(x0, 1, x1, lineHeight-1)
+					paint.FillShape(gtx.Ops, color.NRGBA{R: 98, G: 138, B: 212, A: 118}, clip.Rect(selRect).Op())
+				}
+			}
+		}
+		if !v.wrapEnabled {
+			fromCol := v.hCol
+			visCols := v.visibleCols(textW)
+			maxCol := v.lineCols(i)
+			if fromCol < 0 {
+				fromCol = 0
+			}
+			if fromCol > maxCol {
+				fromCol = maxCol
+			}
+			toCol := fromCol + visCols + 1
+			if toCol > maxCol {
+				toCol = maxCol
+			}
+			fromByte := byteIndexAtRune(line, fromCol)
+			toByte := byteIndexAtRune(line, toCol)
+			if fromByte < 0 {
+				fromByte = 0
+			}
+			if toByte < fromByte {
+				toByte = fromByte
+			}
+			if fromByte > len(line) {
+				fromByte = len(line)
+			}
+			if toByte > len(line) {
+				toByte = len(line)
+			}
+			lineDraw = line[fromByte:toByte]
+		}
+		_ = layout.Inset{Left: unit.Dp(2)}.Layout(lineGTX, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, lineDraw)
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.Font.Weight = font.Normal
+			lbl.TextSize = ui.viewerTextSize()
+			lbl.Color = color.NRGBA{R: 220, G: 226, B: 240, A: 255}
+			lbl.MaxLines = 1
+			lbl.Truncator = ""
+			return lbl.Layout(gtx)
+		})
+		offset.Pop()
+		y += lineHeight
+		if y >= textH {
+			break
+		}
+	}
+}
+
+func (ui *UI) drawStreamOutputScrollbar(gtx layout.Context, st *fileViewerState) {
+	if st == nil {
+		return
+	}
+	v := &st.stream
+	track := v.trackRect
+	thumb := v.thumbRect
+	if track.Dx() <= 0 || track.Dy() <= 0 {
+		return
+	}
+	trackColor := color.NRGBA{R: 255, G: 255, B: 255, A: 24}
+	if v.hoverTrack || v.hoverThumb || v.dragging {
+		trackColor = color.NRGBA{R: 255, G: 255, B: 255, A: 38}
+	}
+	thumbColor := color.NRGBA{R: 173, G: 197, B: 238, A: 178}
+	if v.hoverThumb || v.dragging {
+		thumbColor = color.NRGBA{R: 204, G: 224, B: 255, A: 236}
+	}
+	paint.FillShape(gtx.Ops, trackColor, clip.Rect(track).Op())
+	if thumb.Dx() > 0 && thumb.Dy() > 0 {
+		paint.FillShape(gtx.Ops, thumbColor, clip.Rect(thumb).Op())
+	}
+
+	hTrack := v.hTrackRect
+	hThumb := v.hThumbRect
+	if hTrack.Dx() <= 0 || hTrack.Dy() <= 0 {
+		return
+	}
+	hTrackColor := color.NRGBA{R: 255, G: 255, B: 255, A: 24}
+	if v.hoverHTrack || v.hoverHThumb || v.hDragging {
+		hTrackColor = color.NRGBA{R: 255, G: 255, B: 255, A: 38}
+	}
+	hThumbColor := color.NRGBA{R: 173, G: 197, B: 238, A: 178}
+	if v.hoverHThumb || v.hDragging {
+		hThumbColor = color.NRGBA{R: 204, G: 224, B: 255, A: 236}
+	}
+	paint.FillShape(gtx.Ops, hTrackColor, clip.Rect(hTrack).Op())
+	if hThumb.Dx() > 0 && hThumb.Dy() > 0 {
+		paint.FillShape(gtx.Ops, hThumbColor, clip.Rect(hThumb).Op())
+	}
+}
+
+func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st *fileViewerState) {
+	if st == nil {
+		return
+	}
+	v := &st.stream
+	if !v.dragging {
+		return
+	}
+	total := len(v.lines)
+	if total < 1 {
+		total = 1
+	}
+	line := v.dragTopLine + 1
+	if line < 1 {
+		line = 1
+	}
+	if line > total {
+		line = total
+	}
+	percent := 0.0
+	maxTop := total - v.visibleLines
+	if maxTop > 0 {
+		percent = float64(v.dragTopLine) * 100 / float64(maxTop)
+	}
+	msg := fmt.Sprintf("~ line %d/%d (%.1f%%)", line, total, percent)
+
+	boxW := gtx.Dp(unit.Dp(162))
+	boxH := gtx.Dp(unit.Dp(22))
+	if boxW < 80 {
+		boxW = 80
+	}
+	if boxH < 16 {
+		boxH = 16
+	}
+	x := v.trackRect.Min.X - boxW - gtx.Dp(unit.Dp(6))
+	if x < 2 {
+		x = 2
+	}
+	y := v.thumbRect.Min.Y + v.thumbRect.Dy()/2 - boxH/2
+	if y < 2 {
+		y = 2
+	}
+	maxY := gtx.Constraints.Max.Y - boxH - 2
+	if maxY < 2 {
+		maxY = 2
+	}
+	if y > maxY {
+		y = maxY
+	}
+
+	cgtx := gtx
+	cgtx.Constraints = layout.Exact(image.Pt(boxW, boxH))
+	offset := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
+	_ = fillRoundedBox(
+		cgtx,
+		cgtx.Dp(unit.Dp(6)),
+		color.NRGBA{R: 28, G: 36, B: 52, A: 246},
+		color.NRGBA{R: 210, G: 224, B: 255, A: 88},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(th, msg)
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.TextSize = scaleThemeFontSize(th, 9)
+				lbl.Color = color.NRGBA{R: 223, G: 233, B: 249, A: 255}
+				lbl.MaxLines = 1
+				lbl.Truncator = ""
+				return lbl.Layout(gtx)
+			})
+		},
+	)
+	offset.Pop()
+}
+
+func (ui *UI) applyStreamOutputCursor(gtx layout.Context, st *fileViewerState) {
+	if st == nil {
+		return
+	}
+	v := &st.stream
+	if v.dragging {
+		defer clip.Rect(v.trackRect).Push(gtx.Ops).Pop()
+		pointer.CursorGrabbing.Add(gtx.Ops)
+		return
+	}
+	if v.hDragging {
+		defer clip.Rect(v.hTrackRect).Push(gtx.Ops).Pop()
+		pointer.CursorGrabbing.Add(gtx.Ops)
+		return
+	}
+	if v.hoverThumb || v.hoverTrack {
+		defer clip.Rect(v.trackRect).Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
+		return
+	}
+	if v.hoverHThumb || v.hoverHTrack {
+		defer clip.Rect(v.hTrackRect).Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
+		return
+	}
+	if v.textRect.Dx() > 0 && v.textRect.Dy() > 0 {
+		defer clip.Rect(v.textRect).Push(gtx.Ops).Pop()
+		pointer.CursorText.Add(gtx.Ops)
+	}
+}

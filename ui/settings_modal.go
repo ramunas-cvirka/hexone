@@ -6,6 +6,7 @@ import (
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -386,7 +387,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 			return fmt.Errorf("invalid config yaml: %w", err)
 		}
 		ui.fmCfg = next
-		if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
+		if err := ui.saveFMConfig(); err != nil {
 			return err
 		}
 		ui.applyConfigRuntime(now)
@@ -424,7 +425,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.Command = cmd
 	ui.fmCfg.Viewer.Shell = shell
 	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
-	if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
+	if err := ui.saveFMConfig(); err != nil {
 		return err
 	}
 	ui.refreshFileViewerNow(now)
@@ -1046,6 +1047,27 @@ func (ui *UI) reloadFilePanesForConfig(now time.Time) {
 			continue
 		}
 		dir := old.dir
+		reloadDir := dir
+		baseDir := dir
+		var reloadRemote *paneSSHSession
+		localBeforeRemote := old.localDirBeforeRemote
+		if old.remoteConnected() && old.remote != nil {
+			reloadRemote = old.remote.clone()
+			if strings.TrimSpace(baseDir) == "" || strings.HasPrefix(baseDir, "/") {
+				baseDir = strings.TrimSpace(localBeforeRemote)
+			}
+			if strings.TrimSpace(baseDir) == "" {
+				baseDir = "."
+			}
+			if strings.TrimSpace(reloadDir) == "" {
+				reloadDir = reloadRemote.homeDir()
+			}
+			reloadDir = path.Clean(reloadDir)
+			if reloadDir == "" || reloadDir == "." {
+				reloadDir = "/"
+			}
+		}
+
 		selectedPath := ""
 		mode := table.ModeFull
 		if old.table != nil {
@@ -1055,7 +1077,7 @@ func (ui *UI) reloadFilePanesForConfig(now time.Time) {
 			selectedPath = sel.Path
 		}
 
-		pane := newFilePaneState(dir, ui.fmCfg)
+		pane := newFilePaneState(baseDir, ui.fmCfg)
 		pane.table.SetMode(mode)
 		idx := i
 		pane.table.OnClick = func(row int) {
@@ -1068,8 +1090,23 @@ func (ui *UI) reloadFilePanesForConfig(now time.Time) {
 		pane.table.OnActivate = func(row int) {
 			ui.queueFilePaneOpen(idx, row)
 		}
-		if err := pane.load(filepath.Clean(dir)); err != nil {
-			pane.setNotice(err.Error(), now)
+		if reloadRemote != nil {
+			pane.remote = reloadRemote
+			pane.localDirBeforeRemote = localBeforeRemote
+			if pane.localDirBeforeRemote == "" {
+				pane.localDirBeforeRemote = baseDir
+			}
+			if err := pane.load(reloadDir); err != nil {
+				pane.setNotice("remote reload failed: "+err.Error(), now)
+			}
+		} else {
+			if err := pane.load(filepath.Clean(dir)); err != nil {
+				pane.setNotice(err.Error(), now)
+			}
+		}
+		if old.remote != nil {
+			old.remote.close()
+			old.remote = nil
 		}
 		if selectedPath != "" && pane.table != nil && pane.model != nil {
 			if sel := pane.findEntryPathIndex(selectedPath); sel >= 0 {

@@ -7,9 +7,12 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"net"
+	"net/url"
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -340,14 +343,17 @@ func (p *filePaneState) beginPathEdit() {
 	if p == nil {
 		return
 	}
-	if p.remote != nil {
-		return
-	}
 	p.clearPathClickState()
 	p.clearPendingPathNavigate()
 	p.pathEditing = true
 	p.pathEditFocus = true
-	p.pathEdit.SetText(p.dir)
+	text := p.dir
+	if p.remoteConnected() {
+		if strings.TrimSpace(text) == "" {
+			text = "/"
+		}
+	}
+	p.pathEdit.SetText(text)
 	p.pathEdit.SetCaret(0, p.pathEdit.Len())
 }
 
@@ -524,6 +530,46 @@ func splitFilePathSegments(dir string) []filePathSegment {
 	return out
 }
 
+func splitRemotePathSegments(dir string) []filePathSegment {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		dir = "/"
+	}
+	cleaned := path.Clean(dir)
+	if cleaned == "" || cleaned == "." {
+		cleaned = "/"
+	}
+	if !strings.HasPrefix(cleaned, "/") {
+		cleaned = "/" + cleaned
+	}
+	if cleaned == "/" {
+		return []filePathSegment{{label: "/", path: "/"}}
+	}
+
+	parts := strings.Split(strings.TrimPrefix(cleaned, "/"), "/")
+	out := make([]filePathSegment, 0, len(parts)+1)
+	out = append(out, filePathSegment{label: "/", path: "/"})
+
+	current := "/"
+	for i, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if current == "/" {
+			current = "/" + part
+		} else {
+			current = current + "/" + part
+		}
+		label := "/" + part
+		if i == 0 {
+			label = part
+		}
+		out = append(out, filePathSegment{label: label, path: current})
+	}
+	return out
+}
+
 func (p *filePaneState) selectedEntry() *filesys.Entry {
 	if p == nil || p.table == nil || p.model == nil {
 		return nil
@@ -550,7 +596,10 @@ func (p *filePaneState) displayDir() string {
 	if strings.TrimSpace(dir) == "" {
 		dir = "/"
 	}
-	return base + ":" + dir
+	if !strings.HasPrefix(dir, "/") {
+		dir = "/" + dir
+	}
+	return base + dir
 }
 
 func (p *filePaneState) pathBaseName(raw string) string {
@@ -654,10 +703,152 @@ func normalizeFavoriteLocation(raw string) string {
 	if loc == "" {
 		return ""
 	}
+	if remote, ok := parseRemoteFavoriteLocation(loc); ok {
+		return formatRemoteFavoriteLocation(remote)
+	}
 	if filepath.IsAbs(loc) {
 		return filepath.Clean(loc)
 	}
 	return loc
+}
+
+type remoteFavoriteLocation struct {
+	User string
+	Host string
+	Port int
+	Dir  string
+}
+
+func normalizeRemoteFavoriteDir(raw string) string {
+	dir := strings.TrimSpace(raw)
+	if dir == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(dir, "/") {
+		dir = "/" + dir
+	}
+	dir = path.Clean(dir)
+	if dir == "" || dir == "." {
+		dir = "/"
+	}
+	if !strings.HasPrefix(dir, "/") {
+		dir = "/" + dir
+	}
+	return dir
+}
+
+func parseRemoteFavoriteLocation(raw string) (remoteFavoriteLocation, bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u == nil || !strings.EqualFold(u.Scheme, "ssh") {
+		return remoteFavoriteLocation{}, false
+	}
+
+	user := ""
+	if u.User != nil {
+		user = strings.TrimSpace(u.User.Username())
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if user == "" || host == "" {
+		return remoteFavoriteLocation{}, false
+	}
+
+	port := 22
+	if pText := strings.TrimSpace(u.Port()); pText != "" {
+		p, err := strconv.Atoi(pText)
+		if err != nil || p < 1 || p > 65535 {
+			return remoteFavoriteLocation{}, false
+		}
+		port = p
+	}
+
+	return remoteFavoriteLocation{
+		User: user,
+		Host: host,
+		Port: port,
+		Dir:  normalizeRemoteFavoriteDir(u.Path),
+	}, true
+}
+
+func formatRemoteFavoriteLocation(loc remoteFavoriteLocation) string {
+	port := loc.Port
+	if port <= 0 || port > 65535 {
+		port = 22
+	}
+	hostPort := net.JoinHostPort(strings.TrimSpace(loc.Host), strconv.Itoa(port))
+	u := &url.URL{
+		Scheme: "ssh",
+		User:   url.User(strings.TrimSpace(loc.User)),
+		Host:   hostPort,
+		Path:   normalizeRemoteFavoriteDir(loc.Dir),
+	}
+	return u.String()
+}
+
+func displayRemoteFavoriteLocation(loc remoteFavoriteLocation) string {
+	base := strings.TrimSpace(loc.User) + "@" + strings.TrimSpace(loc.Host)
+	if loc.Port > 0 && loc.Port != 22 {
+		base += ":" + strconv.Itoa(loc.Port)
+	}
+	return base + normalizeRemoteFavoriteDir(loc.Dir)
+}
+
+func remoteFavoriteFromPane(pane *filePaneState) (string, bool) {
+	if pane == nil || !pane.remoteConnected() || pane.remote == nil {
+		return "", false
+	}
+	setup := pane.remote.setup
+	user := strings.TrimSpace(setup.User)
+	host := strings.TrimSpace(setup.Host)
+	if user == "" || host == "" {
+		return "", false
+	}
+	port := setup.Port
+	if port <= 0 {
+		port = 22
+	}
+	return formatRemoteFavoriteLocation(remoteFavoriteLocation{
+		User: user,
+		Host: host,
+		Port: port,
+		Dir:  pane.dir,
+	}), true
+}
+
+func paneMatchesRemoteFavorite(pane *filePaneState, loc remoteFavoriteLocation) bool {
+	if pane == nil || !pane.remoteConnected() || pane.remote == nil {
+		return false
+	}
+	setup := pane.remote.setup
+	port := setup.Port
+	if port <= 0 {
+		port = 22
+	}
+	return strings.TrimSpace(setup.User) == loc.User &&
+		strings.EqualFold(strings.TrimSpace(setup.Host), loc.Host) &&
+		port == loc.Port &&
+		normalizeRemoteFavoriteDir(pane.dir) == loc.Dir
+}
+
+func findSSHSetupForRemoteFavorite(cfg *fm.Config, loc remoteFavoriteLocation) (fm.SSHSetup, bool) {
+	if cfg == nil {
+		return fm.SSHSetup{}, false
+	}
+	for _, raw := range cfg.SSH.Setups {
+		user := strings.TrimSpace(raw.User)
+		host := strings.TrimSpace(raw.Host)
+		port := raw.Port
+		if port <= 0 {
+			port = 22
+		}
+		if user == loc.User && strings.EqualFold(host, loc.Host) && port == loc.Port {
+			setup := raw
+			setup.User = user
+			setup.Host = host
+			setup.Port = port
+			return setup, true
+		}
+	}
+	return fm.SSHSetup{}, false
 }
 
 func favoriteLocationEqual(a, b string) bool {
@@ -665,6 +856,17 @@ func favoriteLocationEqual(a, b string) bool {
 	b = normalizeFavoriteLocation(b)
 	if a == "" || b == "" {
 		return false
+	}
+	ar, aRemote := parseRemoteFavoriteLocation(a)
+	br, bRemote := parseRemoteFavoriteLocation(b)
+	if aRemote || bRemote {
+		if !aRemote || !bRemote {
+			return false
+		}
+		return ar.User == br.User &&
+			strings.EqualFold(ar.Host, br.Host) &&
+			ar.Port == br.Port &&
+			ar.Dir == br.Dir
 	}
 	if filepath.IsAbs(a) && filepath.IsAbs(b) {
 		return samePath(a, b)
@@ -693,10 +895,19 @@ func (ui *UI) paneFavoriteItems(pane *filePaneState) []fileFavoriteItem {
 			continue
 		}
 		hasFavorites = true
+		if remoteLoc, ok := parseRemoteFavoriteLocation(loc); ok {
+			items = append(items, fileFavoriteItem{
+				label:     displayRemoteFavoriteLocation(remoteLoc),
+				targetDir: loc,
+				active:    paneMatchesRemoteFavorite(pane, remoteLoc),
+				removable: true,
+			})
+			continue
+		}
 		items = append(items, fileFavoriteItem{
 			label:     loc,
 			targetDir: loc,
-			active:    current != "" && favoriteLocationEqual(loc, current),
+			active:    !pane.remoteConnected() && current != "" && favoriteLocationEqual(loc, current),
 			removable: true,
 		})
 	}
@@ -726,7 +937,7 @@ func (ui *UI) addFavoriteLocation(raw string) (string, bool, error) {
 		}
 	}
 	ui.fmCfg.FavoriteLocations = append(ui.fmCfg.FavoriteLocations, loc)
-	if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
+	if err := ui.saveFMConfig(); err != nil {
 		ui.fmCfg.FavoriteLocations = ui.fmCfg.FavoriteLocations[:len(ui.fmCfg.FavoriteLocations)-1]
 		return loc, false, err
 	}
@@ -741,7 +952,16 @@ func (ui *UI) addPaneCurrentDirFavorite(idx int, now time.Time) {
 	if pane == nil {
 		return
 	}
-	_, added, err := ui.addFavoriteLocation(pane.dir)
+	target := pane.dir
+	if pane.remoteConnected() {
+		remoteLoc, ok := remoteFavoriteFromPane(pane)
+		if !ok {
+			pane.setNotice("failed to capture current ssh location", now)
+			return
+		}
+		target = remoteLoc
+	}
+	_, added, err := ui.addFavoriteLocation(target)
 	if err != nil {
 		pane.setNotice("failed to save favorites: "+err.Error(), now)
 		return
@@ -775,7 +995,7 @@ func (ui *UI) removeFavoriteLocation(raw string) (bool, error) {
 
 	prev := ui.fmCfg.FavoriteLocations
 	ui.fmCfg.FavoriteLocations = next
-	if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
+	if err := ui.saveFMConfig(); err != nil {
 		ui.fmCfg.FavoriteLocations = prev
 		return false, err
 	}
@@ -790,16 +1010,42 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 	if pane == nil {
 		return false
 	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	target = normalizeFavoriteLocation(target)
+	if target == "" {
+		return false
+	}
+
+	if remoteLoc, ok := parseRemoteFavoriteLocation(target); ok {
+		pane.closeFavoriteMenu()
+		if paneMatchesRemoteFavorite(pane, remoteLoc) {
+			if normalizeRemoteFavoriteDir(pane.dir) == remoteLoc.Dir {
+				return true
+			}
+			return ui.loadPaneDir(idx, remoteLoc.Dir)
+		}
+
+		setup, found := findSSHSetupForRemoteFavorite(ui.fmCfg, remoteLoc)
+		if !found {
+			pane.setNotice("missing SSH setup for favorite: "+displayRemoteFavoriteLocation(remoteLoc), time.Now())
+			return false
+		}
+		if err := ui.connectPaneSSH(idx, setup, remoteLoc.Dir, time.Now()); err != nil {
+			pane.setNotice("ssh connect failed: "+err.Error(), time.Now())
+			return false
+		}
+		return true
+	}
+
 	if pane.remoteConnected() {
 		ui.disconnectPaneSSH(idx, time.Now())
 		pane = ui.filePanes[idx]
 		if pane == nil {
 			return false
 		}
-	}
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return false
 	}
 	if favoriteLocationEqual(target, pane.dir) {
 		pane.closeFavoriteMenu()

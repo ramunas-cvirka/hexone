@@ -45,6 +45,8 @@ type KeyBindings struct {
 	Activate      string `yaml:"activate"`
 	View          string `yaml:"view"`
 	Copy          string `yaml:"copy"`
+	RenameMove    string `yaml:"rename_move"`
+	Create        string `yaml:"create"`
 	Delete        string `yaml:"delete"`
 }
 
@@ -63,10 +65,17 @@ type FontConfig struct {
 }
 
 type ViewerConfig struct {
-	Mode       string  `yaml:"mode"`
-	Shell      string  `yaml:"shell"`
-	Command    string  `yaml:"command"`
-	FontSizeSp float32 `yaml:"font_size_sp"`
+	Mode               string            `yaml:"mode"`
+	Shell              string            `yaml:"shell"`
+	Command            string            `yaml:"command"`
+	CommandByTarget    map[string]string `yaml:"command_by_target"`
+	CommandHistory     []string          `yaml:"command_history"`
+	WordSelectRegex    string            `yaml:"word_select_regex"`
+	FontSizeSp         float32           `yaml:"font_size_sp"`
+	WordWrap           bool              `yaml:"word_wrap"`
+	MaxReadMB          float32           `yaml:"max_read_mb"`
+	CommandAutoRefresh bool              `yaml:"command_auto_refresh"`
+	CommandRefreshMs   int               `yaml:"command_refresh_ms"`
 }
 
 type SSHSetup struct {
@@ -139,6 +148,8 @@ func DefaultConfig() *Config {
 			Activate:      "enter",
 			View:          "f3",
 			Copy:          "f5",
+			RenameMove:    "f6",
+			Create:        "f7",
 			Delete:        "f8",
 		},
 		Sort: SortConfig{
@@ -154,10 +165,17 @@ func DefaultConfig() *Config {
 			BoldPath:    "assets/FiraCode-Bold.ttf",
 		},
 		Viewer: ViewerConfig{
-			Mode:       "file",
-			Shell:      "auto",
-			Command:    "cat {path}",
-			FontSizeSp: 13,
+			Mode:               "file",
+			Shell:              "auto",
+			Command:            "cat {path}",
+			CommandByTarget:    map[string]string{},
+			CommandHistory:     []string{},
+			WordSelectRegex:    "[a-zA-Z0-9]+",
+			FontSizeSp:         13,
+			WordWrap:           false,
+			MaxReadMB:          1,
+			CommandAutoRefresh: true,
+			CommandRefreshMs:   1500,
 		},
 		SSH: SSHConfig{
 			Setups: []SSHSetup{},
@@ -319,6 +337,12 @@ func (c *Config) normalize() {
 	if c.KeyBindings.Copy == "" {
 		c.KeyBindings.Copy = "f5"
 	}
+	if c.KeyBindings.RenameMove == "" {
+		c.KeyBindings.RenameMove = "f6"
+	}
+	if c.KeyBindings.Create == "" {
+		c.KeyBindings.Create = "f7"
+	}
 	if c.KeyBindings.Delete == "" {
 		c.KeyBindings.Delete = "f8"
 	}
@@ -361,11 +385,68 @@ func (c *Config) normalize() {
 	if c.Viewer.Command == "" {
 		c.Viewer.Command = "cat {path}"
 	}
+	if len(c.Viewer.CommandByTarget) > 0 {
+		normalized := make(map[string]string, len(c.Viewer.CommandByTarget))
+		for rawKey, rawCmd := range c.Viewer.CommandByTarget {
+			key := strings.TrimSpace(rawKey)
+			cmd := strings.TrimSpace(rawCmd)
+			if key == "" || cmd == "" {
+				continue
+			}
+			normalized[key] = cmd
+		}
+		if len(normalized) == 0 {
+			c.Viewer.CommandByTarget = nil
+		} else {
+			c.Viewer.CommandByTarget = normalized
+		}
+	} else {
+		c.Viewer.CommandByTarget = nil
+	}
+	if len(c.Viewer.CommandHistory) > 0 {
+		history := make([]string, 0, len(c.Viewer.CommandHistory))
+		for _, raw := range c.Viewer.CommandHistory {
+			cmd := strings.TrimSpace(raw)
+			if cmd == "" {
+				continue
+			}
+			duplicate := false
+			for _, existing := range history {
+				if existing == cmd {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
+				continue
+			}
+			history = append(history, cmd)
+			if len(history) >= 100 {
+				break
+			}
+		}
+		if len(history) == 0 {
+			c.Viewer.CommandHistory = nil
+		} else {
+			c.Viewer.CommandHistory = history
+		}
+	} else {
+		c.Viewer.CommandHistory = nil
+	}
+	if strings.TrimSpace(c.Viewer.WordSelectRegex) == "" {
+		c.Viewer.WordSelectRegex = "[a-zA-Z0-9]+"
+	}
 	if c.Viewer.FontSizeSp < 6 {
 		c.Viewer.FontSizeSp = c.Font.SizeSp * (13.0 / 14.0)
 		if c.Viewer.FontSizeSp < 6 {
 			c.Viewer.FontSizeSp = 13
 		}
+	}
+	if c.Viewer.MaxReadMB <= 0 {
+		c.Viewer.MaxReadMB = 1
+	}
+	if c.Viewer.CommandRefreshMs < 200 {
+		c.Viewer.CommandRefreshMs = 1500
 	}
 
 	c.normalizeSSHSetups()

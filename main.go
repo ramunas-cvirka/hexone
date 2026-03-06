@@ -81,7 +81,7 @@ func run(window *app.Window) error {
 			gtx := app.NewContext(&ops, typ)
 			mainUI.Layout(th, gtx)
 			typ.Frame(gtx.Ops)
-			windowTracker.ObserveFrame()
+			windowTracker.ObserveFrame(gtx.Metric)
 			if !sessionApplied {
 				sessionApplied = true
 				mainUI.ApplySession(session)

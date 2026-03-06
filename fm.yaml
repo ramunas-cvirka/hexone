@@ -8,6 +8,7 @@ favorite_locations:
     - /Users/ramunas/go/src/hexone
     - /Users/ramunas/Downloads/@protocol_doc
     - /Users/ramunas/go/src/gpstrack-go
+    - ssh://root@157.180.68.247:22/opt/gpstrack/log
 name_compact:
     approx_char_px: 8
     min_head: 6
@@ -40,6 +41,8 @@ key_bindings:
     activate: enter
     view: f3
     copy: f5
+    rename_move: f6
+    create: f7
     delete: f8
 sort:
     default_key: name
@@ -54,14 +57,24 @@ font:
 viewer:
     mode: command
     shell: auto
-    command: cat {path}
+    command: tail -f {path} | grep --line-buffered 4a17100a
+    command_by_target:
+        ssh:root@157.180.68.247:22:/opt/gpstrack/log/gpstrack.log: tail -f {path} | grep --line-buffered 4a17100a
+    command_history:
+        - tail -f {path} | grep --line-buffered 4a17100a
+        - tail {path}
+    word_select_regex: '[a-zA-Z0-9]+'
     font_size_sp: 13
+    word_wrap: false
+    max_read_mb: 6
+    command_auto_refresh: true
+    command_refresh_ms: 2500
 ssh:
     setups:
-        - name: rocky-test
-          host: 157.11.1.1
+        - name: root@157.180.68.247:22
+          host: 157.180.68.247
           port: 22
           user: root
-          password: daddy
-          key_path: ""
+          password: ""
+          key_path: /Users/ramunas/.ssh/id_ed25519
           key_passphrase: ""

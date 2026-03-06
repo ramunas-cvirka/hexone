@@ -131,6 +131,7 @@ type UI struct {
 	toolbarPulseAt   time.Time
 	filePanes        []*filePaneState
 	fmCfg            *fm.Config
+	configPath       string
 	typeface         font.Typeface
 	textSize         unit.Sp
 	fileKeys         fileKeyMap
@@ -138,6 +139,8 @@ type UI struct {
 	pendingFileOpen  *fileOpenRequest
 	fileCopy         *fileCopyState
 	fileDelete       *fileDeleteState
+	fileMove         *fileMoveState
+	fileCreate       *fileCreateState
 	fileViewer       *fileViewerState
 	settingsModal    *settingsModalState
 	sshModal         *sshModalState
@@ -150,9 +153,10 @@ func NewUI(cfg *fm.Config) *UI {
 		cfg = fm.DefaultConfig()
 	}
 	ui := &UI{
-		fmCfg:    cfg,
-		typeface: font.Typeface(cfg.Font.Typeface),
-		textSize: fontSizeFromConfig(cfg),
+		fmCfg:      cfg,
+		configPath: resolveUIConfigPath(),
+		typeface:   font.Typeface(cfg.Font.Typeface),
+		textSize:   fontSizeFromConfig(cfg),
 	}
 	ui.Tabs.Value = "tab0"
 
@@ -720,7 +724,10 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 	for {
 		ev, ok := gtx.Event(
 			key.Filter{Name: key.NameF3, Optional: anyMods},
-			key.Filter{Name: "F", Required: key.ModCtrl, Optional: key.ModCtrl},
+			key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
 		)
 		if !ok {
 			return
@@ -752,15 +759,20 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				ui.startFileViewerLoad(gtx.Now)
 				continue
 			}
-			if ui.fileCopy != nil || ui.fileDelete != nil {
+			if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil {
 				continue
 			}
 			if ui.pathEditActive() {
 				continue
 			}
 			ui.startFileViewer(ui.activeFilePane, gtx.Now)
-		case "F":
-			if ke.State != key.Press || ke.Modifiers != key.ModCtrl {
+		case "F", "f":
+			if ke.State != key.Press {
+				continue
+			}
+			// Swallow ctrl/cmd+f with extra modifiers to prevent system beep,
+			// but only trigger action for plain Ctrl+F or Cmd+F.
+			if ke.Modifiers != key.ModCtrl && ke.Modifiers != key.ModShortcut {
 				continue
 			}
 			if ui == nil || ui.Tabs.Value != "tab0" {
@@ -769,7 +781,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ui.settingsModal != nil || ui.sshModal != nil {
 				continue
 			}
-			if ui.fileViewer != nil || ui.fileCopy != nil || ui.fileDelete != nil {
+			if ui.fileViewer != nil || ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil {
 				continue
 			}
 			if ui.pathEditActive() {
@@ -802,6 +814,13 @@ func (ui *UI) consumeUnusedFunctionKeys(gtx layout.Context) {
 			key.Filter{Name: key.NameF10, Optional: anyMods},
 			key.Filter{Name: key.NameF11, Optional: anyMods},
 			key.Filter{Name: key.NameF12, Optional: anyMods},
+			key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
+			// Also drain any unmatched Ctrl/Cmd shortcuts to prevent macOS beep.
+			key.Filter{Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Required: key.ModShortcut, Optional: anyMods},
 		)
 		if !ok {
 			break

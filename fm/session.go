@@ -9,12 +9,13 @@ import (
 )
 
 type SessionWindow struct {
-	X           int    `yaml:"x"`
-	Y           int    `yaml:"y"`
-	HasPosition bool   `yaml:"has_position"`
-	Width       int    `yaml:"width"`
-	Height      int    `yaml:"height"`
-	Mode        string `yaml:"mode"`
+	X           int     `yaml:"x"`
+	Y           int     `yaml:"y"`
+	HasPosition bool    `yaml:"has_position"`
+	Width       int     `yaml:"width"`
+	Height      int     `yaml:"height"`
+	PxPerDp     float32 `yaml:"px_per_dp,omitempty"`
+	Mode        string  `yaml:"mode"`
 }
 
 type SessionPane struct {
@@ -92,6 +93,9 @@ func (s *SessionState) normalize() {
 	}
 	if s.Window.Height < 120 {
 		s.Window.Height = 0
+	}
+	if s.Window.PxPerDp < 0 {
+		s.Window.PxPerDp = 0
 	}
 
 	out := make([]SessionPane, 0, len(s.Panes))

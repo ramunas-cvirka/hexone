@@ -289,7 +289,7 @@ func (ui *UI) saveSSHModal() error {
 		return err
 	}
 	ui.fmCfg.SSH.Setups = setups
-	if err := fm.SaveConfig("fm.yaml", ui.fmCfg); err != nil {
+	if err := ui.saveFMConfig(); err != nil {
 		return err
 	}
 	st.loadFromConfig(ui.fmCfg)
@@ -300,6 +300,23 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 	st := ui.sshModal
 	if st == nil {
 		return layout.Dimensions{}
+	}
+
+	// Explicitly drain Ctrl/Cmd+F while modal is open to avoid macOS beep.
+	anyMods := ^key.Modifiers(0)
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Required: key.ModShortcut, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+		_, _ = ev.(key.Event)
 	}
 
 	for {
@@ -329,9 +346,6 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		st.footerAnim.setPulse("save", gtx.Now)
 		if err := ui.saveSSHModal(); err != nil {
 			st.errText = err.Error()
-		} else {
-			ui.closeSSHModal()
-			return layout.Dimensions{}
 		}
 	}
 	if st.connectClick.Clicked(gtx) {
@@ -483,7 +497,7 @@ func (ui *UI) layoutSSHModalHeader(th *material.Theme, gtx layout.Context, st *s
 func (ui *UI) layoutSSHModalBody(th *material.Theme, gtx layout.Context, st *sshModalState) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, gtx.Dp(unit.Dp(190)), func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, gtx.Dp(unit.Dp(250)), func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutSSHSetupsList(th, gtx, st)
 			})
 		}),
@@ -769,7 +783,7 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 									return toolbarSeparator(gtx, stripH)
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return ui.layoutSSHFooterSegment(th, gtx, &st.saveClick, "Save", hoverSave, pulseSave, stripH, false, false)
+									return ui.layoutSSHFooterSegment(th, gtx, &st.saveClick, "Apply", hoverSave, pulseSave, stripH, false, false)
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return toolbarSeparator(gtx, stripH)

@@ -4,6 +4,7 @@ import (
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
+	"strings"
 	"time"
 
 	"gioui.org/font"
@@ -28,6 +29,10 @@ const (
 	filePaneCornerDp              = 8
 	filePaneControlCornerDp       = 6
 	filePaneOverlayCornerDp       = 6
+	filePaneNoticeVisibleDur      = 3 * time.Second
+	filePaneNoticeFadeInDur       = 180 * time.Millisecond
+	filePaneNoticeFadeOutDur      = 220 * time.Millisecond
+	filePaneNoticeSlideDp         = unit.Dp(6)
 )
 
 type visiblePane struct {
@@ -39,6 +44,8 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 	ui.pumpFileViewerState(gtx)
 	ui.pumpFileCopyState(gtx)
 	ui.pumpFileDeleteState(gtx)
+	ui.pumpFileMoveState(gtx)
+	ui.pumpFileCreateState(gtx)
 
 	dims := layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
@@ -51,6 +58,12 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFileDeleteDialog(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFileMoveDialog(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFileCreateDialog(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFileViewer(th, gtx)
@@ -73,7 +86,7 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 		ui.handleFileViewerKeys(gtx)
 		return
 	}
-	if ui.fileCopy != nil || ui.fileDelete != nil {
+	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil {
 		return
 	}
 	ui.handleFileManagerEscape(gtx)
@@ -124,6 +137,14 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 				continue
 			case fileActionCopy:
 				ui.startFileCopyDialog(ui.activeFilePane, gtx.Now)
+				ui.rep.active = false
+				continue
+			case fileActionRenameMove:
+				ui.startFileMoveDialog(ui.activeFilePane, gtx.Now)
+				ui.rep.active = false
+				continue
+			case fileActionCreate:
+				ui.startFileCreateDialog(ui.activeFilePane, gtx.Now)
 				ui.rep.active = false
 				continue
 			case fileActionDelete:
@@ -398,26 +419,52 @@ func (ui *UI) layoutFilePaneNotice(th *material.Theme, gtx layout.Context, pane 
 	if pane == nil || pane.noticeText == "" {
 		return layout.Dimensions{}
 	}
-	if !gtx.Now.Before(pane.noticeUntil) {
+	showAt := pane.noticeUntil.Add(-filePaneNoticeVisibleDur)
+	hideAt := pane.noticeUntil.Add(filePaneNoticeFadeOutDur)
+	if pane.noticeUntil.IsZero() || !gtx.Now.Before(hideAt) {
 		pane.noticeText = ""
 		pane.noticeUntil = time.Time{}
 		return layout.Dimensions{}
 	}
 
-	gtx.Execute(op.InvalidateCmd{At: pane.noticeUntil})
+	alpha := float32(1)
+	animating := false
+
+	if gtx.Now.Before(showAt.Add(filePaneNoticeFadeInDur)) {
+		t := clamp01(float32(gtx.Now.Sub(showAt)) / float32(filePaneNoticeFadeInDur))
+		alpha = smoothstep01(t)
+		animating = true
+	}
+	if !gtx.Now.Before(pane.noticeUntil) {
+		t := clamp01(float32(gtx.Now.Sub(pane.noticeUntil)) / float32(filePaneNoticeFadeOutDur))
+		alpha = 1 - smoothstep01(t)
+		animating = true
+	}
+	alpha = clamp01(alpha)
+	if alpha <= 0 {
+		return layout.Dimensions{}
+	}
+
+	gtx.Execute(op.InvalidateCmd{At: hideAt})
+	if animating {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+	}
+
+	offsetY := gtx.Dp(filePaneNoticeSlideDp) - int(float32(gtx.Dp(filePaneNoticeSlideDp))*alpha)
+	defer op.Offset(image.Pt(0, offsetY)).Push(gtx.Ops).Pop()
 	return layout.Inset{Top: unit.Dp(4), Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.NW.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return fillRoundedBox(
 				gtx,
 				gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-				color.NRGBA{R: 56, G: 20, B: 20, A: 242},
-				color.NRGBA{R: 170, G: 70, B: 70, A: 180},
+				scaleNoticeAlpha(color.NRGBA{R: 22, G: 30, B: 38, A: 234}, alpha),
+				scaleNoticeAlpha(color.NRGBA{R: 136, G: 168, B: 196, A: 132}, alpha),
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body2(th, pane.noticeText)
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.TextSize = scaleThemeFontSize(th, 12)
-						lbl.Color = color.NRGBA{R: 255, G: 180, B: 180, A: 255}
+						lbl.Color = scaleNoticeAlpha(color.NRGBA{R: 220, G: 228, B: 236, A: 255}, alpha)
 						lbl.MaxLines = 2
 						lbl.Truncator = "…"
 						return lbl.Layout(gtx)
@@ -426,6 +473,11 @@ func (ui *UI) layoutFilePaneNotice(th *material.Theme, gtx layout.Context, pane 
 			)
 		})
 	})
+}
+
+func scaleNoticeAlpha(c color.NRGBA, a float32) color.NRGBA {
+	c.A = uint8(float32(c.A) * clamp01(a))
+	return c
 }
 
 func (ui *UI) layoutFilePaneContextMenu(th *material.Theme, gtx layout.Context, pane *filePaneState) layout.Dimensions {
@@ -663,9 +715,6 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 }
 
 func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
-	if pane != nil && pane.remoteConnected() && pane.pathEditing {
-		pane.stopPathEdit()
-	}
 	sortOptions := []struct {
 		key   fileSortKey
 		label string
@@ -760,10 +809,6 @@ func (ui *UI) handleFilePanePathRowClicks(gtx layout.Context, idx int, pane *fil
 		pane.sortMenuOpen = false
 		pane.closeFavoriteMenu()
 		pane.closeContextMenu()
-		if pane.remoteConnected() {
-			pane.clearPendingPathNavigate()
-			continue
-		}
 		if pane.registerPathClick("row:"+pane.dir, gtx.Now, filePanePathDoubleClickWindow) {
 			pane.clearPendingPathNavigate()
 			pane.beginPathEdit()
@@ -779,18 +824,6 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 	if pane == nil {
 		return layout.Dimensions{}
 	}
-	if pane.remoteConnected() {
-		lbl := material.Body2(th, pane.displayDir())
-		lbl.Font.Typeface = ui.mainTypeface()
-		lbl.Font.Weight = font.Medium
-		lbl.TextSize = scaleThemeFontSize(th, 11)
-		lbl.Color = color.NRGBA{R: 210, G: 220, B: 240, A: 255}
-		lbl.MaxLines = 1
-		lbl.Truncator = "..."
-		return lbl.Layout(gtx)
-	}
-	segments := splitFilePathSegments(pane.dir)
-	pane.ensurePathClicks(len(segments))
 	if pane.pendingPathNav != "" {
 		if gtx.Now.Before(pane.pendingPathAt) {
 			gtx.Execute(op.InvalidateCmd{At: pane.pendingPathAt})
@@ -803,6 +836,107 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 		}
 	}
 
+	if pane.remoteConnected() {
+		address := "ssh"
+		if pane.remote != nil {
+			if prefix := strings.TrimSpace(pane.remote.displayPrefix()); prefix != "" {
+				address = prefix
+			}
+		}
+		segments := splitRemotePathSegments(pane.dir)
+		totalClicks := len(segments) + 1 // address + remote path segments
+		pane.ensurePathClicks(totalClicks)
+		for i := 0; i < totalClicks; i++ {
+			click := &pane.pathSegClicks[i]
+			for {
+				_, ok := click.Update(gtx)
+				if !ok {
+					break
+				}
+				ui.setActiveFilePane(idx)
+				pane.sortMenuOpen = false
+				pane.closeFavoriteMenu()
+				pane.closeContextMenu()
+				pane.clearPendingPathNavigate()
+				switch {
+				case i == 0:
+					pane.queuePathNavigate("/", gtx.Now.Add(filePanePathClickDelay))
+					gtx.Execute(op.InvalidateCmd{At: pane.pendingPathAt})
+				case i-1 != len(segments)-1:
+					pane.queuePathNavigate(segments[i-1].path, gtx.Now.Add(filePanePathClickDelay))
+					gtx.Execute(op.InvalidateCmd{At: pane.pendingPathAt})
+				}
+			}
+			if pane.pathEditing {
+				return ui.layoutFilePanePathEditor(th, gtx, idx, pane, active)
+			}
+		}
+
+		pathBaseColor := txtColor
+		pathHoverColor := color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+		addrBaseColor := color.NRGBA{R: 186, G: 214, B: 255, A: 255}
+		addrHoverColor := color.NRGBA{R: 224, G: 236, B: 255, A: 255}
+		if active {
+			pathBaseColor = color.NRGBA{R: 220, G: 230, B: 255, A: 255}
+		}
+		children := make([]layout.FlexChild, 0, len(segments)+1)
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			click := &pane.pathSegClicks[0]
+			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				bg := color.NRGBA{}
+				lblColor := addrBaseColor
+				if click.Hovered() {
+					bg = color.NRGBA{R: 44, G: 52, B: 74, A: 255}
+					lblColor = addrHoverColor
+				}
+				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, address)
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Weight = font.Medium
+					lbl.TextSize = scaleThemeFontSize(th, 11)
+					lbl.Color = lblColor
+					lbl.MaxLines = 1
+					return lbl.Layout(gtx)
+				})
+			})
+		}))
+		for i := range segments {
+			i := i
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				click := &pane.pathSegClicks[i+1]
+				return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					bg := color.NRGBA{}
+					lblColor := pathBaseColor
+					if click.Hovered() {
+						bg = color.NRGBA{R: 44, G: 52, B: 74, A: 255}
+						lblColor = pathHoverColor
+					}
+					if i == len(segments)-1 {
+						lblColor = color.NRGBA{R: 205, G: 220, B: 255, A: 255}
+						if click.Hovered() {
+							lblColor = color.NRGBA{R: 240, G: 244, B: 255, A: 255}
+						}
+					}
+					return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, segments[i].label)
+						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.Font.Weight = font.Normal
+						if i == len(segments)-1 {
+							lbl.Font.Weight = font.Medium
+						}
+						lbl.TextSize = scaleThemeFontSize(th, 11)
+						lbl.Color = lblColor
+						lbl.MaxLines = 1
+						return lbl.Layout(gtx)
+					})
+				})
+			}))
+		}
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+	}
+
+	segments := splitFilePathSegments(pane.dir)
+	pane.ensurePathClicks(len(segments))
 	for i := range segments {
 		click := &pane.pathSegClicks[i]
 		for {
@@ -1439,7 +1573,7 @@ func (ui *UI) updateFilePaneFavoriteHover(gtx layout.Context, pane *filePaneStat
 			continue
 		}
 		hoveredKey = item.targetDir
-		hoveredLabel = item.targetDir
+		hoveredLabel = item.label
 		break
 	}
 

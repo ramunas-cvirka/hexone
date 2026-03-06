@@ -6,9 +6,11 @@ import (
 	"image"
 	"image/color"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gioui.org/font"
 	"gioui.org/io/key"
@@ -23,11 +25,16 @@ import (
 )
 
 type fileCopyState struct {
-	pane int
+	pane    int
+	srcPane int
+	dstPane int
 
 	srcPath string
 	dstPath string
 	dstRaw  string
+
+	srcEndpoint copyEndpoint
+	dstEndpoint copyEndpoint
 
 	dstEdit     widget.Editor
 	dstEditWant bool
@@ -133,11 +140,6 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	if pane == nil {
 		return
 	}
-	if pane.remoteConnected() {
-		pane.setNotice("remote copy is not implemented yet", now)
-		return
-	}
-
 	entry := pane.selectedEntry()
 	if entry == nil || entry.Path == "" {
 		pane.setNotice("nothing selected to copy", now)
@@ -157,21 +159,36 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
 
-	dstDir := pane.dir
+	dstPaneIdx := idx
 	for i, other := range ui.filePanes {
-		if i == idx || other == nil || other.dir == "" || other.remoteConnected() {
+		if i == idx || other == nil || other.dir == "" {
 			continue
 		}
-		dstDir = other.dir
+		dstPaneIdx = i
 		break
 	}
-	dstDefault := filepath.Join(dstDir, filepath.Base(entry.Path))
+	dstPane := ui.filePanes[dstPaneIdx]
+	srcEndpoint := copyEndpointFromPane(idx, pane)
+	dstEndpoint := copyEndpointFromPane(dstPaneIdx, dstPane)
+	dstDir := strings.TrimSpace(dstEndpoint.dir)
+	if dstDir == "" {
+		if dstEndpoint.isRemote() {
+			dstDir = "/"
+		} else {
+			dstDir = "."
+		}
+	}
+	dstDefault := dstEndpoint.join(dstDir, srcEndpoint.baseName(entry.Path))
 
 	st := &fileCopyState{
-		pane:    idx,
-		srcPath: entry.Path,
-		dstPath: dstDefault,
-		dstRaw:  dstDefault,
+		pane:        idx,
+		srcPane:     idx,
+		dstPane:     dstPaneIdx,
+		srcPath:     entry.Path,
+		dstPath:     dstDefault,
+		dstRaw:      dstDefault,
+		srcEndpoint: srcEndpoint,
+		dstEndpoint: dstEndpoint,
 	}
 	st.dstEdit.SingleLine = true
 	st.dstEdit.Submit = true
@@ -205,7 +222,7 @@ func (st *fileCopyState) refreshPreview() {
 		return
 	}
 
-	effectiveDst, srcInfo, dstInfo, err := inspectCopyPaths(st.srcPath, raw)
+	effectiveDst, srcInfo, dstInfo, err := inspectCopyPaths(st.srcEndpoint, st.srcPath, st.dstEndpoint, raw)
 	if err != nil {
 		st.dstPath = raw
 		return
@@ -213,50 +230,6 @@ func (st *fileCopyState) refreshPreview() {
 	st.dstPath = effectiveDst
 	st.srcInfo = srcInfo
 	st.dstInfo = dstInfo
-}
-
-func inspectCopyPaths(srcPath, dstRaw string) (string, fileCopyPathInfo, fileCopyPathInfo, error) {
-	srcAbs, err := filepath.Abs(srcPath)
-	if err != nil {
-		return "", fileCopyPathInfo{}, fileCopyPathInfo{}, err
-	}
-	srcAbs = filepath.Clean(srcAbs)
-
-	srcStat, err := os.Lstat(srcAbs)
-	if err != nil {
-		return "", fileCopyPathInfo{}, fileCopyPathInfo{}, err
-	}
-
-	dstAbs, err := filepath.Abs(dstRaw)
-	if err != nil {
-		return "", fileCopyPathInfo{}, fileCopyPathInfo{}, err
-	}
-	dstAbs = filepath.Clean(dstAbs)
-
-	if dstDirInfo, err := os.Stat(dstAbs); err == nil && dstDirInfo.IsDir() {
-		dstAbs = filepath.Join(dstAbs, filepath.Base(srcAbs))
-	}
-
-	srcInfo := fileCopyPathInfo{
-		Path:    srcAbs,
-		Exists:  true,
-		IsDir:   srcStat.IsDir(),
-		ModTime: srcStat.ModTime(),
-	}
-	if srcStat.Mode().IsRegular() {
-		srcInfo.Size = srcStat.Size()
-	}
-
-	dstInfo := fileCopyPathInfo{Path: dstAbs}
-	if dstStat, err := os.Lstat(dstAbs); err == nil {
-		dstInfo.Exists = true
-		dstInfo.IsDir = dstStat.IsDir()
-		dstInfo.ModTime = dstStat.ModTime()
-		if dstStat.Mode().IsRegular() {
-			dstInfo.Size = dstStat.Size()
-		}
-	}
-	return dstAbs, srcInfo, dstInfo, nil
 }
 
 func (ui *UI) submitFileCopyDialog(now time.Time) {
@@ -272,7 +245,7 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 	}
 
 	st.dstRaw = dst
-	effectiveDst, srcInfo, dstInfo, err := inspectCopyPaths(st.srcPath, dst)
+	effectiveDst, srcInfo, dstInfo, err := inspectCopyPaths(st.srcEndpoint, st.srcPath, st.dstEndpoint, dst)
 	if err != nil {
 		st.lastErr = err.Error()
 		return
@@ -291,6 +264,7 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 	st.doneCh = doneCh
 
 	src := st.srcPath
+	dst = st.dstPath
 	go func() {
 		sendProgress := func(p filesys.CopyProgress) {
 			for {
@@ -305,7 +279,7 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 				}
 			}
 		}
-		doneCh <- filesys.CopyPath(src, dst, sendProgress)
+		doneCh <- runCopyBetweenEndpoints(st.srcEndpoint, src, st.dstEndpoint, dst, sendProgress)
 	}()
 
 	_ = now
@@ -350,24 +324,18 @@ func (ui *UI) finishFileCopy(now time.Time) {
 		return
 	}
 
-	srcPath := st.srcPath
-	dstPath := st.dstPath
+	srcPaneIdx := st.srcPane
+	dstPaneIdx := st.dstPane
 	ui.fileCopy = nil // close dialog first
 	ui.clearFileCopyHotkeyHold()
 
-	srcDir := filepath.Clean(filepath.Dir(srcPath))
-	dstDir := filepath.Clean(filepath.Dir(dstPath))
-	if info, err := os.Stat(dstPath); err == nil && info.IsDir() {
-		dstDir = filepath.Clean(dstPath)
-	}
-
-	for _, pane := range ui.filePanes {
-		if pane == nil {
-			continue
+	reloadPane := func(paneIdx int) {
+		if paneIdx < 0 || paneIdx >= len(ui.filePanes) {
+			return
 		}
-		cur := filepath.Clean(pane.dir)
-		if !samePath(cur, srcDir) && !samePath(cur, dstDir) {
-			continue
+		pane := ui.filePanes[paneIdx]
+		if pane == nil {
+			return
 		}
 		selectedPath := ""
 		if sel := pane.selectedEntry(); sel != nil {
@@ -375,13 +343,17 @@ func (ui *UI) finishFileCopy(now time.Time) {
 		}
 		if err := pane.load(pane.dir); err != nil {
 			pane.setNotice(err.Error(), now)
-			continue
+			return
 		}
 		if selectedPath != "" && pane.table != nil && pane.model != nil {
 			if idx := pane.findEntryPathIndex(selectedPath); idx >= 0 {
 				pane.table.SetSelected(idx, pane.model.Len(), false)
 			}
 		}
+	}
+	reloadPane(srcPaneIdx)
+	if dstPaneIdx != srcPaneIdx {
+		reloadPane(dstPaneIdx)
 	}
 }
 
@@ -730,7 +702,8 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 		hoverFill = 0
 		pulseFill = 0
 	}
-	dims := fixedWidth(gtx, gtx.Dp(unit.Dp(82)), func(gtx layout.Context) layout.Dimensions {
+	segW := dialogActionSegmentWidthPx(gtx, label)
+	dims := fixedWidth(gtx, segW, func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
 			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				if click.Pressed() && !disabled && pulseFill < 0.5 {
@@ -776,6 +749,27 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 		pointer.CursorPointer.Add(gtx.Ops)
 	}
 	return dims
+}
+
+func dialogActionSegmentWidthPx(gtx layout.Context, label string) int {
+	runes := utf8.RuneCountInString(strings.TrimSpace(label))
+	if runes < 2 {
+		runes = 2
+	}
+	charW := gtx.Dp(unit.Dp(6))
+	if charW < 4 {
+		charW = 4
+	}
+	width := gtx.Dp(unit.Dp(26)) + runes*charW
+	minW := gtx.Dp(unit.Dp(64))
+	maxW := gtx.Dp(unit.Dp(176))
+	if width < minW {
+		width = minW
+	}
+	if width > maxW {
+		width = maxW
+	}
+	return width
 }
 
 func (ui *UI) layoutDialogActionPair(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool) layout.Dimensions {
@@ -870,6 +864,9 @@ func copyProgressText(progress filesys.CopyProgress) string {
 func copyProgressCurrent(progress filesys.CopyProgress) string {
 	if progress.CurrentPath == "" {
 		return ""
+	}
+	if strings.Contains(progress.CurrentPath, "/") {
+		return path.Base(progress.CurrentPath)
 	}
 	return filepath.Base(progress.CurrentPath)
 }

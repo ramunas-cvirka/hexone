@@ -11,12 +11,21 @@ func applyWindowOptionsFromSession(window *app.Window, session *fm.SessionState)
 	if window == nil || session == nil {
 		return
 	}
+	preparePlatformWindowRestore(session)
+	pxPerDp := session.Window.PxPerDp
+	if pxPerDp <= 0 {
+		pxPerDp = 1
+	}
+	pxToDp := func(px int) unit.Dp {
+		return unit.Dp(float32(px) / pxPerDp)
+	}
+
 	opts := make([]app.Option, 0, 3)
 	if session.Window.Width > 0 && session.Window.Height > 0 {
-		opts = append(opts, app.Size(unit.Dp(session.Window.Width), unit.Dp(session.Window.Height)))
+		opts = append(opts, app.Size(pxToDp(session.Window.Width), pxToDp(session.Window.Height)))
 	}
 	if session.Window.HasPosition && session.Window.Mode == "windowed" {
-		opts = append(opts, app.Position(unit.Dp(session.Window.X), unit.Dp(session.Window.Y)))
+		opts = append(opts, app.Position(pxToDp(session.Window.X), pxToDp(session.Window.Y)))
 	}
 	switch sessionModeToWindowMode(session.Window.Mode) {
 	case app.Maximized:

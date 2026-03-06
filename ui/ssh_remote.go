@@ -7,47 +7,110 @@ import (
 	"hexone/fm"
 	"net"
 	"os"
+	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
-type paneSSHSession struct {
-	setup     fm.SSHSetup
-	identity  string
-	address   string
-	sshClient *ssh.Client
+type sharedSSHConn struct {
+	mu sync.Mutex
 
-	sftpBase   *ssh.Client
-	sftpClient *sftp.Client
+	refs int
+
+	sshClient *ssh.Client
+	sftpBase  *ssh.Client
+	sftp      *sftp.Client
+}
+
+func (c *sharedSSHConn) retain() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.refs++
+	c.mu.Unlock()
+}
+
+func (c *sharedSSHConn) release() {
+	if c == nil {
+		return
+	}
+	var (
+		sshClient *ssh.Client
+		sftpBase  *ssh.Client
+		sftpCli   *sftp.Client
+	)
+	c.mu.Lock()
+	if c.refs > 0 {
+		c.refs--
+	}
+	if c.refs == 0 {
+		sftpCli = c.sftp
+		sftpBase = c.sftpBase
+		sshClient = c.sshClient
+		c.sftp = nil
+		c.sftpBase = nil
+		c.sshClient = nil
+	}
+	c.mu.Unlock()
+
+	if sftpCli != nil {
+		_ = sftpCli.Close()
+	}
+	if sftpBase != nil {
+		_ = sftpBase.Close()
+	}
+	if sshClient != nil {
+		_ = sshClient.Close()
+	}
+}
+
+func (c *sharedSSHConn) sftpClient() *sftp.Client {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sftp
+}
+
+func (c *sharedSSHConn) commandClient() *ssh.Client {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sshClient
+}
+
+type paneSSHSession struct {
+	setup    fm.SSHSetup
+	identity string
+	address  string
+	conn     *sharedSSHConn
 }
 
 func (s *paneSSHSession) close() {
 	if s == nil {
 		return
 	}
-	if s.sftpClient != nil {
-		_ = s.sftpClient.Close()
-		s.sftpClient = nil
-	}
-	if s.sftpBase != nil {
-		_ = s.sftpBase.Close()
-		s.sftpBase = nil
-	}
-	if s.sshClient != nil {
-		_ = s.sshClient.Close()
-		s.sshClient = nil
+	if s.conn != nil {
+		s.conn.release()
+		s.conn = nil
 	}
 }
 
 func (s *paneSSHSession) homeDir() string {
-	if s == nil || s.sftpClient == nil {
+	client := s.sftpClient()
+	if s == nil || client == nil {
 		return "/"
 	}
-	wd, err := s.sftpClient.Getwd()
+	wd, err := client.Getwd()
 	if err != nil || strings.TrimSpace(wd) == "" {
 		return "/"
 	}
@@ -55,17 +118,56 @@ func (s *paneSSHSession) homeDir() string {
 }
 
 func (s *paneSSHSession) readDir(dir string) (filesys.Listing, error) {
-	if s == nil || s.sftpClient == nil {
+	client := s.sftpClient()
+	if s == nil || client == nil {
 		return filesys.Listing{}, errors.New("sftp session is not connected")
 	}
-	return filesys.ReadDirSFTP(s.sftpClient, dir)
+	return filesys.ReadDirSFTP(client, dir)
+}
+
+func (s *paneSSHSession) sftpClient() *sftp.Client {
+	if s == nil || s.conn == nil {
+		return nil
+	}
+	return s.conn.sftpClient()
+}
+
+func (s *paneSSHSession) commandClient() *ssh.Client {
+	if s == nil || s.conn == nil {
+		return nil
+	}
+	return s.conn.commandClient()
+}
+
+func (s *paneSSHSession) clone() *paneSSHSession {
+	if s == nil || s.conn == nil {
+		return nil
+	}
+	s.conn.retain()
+	return &paneSSHSession{
+		setup:    s.setup,
+		identity: s.identity,
+		address:  s.address,
+		conn:     s.conn,
+	}
 }
 
 func (s *paneSSHSession) displayPrefix() string {
 	if s == nil {
 		return ""
 	}
-	return s.identity
+	user := strings.TrimSpace(s.setup.User)
+	host := strings.TrimSpace(s.setup.Host)
+	switch {
+	case user != "" && host != "":
+		return user + "@" + host
+	case host != "":
+		return host
+	case user != "":
+		return user + "@?"
+	default:
+		return "ssh"
+	}
 }
 
 func (ui *UI) connectSSHModalToActivePane(now time.Time) error {
@@ -84,13 +186,34 @@ func (ui *UI) connectSSHModalToActivePane(now time.Time) error {
 	if err != nil {
 		return err
 	}
-	setup, err = normalizeConnectSSHSetup(setup)
+	return ui.connectPaneSSH(ui.activeFilePane, setup, "", now)
+}
+
+func (ui *UI) connectPaneSSH(idx int, setup fm.SSHSetup, targetDir string, now time.Time) error {
+	if ui == nil {
+		return errors.New("ui is nil")
+	}
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return errors.New("invalid pane index")
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return errors.New("pane is nil")
+	}
+
+	setup, err := normalizeConnectSSHSetup(setup)
 	if err != nil {
 		return err
 	}
-	next, err := newPaneSSHSession(setup)
-	if err != nil {
-		return err
+	var next *paneSSHSession
+	if shared := ui.findReusableRemoteSession(idx, setup); shared != nil {
+		next = shared.clone()
+	}
+	if next == nil {
+		next, err = newPaneSSHSession(setup)
+		if err != nil {
+			return err
+		}
 	}
 
 	prev := pane.remote
@@ -100,11 +223,22 @@ func (ui *UI) connectSSHModalToActivePane(now time.Time) error {
 	}
 	pane.remote = next
 
-	targetDir := next.homeDir()
-	if targetDir == "" {
-		targetDir = "/"
+	target := strings.TrimSpace(targetDir)
+	if target == "" {
+		target = next.homeDir()
 	}
-	if err := pane.load(targetDir); err != nil {
+	if target == "" {
+		target = "/"
+	}
+	target = path.Clean(target)
+	if target == "" || target == "." {
+		target = "/"
+	}
+	if !strings.HasPrefix(target, "/") {
+		target = "/" + target
+	}
+
+	if err := pane.load(target); err != nil {
 		pane.remote = prev
 		pane.localDirBeforeRemote = prevLocal
 		next.close()
@@ -120,6 +254,41 @@ func (ui *UI) connectSSHModalToActivePane(now time.Time) error {
 	pane.stopPathEdit()
 	pane.setNotice("connected: "+next.identity, now)
 	return nil
+}
+
+func (ui *UI) findReusableRemoteSession(excludeIdx int, setup fm.SSHSetup) *paneSSHSession {
+	if ui == nil {
+		return nil
+	}
+	for i, pane := range ui.filePanes {
+		if i == excludeIdx || pane == nil || pane.remote == nil {
+			continue
+		}
+		if !sameSSHRemoteTarget(pane.remote.setup, setup) {
+			continue
+		}
+		if pane.remote.sftpClient() == nil {
+			continue
+		}
+		return pane.remote
+	}
+	return nil
+}
+
+func sameSSHRemoteTarget(a, b fm.SSHSetup) bool {
+	hostA := strings.TrimSpace(a.Host)
+	hostB := strings.TrimSpace(b.Host)
+	userA := strings.TrimSpace(a.User)
+	userB := strings.TrimSpace(b.User)
+	portA := a.Port
+	portB := b.Port
+	if portA <= 0 {
+		portA = 22
+	}
+	if portB <= 0 {
+		portB = 22
+	}
+	return hostA == hostB && userA == userB && portA == portB
 }
 
 func (ui *UI) disconnectPaneSSH(idx int, now time.Time) {
@@ -231,12 +400,15 @@ func newPaneSSHSession(setup fm.SSHSetup) (*paneSSHSession, error) {
 	}
 
 	return &paneSSHSession{
-		setup:      setup,
-		identity:   sshSetupIdentity(setup),
-		address:    address,
-		sshClient:  cmdClient,
-		sftpBase:   sftpBase,
-		sftpClient: sftpClient,
+		setup:    setup,
+		identity: sshSetupIdentity(setup),
+		address:  address,
+		conn: &sharedSSHConn{
+			refs:      1,
+			sshClient: cmdClient,
+			sftpBase:  sftpBase,
+			sftp:      sftpClient,
+		},
 	}, nil
 }
 

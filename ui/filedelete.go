@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"errors"
 	"hexone/filesys"
 	"image"
 	"image/color"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gioui.org/font"
@@ -26,6 +29,7 @@ type fileDeleteState struct {
 	targetPath string
 	targetName string
 	targetInfo fileCopyPathInfo
+	remote     *paneSSHSession
 
 	backdropClick widget.Clickable
 	closeClick    widget.Clickable
@@ -47,11 +51,6 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 	if pane == nil || pane.model == nil || pane.table == nil {
 		return
 	}
-	if pane.remoteConnected() {
-		pane.setNotice("remote delete is not implemented yet", now)
-		return
-	}
-
 	row := pane.table.Selected
 	entry := pane.model.Entry(row)
 	if entry == nil || entry.Path == "" {
@@ -72,8 +71,28 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
 
-	info, err := buildCopyPathInfo(entry.Path)
+	var remote *paneSSHSession
+	if pane.remoteConnected() {
+		remote = pane.remote.clone()
+		if remote == nil {
+			pane.setNotice("remote session is not connected", now)
+			return
+		}
+	}
+
+	var (
+		info fileCopyPathInfo
+		err  error
+	)
+	if remote != nil {
+		info, err = buildCopyPathInfoRemote(remote, entry.Path)
+	} else {
+		info, err = buildCopyPathInfo(entry.Path)
+	}
 	if err != nil {
+		if remote != nil {
+			remote.close()
+		}
 		pane.setNotice(err.Error(), now)
 		return
 	}
@@ -84,6 +103,7 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 		targetPath: entry.Path,
 		targetName: entry.DisplayName,
 		targetInfo: info,
+		remote:     remote,
 	}
 	ui.rep.active = false
 	ui.rep.pane = -1
@@ -108,7 +128,12 @@ func (ui *UI) submitFileDeleteDialog(now time.Time) {
 	st.doneCh = doneCh
 
 	target := st.targetPath
+	remote := st.remote
 	go func() {
+		if remote != nil {
+			doneCh <- deleteRemotePath(remote, target)
+			return
+		}
 		doneCh <- filesys.DeletePath(target)
 	}()
 
@@ -141,8 +166,14 @@ func (ui *UI) finishFileDelete(now time.Time) {
 	if st == nil {
 		return
 	}
+	remoteDelete := st.remote != nil
 	paneIdx := st.pane
 	deletedPath := filepath.Clean(st.targetPath)
+	deletedDir := filepath.Clean(filepath.Dir(deletedPath))
+	if remoteDelete {
+		deletedPath = path.Clean(st.targetPath)
+		deletedDir = path.Clean(path.Dir(deletedPath))
+	}
 	preferRow := st.row
 
 	ui.fileDelete = nil
@@ -152,21 +183,45 @@ func (ui *UI) finishFileDelete(now time.Time) {
 		if pane == nil || pane.model == nil || pane.table == nil {
 			continue
 		}
-		curDir := filepath.Clean(pane.dir)
-		if !samePath(curDir, filepath.Clean(filepath.Dir(deletedPath))) {
-			continue
+		if remoteDelete {
+			if !pane.remoteConnected() || pane.remote == nil || !sameSSHRemoteTarget(pane.remote.setup, st.remote.setup) {
+				continue
+			}
+			curDir := path.Clean(pane.dir)
+			if curDir != deletedDir {
+				continue
+			}
+		} else {
+			if pane.remoteConnected() {
+				continue
+			}
+			curDir := filepath.Clean(pane.dir)
+			if !samePath(curDir, deletedDir) {
+				continue
+			}
 		}
 
 		selectedPath := ""
 		if sel := pane.selectedEntry(); sel != nil {
 			selectedPath = filepath.Clean(sel.Path)
+			if remoteDelete {
+				selectedPath = path.Clean(sel.Path)
+			}
 		}
 		if err := pane.load(pane.dir); err != nil {
 			pane.setNotice(err.Error(), now)
 			continue
 		}
 
-		if selectedPath != "" && !samePath(selectedPath, deletedPath) {
+		sameSelected := false
+		if selectedPath != "" {
+			if remoteDelete {
+				sameSelected = selectedPath == deletedPath
+			} else {
+				sameSelected = samePath(selectedPath, deletedPath)
+			}
+		}
+		if selectedPath != "" && !sameSelected {
 			if idx := pane.findEntryPathIndex(selectedPath); idx >= 0 {
 				pane.table.SetSelected(idx, pane.model.Len(), false)
 				continue
@@ -189,6 +244,20 @@ func (ui *UI) finishFileDelete(now time.Time) {
 			pane.table.SetSelected(row, pane.model.Len(), false)
 		}
 	}
+	if st.remote != nil {
+		st.remote.close()
+		st.remote = nil
+	}
+}
+
+func (ui *UI) closeFileDeleteDialog() {
+	st := ui.fileDelete
+	if st != nil && st.remote != nil {
+		st.remote.close()
+		st.remote = nil
+	}
+	ui.fileDelete = nil
+	ui.clearFileDeleteHotkeyHold()
 }
 
 func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) layout.Dimensions {
@@ -210,8 +279,7 @@ func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) lay
 			switch name {
 			case key.NameEscape:
 				if !st.running {
-					ui.fileDelete = nil
-					ui.clearFileDeleteHotkeyHold()
+					ui.closeFileDeleteDialog()
 				}
 			case key.NameEnter, key.NameReturn:
 				if !st.running {
@@ -223,13 +291,11 @@ func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) lay
 	}
 
 	if st.cancelClick.Clicked(gtx) && !st.running {
-		ui.fileDelete = nil
-		ui.clearFileDeleteHotkeyHold()
+		ui.closeFileDeleteDialog()
 		return layout.Dimensions{}
 	}
 	if st.closeClick.Clicked(gtx) && !st.running {
-		ui.fileDelete = nil
-		ui.clearFileDeleteHotkeyHold()
+		ui.closeFileDeleteDialog()
 		return layout.Dimensions{}
 	}
 	if st.confirmClick.Clicked(gtx) && !st.running {
@@ -319,7 +385,11 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 
 	target := st.targetName
 	if target == "" {
-		target = filepath.Base(st.targetPath)
+		if st.remote != nil {
+			target = path.Base(st.targetPath)
+		} else {
+			target = filepath.Base(st.targetPath)
+		}
 	}
 	targetLabel := material.Body2(th, target)
 	targetLabel.Font.Typeface = ui.mainTypeface()
@@ -425,6 +495,56 @@ func buildCopyPathInfo(path string) (fileCopyPathInfo, error) {
 		info.Size = st.Size()
 	}
 	return info, nil
+}
+
+func buildCopyPathInfoRemote(remote *paneSSHSession, p string) (fileCopyPathInfo, error) {
+	if remote == nil {
+		return fileCopyPathInfo{}, errors.New("remote session is nil")
+	}
+	client := remote.sftpClient()
+	if client == nil {
+		return fileCopyPathInfo{}, errors.New("sftp session is not connected")
+	}
+	clean := path.Clean(strings.TrimSpace(p))
+	if clean == "" {
+		clean = "/"
+	}
+	st, err := client.Lstat(clean)
+	if err != nil {
+		return fileCopyPathInfo{}, err
+	}
+	info := fileCopyPathInfo{
+		Path:    clean,
+		Exists:  true,
+		IsDir:   st.IsDir(),
+		ModTime: st.ModTime(),
+	}
+	if st.Mode().IsRegular() {
+		info.Size = st.Size()
+	}
+	return info, nil
+}
+
+func deleteRemotePath(remote *paneSSHSession, p string) error {
+	if remote == nil {
+		return errors.New("remote session is nil")
+	}
+	client := remote.sftpClient()
+	if client == nil {
+		return errors.New("sftp session is not connected")
+	}
+	target := path.Clean(strings.TrimSpace(p))
+	if target == "" {
+		target = "/"
+	}
+	info, err := client.Lstat(target)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return client.Remove(target)
+	}
+	return client.RemoveAll(target)
 }
 
 func (ui *UI) filePaneRectForOverlay(gtx layout.Context, paneIdx int) image.Rectangle {
