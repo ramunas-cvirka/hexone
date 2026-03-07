@@ -4,6 +4,7 @@ import (
 	"errors"
 	"hexone/filesys"
 	"hexone/fm"
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -317,42 +318,24 @@ func (ui *UI) finishFileMove(now time.Time) {
 			selectedPath = sel.Path
 		}
 
-		if err := pane.load(pane.dir); err != nil {
-			pane.setNotice(err.Error(), now)
-			continue
-		}
-
 		paneDir := filepath.Clean(pane.dir)
 		if remoteMove {
 			paneDir = path.Clean(pane.dir)
 		}
+		primaryPath := ""
 		if paneDir == dstDir {
-			if idx := pane.findEntryPathIndex(dstPath); idx >= 0 {
-				pane.table.SetSelected(idx, pane.model.Len(), false)
-				continue
-			}
+			primaryPath = dstPath
 		}
-
+		secondaryPath := ""
 		if selectedPath != "" && !samePathFn(selectedPath, srcPath) {
-			if idx := pane.findEntryPathIndex(selectedPath); idx >= 0 {
-				pane.table.SetSelected(idx, pane.model.Len(), false)
-				continue
-			}
+			secondaryPath = selectedPath
 		}
 
 		row := selectedRow
 		if i == st.pane {
 			row = st.row
 		}
-		if row < 0 {
-			row = 0
-		}
-		if pane.model.Len() > 0 {
-			if row >= pane.model.Len() {
-				row = pane.model.Len() - 1
-			}
-			pane.table.SetSelected(row, pane.model.Len(), false)
-		}
+		ui.requestPaneLoadWithSelection(i, pane.dir, primaryPath, secondaryPath, row)
 	}
 }
 
@@ -550,7 +533,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uiCloseIcon(), false)
+					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
 				}),
 			)
 		}),
@@ -584,7 +567,9 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
-			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.dstEdit), true, ed.Layout)
+			return ui.layoutEditorWithContextMenu(th, gtx, "filemove-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
+				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.dstEdit), true, ed.Layout)
+			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
 		layout.Rigid(metaLbl.Layout),

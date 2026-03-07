@@ -1,15 +1,15 @@
 window:
-    x: 531
-    "y": 374
+    x: 525
+    "y": 310
     has_position: true
-    width: 1385
+    width: 1588
     height: 764
     px_per_dp: 1
     mode: windowed
 active_tab: tab0
-active_pane: 1
+active_pane: 0
 panes:
-    - dir: C:\Users\ramuc
-      selected_path: C:\Users\ramuc\.jupyter
     - dir: C:\
-      selected_path: C:\Users
+      selected_path: C:\Windows
+    - dir: C:\toolz\calculators\32-bit ASM Calculator
+      selected_path: C:\toolz\calculators\32-bit ASM Calculator\calc32.ini

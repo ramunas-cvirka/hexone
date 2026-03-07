@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/hex"
 	"hexone/protocols"
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"io"
@@ -113,7 +114,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 
 			// Row 1: editor + floating combobox
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return row1InputAndProtocol(th, gtx, st, &hoverSeen)
+				return ui.row1InputAndProtocol(th, gtx, st, &hoverSeen)
 			}),
 
 			layout.Rigid(layout.Spacer{Height: gap}.Layout),
@@ -337,7 +338,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 
 // ---------- Row 1: editor + floating combobox (NO layout shift) ----------
 
-func row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool) layout.Dimensions {
+func (ui *UI) row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool) layout.Dimensions {
 	// We need btnDims for popup anchoring, so lay out the base row first.
 	// The popup is deferred so it paints on top of everything.
 
@@ -375,7 +376,7 @@ func row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *tab2State,
 			ed.Font.Weight = font.Medium
 			ed.Color = txtColor
 			ed.HintColor = hintColor
-			return ed.Layout(gtx)
+			return ui.layoutEditorWithContextMenu(th, gtx, "tab2-hex", &st.hexEd, true, ed.Layout)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -986,7 +987,7 @@ func hintCardFixed(th *material.Theme, gtx layout.Context, st *tab2State, typefa
 									size = 1
 								}
 								return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									if ic := uiCopyGlyphIcon(); ic != nil {
+									if ic := uitheme.CopyIcon(); ic != nil {
 										iconGtx := gtx
 										iconGtx.Constraints = layout.Exact(image.Pt(size, size))
 										ic.Layout(iconGtx, iconColor)

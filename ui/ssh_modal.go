@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"hexone/fm"
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"strconv"
@@ -489,7 +490,7 @@ func (ui *UI) layoutSSHModalHeader(th *material.Theme, gtx layout.Context, st *s
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutTinyIconModeButton(th, gtx, &st.closeClick, uiCloseIcon(), false)
+			return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
 		}),
 	)
 }
@@ -619,7 +620,7 @@ func (ui *UI) layoutSSHSetupRow(th *material.Theme, gtx layout.Context, st *sshM
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyIconModeButton(th, gtx, &st.setupRemoveClicks[index], uiCloseIcon(), false)
+							return layoutTinyIconModeButton(th, gtx, &st.setupRemoveClicks[index], uitheme.CloseIcon(), false)
 						}),
 					)
 				})
@@ -716,12 +717,15 @@ func (ui *UI) layoutSSHField(th *material.Theme, gtx layout.Context, label strin
 		ed.Color = color.NRGBA{R: 132, G: 132, B: 132, A: 255}
 		ed.HintColor = color.NRGBA{R: 98, G: 98, B: 98, A: 255}
 	}
+	menuID := "ssh-" + strings.ToLower(strings.ReplaceAll(label, " ", "-"))
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(rowLabel.Layout),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutNeutralEditorBox(gtx, gtx.Focused(edState), enabled, ed.Layout)
+			return ui.layoutEditorWithContextMenu(th, gtx, menuID, edState, enabled, func(gtx layout.Context) layout.Dimensions {
+				return layoutNeutralEditorBox(gtx, gtx.Focused(edState), enabled, ed.Layout)
+			})
 		}),
 	)
 }

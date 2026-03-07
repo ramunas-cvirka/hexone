@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"hexone/filesys"
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -341,15 +342,7 @@ func (ui *UI) finishFileCopy(now time.Time) {
 		if sel := pane.selectedEntry(); sel != nil {
 			selectedPath = sel.Path
 		}
-		if err := pane.load(pane.dir); err != nil {
-			pane.setNotice(err.Error(), now)
-			return
-		}
-		if selectedPath != "" && pane.table != nil && pane.model != nil {
-			if idx := pane.findEntryPathIndex(selectedPath); idx >= 0 {
-				pane.table.SetSelected(idx, pane.model.Len(), false)
-			}
-		}
+		ui.requestPaneLoadWithSelection(paneIdx, pane.dir, selectedPath, "", pane.table.Selected)
 	}
 	reloadPane(srcPaneIdx)
 	if dstPaneIdx != srcPaneIdx {
@@ -530,7 +523,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uiCloseIcon(), false)
+					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
 				}),
 			)
 		}),
@@ -564,7 +557,9 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
-			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.dstEdit), true, ed.Layout)
+			return ui.layoutEditorWithContextMenu(th, gtx, "filecopy-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
+				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.dstEdit), true, ed.Layout)
+			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {

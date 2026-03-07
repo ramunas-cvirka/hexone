@@ -1,6 +1,6 @@
 //go:build !darwin || ios
 
-package main
+package windowstate
 
 import "hexone/fm"
 

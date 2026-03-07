@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"hexone/fm"
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -310,7 +311,7 @@ func (ui *UI) finishFileCreate(now time.Time) {
 	ui.fileCreate = nil
 	ui.clearFileCreateHotkeyHold()
 
-	for _, pane := range ui.filePanes {
+	for i, pane := range ui.filePanes {
 		if pane == nil || pane.model == nil || pane.table == nil {
 			continue
 		}
@@ -337,33 +338,7 @@ func (ui *UI) finishFileCreate(now time.Time) {
 		if sel := pane.selectedEntry(); sel != nil {
 			selectedPath = sel.Path
 		}
-
-		if err := pane.load(pane.dir); err != nil {
-			pane.setNotice(err.Error(), now)
-			continue
-		}
-
-		if idx := pane.findEntryPathIndex(createdPath); idx >= 0 {
-			pane.table.SetSelected(idx, pane.model.Len(), false)
-			continue
-		}
-		if selectedPath != "" {
-			if idx := pane.findEntryPathIndex(selectedPath); idx >= 0 {
-				pane.table.SetSelected(idx, pane.model.Len(), false)
-				continue
-			}
-		}
-
-		row := selectedRow
-		if row < 0 {
-			row = 0
-		}
-		if pane.model.Len() > 0 {
-			if row >= pane.model.Len() {
-				row = pane.model.Len() - 1
-			}
-			pane.table.SetSelected(row, pane.model.Len(), false)
-		}
+		ui.requestPaneLoadWithSelection(i, pane.dir, createdPath, selectedPath, selectedRow)
 	}
 }
 
@@ -576,7 +551,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uiCloseIcon(), false)
+					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
 				}),
 			)
 		}),
@@ -629,7 +604,9 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
-			return layoutNeutralEditorBox(gtx, gtx.Focused(&st.nameEdit), true, ed.Layout)
+			return ui.layoutEditorWithContextMenu(th, gtx, "filecreate-name", &st.nameEdit, true, func(gtx layout.Context) layout.Dimensions {
+				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.nameEdit), true, ed.Layout)
+			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {

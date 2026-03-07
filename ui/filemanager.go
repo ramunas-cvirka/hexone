@@ -3,6 +3,7 @@ package ui
 import (
 	"hexone/filesys"
 	"hexone/fm"
+	"hexone/ui/platform"
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
@@ -19,6 +20,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
 )
@@ -35,6 +37,8 @@ const (
 	fileSortExt
 	fileSortSize
 	fileSortDate
+	filePaneApproxCharPx  = 8
+	filePaneNameTailRunes = 3
 )
 
 func (m *filePaneModel) Len() int {
@@ -198,10 +202,10 @@ type filePaneState struct {
 	sortClick            widget.Clickable
 	favoriteClick        widget.Clickable
 	disconnectClick      widget.Clickable
-	tablePointerTag      struct{}
+	tablePointerTag      uiEventTag
 	sortOptionBtns       [4]widget.Clickable
 	sortMenuOpen         bool
-	favoritePointerTag   struct{}
+	favoritePointerTag   uiEventTag
 	favoriteMenuClick    widget.Clickable
 	favoriteOptionClicks []widget.Clickable
 	favoriteRemoveClicks []widget.Clickable
@@ -211,21 +215,42 @@ type filePaneState struct {
 	favoriteHoverLabel   string
 	favoriteHoverAt      time.Time
 	headerHeight         int
-	ctxPointerTag        struct{}
+	ctxPointerTag        uiEventTag
 	ctxMenuClicks        []widget.Clickable
 	ctxMenuOpen          bool
 	ctxMenuRow           int
 	ctxMenuPos           image.Point
 	ctxMenuRect          image.Rectangle
+	drivePointerTag      uiEventTag
+	driveMenuPointerTag  uiEventTag
+	driveMenuClicks      []widget.Clickable
+	driveMenuOpen        bool
+	driveMenuPos         image.Point
+	driveMenuRect        image.Rectangle
+	driveSegmentRect     image.Rectangle
 	sortKey              fileSortKey
 	sortDesc             bool
 	dirsFirst            bool
 	remote               *paneSSHSession
 	localDirBeforeRemote string
 	dir                  string
+	loading              bool
+	loadingDir           string
+	loadingStartedAt     time.Time
+	loadSeq              int
+	loadResultCh         chan filePaneLoadResult
 	err                  string
 	noticeText           string
 	noticeUntil          time.Time
+}
+
+type filePaneLoadResult struct {
+	seq           int
+	listing       filesys.Listing
+	err           error
+	primaryPath   string
+	secondaryPath string
+	fallbackRow   int
 }
 
 func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
@@ -253,7 +278,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	if cfg.Columns.ShowPermissions {
 		cols = append(cols, table.Column{
 			Width:        scaleDp(cfg.Columns.PermWidthDp),
-			MinWidth:     scaleDp(cfg.Columns.PermMinWidthDp),
+			MinWidth:     scaleDp(fm.PermMinWidthDp(cfg)),
 			Flex:         false,
 			Align:        table.AlignStart,
 			PadX:         fullPad,
@@ -263,7 +288,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	cols = append(cols,
 		table.Column{
 			Width:        scaleDp(cfg.Columns.SizeWidthDp),
-			MinWidth:     scaleDp(cfg.Columns.SizeMinWidthDp),
+			MinWidth:     scaleDp(fm.SizeMinWidthDp(cfg)),
 			Flex:         false,
 			Align:        table.AlignEnd,
 			PadX:         fullPad,
@@ -271,7 +296,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 		},
 		table.Column{
 			Width:        scaleDp(cfg.Columns.DateWidthDp),
-			MinWidth:     scaleDp(cfg.Columns.DateMinWidthDp),
+			MinWidth:     scaleDp(fm.DateMinWidthDp(cfg)),
 			Flex:         false,
 			Align:        table.AlignStart,
 			PadX:         fullPad,
@@ -280,12 +305,13 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	)
 
 	pane := &filePaneState{
-		table:     table.New(cols),
-		model:     &filePaneModel{cfg: cfg},
-		sortKey:   parseFileSortKey(cfg.Sort.DefaultKey),
-		sortDesc:  cfg.Sort.Descending,
-		dirsFirst: cfg.Sort.DirectoriesFirst,
-		dir:       dir,
+		table:        table.New(cols),
+		model:        &filePaneModel{cfg: cfg},
+		sortKey:      parseFileSortKey(cfg.Sort.DefaultKey),
+		sortDesc:     cfg.Sort.Descending,
+		dirsFirst:    cfg.Sort.DirectoriesFirst,
+		dir:          filepath.Clean(dir),
+		loadResultCh: make(chan filePaneLoadResult, 8),
 	}
 	pane.pathEdit.SingleLine = true
 	pane.pathEdit.Submit = true
@@ -298,7 +324,6 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	pane.table.BriefColumnWidth = scaleDp(cfg.Columns.BriefWidthDp)
 	pane.table.BriefGap = scaleDp(cfg.Columns.BriefGapDp)
 	pane.table.SelectedFg = &color.NRGBA{R: 230, G: 230, B: 255, A: 255}
-	_ = pane.load(dir)
 	if pane.dir != "" {
 		pane.localDirBeforeRemote = pane.dir
 	}
@@ -375,10 +400,21 @@ func (p *filePaneState) load(dir string) error {
 		return err
 	}
 
+	p.applyListing(listing, "", "", 0)
+	return nil
+}
+
+func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int) {
+	if p == nil {
+		return
+	}
 	p.dir = listing.Dir
 	if p.remote == nil && p.dir != "" {
 		p.localDirBeforeRemote = p.dir
 	}
+	p.loading = false
+	p.loadingDir = ""
+	p.loadingStartedAt = time.Time{}
 	p.err = ""
 	p.noticeText = ""
 	p.noticeUntil = time.Time{}
@@ -388,7 +424,33 @@ func (p *filePaneState) load(dir string) error {
 	p.applySort("")
 	p.table.Selected = 0
 	p.table.List.Position = layout.Position{}
-	return nil
+	p.applySelection(primaryPath, secondaryPath, fallbackRow)
+}
+
+func (p *filePaneState) applySelection(primaryPath, secondaryPath string, fallbackRow int) {
+	if p == nil || p.table == nil || p.model == nil || p.model.Len() == 0 {
+		return
+	}
+	if primaryPath != "" {
+		if idx := p.findEntryPathIndex(primaryPath); idx >= 0 {
+			p.table.SetSelected(idx, p.model.Len(), false)
+			return
+		}
+	}
+	if secondaryPath != "" {
+		if idx := p.findEntryPathIndex(secondaryPath); idx >= 0 {
+			p.table.SetSelected(idx, p.model.Len(), false)
+			return
+		}
+	}
+	row := fallbackRow
+	if row < 0 {
+		row = 0
+	}
+	if row >= p.model.Len() {
+		row = p.model.Len() - 1
+	}
+	p.table.SetSelected(row, p.model.Len(), false)
 }
 
 func (p *filePaneState) setNotice(msg string, now time.Time) {
@@ -506,6 +568,14 @@ func (p *filePaneState) closeFavoriteMenu() {
 	p.favoriteHoverAt = time.Time{}
 }
 
+func (p *filePaneState) closeDriveMenu() {
+	if p == nil {
+		return
+	}
+	p.driveMenuOpen = false
+	p.driveMenuRect = image.Rectangle{}
+}
+
 func (p *filePaneState) openContextMenu(row int, pos image.Point) {
 	if p == nil {
 		return
@@ -514,6 +584,15 @@ func (p *filePaneState) openContextMenu(row int, pos image.Point) {
 	p.ctxMenuRow = row
 	p.ctxMenuPos = pos
 	p.ctxMenuRect = image.Rectangle{}
+}
+
+func (p *filePaneState) openDriveMenu(pos image.Point) {
+	if p == nil {
+		return
+	}
+	p.driveMenuOpen = true
+	p.driveMenuPos = pos
+	p.driveMenuRect = image.Rectangle{}
 }
 
 func (p *filePaneState) ensureContextMenuClicks(n int) {
@@ -544,6 +623,16 @@ func (p *filePaneState) ensureFavoriteRemoveClicks(n int) {
 	old := p.favoriteRemoveClicks
 	p.favoriteRemoveClicks = make([]widget.Clickable, n)
 	copy(p.favoriteRemoveClicks, old)
+}
+
+func (p *filePaneState) ensureDriveMenuClicks(n int) {
+	if n <= cap(p.driveMenuClicks) {
+		p.driveMenuClicks = p.driveMenuClicks[:n]
+		return
+	}
+	old := p.driveMenuClicks
+	p.driveMenuClicks = make([]widget.Clickable, n)
+	copy(p.driveMenuClicks, old)
 }
 
 func (p *filePaneState) ensurePathClicks(n int) {
@@ -614,6 +703,15 @@ func splitFilePathSegments(dir string) []filePathSegment {
 	return out
 }
 
+func localDriveRoot(dir string) string {
+	cleaned := filepath.Clean(strings.TrimSpace(dir))
+	vol := filepath.VolumeName(cleaned)
+	if vol == "" {
+		return ""
+	}
+	return vol + string(filepath.Separator)
+}
+
 func splitRemotePathSegments(dir string) []filePathSegment {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
@@ -669,6 +767,9 @@ func (p *filePaneState) displayDir() string {
 	if p == nil {
 		return ""
 	}
+	if p.remote == nil && p.loading && strings.TrimSpace(p.loadingDir) != "" {
+		return p.loadingDir
+	}
 	if p.remote == nil {
 		return p.dir
 	}
@@ -684,6 +785,13 @@ func (p *filePaneState) displayDir() string {
 		dir = "/" + dir
 	}
 	return base + dir
+}
+
+func (p *filePaneState) loadingHintVisible(now time.Time) bool {
+	if p == nil || !p.loading || p.remoteConnected() || p.loadingStartedAt.IsZero() {
+		return false
+	}
+	return !now.Before(p.loadingStartedAt.Add(filePaneLoadingHintDelay))
 }
 
 func (p *filePaneState) pathBaseName(raw string) string {
@@ -1164,10 +1272,10 @@ func (p *filePaneState) findEntryPathIndex(path string) int {
 }
 
 func (m *filePaneModel) approxCharPx() int {
-	if m == nil || m.cfg == nil || m.cfg.NameCompact.ApproxCharPx < 1 {
-		return 7
+	if m == nil {
+		return filePaneApproxCharPx
 	}
-	return scaleFilePanePx(m.cfg, m.cfg.NameCompact.ApproxCharPx)
+	return scaleFilePanePx(m.cfg, filePaneApproxCharPx)
 }
 
 func (m *filePaneModel) approxChars(widthPx, reservePx int) int {
@@ -1205,16 +1313,13 @@ func (m *filePaneModel) compactName(text string, capacity int) string {
 
 	marker := ".."
 	headMin := 6
-	tailMin := 3
+	tailMin := filePaneNameTailRunes
 	if m.cfg != nil {
 		if m.cfg.NameCompact.Marker != "" {
 			marker = m.cfg.NameCompact.Marker
 		}
-		if m.cfg.NameCompact.MinHead > 0 {
-			headMin = m.cfg.NameCompact.MinHead
-		}
-		if m.cfg.NameCompact.MinTail > 0 {
-			tailMin = m.cfg.NameCompact.MinTail
+		if m.cfg.NameCompact.KeepStartChars > 0 {
+			headMin = m.cfg.NameCompact.KeepStartChars
 		}
 	}
 
@@ -1596,6 +1701,7 @@ func (ui *UI) setActiveFilePane(idx int) {
 	ui.rep.pane = -1
 	ui.stopPathEditExcept(idx)
 	ui.closeSortMenusExcept(idx)
+	ui.closeDriveMenusExcept(idx)
 	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
 }
@@ -1633,6 +1739,15 @@ func (ui *UI) closeFavoriteMenusExcept(active int) {
 	}
 }
 
+func (ui *UI) closeDriveMenusExcept(active int) {
+	for i, pane := range ui.filePanes {
+		if pane == nil || i == active {
+			continue
+		}
+		pane.closeDriveMenu()
+	}
+}
+
 func (ui *UI) closeContextMenusExcept(active int) {
 	for i, pane := range ui.filePanes {
 		if pane == nil || i == active {
@@ -1660,7 +1775,80 @@ func (ui *UI) pathEditActive() bool {
 	return false
 }
 
-func (ui *UI) loadPaneDir(idx int, dir string) bool {
+func (ui *UI) openPaneDriveMenu(idx int) bool {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil || pane.remoteConnected() || localDriveRoot(pane.displayDir()) == "" {
+		return false
+	}
+	if len(platform.AvailableLocalDrives()) == 0 {
+		return false
+	}
+	ui.setActiveFilePane(idx)
+	ui.closeSortMenusExcept(idx)
+	ui.closeDriveMenusExcept(idx)
+	ui.closeFavoriteMenusExcept(idx)
+	ui.closeContextMenusExcept(idx)
+	pane.sortMenuOpen = false
+	pane.closeFavoriteMenu()
+	pane.closeContextMenu()
+	pane.stopPathEdit()
+	pane.openDriveMenu(image.Point{
+		X: 0,
+		Y: pane.headerHeight + 4,
+	})
+	return true
+}
+
+func sendFilePaneLoadResult(ch chan filePaneLoadResult, res filePaneLoadResult) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- res:
+	default:
+		select {
+		case <-ch:
+		default:
+		}
+		select {
+		case ch <- res:
+		default:
+		}
+	}
+}
+
+func startLocalPaneLoad(pane *filePaneState, dir, primaryPath, secondaryPath string, fallbackRow int) bool {
+	if pane == nil {
+		return false
+	}
+	target := filepath.Clean(dir)
+	pane.loadSeq++
+	seq := pane.loadSeq
+	pane.loading = true
+	pane.loadingDir = target
+	pane.loadingStartedAt = time.Now()
+	pane.err = ""
+	pane.clearPendingPathNavigate()
+
+	ch := pane.loadResultCh
+	go func(targetDir, wantPrimary, wantSecondary string, wantRow, currentSeq int) {
+		listing, err := filesys.ReadDir(targetDir)
+		sendFilePaneLoadResult(ch, filePaneLoadResult{
+			seq:           currentSeq,
+			listing:       listing,
+			err:           err,
+			primaryPath:   wantPrimary,
+			secondaryPath: wantSecondary,
+			fallbackRow:   wantRow,
+		})
+	}(target, primaryPath, secondaryPath, fallbackRow, seq)
+	return true
+}
+
+func (ui *UI) requestPaneLoadWithSelection(idx int, dir, primaryPath, secondaryPath string, fallbackRow int) bool {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return false
 	}
@@ -1669,15 +1857,62 @@ func (ui *UI) loadPaneDir(idx int, dir string) bool {
 		return false
 	}
 	ui.setActiveFilePane(idx)
-	if err := pane.load(dir); err != nil {
-		pane.setNotice(err.Error(), time.Now())
-		return false
-	}
+
 	pane.sortMenuOpen = false
 	pane.closeFavoriteMenu()
+	pane.closeDriveMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
-	return true
+
+	if pane.remoteConnected() {
+		if err := pane.load(dir); err != nil {
+			pane.setNotice(err.Error(), time.Now())
+			return false
+		}
+		pane.applySelection(primaryPath, secondaryPath, fallbackRow)
+		return true
+	}
+	return startLocalPaneLoad(pane, dir, primaryPath, secondaryPath, fallbackRow)
+}
+
+func (ui *UI) loadPaneDir(idx int, dir string) bool {
+	return ui.requestPaneLoadWithSelection(idx, dir, "", "", 0)
+}
+
+func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {
+	anyLoading := false
+	for _, pane := range ui.filePanes {
+		if pane == nil || pane.loadResultCh == nil {
+			continue
+		}
+		for {
+			select {
+			case res := <-pane.loadResultCh:
+				if res.seq != pane.loadSeq {
+					continue
+				}
+				if res.err != nil {
+					pane.loading = false
+					pane.loadingDir = ""
+					pane.loadingStartedAt = time.Time{}
+					pane.setNotice(res.err.Error(), gtx.Now)
+					gtx.Execute(op.InvalidateCmd{})
+					continue
+				}
+				pane.applyListing(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow)
+				gtx.Execute(op.InvalidateCmd{})
+			default:
+				goto nextPane
+			}
+		}
+	nextPane:
+		if pane.loading {
+			anyLoading = true
+		}
+	}
+	if anyLoading {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(50 * time.Millisecond)})
+	}
 }
 
 func (ui *UI) submitPanePathEdit(idx int, raw string) bool {
@@ -1833,21 +2068,12 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 	if entry == nil || !entry.CanEnter {
 		return false
 	}
-	if err := pane.load(entry.Path); err != nil {
-		pane.setNotice(err.Error(), time.Now())
-		return false
-	}
-	pane.sortMenuOpen = false
-	pane.closeFavoriteMenu()
-	pane.closeContextMenu()
-	pane.stopPathEdit()
+	primaryPath := ""
 	if entry.Kind == filesys.EntryParent {
-		childName := pane.pathBaseName(prevDir)
-		if childName != "." && childName != "/" && childName != string(filepath.Separator) {
-			if sel := pane.findEntryIndex(childName); sel >= 0 && pane.table != nil && pane.model != nil {
-				pane.table.SetSelected(sel, pane.model.Len(), true)
-			}
-		}
+		primaryPath = prevDir
+	}
+	if !ui.requestPaneLoadWithSelection(idx, entry.Path, primaryPath, "", 0) {
+		return false
 	}
 	return true
 }
@@ -1862,9 +2088,11 @@ func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point) {
 	}
 	ui.setActiveFilePane(idx)
 	ui.closeSortMenusExcept(idx)
+	ui.closeDriveMenusExcept(idx)
 	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
 	pane.sortMenuOpen = false
+	pane.closeDriveMenu()
 	pane.closeFavoriteMenu()
 	pane.openContextMenu(row, pos)
 }

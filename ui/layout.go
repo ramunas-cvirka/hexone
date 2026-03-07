@@ -102,6 +102,13 @@ type tab2State struct {
 	hintCopyPulseAt time.Time
 }
 
+// Gio event tags must not be zero-sized. Distinct zero-sized fields can share
+// the same address, which breaks event routing across handlers that are meant
+// to be independent.
+type uiEventTag struct {
+	_ byte
+}
+
 type UI struct {
 	Tabs widget.Enum // selected tab key: "tab0" / "tab1" / "tab2"
 
@@ -120,33 +127,46 @@ type UI struct {
 	tab2State *tab2State
 
 	// Tab buttons
-	tab0, tab1, tab2 widget.Clickable
-	settingsClick    widget.Clickable
-	toolbarPrevTab   string
-	toolbarAnimAt    time.Time
-	toolbarHoverKey  string
-	toolbarHoverPrev string
-	toolbarHoverAt   time.Time
-	toolbarPulseKey  string
-	toolbarPulseAt   time.Time
-	filePanes        []*filePaneState
-	fmCfg            *fm.Config
-	configPath       string
-	typeface         font.Typeface
-	textSize         unit.Sp
-	fileKeys         fileKeyMap
-	activeFilePane   int
-	pendingFileOpen  *fileOpenRequest
-	fileCopy         *fileCopyState
-	fileDelete       *fileDeleteState
-	fileMove         *fileMoveState
-	fileCreate       *fileCreateState
-	filePerm         *filePermState
-	fileViewer       *fileViewerState
-	settingsModal    *settingsModalState
-	sshModal         *sshModalState
+	tab0, tab1, tab2            widget.Clickable
+	settingsClick               widget.Clickable
+	toolbarPrevTab              string
+	toolbarAnimAt               time.Time
+	toolbarHoverKey             string
+	toolbarHoverPrev            string
+	toolbarHoverAt              time.Time
+	toolbarPulseKey             string
+	toolbarPulseAt              time.Time
+	filePanes                   []*filePaneState
+	fmCfg                       *fm.Config
+	configPath                  string
+	typeface                    font.Typeface
+	textSize                    unit.Sp
+	fileKeys                    fileKeyMap
+	activeFilePane              int
+	pendingFileOpen             *fileOpenRequest
+	fileCopy                    *fileCopyState
+	fileDelete                  *fileDeleteState
+	fileMove                    *fileMoveState
+	fileCreate                  *fileCreateState
+	filePerm                    *filePermState
+	fileViewer                  *fileViewerState
+	settingsModal               *settingsModalState
+	sshModal                    *sshModalState
+	editorMenuOpenID            string
+	editorMenuTarget            *widget.Editor
+	editorMenuPos               image.Point
+	editorMenuPressPos          image.Point
+	editorMenuRect              image.Rectangle
+	editorMenuHoverAction       string
+	editorMenuTags              map[string]*editorMenuEventTag
+	editorMenuCanPaste          bool
+	editorMenuUseExplicitCaret  bool
+	editorMenuClipboardTarget   *widget.Editor
+	editorMenuClipboardUseCaret bool
+	editorMenuClipboardTag      uiEventTag
+	editorMenuGlobalPointerTag  uiEventTag
 
-	protoDropGlobalPointerTag struct{}
+	protoDropGlobalPointerTag uiEventTag
 }
 
 func NewUI(cfg *fm.Config) *UI {
@@ -195,6 +215,7 @@ func NewUI(cfg *fm.Config) *UI {
 		pane.table.OnActivate = func(row int) {
 			ui.queueFilePaneOpen(idx, row)
 		}
+		ui.requestPaneLoadWithSelection(idx, cwd, "", "", 0)
 	}
 	return ui
 }
@@ -608,6 +629,8 @@ func vRule(gtx layout.Context, w unit.Dp) layout.Dimensions {
 func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleGlobalFunctionKeys(gtx)
 	ui.handleGlobalEscapeToFileManager(gtx)
+	ui.handleEditorContextMenuGlobalPresses(gtx)
+	ui.handleEditorContextMenuClipboardEvents(gtx)
 
 	r := image.Rectangle{Max: gtx.Constraints.Max}
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 32, G: 32, B: 32, A: 255}, clip.Rect(r).Op())
@@ -646,8 +669,13 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSSHModal(th, gtx)
 		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutEditorContextMenuOverlay(th, gtx)
+		}),
 	)
 	ui.handleProtocolDropdownOutsideClick(gtx)
+	ui.registerEditorContextMenuGlobalPointer(gtx)
+	ui.registerEditorContextMenuClipboardTarget(gtx)
 	if ui != nil && ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		pass := pointer.PassOp{}.Push(gtx.Ops)
@@ -656,6 +684,81 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	}
 	ui.consumeUnusedFunctionKeys(gtx)
 	return dims
+}
+
+func (ui *UI) registerEditorContextMenuGlobalPointer(gtx layout.Context) {
+	if ui == nil {
+		return
+	}
+	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+	if ui.editorMenuOpenID == "" {
+		pass := pointer.PassOp{}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &ui.editorMenuGlobalPointerTag)
+		pass.Pop()
+		return
+	}
+	event.Op(gtx.Ops, &ui.editorMenuGlobalPointerTag)
+}
+
+func (ui *UI) handleEditorContextMenuGlobalPresses(gtx layout.Context) {
+	if ui == nil {
+		return
+	}
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &ui.editorMenuGlobalPointerTag,
+			Kinds:  pointer.Press | pointer.Move,
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		pos := pe.Position.Round()
+		switch pe.Kind {
+		case pointer.Move:
+			if ui.editorMenuOpenID == "" {
+				continue
+			}
+			hover := ui.editorContextMenuActionAt(gtx, pos)
+			if hover != ui.editorMenuHoverAction {
+				ui.editorMenuHoverAction = hover
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case pointer.Press:
+			ui.editorMenuPressPos = pos
+			if ui.editorMenuOpenID == "" {
+				continue
+			}
+			action := ui.editorContextMenuActionAt(gtx, pos)
+			if action == "" {
+				ui.closeEditorContextMenu()
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
+			if !pe.Buttons.Contain(pointer.ButtonPrimary) {
+				continue
+			}
+			ed := ui.editorMenuTarget
+			if ed == nil {
+				ui.closeEditorContextMenu()
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
+			switch action {
+			case "copy":
+				ui.copyEditorText(gtx, ed)
+			case "paste":
+				if ui.editorMenuCanPaste {
+					ui.pasteEditorText(gtx, ed, true)
+				}
+			}
+			ui.closeEditorContextMenu()
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
 }
 
 func (ui *UI) handleProtocolDropdownOutsideClick(gtx layout.Context) {
@@ -739,6 +842,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 	for {
 		ev, ok := gtx.Event(
 			key.Filter{Name: key.NameF3, Optional: anyMods},
+			key.Filter{Name: key.NameF4, Optional: anyMods},
 			key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
@@ -781,6 +885,29 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				continue
 			}
 			ui.startFileViewer(ui.activeFilePane, gtx.Now)
+		case key.NameF4:
+			if ke.State != key.Press {
+				continue
+			}
+			if ke.Modifiers != 0 {
+				continue
+			}
+			if ui == nil || ui.Tabs.Value != "tab0" {
+				continue
+			}
+			if ui.settingsModal != nil || ui.sshModal != nil {
+				continue
+			}
+			if ui.fileViewer != nil {
+				continue
+			}
+			if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil {
+				continue
+			}
+			if ui.pathEditActive() {
+				continue
+			}
+			ui.startFileExternalOpenAction(ui.activeFilePane, gtx.Now)
 		case "F", "f":
 			if ke.State != key.Press {
 				continue

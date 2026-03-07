@@ -22,7 +22,7 @@ func (ui *UI) layoutTab0(th *material.Theme, gtx layout.Context) layout.Dimensio
 							ed.HintColor = hintColor
 							ed.TextSize = scaleThemeFontSize(th, 15)
 							gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-							return ed.Layout(gtx)
+							return ui.layoutEditorWithContextMenu(th, gtx, "tab0-left", &ui.LeftEd, true, ed.Layout)
 						})
 					}),
 
@@ -50,7 +50,7 @@ func (ui *UI) layoutTab0(th *material.Theme, gtx layout.Context) layout.Dimensio
 							ed.HintColor = hintColor
 							ed.TextSize = scaleThemeFontSize(th, 15)
 							gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-							return ed.Layout(gtx)
+							return ui.layoutEditorWithContextMenu(th, gtx, "tab0-right", &ui.RightEd, true, ed.Layout)
 						})
 					}),
 				)

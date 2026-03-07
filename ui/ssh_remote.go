@@ -249,6 +249,7 @@ func (ui *UI) connectPaneSSH(idx int, setup fm.SSHSetup, targetDir string, now t
 	}
 
 	pane.sortMenuOpen = false
+	pane.closeDriveMenu()
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
@@ -307,14 +308,15 @@ func (ui *UI) disconnectPaneSSH(idx int, now time.Time) {
 	if target == "" {
 		target = "."
 	}
-	if err := pane.load(target); err != nil {
-		pane.setNotice("disconnect failed: "+err.Error(), now)
-		return
-	}
 	pane.sortMenuOpen = false
+	pane.closeDriveMenu()
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
+	if !ui.requestPaneLoadWithSelection(idx, target, "", "", 0) {
+		pane.setNotice("disconnect failed", now)
+		return
+	}
 	pane.setNotice("disconnected: "+prev.identity, now)
 }
 

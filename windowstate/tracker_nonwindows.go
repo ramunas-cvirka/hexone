@@ -1,6 +1,6 @@
 //go:build !windows && !darwin
 
-package main
+package windowstate
 
 import (
 	"hexone/fm"
@@ -9,7 +9,7 @@ import (
 	"gioui.org/unit"
 )
 
-type windowStateTracker struct {
+type Tracker struct {
 	cfg     app.Config
 	haveCfg bool
 
@@ -17,14 +17,14 @@ type windowStateTracker struct {
 	haveMetric bool
 }
 
-func newWindowStateTracker(_ *fm.SessionState) *windowStateTracker {
-	return &windowStateTracker{}
+func NewTracker(_ *fm.SessionState) *Tracker {
+	return &Tracker{}
 }
 
-func (t *windowStateTracker) ObserveView(_ app.ViewEvent) {
+func (t *Tracker) ObserveView(_ app.ViewEvent) {
 }
 
-func (t *windowStateTracker) ObserveConfig(cfg app.Config) {
+func (t *Tracker) ObserveConfig(cfg app.Config) {
 	if t == nil {
 		return
 	}
@@ -32,7 +32,7 @@ func (t *windowStateTracker) ObserveConfig(cfg app.Config) {
 	t.haveCfg = true
 }
 
-func (t *windowStateTracker) ObserveFrame(metric unit.Metric) {
+func (t *Tracker) ObserveFrame(metric unit.Metric) {
 	if t == nil {
 		return
 	}
@@ -40,7 +40,7 @@ func (t *windowStateTracker) ObserveFrame(metric unit.Metric) {
 	t.haveMetric = true
 }
 
-func (t *windowStateTracker) ApplyToSession(s *fm.SessionState) {
+func (t *Tracker) ApplyToSession(s *fm.SessionState) {
 	if t == nil || s == nil || !t.haveCfg {
 		return
 	}

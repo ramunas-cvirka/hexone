@@ -1,6 +1,6 @@
 //go:build darwin && !ios
 
-package main
+package windowstate
 
 /*
 #cgo CFLAGS: -x objective-c
@@ -188,7 +188,7 @@ func preparePlatformWindowRestore(session *fm.SessionState) {
 	C.hexoneSetStartupWindowPosition(C.int(1), C.double(x), C.double(y))
 }
 
-type windowStateTracker struct {
+type Tracker struct {
 	cfg     app.Config
 	haveCfg bool
 
@@ -204,8 +204,8 @@ type windowStateTracker struct {
 	fallbackPxPerDp     float32
 }
 
-func newWindowStateTracker(session *fm.SessionState) *windowStateTracker {
-	t := &windowStateTracker{}
+func NewTracker(session *fm.SessionState) *Tracker {
+	t := &Tracker{}
 	if session != nil && session.Window.HasPosition {
 		t.fallbackHasPosition = true
 		t.fallbackX = session.Window.X
@@ -215,7 +215,7 @@ func newWindowStateTracker(session *fm.SessionState) *windowStateTracker {
 	return t
 }
 
-func (t *windowStateTracker) ObserveView(v app.ViewEvent) {
+func (t *Tracker) ObserveView(v app.ViewEvent) {
 	if t == nil {
 		return
 	}
@@ -230,7 +230,7 @@ func (t *windowStateTracker) ObserveView(v app.ViewEvent) {
 	C.hexoneCaptureWindowStateForViewAsync(C.uintptr_t(t.view))
 }
 
-func (t *windowStateTracker) ObserveConfig(cfg app.Config) {
+func (t *Tracker) ObserveConfig(cfg app.Config) {
 	if t == nil {
 		return
 	}
@@ -241,7 +241,7 @@ func (t *windowStateTracker) ObserveConfig(cfg app.Config) {
 	}
 }
 
-func (t *windowStateTracker) ObserveFrame(metric unit.Metric) {
+func (t *Tracker) ObserveFrame(metric unit.Metric) {
 	if t == nil {
 		return
 	}
@@ -252,7 +252,7 @@ func (t *windowStateTracker) ObserveFrame(metric unit.Metric) {
 	}
 }
 
-func (t *windowStateTracker) ApplyToSession(s *fm.SessionState) {
+func (t *Tracker) ApplyToSession(s *fm.SessionState) {
 	if t == nil || s == nil {
 		return
 	}

@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"hexone/ui/platform"
+	uitheme "hexone/ui/theme"
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,6 +37,7 @@ const (
 	filePaneNoticeFadeOutDur       = 220 * time.Millisecond
 	filePaneNoticeSlideDp          = unit.Dp(6)
 	filePaneTableDoubleClickWindow = 400 * time.Millisecond
+	filePaneLoadingHintDelay       = 350 * time.Millisecond
 )
 
 type visiblePane struct {
@@ -42,6 +46,7 @@ type visiblePane struct {
 }
 
 func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	ui.pumpFilePaneLoads(gtx)
 	ui.pumpFileViewerState(gtx)
 	ui.pumpFileCopyState(gtx)
 	ui.pumpFileDeleteState(gtx)
@@ -97,6 +102,29 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 	ui.handleFileManagerEscape(gtx)
 	if ui.pathEditActive() {
 		return
+	}
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameF1, Required: key.ModAlt},
+			key.Filter{Name: key.NameF2, Required: key.ModAlt},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		switch ke.Name {
+		case key.NameF1:
+			if ui.openPaneDriveMenu(0) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF2:
+			if ui.openPaneDriveMenu(1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
 	}
 
 	filters := ui.fileKeys.Filters()
@@ -158,8 +186,17 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 				continue
 			}
 
+			if active := ui.activePane(); active != nil && active.loading {
+				ui.held[holdKey] = false
+				continue
+			}
+
 			pane := ui.activePane()
 			if pane == nil || pane.table == nil || pane.model == nil {
+				ui.held[holdKey] = false
+				continue
+			}
+			if pane.loading {
 				ui.held[holdKey] = false
 				continue
 			}
@@ -238,6 +275,10 @@ func (ui *UI) handleFileManagerEscape(gtx layout.Context) {
 			closed := false
 			if pane.favoriteMenuOpen {
 				pane.closeFavoriteMenu()
+				closed = true
+			}
+			if pane.driveMenuOpen {
+				pane.closeDriveMenu()
 				closed = true
 			}
 			if pane.sortMenuOpen {
@@ -395,6 +436,9 @@ func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pa
 									return ui.layoutFilePaneBody(th, gtx, idx, pane)
 								}),
 							)
+						}),
+						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutFilePaneDriveMenu(th, gtx, idx, pane)
 						}),
 						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 							return ui.layoutFilePaneFavoriteMenu(th, gtx, idx, pane)
@@ -644,6 +688,9 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 
 	total := pane.model.Len()
 	dims := pane.table.Layout(th, gtx, pane.model)
+	if pane.loading {
+		return dims
+	}
 
 	selectionChanged := false
 	pathEditClosed := false
@@ -826,12 +873,52 @@ func (ui *UI) handleFilePanePathRowClicks(gtx layout.Context, idx int, pane *fil
 		}
 		ui.setActiveFilePane(idx)
 		pane.sortMenuOpen = false
+		pane.closeDriveMenu()
 		pane.closeFavoriteMenu()
 		pane.closeContextMenu()
 		if pane.registerPathClick("row:"+pane.dir, gtx.Now, filePanePathDoubleClickWindow) {
 			pane.clearPendingPathNavigate()
 			pane.beginPathEdit()
 		}
+	}
+}
+
+func (ui *UI) processFilePaneDriveSegmentInput(gtx layout.Context, idx int, pane *filePaneState) {
+	if pane == nil || pane.remoteConnected() || localDriveRoot(pane.displayDir()) == "" {
+		if pane != nil {
+			pane.driveSegmentRect = image.Rectangle{}
+		}
+		return
+	}
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &pane.drivePointerTag,
+			Kinds:  pointer.Press,
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok || pe.Kind != pointer.Press || !pe.Buttons.Contain(pointer.ButtonSecondary) {
+			continue
+		}
+		if len(platform.AvailableLocalDrives()) == 0 {
+			continue
+		}
+		ui.setActiveFilePane(idx)
+		ui.closeSortMenusExcept(idx)
+		ui.closeDriveMenusExcept(idx)
+		ui.closeFavoriteMenusExcept(idx)
+		ui.closeContextMenusExcept(idx)
+		pane.sortMenuOpen = false
+		pane.closeFavoriteMenu()
+		pane.closeContextMenu()
+		pane.stopPathEdit()
+		pane.openDriveMenu(image.Point{
+			X: pe.Position.Round().X,
+			Y: pane.headerHeight + gtx.Dp(unit.Dp(4)),
+		})
+		gtx.Execute(op.InvalidateCmd{})
 	}
 }
 
@@ -874,6 +961,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 				}
 				ui.setActiveFilePane(idx)
 				pane.sortMenuOpen = false
+				pane.closeDriveMenu()
 				pane.closeFavoriteMenu()
 				pane.closeContextMenu()
 				pane.clearPendingPathNavigate()
@@ -954,7 +1042,12 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 	}
 
-	segments := splitFilePathSegments(pane.dir)
+	segments := splitFilePathSegments(pane.displayDir())
+	ui.processFilePaneDriveSegmentInput(gtx, idx, pane)
+	showLoadingHint := pane.loadingHintVisible(gtx.Now)
+	if pane.loading && !showLoadingHint && !pane.loadingStartedAt.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: pane.loadingStartedAt.Add(filePaneLoadingHintDelay)})
+	}
 	pane.ensurePathClicks(len(segments))
 	for i := range segments {
 		click := &pane.pathSegClicks[i]
@@ -965,6 +1058,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 			}
 			ui.setActiveFilePane(idx)
 			pane.sortMenuOpen = false
+			pane.closeDriveMenu()
 			pane.closeFavoriteMenu()
 			pane.closeContextMenu()
 			pane.clearPendingPathNavigate()
@@ -1001,7 +1095,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 						lblColor = color.NRGBA{R: 240, G: 244, B: 255, A: 255}
 					}
 				}
-				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+				dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, segments[i].label)
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.Font.Weight = font.Normal
@@ -1013,6 +1107,27 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 					lbl.MaxLines = 1
 					return lbl.Layout(gtx)
 				})
+				if i == 0 && localDriveRoot(pane.displayDir()) != "" {
+					pane.driveSegmentRect = image.Rectangle{Max: dims.Size}
+					defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+					pass := pointer.PassOp{}.Push(gtx.Ops)
+					event.Op(gtx.Ops, &pane.drivePointerTag)
+					pass.Pop()
+				}
+				return dims
+			})
+		}))
+	}
+	if showLoadingHint {
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, " [loading...]")
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Weight = font.Medium
+				lbl.TextSize = scaleThemeFontSize(th, 10)
+				lbl.Color = color.NRGBA{R: 154, G: 170, B: 210, A: 255}
+				lbl.MaxLines = 1
+				return lbl.Layout(gtx)
 			})
 		}))
 	}
@@ -1067,15 +1182,17 @@ func (ui *UI) layoutFilePanePathEditor(th *material.Theme, gtx layout.Context, i
 	}
 	ed.HintColor = hintColor
 
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 22, G: 28, B: 40, A: 255},
-		color.NRGBA{R: 110, G: 132, B: 190, A: 120},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, ed.Layout)
-		},
-	)
+	return ui.layoutEditorWithContextMenu(th, gtx, "pane-path-"+strconv.Itoa(idx), &pane.pathEdit, true, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+			color.NRGBA{R: 22, G: 28, B: 40, A: 255},
+			color.NRGBA{R: 110, G: 132, B: 190, A: 120},
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, ed.Layout)
+			},
+		)
+	})
 }
 
 func (ui *UI) layoutFilePaneSortOptionsStrip(th *material.Theme, gtx layout.Context, pane *filePaneState, sortOptions []struct {
@@ -1161,6 +1278,7 @@ func (ui *UI) processFileModeBadgeInput(gtx layout.Context, idx int, pane *fileP
 	if pane.modeClick.Clicked(gtx) {
 		pane.clearPendingPathNavigate()
 		pane.stopPathEdit()
+		pane.closeDriveMenu()
 		ui.togglePaneMode(idx)
 	}
 }
@@ -1185,8 +1303,10 @@ func (ui *UI) processFilePaneSortBadgeInput(gtx layout.Context, idx int, pane *f
 			ui.setActiveFilePane(idx)
 			pane.clearPendingPathNavigate()
 			pane.stopPathEdit()
+			pane.closeDriveMenu()
 			next := !pane.sortMenuOpen
 			ui.closeSortMenusExcept(idx)
+			ui.closeDriveMenusExcept(idx)
 			ui.closeFavoriteMenusExcept(idx)
 			pane.closeContextMenu()
 			pane.sortMenuOpen = next
@@ -1199,6 +1319,7 @@ func (ui *UI) processFilePaneSortBadgeInput(gtx layout.Context, idx int, pane *f
 	if pane.sortClick.Clicked(gtx) {
 		pane.clearPendingPathNavigate()
 		pane.stopPathEdit()
+		pane.closeDriveMenu()
 		pane.closeFavoriteMenu()
 		ui.togglePaneSortDirection(idx)
 	}
@@ -1212,8 +1333,10 @@ func (ui *UI) processFilePaneFavoriteBadgeInput(gtx layout.Context, idx int, pan
 		ui.setActiveFilePane(idx)
 		pane.clearPendingPathNavigate()
 		pane.stopPathEdit()
+		pane.closeDriveMenu()
 		next := !pane.favoriteMenuOpen
 		ui.closeFavoriteMenusExcept(idx)
+		ui.closeDriveMenusExcept(idx)
 		ui.closeSortMenusExcept(idx)
 		pane.closeContextMenu()
 		pane.sortMenuOpen = false
@@ -1231,6 +1354,7 @@ func (ui *UI) processFilePaneDisconnectInput(gtx layout.Context, idx int, pane *
 	}
 	if pane.disconnectClick.Clicked(gtx) {
 		ui.setActiveFilePane(idx)
+		pane.closeDriveMenu()
 		ui.disconnectPaneSSH(idx, gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
@@ -1347,7 +1471,7 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 								}
 								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 									return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										if ic := uiDisconnectGlyphIcon(); ic != nil {
+										if ic := uitheme.DisconnectIcon(); ic != nil {
 											iconGtx := gtx
 											iconGtx.Constraints = layout.Exact(image.Pt(gtx.Dp(unit.Dp(12)), gtx.Dp(unit.Dp(12))))
 											ic.Layout(iconGtx, iconColor)
@@ -1476,6 +1600,142 @@ func (ui *UI) layoutFilePaneFavoriteBadge(th *material.Theme, gtx layout.Context
 	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
 	pointer.CursorPointer.Add(gtx.Ops)
 	return dims
+}
+
+func (ui *UI) layoutFilePaneDriveMenu(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
+	if pane == nil || !pane.driveMenuOpen || pane.remoteConnected() {
+		return layout.Dimensions{}
+	}
+
+	drives := platform.AvailableLocalDrives()
+	if len(drives) == 0 {
+		pane.closeDriveMenu()
+		return layout.Dimensions{}
+	}
+
+	pane.ensureDriveMenuClicks(len(drives))
+	for i, drive := range drives {
+		if !pane.driveMenuClicks[i].Clicked(gtx) {
+			continue
+		}
+		pane.closeDriveMenu()
+		ui.requestPaneLoadWithSelection(idx, drive, "", "", 0)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &pane.driveMenuPointerTag,
+			Kinds:  pointer.Press,
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok || pe.Kind != pointer.Press {
+			continue
+		}
+		pos := pe.Position.Round()
+		inMenu := pane.driveMenuRect.Dx() > 0 && pane.driveMenuRect.Dy() > 0 &&
+			pos.X >= pane.driveMenuRect.Min.X && pos.X < pane.driveMenuRect.Max.X &&
+			pos.Y >= pane.driveMenuRect.Min.Y && pos.Y < pane.driveMenuRect.Max.Y
+		inSegment := pane.driveSegmentRect.Dx() > 0 && pane.driveSegmentRect.Dy() > 0 &&
+			pos.X >= pane.driveSegmentRect.Min.X && pos.X < pane.driveSegmentRect.Max.X &&
+			pos.Y >= pane.driveSegmentRect.Min.Y && pos.Y < pane.driveSegmentRect.Max.Y
+		if !inMenu && !inSegment {
+			pane.closeDriveMenu()
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
+	if !pane.driveMenuOpen {
+		return layout.Dimensions{}
+	}
+
+	m := op.Record(gtx.Ops)
+	menuDims := ui.layoutFilePaneDriveMenuCard(th, gtx, pane, drives)
+	call := m.Stop()
+
+	anchor := clampFilePaneMenuPoint(pane.driveMenuPos, menuDims.Size, gtx.Constraints.Max)
+	pane.driveMenuRect = image.Rectangle{Min: anchor, Max: anchor.Add(menuDims.Size)}
+
+	bodyClip := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
+	offset := op.Offset(anchor).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	offset.Pop()
+	bodyClip.Pop()
+
+	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &pane.driveMenuPointerTag)
+	pass.Pop()
+
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+func (ui *UI) layoutFilePaneDriveMenuCard(th *material.Theme, gtx layout.Context, pane *filePaneState, drives []string) layout.Dimensions {
+	const menuWidthDp = 78
+	width := gtx.Dp(unit.Dp(menuWidthDp))
+	if width > gtx.Constraints.Max.X {
+		width = gtx.Constraints.Max.X
+	}
+	if width < 1 {
+		width = 1
+	}
+	currentDrive := localDriveRoot(pane.displayDir())
+
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+			color.NRGBA{R: 18, G: 22, B: 30, A: 250},
+			color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+			func(gtx layout.Context) layout.Dimensions {
+				children := make([]layout.FlexChild, 0, len(drives)+1)
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, "Drives")
+						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.TextSize = scaleThemeFontSize(th, 10)
+						lbl.Color = color.NRGBA{R: 170, G: 180, B: 205, A: 255}
+						lbl.MaxLines = 1
+						lbl.Font.Weight = font.Medium
+						return lbl.Layout(gtx)
+					})
+				}))
+				for i, drive := range drives {
+					i := i
+					drive := drive
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						active := strings.EqualFold(currentDrive, drive)
+						return pane.driveMenuClicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							bg := color.NRGBA{}
+							fg := txtColor
+							if active {
+								bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
+								fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
+							} else if pane.driveMenuClicks[i].Hovered() {
+								bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
+								fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+							}
+							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(th, drive)
+									lbl.Font.Typeface = ui.mainTypeface()
+									lbl.Font.Weight = font.Medium
+									lbl.TextSize = scaleThemeFontSize(th, 11)
+									lbl.Color = fg
+									lbl.MaxLines = 1
+									return lbl.Layout(gtx)
+								})
+							})
+						})
+					}))
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			},
+		)
+	})
 }
 
 func (ui *UI) layoutFilePaneFavoriteMenu(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
@@ -1824,7 +2084,7 @@ func trimLeftToFit(gtx layout.Context, text string, size unit.Sp) string {
 }
 
 func layoutFilePaneFavoriteRemoveButton(th *material.Theme, gtx layout.Context, c *widget.Clickable) layout.Dimensions {
-	return layoutTinyIconModeButton(th, gtx, c, uiCloseIcon(), false)
+	return layoutTinyIconModeButton(th, gtx, c, uitheme.CloseIcon(), false)
 }
 
 func paneRRect(size image.Point, radius int, roundLeft, roundRight bool) clip.RRect {

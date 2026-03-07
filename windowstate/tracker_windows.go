@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package windowstate
 
 import (
 	"hexone/fm"
@@ -12,7 +12,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-type windowStateTracker struct {
+type Tracker struct {
 	cfg     app.Config
 	haveCfg bool
 
@@ -25,12 +25,12 @@ type windowStateTracker struct {
 	titleBarApplied bool
 }
 
-func newWindowStateTracker(session *fm.SessionState) *windowStateTracker {
+func NewTracker(session *fm.SessionState) *Tracker {
 	_ = session
-	return &windowStateTracker{}
+	return &Tracker{}
 }
 
-func (t *windowStateTracker) ObserveView(v app.ViewEvent) {
+func (t *Tracker) ObserveView(v app.ViewEvent) {
 	if t == nil {
 		return
 	}
@@ -48,7 +48,7 @@ func (t *windowStateTracker) ObserveView(v app.ViewEvent) {
 	}
 }
 
-func (t *windowStateTracker) ObserveConfig(cfg app.Config) {
+func (t *Tracker) ObserveConfig(cfg app.Config) {
 	if t == nil {
 		return
 	}
@@ -56,7 +56,7 @@ func (t *windowStateTracker) ObserveConfig(cfg app.Config) {
 	t.haveCfg = true
 }
 
-func (t *windowStateTracker) ObserveFrame(metric unit.Metric) {
+func (t *Tracker) ObserveFrame(metric unit.Metric) {
 	if t == nil {
 		return
 	}
@@ -64,7 +64,7 @@ func (t *windowStateTracker) ObserveFrame(metric unit.Metric) {
 	t.haveMetric = true
 }
 
-func (t *windowStateTracker) ApplyToSession(s *fm.SessionState) {
+func (t *Tracker) ApplyToSession(s *fm.SessionState) {
 	if t == nil || s == nil {
 		return
 	}
@@ -102,6 +102,18 @@ func (t *windowStateTracker) ApplyToSession(s *fm.SessionState) {
 	default:
 		r, ok := winGetWindowRect(t.hwnd)
 		if !ok {
+			return
+		}
+		if sessionWindowPositionLooksHidden(int(r.Left), int(r.Top)) {
+			if wp, ok := winGetWindowPlacement(t.hwnd); ok && !sessionWindowPositionLooksHidden(int(wp.RcNormalPosition.Left), int(wp.RcNormalPosition.Top)) {
+				s.Window.X = int(wp.RcNormalPosition.Left)
+				s.Window.Y = int(wp.RcNormalPosition.Top)
+				s.Window.HasPosition = true
+				return
+			}
+			s.Window.X = 0
+			s.Window.Y = 0
+			s.Window.HasPosition = false
 			return
 		}
 		s.Window.X = int(r.Left)

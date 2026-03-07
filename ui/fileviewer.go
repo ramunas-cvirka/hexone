@@ -41,6 +41,12 @@ const (
 	viewerCommandHistoryLimit = 80
 )
 
+// Pointer event tags must be non-zero-sized; zero-sized fields can share the
+// same address and collapse distinct handlers onto one Gio tag.
+type fileViewerEventTag struct {
+	_ byte
+}
+
 type fileViewerState struct {
 	pane   int
 	path   string
@@ -52,6 +58,7 @@ type fileViewerState struct {
 	closeClick       widget.Clickable
 	autoRefreshClick widget.Clickable
 	modeFileClick    widget.Clickable
+	modeHexClick     widget.Clickable
 	modeCmdClick     widget.Clickable
 	historyClick     widget.Clickable
 	commandClick     widget.Clickable
@@ -72,13 +79,17 @@ type fileViewerState struct {
 	wordSelectExpr  string
 	updatedAt       time.Time
 	stream          streamOutputView
+	hex             *hexViewerState
 	historyOpen     bool
 
 	loading    bool
 	seq        int
 	loadCancel context.CancelFunc
 
-	contentPointerTag struct{}
+	contentPointerTag fileViewerEventTag
+	rootPointerTag    fileViewerEventTag
+	commandAreaTag    fileViewerEventTag
+	commandAreaPress  map[pointer.ID]struct{}
 	userBrowseUntil   time.Time
 	pendingUpdate     bool
 	pendingContent    string
@@ -88,7 +99,7 @@ type fileViewerState struct {
 	menuOpen          bool
 	menuPos           image.Point
 	menuRect          image.Rectangle
-	menuPointerTag    struct{}
+	menuPointerTag    fileViewerEventTag
 	scrollCarry       float32
 	scrollbarTrack    image.Rectangle
 	scrollbarThumb    image.Rectangle
@@ -168,9 +179,17 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			if st == nil || st.commandEditOn {
 				continue
 			}
+			if st.mode == "hex" {
+				if st.hex != nil && len(st.hex.buffer) > 0 {
+					start := st.hex.bufferStart
+					length := int64(len(st.hex.buffer))
+					st.hex.setSelectionRange(start, length)
+				}
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
 			st.stream.selectAll()
 			st.err = ""
-			st.status = "selected all"
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
@@ -180,6 +199,24 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 	st := ui.fileViewer
 	if st == nil {
 		return false
+	}
+	if st.mode == "hex" && st.hex != nil {
+		data, ok := st.hex.selectedBytes()
+		if !ok && fallbackAll && len(st.hex.buffer) > 0 {
+			data = append([]byte(nil), st.hex.buffer...)
+			ok = true
+		}
+		if !ok || len(data) == 0 {
+			st.status = "nothing to copy"
+			return false
+		}
+		text := formatHexSelectionCopy(data)
+		gtx.Execute(clipboard.WriteCmd{
+			Type: "application/text",
+			Data: io.NopCloser(strings.NewReader(text)),
+		})
+		st.err = ""
+		return true
 	}
 	text := st.stream.selectedText()
 	if text == "" && fallbackAll {
@@ -194,11 +231,6 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 		Data: io.NopCloser(strings.NewReader(text)),
 	})
 	st.err = ""
-	if st.stream.hasSelection() {
-		st.status = "selection copied"
-	} else {
-		st.status = "content copied"
-	}
 	return true
 }
 
@@ -268,6 +300,8 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.commandEditor.SetText(st.command)
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.captureWatchState()
+	st.hex = newHexViewerState()
+	st.hex.offsetDigits = viewerHexOffsetDigits(st.watchSize)
 
 	ui.fileViewer = st
 	ui.setActiveFilePane(idx)
@@ -348,6 +382,10 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	if !st.commandEditOn {
 		st.commandEditor.SetText(st.command)
 	}
+	if st.mode == "hex" {
+		ui.startHexViewerLoad(st, force)
+		return
+	}
 
 	maxBytes := viewerMaxLoadBytes(ui.fmCfg)
 
@@ -418,7 +456,11 @@ func sendViewerResult(ch chan fileViewerResult, res fileViewerResult) {
 
 func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 	st := ui.fileViewer
-	if st == nil || st.resultCh == nil {
+	if st == nil {
+		return
+	}
+	ui.pumpHexViewerState(gtx, st)
+	if st.resultCh == nil {
 		return
 	}
 	if st.pendingUpdate && !st.userIsBrowsing(gtx.Now) {
@@ -471,11 +513,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 				st.pendingContent = res.content
 				st.pendingStatus = st.status
 				st.pendingErr = st.err
-				if st.status != "" {
-					st.status = st.status + " | update pending"
-				} else {
-					st.status = "update pending"
-				}
+				st.status = "update pending"
 				ui.scheduleFileViewerWatch(gtx)
 				gtx.Execute(op.InvalidateCmd{})
 				continue
@@ -900,10 +938,12 @@ func (ui *UI) refreshFileViewerNow(now time.Time) {
 
 func normalizeViewerMode(mode string) string {
 	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode != "command" {
+	switch mode {
+	case "command", "hex", "file":
+		return mode
+	default:
 		return "file"
 	}
-	return "command"
 }
 
 func (ui *UI) setFileViewerMode(mode string, now time.Time) {
@@ -949,11 +989,6 @@ func (ui *UI) toggleFileViewerAutoRefresh(now time.Time) {
 		return
 	}
 	st.autoRefresh = !st.autoRefresh
-	if st.autoRefresh {
-		st.status = "auto-refresh on"
-	} else {
-		st.status = "auto-refresh off"
-	}
 	if ui.fmCfg != nil {
 		ui.fmCfg.Viewer.CommandAutoRefresh = st.autoRefresh
 		if err := ui.saveFMConfig(); err != nil {
@@ -986,6 +1021,7 @@ func (ui *UI) cancelViewerCommandEdit() {
 	st.commandEditOn = false
 	st.commandFocus = false
 	st.commandEditor.SetText(st.command)
+	ui.closeEditorContextMenu()
 }
 
 func (ui *UI) applyViewerCommandEdit(now time.Time) {
@@ -1446,16 +1482,18 @@ func emitViewerCommandProgress(onProgress func(string, string), buf *viewerComma
 }
 
 func viewerCommandStatus(kind string, shell viewerShellSpec, started time.Time, truncated, infinite, running bool) string {
-	status := fmt.Sprintf("%s (%s)", kind, shell.name)
+	parts := make([]string, 0, 2)
 	if infinite {
-		status += " [stream]"
+		parts = append(parts, "streaming")
 	}
 	if truncated {
-		status += " (truncated)"
+		parts = append(parts, "truncated")
 	}
 	_ = started
 	_ = running
-	return status
+	_ = kind
+	_ = shell
+	return strings.Join(parts, ", ")
 }
 
 type viewerCommandBuffer struct {

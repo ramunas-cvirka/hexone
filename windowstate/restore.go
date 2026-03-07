@@ -1,4 +1,4 @@
-package main
+package windowstate
 
 import (
 	"hexone/fm"
@@ -7,7 +7,7 @@ import (
 	"gioui.org/unit"
 )
 
-func applyWindowOptionsFromSession(window *app.Window, session *fm.SessionState) {
+func ApplyWindowOptions(window *app.Window, session *fm.SessionState) {
 	if window == nil || session == nil {
 		return
 	}
@@ -24,7 +24,7 @@ func applyWindowOptionsFromSession(window *app.Window, session *fm.SessionState)
 	if session.Window.Width > 0 && session.Window.Height > 0 {
 		opts = append(opts, app.Size(pxToDp(session.Window.Width), pxToDp(session.Window.Height)))
 	}
-	if session.Window.HasPosition && session.Window.Mode == "windowed" {
+	if session.Window.HasPosition && session.Window.Mode == "windowed" && !sessionWindowPositionLooksHidden(session.Window.X, session.Window.Y) {
 		opts = append(opts, app.Position(pxToDp(session.Window.X), pxToDp(session.Window.Y)))
 	}
 	switch sessionModeToWindowMode(session.Window.Mode) {
@@ -40,6 +40,13 @@ func applyWindowOptionsFromSession(window *app.Window, session *fm.SessionState)
 	if len(opts) > 0 {
 		window.Option(opts...)
 	}
+}
+
+// Windows reports minimized/off-screen windows at approximately (-32000, -32000).
+// Restoring that position makes the next launch appear "missing" even though the
+// process is running normally.
+func sessionWindowPositionLooksHidden(x, y int) bool {
+	return x <= -32000 || y <= -32000
 }
 
 func sessionModeToWindowMode(raw string) app.WindowMode {

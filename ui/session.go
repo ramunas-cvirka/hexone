@@ -3,7 +3,6 @@ package ui
 import (
 	"hexone/fm"
 	"strings"
-	"time"
 )
 
 func (ui *UI) SnapshotSession() *fm.SessionState {
@@ -32,6 +31,9 @@ func (ui *UI) SnapshotSession() *fm.SessionState {
 		}
 
 		dir := pane.dir
+		if !pane.remoteConnected() && pane.loading && strings.TrimSpace(pane.loadingDir) != "" {
+			dir = pane.loadingDir
+		}
 		if pane.remoteConnected() && strings.TrimSpace(pane.localDirBeforeRemote) != "" {
 			dir = pane.localDirBeforeRemote
 		}
@@ -62,7 +64,6 @@ func (ui *UI) ApplySession(s *fm.SessionState) {
 	}
 
 	if len(s.Panes) > 0 {
-		now := time.Now()
 		limit := len(s.Panes)
 		if len(ui.filePanes) < limit {
 			limit = len(ui.filePanes)
@@ -75,10 +76,9 @@ func (ui *UI) ApplySession(s *fm.SessionState) {
 			paneState := s.Panes[i]
 			targetDir := strings.TrimSpace(paneState.Dir)
 			if targetDir != "" {
-				if err := pane.load(targetDir); err != nil {
-					pane.setNotice(err.Error(), now)
-					continue
-				}
+				selectedPath := strings.TrimSpace(paneState.SelectedPath)
+				ui.requestPaneLoadWithSelection(i, targetDir, selectedPath, "", 0)
+				continue
 			}
 			selectedPath := strings.TrimSpace(paneState.SelectedPath)
 			if selectedPath != "" && pane.table != nil && pane.model != nil {

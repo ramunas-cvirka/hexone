@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"hexone/filesys"
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -208,10 +209,6 @@ func (ui *UI) finishFileDelete(now time.Time) {
 				selectedPath = path.Clean(sel.Path)
 			}
 		}
-		if err := pane.load(pane.dir); err != nil {
-			pane.setNotice(err.Error(), now)
-			continue
-		}
 
 		sameSelected := false
 		if selectedPath != "" {
@@ -221,28 +218,17 @@ func (ui *UI) finishFileDelete(now time.Time) {
 				sameSelected = samePath(selectedPath, deletedPath)
 			}
 		}
-		if selectedPath != "" && !sameSelected {
-			if idx := pane.findEntryPathIndex(selectedPath); idx >= 0 {
-				pane.table.SetSelected(idx, pane.model.Len(), false)
-				continue
-			}
-		}
-
 		row := 0
 		if i == paneIdx {
 			row = preferRow
 		} else {
 			row = pane.table.Selected
 		}
-		if row < 0 {
-			row = 0
+		primaryPath := ""
+		if selectedPath != "" && !sameSelected {
+			primaryPath = selectedPath
 		}
-		if pane.model.Len() > 0 {
-			if row >= pane.model.Len() {
-				row = pane.model.Len() - 1
-			}
-			pane.table.SetSelected(row, pane.model.Len(), false)
-		}
+		ui.requestPaneLoadWithSelection(i, pane.dir, primaryPath, "", row)
 	}
 	if st.remote != nil {
 		st.remote.close()
@@ -424,7 +410,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uiCloseIcon(), false)
+					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
 				}),
 			)
 		}),

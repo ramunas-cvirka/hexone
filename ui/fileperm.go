@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"hexone/filesys"
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -204,7 +205,7 @@ func (ui *UI) refreshPanesAfterPermChange(st *filePermState, now time.Time) {
 	targetDir := st.endpoint.dirName(target)
 	remoteChange := st.endpoint.isRemote()
 
-	for _, pane := range ui.filePanes {
+	for i, pane := range ui.filePanes {
 		if pane == nil || pane.model == nil || pane.table == nil {
 			continue
 		}
@@ -228,20 +229,7 @@ func (ui *UI) refreshPanesAfterPermChange(st *filePermState, now time.Time) {
 		if sel := pane.selectedEntry(); sel != nil {
 			selectedPath = sel.Path
 		}
-
-		if err := pane.load(pane.dir); err != nil {
-			pane.setNotice(err.Error(), now)
-			continue
-		}
-
-		if idx := pane.findEntryPathIndex(target); idx >= 0 {
-			pane.table.SetSelected(idx, pane.model.Len(), false)
-		} else if selectedPath != "" {
-			if idx := pane.findEntryPathIndex(selectedPath); idx >= 0 {
-				pane.table.SetSelected(idx, pane.model.Len(), false)
-			}
-		}
-
+		ui.requestPaneLoadWithSelection(i, pane.dir, target, selectedPath, pane.table.Selected)
 	}
 }
 
@@ -420,7 +408,7 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uiCloseIcon(), false)
+					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
 				}),
 			)
 		}),
@@ -589,7 +577,9 @@ func (ui *UI) layoutPermDigitsEditor(th *material.Theme, gtx layout.Context, st 
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(84)), func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.permEdit), !st.running, ed.Layout)
+				return ui.layoutEditorWithContextMenu(th, gtx, "fileperm-digits", &st.permEdit, !st.running, func(gtx layout.Context) layout.Dimensions {
+					return layoutNeutralEditorBox(gtx, gtx.Focused(&st.permEdit), !st.running, ed.Layout)
+				})
 			})
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
