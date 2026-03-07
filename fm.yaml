@@ -62,7 +62,7 @@ associations:
     - app_path: c:\portable_appz\xmplay\xmplay.exe
       extensions: mp3, mp4, mp5, mp6
 viewer:
-    mode: hex
+    mode: command
     shell: auto
     command: cat {path}
     command_by_target:

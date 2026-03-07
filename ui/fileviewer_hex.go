@@ -64,6 +64,7 @@ type hexViewerState struct {
 	selectionLen   int64
 
 	groupBytes int
+	hexByteX   []int
 
 	pointerTag fileViewerEventTag
 }
@@ -256,6 +257,87 @@ func (v *hexViewerState) bufferCovers(start, end int64) bool {
 	return start >= v.bufferStart && end <= bufferEnd
 }
 
+func (v *hexViewerState) needsPrefetch() bool {
+	if v == nil || len(v.buffer) == 0 || v.bytesPerLine <= 0 {
+		return true
+	}
+	visibleStart, visibleEnd := v.visibleByteRange()
+	bufferEnd := v.bufferStart + int64(len(v.buffer))
+
+	margin := int64(v.visibleLines*v.bytesPerLine) / 2
+	if margin < int64(hexViewerMinChunkBytes/4) {
+		margin = int64(hexViewerMinChunkBytes / 4)
+	}
+
+	return visibleStart < v.bufferStart+margin || visibleEnd > bufferEnd-margin
+}
+
+func (v *hexViewerState) mergeBuffer(start int64, data []byte, maxBytes int64) {
+	if v == nil || len(data) == 0 {
+		return
+	}
+	if len(v.buffer) == 0 {
+		v.bufferStart = start
+		v.buffer = append([]byte(nil), data...)
+		return
+	}
+
+	oldStart := v.bufferStart
+	oldEnd := v.bufferStart + int64(len(v.buffer))
+	newStart := start
+	newEnd := start + int64(len(data))
+
+	// If the new chunk is separate, keep the one that covers the viewport and replace otherwise.
+	if newEnd < oldStart || newStart > oldEnd {
+		visibleStart, visibleEnd := v.visibleByteRange()
+		if v.bufferCovers(visibleStart, visibleEnd) {
+			return
+		}
+		v.bufferStart = newStart
+		v.buffer = append([]byte(nil), data...)
+		return
+	}
+
+	mergedStart := oldStart
+	if newStart < mergedStart {
+		mergedStart = newStart
+	}
+	mergedEnd := oldEnd
+	if newEnd > mergedEnd {
+		mergedEnd = newEnd
+	}
+
+	mergedLen := mergedEnd - mergedStart
+	merged := make([]byte, mergedLen)
+	copy(merged[oldStart-mergedStart:], v.buffer)
+	copy(merged[newStart-mergedStart:], data)
+
+	if maxBytes > 0 && int64(len(merged)) > maxBytes {
+		visibleStart, visibleEnd := v.visibleByteRange()
+		keepStart := visibleStart - maxBytes/3
+		if keepStart < mergedStart {
+			keepStart = mergedStart
+		}
+		keepEnd := keepStart + maxBytes
+		if keepEnd < visibleEnd {
+			keepEnd = visibleEnd
+			keepStart = keepEnd - maxBytes
+		}
+		if keepEnd > mergedEnd {
+			keepEnd = mergedEnd
+			keepStart = keepEnd - maxBytes
+			if keepStart < mergedStart {
+				keepStart = mergedStart
+			}
+		}
+		merged = merged[keepStart-mergedStart : keepEnd-mergedStart]
+		mergedStart = keepStart
+	}
+
+	v.bufferStart = mergedStart
+	v.buffer = merged
+}
+
 func (v *hexViewerState) lineBytes(line int64) ([]byte, int64) {
 	if v == nil || v.bytesPerLine <= 0 {
 		return nil, 0
@@ -287,14 +369,19 @@ func (v *hexViewerState) scrollByDelta(delta float32) {
 		v.scrollCarry = 0
 	}
 	v.scrollCarry += delta
+
+	// Gio wheel delta is device-dependent and can be much larger than 1 per notch.
+	// Normalize it so one wheel notch advances roughly one line instead of a page.
+	const wheelStep float32 = 80
+
 	steps := int64(0)
-	for v.scrollCarry >= 1 {
+	for v.scrollCarry >= wheelStep {
 		steps++
-		v.scrollCarry -= 1
+		v.scrollCarry -= wheelStep
 	}
-	for v.scrollCarry <= -1 {
+	for v.scrollCarry <= -wheelStep {
 		steps--
-		v.scrollCarry += 1
+		v.scrollCarry += wheelStep
 	}
 	if steps == 0 {
 		return
@@ -353,6 +440,40 @@ func (v *hexViewerState) computeLayout(size image.Point) {
 	}
 	v.trackRect = image.Rect(trackX, 0, trackX+scrollbarW, size.Y)
 	v.computeScrollbar()
+	v.rebuildHexByteX()
+}
+
+func (v *hexViewerState) rebuildHexByteX() {
+	if v == nil || v.bytesPerLine <= 0 || v.charW <= 0 {
+		v.hexByteX = nil
+		return
+	}
+	v.hexByteX = make([]int, v.bytesPerLine)
+	x := 0
+	for i := 0; i < v.bytesPerLine; i++ {
+		v.hexByteX[i] = x
+		x += 2 * v.charW
+		if i+1 < v.bytesPerLine {
+			x += v.charW
+			if v.groupBytes > 1 && (i+1)%v.groupBytes == 0 {
+				x += v.charW
+			}
+		}
+	}
+}
+
+func (v *hexViewerState) hexByteLeft(i int) int {
+	if v == nil || len(v.hexByteX) == 0 || i <= 0 {
+		return 0
+	}
+	if i >= len(v.hexByteX) {
+		return v.hexByteX[len(v.hexByteX)-1]
+	}
+	return v.hexByteX[i]
+}
+
+func (v *hexViewerState) hexByteRight(i int) int {
+	return v.hexByteLeft(i) + 2*v.charW
 }
 
 func (v *hexViewerState) computeScrollbar() {
@@ -518,44 +639,89 @@ func formatHexSelectionCopy(data []byte) string {
 }
 
 func hexByteAtPoint(v *hexViewerState, pos image.Point) (int64, bool) {
-	if v == nil || v.bytesPerLine <= 0 || v.lineH <= 0 {
+	if v == nil || v.bytesPerLine <= 0 || v.lineH <= 0 || v.fileSize <= 0 {
 		return 0, false
 	}
-	row := pos.Y / v.lineH
-	if row < 0 || row >= v.visibleLines {
+
+	// Only react inside hex/text bands horizontally.
+	inHex := viewerPointInRect(pos, v.hexRect)
+	inText := viewerPointInRect(pos, v.textRect)
+	if !inHex && !inText {
 		return 0, false
 	}
+
+	// Allow below-the-content selection start/drag by clamping row.
+	row := (pos.Y - v.hexRect.Min.Y) / v.lineH
+	if row < 0 {
+		row = 0
+	}
+	if row >= v.visibleLines {
+		row = v.visibleLines - 1
+	}
+	if row < 0 {
+		row = 0
+	}
+
 	line := v.topLine + int64(row)
+	maxLine := v.totalLines() - 1
+	if maxLine < 0 {
+		maxLine = 0
+	}
+	if line > maxLine {
+		line = maxLine
+	}
+	if line < 0 {
+		line = 0
+	}
+
 	lineStart := line * int64(v.bytesPerLine)
 	if lineStart >= v.fileSize {
-		return 0, false
+		return v.fileSize - 1, true
 	}
-	if viewerPointInRect(pos, v.textRect) {
-		col := (pos.X - v.textRect.Min.X) / v.charW
-		if col < 0 || col >= v.bytesPerLine {
-			return 0, false
-		}
-		byteOffset := lineStart + int64(col)
-		if byteOffset >= v.fileSize {
-			return 0, false
-		}
-		return byteOffset, true
-	}
-	if !viewerPointInRect(pos, v.hexRect) {
-		return 0, false
-	}
-	col := (pos.X - v.hexRect.Min.X) / v.charW
-	for i := 0; i < v.bytesPerLine; i++ {
-		startCol := hexByteColumn(i, v.groupBytes)
-		if col >= startCol && col < startCol+2 {
-			byteOffset := lineStart + int64(i)
-			if byteOffset >= v.fileSize {
-				return 0, false
+
+	var idx int
+	if inText {
+		idx = (pos.X - v.textRect.Min.X) / v.charW
+	} else {
+		bestIdx := 0
+		bestDist := int(^uint(0) >> 1)
+		for i := 0; i < v.bytesPerLine; i++ {
+			x0 := v.hexRect.Min.X + v.hexByteLeft(i)
+			x1 := v.hexRect.Min.X + v.hexByteRight(i)
+
+			var dist int
+			switch {
+			case pos.X < x0:
+				dist = x0 - pos.X
+			case pos.X >= x1:
+				dist = pos.X - (x1 - 1)
+			default:
+				dist = 0
 			}
-			return byteOffset, true
+
+			if dist < bestDist {
+				bestDist = dist
+				bestIdx = i
+			}
 		}
+		idx = bestIdx
 	}
-	return 0, false
+
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= v.bytesPerLine {
+		idx = v.bytesPerLine - 1
+	}
+
+	byteOffset := lineStart + int64(idx)
+	if byteOffset >= v.fileSize {
+		byteOffset = v.fileSize - 1
+	}
+	if byteOffset < 0 {
+		byteOffset = 0
+	}
+	return byteOffset, true
 }
 
 func (ui *UI) ensureHexViewer(st *fileViewerState) *hexViewerState {
@@ -578,14 +744,15 @@ func (ui *UI) startHexViewerLoad(st *fileViewerState, force bool) {
 	}
 	visibleStart, visibleEnd := v.visibleByteRange()
 	windowBytes := int64(v.visibleLines * v.bytesPerLine)
-	if windowBytes < hexViewerMinChunkBytes {
-		windowBytes = hexViewerMinChunkBytes
+	padBytes := windowBytes * 4
+	if padBytes < hexViewerMinChunkBytes {
+		padBytes = hexViewerMinChunkBytes
 	}
-	wantStart := visibleStart - windowBytes
+	wantStart := visibleStart - padBytes
 	if wantStart < 0 {
 		wantStart = 0
 	}
-	wantEnd := visibleEnd + windowBytes
+	wantEnd := visibleEnd + padBytes
 	if v.fileSize > 0 && wantEnd > v.fileSize {
 		wantEnd = v.fileSize
 	}
@@ -595,7 +762,10 @@ func (ui *UI) startHexViewerLoad(st *fileViewerState, force bool) {
 	if v.fileSize > 0 && wantEnd > v.fileSize {
 		wantEnd = v.fileSize
 	}
-	if !force && len(v.buffer) > 0 && v.bufferCovers(visibleStart, visibleEnd) {
+	if !force && len(v.buffer) > 0 && !v.needsPrefetch() {
+		return
+	}
+	if st.loading {
 		return
 	}
 
@@ -605,9 +775,6 @@ func (ui *UI) startHexViewerLoad(st *fileViewerState, force bool) {
 	st.err = ""
 	if len(v.buffer) == 0 {
 		st.status = "loading..."
-	}
-	if st.loadCancel != nil {
-		st.loadCancel()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	st.loadCancel = cancel
@@ -738,8 +905,11 @@ func (ui *UI) pumpHexViewerState(gtx layout.Context, st *fileViewerState) {
 				st.err = ""
 				st.status = ""
 				st.hex.fileSize = res.size
-				st.hex.bufferStart = res.start
-				st.hex.buffer = res.data
+				maxKeep := int64(st.hex.visibleLines * st.hex.bytesPerLine * 12)
+				if maxKeep < int64(hexViewerMinChunkBytes*2) {
+					maxKeep = int64(hexViewerMinChunkBytes * 2)
+				}
+				st.hex.mergeBuffer(res.start, res.data, maxKeep)
 				st.hex.offsetDigits = viewerHexOffsetDigits(res.size)
 				st.hex.clampTop()
 				st.captureWatchState()
@@ -802,17 +972,12 @@ func (ui *UI) drawHexOutput(gtx layout.Context, th *material.Theme, st *fileView
 	for line := v.topLine; line < end; line++ {
 		lineBytes, lineStart := v.lineBytes(line)
 		offsetText := formatHexOffset(lineStart, v.offsetDigits)
-		hexText := formatHexLine(lineBytes, v.bytesPerLine, v.groupBytes)
-		asciiText := formatHexTextLine(lineBytes, v.bytesPerLine)
-		lineGTX := gtx
-		lineGTX.Constraints = layout.Exact(image.Pt(v.textRect.Max.X, v.lineH))
 		offset := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 		ui.drawHexLineSelections(gtx, st, line, len(lineBytes))
 		ui.drawHexLineLabel(th, gtx, image.Pt(v.offsetRect.Min.X, 0), v.offsetRect.Dx(), offsetText, color.NRGBA{R: 154, G: 166, B: 186, A: 255})
-		ui.drawHexLineLabel(th, gtx, image.Pt(v.hexRect.Min.X, 0), v.hexRect.Dx(), hexText, color.NRGBA{R: 222, G: 228, B: 242, A: 255})
-		ui.drawHexLineLabel(th, gtx, image.Pt(v.textRect.Min.X, 0), v.textRect.Dx(), asciiText, color.NRGBA{R: 198, G: 214, B: 232, A: 255})
+		ui.drawHexBytesLine(th, gtx, v, lineBytes, color.NRGBA{R: 222, G: 228, B: 242, A: 255})
+		ui.drawHexASCIIline(th, gtx, v, lineBytes, color.NRGBA{R: 198, G: 214, B: 232, A: 255})
 		offset.Pop()
-		_ = lineGTX
 		y += v.lineH
 	}
 }
@@ -824,17 +989,59 @@ func (ui *UI) drawHexLineLabel(th *material.Theme, gtx layout.Context, pos image
 	offset := op.Offset(pos).Push(gtx.Ops)
 	lineGTX := gtx
 	lineGTX.Constraints = layout.Exact(image.Pt(width, gtx.Constraints.Max.Y))
-	_ = layout.Inset{Left: unit.Dp(1)}.Layout(lineGTX, func(gtx layout.Context) layout.Dimensions {
-		lbl := material.Body2(th, text)
-		lbl.Font.Typeface = ui.mainTypeface()
-		lbl.Font.Weight = font.Normal
-		lbl.TextSize = ui.viewerTextSize()
-		lbl.Color = fg
-		lbl.MaxLines = 1
-		lbl.Truncator = ""
-		return lbl.Layout(gtx)
-	})
+	lbl := material.Body2(th, text)
+	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.Font.Weight = font.Normal
+	lbl.TextSize = ui.viewerTextSize()
+	lbl.Color = fg
+	lbl.MaxLines = 1
+	lbl.Truncator = ""
+	lbl.Layout(lineGTX)
 	offset.Pop()
+}
+
+func (ui *UI) drawMonoCell(th *material.Theme, gtx layout.Context, pos image.Point, width int, text string, fg color.NRGBA) {
+	if width <= 0 || text == "" {
+		return
+	}
+	offset := op.Offset(pos).Push(gtx.Ops)
+	lineGTX := gtx
+	lineGTX.Constraints = layout.Exact(image.Pt(width, gtx.Constraints.Max.Y))
+	lbl := material.Body2(th, text)
+	lbl.Font.Typeface = "monospace"
+	lbl.Font.Weight = font.Normal
+	lbl.TextSize = ui.viewerTextSize()
+	lbl.Color = fg
+	lbl.MaxLines = 1
+	lbl.Truncator = ""
+	lbl.Layout(lineGTX)
+	offset.Pop()
+}
+
+func (ui *UI) drawHexBytesLine(th *material.Theme, gtx layout.Context, v *hexViewerState, data []byte, fg color.NRGBA) {
+	if v == nil {
+		return
+	}
+	for i, b := range data {
+		txt := fmt.Sprintf("%02X", b)
+		x := v.hexRect.Min.X + v.hexByteLeft(i)
+		ui.drawMonoCell(th, gtx, image.Pt(x, 0), 2*v.charW, txt, fg)
+	}
+}
+
+func (ui *UI) drawHexASCIIline(th *material.Theme, gtx layout.Context, v *hexViewerState, data []byte, fg color.NRGBA) {
+	if v == nil {
+		return
+	}
+	for i, b := range data {
+		r := rune(b)
+		ch := "."
+		if r >= 0x20 && unicode.IsPrint(r) {
+			ch = string(b)
+		}
+		x := v.textRect.Min.X + i*v.charW
+		ui.drawMonoCell(th, gtx, image.Pt(x, 0), v.charW, ch, fg)
+	}
 }
 
 func (ui *UI) drawHexLineSelections(gtx layout.Context, st *fileViewerState, line int64, lineLen int) {
@@ -842,12 +1049,14 @@ func (ui *UI) drawHexLineSelections(gtx layout.Context, st *fileViewerState, lin
 	if v == nil || !v.hasSelection() || lineLen <= 0 {
 		return
 	}
+
 	lineStart := line * int64(v.bytesPerLine)
 	lineEnd := lineStart + int64(lineLen)
 	selectionEnd := v.selectionEnd()
 	if lineEnd <= v.selectionStart || lineStart >= selectionEnd {
 		return
 	}
+
 	selStart := v.selectionStart
 	if selStart < lineStart {
 		selStart = lineStart
@@ -856,17 +1065,28 @@ func (ui *UI) drawHexLineSelections(gtx layout.Context, st *fileViewerState, lin
 	if selEnd > lineEnd {
 		selEnd = lineEnd
 	}
+	if selEnd <= selStart {
+		return
+	}
+
+	firstIdx := int(selStart - lineStart)
+	lastIdx := int(selEnd - lineStart - 1)
+
 	hexSel := color.NRGBA{R: 98, G: 138, B: 212, A: 118}
 	textSel := color.NRGBA{R: 98, G: 138, B: 212, A: 138}
-	for off := selStart; off < selEnd; off++ {
-		idx := int(off - lineStart)
-		hexX := v.hexRect.Min.X + hexByteColumn(idx, v.groupBytes)*v.charW
-		hexRect := image.Rect(hexX, 1, hexX+v.charW*2, v.lineH-1)
-		paint.FillShape(gtx.Ops, hexSel, clip.Rect(hexRect).Op())
-		textX := v.textRect.Min.X + idx*v.charW
-		textRect := image.Rect(textX, 1, textX+v.charW, v.lineH-1)
-		paint.FillShape(gtx.Ops, textSel, clip.Rect(textRect).Op())
+
+	hexX0 := v.hexRect.Min.X + v.hexByteLeft(firstIdx)
+	var hexX1 int
+	if lastIdx+1 < lineLen {
+		hexX1 = v.hexRect.Min.X + v.hexByteLeft(lastIdx+1)
+	} else {
+		hexX1 = v.hexRect.Min.X + v.hexByteRight(lastIdx)
 	}
+	paint.FillShape(gtx.Ops, hexSel, clip.Rect(image.Rect(hexX0, 1, hexX1, v.lineH-1)).Op())
+
+	textX0 := v.textRect.Min.X + firstIdx*v.charW
+	textX1 := v.textRect.Min.X + (lastIdx+1)*v.charW
+	paint.FillShape(gtx.Ops, textSel, clip.Rect(image.Rect(textX0, 1, textX1, v.lineH-1)).Op())
 }
 
 func (ui *UI) drawHexScrollbar(gtx layout.Context, st *fileViewerState) {
@@ -960,6 +1180,17 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 					v.selectID = pe.PointerID
 					v.dragAnchor = byteOff
 					v.setSelectionRange(byteOff, 1)
+					gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
+				} else if viewerPointInRect(pos, v.hexRect) || viewerPointInRect(pos, v.textRect) {
+					// Keep nearest-byte behavior for awkward edge presses.
+					v.selecting = true
+					v.selectID = pe.PointerID
+					last := v.fileSize - 1
+					if last < 0 {
+						last = 0
+					}
+					v.dragAnchor = last
+					v.setSelectionRange(last, 1)
 					gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
 				} else {
 					v.clearSelection()

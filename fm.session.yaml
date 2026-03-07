@@ -1,13 +1,13 @@
 window:
-    x: 525
-    "y": 310
+    x: 530
+    "y": 394
     has_position: true
-    width: 1588
-    height: 764
+    width: 1461
+    height: 859
     px_per_dp: 1
     mode: windowed
 active_tab: tab0
-active_pane: 0
+active_pane: 1
 panes:
     - dir: C:\
       selected_path: C:\Windows
