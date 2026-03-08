@@ -19,10 +19,10 @@ func TestSettingsTabIndexOrder(t *testing.T) {
 		key  string
 		want int
 	}{
-		{key: "viewer", want: 0},
-		{key: "associations", want: 1},
-		{key: "colors", want: 2},
-		{key: "general", want: 3},
+		{key: "general", want: 0},
+		{key: "viewer", want: 1},
+		{key: "associations", want: 2},
+		{key: "colors", want: 3},
 		{key: "config", want: 4},
 	}
 	for _, tc := range cases {
@@ -34,14 +34,14 @@ func TestSettingsTabIndexOrder(t *testing.T) {
 
 func TestSettingsTabPositionSlidesToAssociations(t *testing.T) {
 	now := time.Date(2026, time.March, 7, 10, 0, 0, 0, time.UTC)
-	st := &settingsModalState{activeTab: "viewer"}
+	st := &settingsModalState{activeTab: "general"}
 
 	st.setActiveTab("associations", now)
 	if st.activeTab != "associations" {
 		t.Fatalf("activeTab=%q want %q", st.activeTab, "associations")
 	}
-	if st.navPrevTab != "viewer" {
-		t.Fatalf("navPrevTab=%q want %q", st.navPrevTab, "viewer")
+	if st.navPrevTab != "general" {
+		t.Fatalf("navPrevTab=%q want %q", st.navPrevTab, "general")
 	}
 
 	start, anim := st.tabPosition(now)
@@ -56,16 +56,16 @@ func TestSettingsTabPositionSlidesToAssociations(t *testing.T) {
 	if !anim {
 		t.Fatal("tabPosition should still animate mid-transition")
 	}
-	if mid <= 0 || mid >= 1 {
-		t.Fatalf("mid position=%v want between 0 and 1", mid)
+	if mid <= 0 || mid >= 2 {
+		t.Fatalf("mid position=%v want between 0 and 2", mid)
 	}
 
 	end, anim := st.tabPosition(now.Add(toolbarAnimDur))
 	if anim {
 		t.Fatal("tabPosition should stop animating at the end of the transition")
 	}
-	if end != 1 {
-		t.Fatalf("end position=%v want 1", end)
+	if end != 2 {
+		t.Fatalf("end position=%v want 2", end)
 	}
 	if st.navPrevTab != "" {
 		t.Fatalf("navPrevTab should clear after transition, got %q", st.navPrevTab)

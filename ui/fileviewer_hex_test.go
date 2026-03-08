@@ -1,6 +1,10 @@
 package ui
 
-import "testing"
+import (
+	"image"
+	"testing"
+	"time"
+)
 
 func TestNormalizeViewerModeSupportsHex(t *testing.T) {
 	if got := normalizeViewerMode("hex"); got != "hex" {
@@ -39,5 +43,57 @@ func TestFormatHexLineWithGrouping(t *testing.T) {
 	data := []byte{0x01, 0x02, 0x03, 0x04}
 	if got, want := formatHexLine(data, 4, 2), "01 02  03 04"; got != want {
 		t.Fatalf("formatHexLine = %q, want %q", got, want)
+	}
+}
+
+func TestHexSelectionByteAtPointClampsOutsideViewerArea(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     512,
+		bytesPerLine: 16,
+		topLine:      10,
+		visibleLines: 4,
+		charW:        8,
+		lineH:        16,
+		hexRect:      image.Rect(0, 0, 160, 64),
+		textRect:     image.Rect(200, 0, 328, 64),
+	}
+
+	got, ok := hexSelectionByteAtPoint(v, image.Pt(420, 90))
+	if !ok {
+		t.Fatal("hexSelectionByteAtPoint should clamp outside points")
+	}
+	if want := int64(223); got != want {
+		t.Fatalf("byte offset=%d want %d", got, want)
+	}
+}
+
+func TestHexViewerRunAutoScrollScrollsAndExtendsSelection(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     16000,
+		bytesPerLine: 16,
+		topLine:      10,
+		visibleLines: 4,
+		charW:        8,
+		lineH:        16,
+		hexRect:      image.Rect(0, 0, 160, 64),
+		textRect:     image.Rect(200, 0, 328, 64),
+		selecting:    true,
+		dragAnchor:   160,
+	}
+	v.setSelectionRange(160, 1)
+
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v.updateAutoScroll(image.Pt(208, 90), now)
+	if !v.autoScrollActive {
+		t.Fatal("updateAutoScroll should activate outside selection scrolling")
+	}
+	if !v.runAutoScroll(now) {
+		t.Fatal("runAutoScroll should advance when tick is due")
+	}
+	if got := v.topLine; got != 14 {
+		t.Fatalf("topLine=%d want 14", got)
+	}
+	if v.selectionLen <= 1 {
+		t.Fatalf("selectionLen=%d want >1 after autoscroll extension", v.selectionLen)
 	}
 }

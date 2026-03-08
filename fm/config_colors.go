@@ -8,16 +8,18 @@ import (
 )
 
 const (
-	DefaultFilePaneBackgroundHex          = "#161E28"
+	DefaultFilePaneBackgroundHex          = "#202020"
 	DefaultFilePaneTextHex                = "#D2D2D2"
-	DefaultFilePaneHoverHex               = "#1F2E48"
-	DefaultFilePaneHoverTextHex           = "#F4F8FF"
-	DefaultFilePaneSelectionHex           = "#456FCC"
-	DefaultFilePaneSelectionTextHex       = "#F4F8FF"
-	DefaultFilePaneSelectedFilesHex       = "#2F8B63"
-	DefaultFilePaneSelectedTextHex        = "#F4F8FF"
-	DefaultFilePaneFocusedSelectedHex     = "#3A7C99"
-	DefaultFilePaneFocusedSelectedTextHex = "#F4F8FF"
+	DefaultFilePaneHoverHex               = "#2D2D2D"
+	DefaultFilePaneHoverTextHex           = "#E8E8E8"
+	DefaultFilePaneSelectionHex           = "#3C3C50"
+	DefaultFilePaneSelectionTextHex       = "#F4F4F4"
+	DefaultFilePaneSelectedFilesHex       = "#4A4A4A"
+	DefaultFilePaneSelectedTextHex        = "#F4F4F4"
+	DefaultFilePaneFocusedSelectedHex     = "#58586C"
+	DefaultFilePaneFocusedSelectedTextHex = "#F4F4F4"
+	DefaultCurrentDirBackgroundHex        = "#363636"
+	DefaultCurrentDirTextHex              = "#F0F0F0"
 )
 
 type ColorsConfig struct {
@@ -31,6 +33,8 @@ type ColorsConfig struct {
 	SelectedFilesText   string `yaml:"selected_files_text"`
 	FocusedSelected     string `yaml:"focused_selected"`
 	FocusedSelectedText string `yaml:"focused_selected_text"`
+	CurrentDirBg        string `yaml:"current_dir_background"`
+	CurrentDirText      string `yaml:"current_dir_text"`
 }
 
 func ParseHexColor(raw string) (color.NRGBA, bool) {

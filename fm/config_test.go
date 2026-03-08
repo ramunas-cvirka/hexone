@@ -74,6 +74,9 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	if !strings.Contains(out, "keep_start_chars:") {
 		t.Fatalf("serialized config missing keep_start_chars:\n%s", out)
 	}
+	if strings.Contains(out, "key_bindings:") {
+		t.Fatalf("serialized config should not contain legacy key_bindings block:\n%s", out)
+	}
 }
 
 func TestNormalizeViewerAssociations(t *testing.T) {
@@ -186,18 +189,66 @@ func TestNormalizeViewerModeAcceptsHex(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigHidesFunctionBarWhenViewerOpen(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if !cfg.Viewer.HideFunctionBarWhenOpen {
+		t.Fatal("viewer hide_function_bar_when_open should default to true")
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "hide_function_bar_when_open: true") {
+		t.Fatalf("serialized config missing viewer hide_function_bar_when_open:\n%s", out)
+	}
+}
+
+func TestDefaultConfigDimsInactivePanes(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.General.DimInactivePanes {
+		t.Fatal("general dim_inactive_panes should default to false")
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "dim_inactive_panes: false") {
+		t.Fatalf("serialized config missing general dim_inactive_panes:\n%s", out)
+	}
+}
+
+func TestLegacyKeyBindingsAreIgnoredOnLoad(t *testing.T) {
+	raw := `
+key_bindings:
+  focus_next_pane: f3
+  move_up: home
+  view: f11
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	out := string(mustMarshalConfig(t, cfg))
+	if strings.Contains(out, "key_bindings:") {
+		t.Fatalf("serialized config should drop legacy key_bindings block:\n%s", out)
+	}
+}
+
 func TestNormalizeColors(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.Colors.FilePaneBackground = "161e28"
+	cfg.Colors.FilePaneBackground = "161e2"
 	cfg.Colors.FilePaneText = "badtext"
 	cfg.Colors.Hover = "hover"
 	cfg.Colors.HoverText = "hovertext"
 	cfg.Colors.Selection = "bad"
 	cfg.Colors.SelectionText = "oops"
-	cfg.Colors.SelectedFiles = "#2f8b63"
+	cfg.Colors.SelectedFiles = "selected"
 	cfg.Colors.SelectedFilesText = "oops"
 	cfg.Colors.FocusedSelected = "focused"
 	cfg.Colors.FocusedSelectedText = "focusedtext"
+	cfg.Colors.CurrentDirBg = "currdir"
+	cfg.Colors.CurrentDirText = "currtext"
 
 	cfg.normalize()
 
@@ -230,6 +281,12 @@ func TestNormalizeColors(t *testing.T) {
 	}
 	if cfg.Colors.FocusedSelectedText != DefaultFilePaneFocusedSelectedTextHex {
 		t.Fatalf("FocusedSelectedText=%q, want %q", cfg.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
+	}
+	if cfg.Colors.CurrentDirBg != DefaultCurrentDirBackgroundHex {
+		t.Fatalf("CurrentDirBg=%q, want %q", cfg.Colors.CurrentDirBg, DefaultCurrentDirBackgroundHex)
+	}
+	if cfg.Colors.CurrentDirText != DefaultCurrentDirTextHex {
+		t.Fatalf("CurrentDirText=%q, want %q", cfg.Colors.CurrentDirText, DefaultCurrentDirTextHex)
 	}
 }
 

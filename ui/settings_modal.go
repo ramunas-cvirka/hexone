@@ -84,9 +84,13 @@ type settingsModalState struct {
 	colorSelectedFilesText   string
 	colorFocusedSelected     string
 	colorFocusedSelectedText string
+	colorCurrentDir          string
+	colorCurrentDirText      string
 	viewCommandEdit          widget.Editor
 	viewShellEdit            widget.Editor
 	viewFontSizeEdit         widget.Editor
+	generalDimInactiveBool   widget.Bool
+	viewHideFunctionBarBool  widget.Bool
 	viewAssocExtEdit         widget.Editor
 	viewAssocAppEdit         widget.Editor
 	viewAssocPickClick       widget.Clickable
@@ -127,6 +131,7 @@ var settingsColorOptions = []settingsColorOption{
 	{key: "selection", label: "Focused"},
 	{key: "selected_files", label: "Selected Files"},
 	{key: "focused_selected", label: "Focused + Selected Files"},
+	{key: "current_dir", label: "Current Dir"},
 }
 
 type settingsColorSwatchGroup struct {
@@ -193,7 +198,7 @@ func (ui *UI) openSettingsModal() {
 	}
 	st := ui.settingsModal
 	if st == nil {
-		st = &settingsModalState{activeTab: "viewer"}
+		st = &settingsModalState{activeTab: "general"}
 		st.viewCommandEdit.SingleLine = true
 		st.viewCommandEdit.Submit = false
 		st.colorValueEdit.SingleLine = true
@@ -232,7 +237,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	}
 	st.viewMode = mode
 	switch st.colorCategory {
-	case "normal", "hover", "selection", "selected_files", "focused_selected":
+	case "normal", "hover", "selection", "selected_files", "focused_selected", "current_dir":
 	default:
 		st.colorCategory = "selection"
 	}
@@ -246,6 +251,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorSelectedFilesText = cfg.Colors.SelectedFilesText
 	st.colorFocusedSelected = cfg.Colors.FocusedSelected
 	st.colorFocusedSelectedText = cfg.Colors.FocusedSelectedText
+	st.colorCurrentDir = cfg.Colors.CurrentDirBg
+	st.colorCurrentDirText = cfg.Colors.CurrentDirText
 	st.syncColorEditors()
 	st.colorCategoryOpen = false
 	st.colorPickerOpen = false
@@ -253,6 +260,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.viewCommandEdit.SetText(cfg.Viewer.Command)
 	st.viewShellEdit.SetText(normalizeViewerShellInput(cfg.Viewer.Shell))
 	st.viewFontSizeEdit.SetText(formatConfigFloat(cfg.Viewer.FontSizeSp))
+	st.generalDimInactiveBool.Value = cfg.General.DimInactivePanes
+	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
 	st.viewAssocEntries = append([]fm.ViewerAssociation(nil), fm.FlattenAssociationPrograms(cfg.Associations)...)
 	st.viewAssocSavedEntries = append([]fm.ViewerAssociation(nil), st.viewAssocEntries...)
 	st.viewAssocPickOpen = false
@@ -282,6 +291,8 @@ func (st *settingsModalState) colorValue(key string) string {
 	switch key {
 	case "focused_selected":
 		return st.colorFocusedSelected
+	case "current_dir":
+		return st.colorCurrentDir
 	case "hover":
 		return st.colorHover
 	case "selected_files":
@@ -300,6 +311,8 @@ func (st *settingsModalState) setColorValue(key, value string) {
 	switch key {
 	case "focused_selected":
 		st.colorFocusedSelected = value
+	case "current_dir":
+		st.colorCurrentDir = value
 	case "hover":
 		st.colorHover = value
 	case "selected_files":
@@ -318,6 +331,8 @@ func (st *settingsModalState) colorTextValue(key string) string {
 	switch key {
 	case "focused_selected":
 		return st.colorFocusedSelectedText
+	case "current_dir":
+		return st.colorCurrentDirText
 	case "hover":
 		return st.colorHoverText
 	case "selected_files":
@@ -336,6 +351,8 @@ func (st *settingsModalState) setColorTextValue(key, value string) {
 	switch key {
 	case "focused_selected":
 		st.colorFocusedSelectedText = value
+	case "current_dir":
+		st.colorCurrentDirText = value
 	case "hover":
 		st.colorHoverText = value
 	case "selected_files":
@@ -507,6 +524,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	selectedFilesTextFallback := fm.DefaultFilePaneSelectedTextHex
 	focusedSelectedFallback := fm.DefaultFilePaneFocusedSelectedHex
 	focusedSelectedTextFallback := fm.DefaultFilePaneFocusedSelectedTextHex
+	currentDirFallback := fm.DefaultCurrentDirBackgroundHex
+	currentDirTextFallback := fm.DefaultCurrentDirTextHex
 	if cfg != nil {
 		bgFallback = cfg.Colors.FilePaneBackground
 		paneTextFallback = cfg.Colors.FilePaneText
@@ -518,6 +537,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		selectedFilesTextFallback = cfg.Colors.SelectedFilesText
 		focusedSelectedFallback = cfg.Colors.FocusedSelected
 		focusedSelectedTextFallback = cfg.Colors.FocusedSelectedText
+		currentDirFallback = cfg.Colors.CurrentDirBg
+		currentDirTextFallback = cfg.Colors.CurrentDirText
 	}
 
 	bgRaw := strings.TrimSpace(st.colorPaneBackground)
@@ -530,6 +551,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	selectedFilesTextRaw := strings.TrimSpace(st.colorSelectedFilesText)
 	focusedSelectedRaw := strings.TrimSpace(st.colorFocusedSelected)
 	focusedSelectedTextRaw := strings.TrimSpace(st.colorFocusedSelectedText)
+	currentDirRaw := strings.TrimSpace(st.colorCurrentDir)
+	currentDirTextRaw := strings.TrimSpace(st.colorCurrentDirText)
 
 	errText := ""
 	for _, field := range []struct {
@@ -546,6 +569,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		{label: "Selected files text", value: selectedFilesTextRaw},
 		{label: "Focused + selected files background", value: focusedSelectedRaw},
 		{label: "Focused + selected files text", value: focusedSelectedTextRaw},
+		{label: "Current dir background", value: currentDirRaw},
+		{label: "Current dir text", value: currentDirTextRaw},
 	} {
 		if field.value == "" {
 			continue
@@ -567,6 +592,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	draft.Colors.SelectedFilesText = fm.NormalizeHexColor(selectedFilesTextRaw, selectedFilesTextFallback)
 	draft.Colors.FocusedSelected = fm.NormalizeHexColor(focusedSelectedRaw, focusedSelectedFallback)
 	draft.Colors.FocusedSelectedText = fm.NormalizeHexColor(focusedSelectedTextRaw, focusedSelectedTextFallback)
+	draft.Colors.CurrentDirBg = fm.NormalizeHexColor(currentDirRaw, currentDirFallback)
+	draft.Colors.CurrentDirText = fm.NormalizeHexColor(currentDirTextRaw, currentDirTextFallback)
 	return filePanePaletteFromConfig(draft), errText
 }
 
@@ -860,13 +887,13 @@ func (st *settingsModalState) setActiveTab(next string, now time.Time) {
 
 func settingsTabIndex(key string) int {
 	switch key {
-	case "viewer":
-		return 0
-	case "associations":
-		return 1
-	case "colors":
-		return 2
 	case "general":
+		return 0
+	case "viewer":
+		return 1
+	case "associations":
+		return 2
+	case "colors":
 		return 3
 	case "config":
 		return 4
@@ -1260,6 +1287,16 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	} else {
 		ui.fmCfg.Colors.FocusedSelectedText = fm.FormatHexColor(c)
 	}
+	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorCurrentDir)); !ok {
+		return fmt.Errorf("current dir background color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.CurrentDirBg = fm.FormatHexColor(c)
+	}
+	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorCurrentDirText)); !ok {
+		return fmt.Errorf("current dir text color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.CurrentDirText = fm.FormatHexColor(c)
+	}
 
 	mode := strings.ToLower(strings.TrimSpace(st.viewMode))
 	switch mode {
@@ -1296,6 +1333,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.Command = cmd
 	ui.fmCfg.Viewer.Shell = shell
 	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
+	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
+	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value
 	ui.fmCfg.Associations = fm.GroupViewerAssociations(st.viewAssocEntries)
 	ui.fmCfg.Viewer.Associations = nil
 	if err := ui.saveFMConfig(); err != nil {
@@ -1702,6 +1741,12 @@ func (ui *UI) layoutSettingsNavTabs(th *material.Theme, gtx layout.Context, st *
 
 			dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabGeneralClick, "General", fillGeneral, hoverGeneral, pulseGeneral, stripH)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layoutSettingsNavSeparator(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabViewerClick, "Viewer", fillViewer, hoverViewer, pulseViewer, stripH)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1720,12 +1765,6 @@ func (ui *UI) layoutSettingsNavTabs(th *material.Theme, gtx layout.Context, st *
 					return layoutSettingsNavSeparator(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabGeneralClick, "General", fillGeneral, hoverGeneral, pulseGeneral, stripH)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutSettingsNavSeparator(gtx)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabConfigClick, "Config", fillConfig, hoverConfig, pulseConfig, stripH)
 				}),
 			)
@@ -1737,21 +1776,44 @@ func (ui *UI) layoutSettingsNavTabs(th *material.Theme, gtx layout.Context, st *
 
 func (ui *UI) layoutSettingsTabContent(th *material.Theme, gtx layout.Context, st *settingsModalState, tab string) layout.Dimensions {
 	switch tab {
+	case "general":
+		return ui.layoutSettingsGeneralTab(th, gtx, st)
 	case "associations":
 		return ui.layoutSettingsAssociationsTab(th, gtx, st)
 	case "colors":
 		return ui.layoutSettingsColorsTab(th, gtx, st)
-	case "general":
-		lbl := material.Body2(th, "Favorites are managed from the '*' menu. Use the Config tab for full fm.yaml editing.")
-		lbl.Font.Typeface = ui.mainTypeface()
-		lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 11)
-		lbl.Color = hintColor
-		return lbl.Layout(gtx)
 	case "config":
 		return ui.layoutSettingsConfigTab(th, gtx, st)
 	default:
 		return ui.layoutSettingsViewerTab(th, gtx, st)
 	}
+}
+
+func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	rowLabel := func(txt string) layout.Widget {
+		return settingsViewerRowLabel(ui, th, txt, true)
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(rowLabel("Workspace")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			cb := material.CheckBox(th, &st.generalDimInactiveBool, "Gray out inactive pane")
+			cb.Font.Typeface = ui.mainTypeface()
+			cb.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			cb.Color = txtColor
+			cb.IconColor = txtColor
+			return cb.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, "Favorites are managed from the '*' menu. Use the Config tab for full fm.yaml editing.")
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 11)
+			lbl.Color = hintColor
+			return lbl.Layout(gtx)
+		}),
+	)
 }
 
 func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
@@ -1925,6 +1987,15 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 			return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-font", &st.viewFontSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
 				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewFontSizeEdit), true, ed.Layout)
 			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			cb := material.CheckBox(th, &st.viewHideFunctionBarBool, "Hide F1-F10 bar while viewer is open")
+			cb.Font.Typeface = ui.mainTypeface()
+			cb.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			cb.Color = txtColor
+			cb.IconColor = txtColor
+			return cb.Layout(gtx)
 		}),
 	)
 }
@@ -2484,10 +2555,73 @@ func (ui *UI) layoutSettingsColorPreview(th *material.Theme, gtx layout.Context,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedSelBg, palette.MarkedSelFg, "Focused + Selected Files", "omega.txt")
 					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutSettingsColorPreviewCurrentDir(th, gtx, palette)
+					}),
 				)
 			})
 		},
 	)
+}
+
+func (ui *UI) layoutSettingsColorPreviewCurrentDir(th *material.Theme, gtx layout.Context, palette filePanePalette) layout.Dimensions {
+	rowH := gtx.Dp(unit.Dp(22))
+	if rowH < 1 {
+		rowH = 1
+	}
+	nameSize := scaleConfigFontSize(ui.fmCfg, 13)
+	stateW := settingsColorPreviewStateWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
+	stateColor := settingsColorPreviewStateColor(palette.PaneBg)
+	rowBg, rowBorder := filePanePathRowColors(palette)
+	pathColor := filePanePathBaseColor(palette)
+	return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+		return fillBgExact(gtx, palette.PaneBg, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return fixedWidth(gtx, stateW, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Label(th, scaleConfigFontSize(ui.fmCfg, 13), "Current Dir")
+							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Weight = font.Normal
+							lbl.Color = stateColor
+							lbl.MaxLines = 1
+							return lbl.Layout(gtx)
+						})
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), rowBg, rowBorder, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										gtx.Constraints.Min.X = gtx.Constraints.Max.X
+										return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+												return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														lbl := material.Label(th, nameSize, `C:\AsmSource\`)
+														lbl.Font.Typeface = ui.mainTypeface()
+														lbl.Font.Weight = font.Normal
+														lbl.Color = pathColor
+														lbl.MaxLines = 1
+														return lbl.Layout(gtx)
+													}),
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														return ui.layoutFilePanePathSegmentLabel(th, gtx, "tests", color.NRGBA{}, pathColor, color.NRGBA{}, font.Medium)
+													}),
+												)
+											})
+										})
+									})
+								})
+							})
+						})
+					}),
+				)
+			})
+		})
+	})
 }
 
 func (ui *UI) layoutSettingsColorPreviewRow(th *material.Theme, gtx layout.Context, bg, fg color.NRGBA, stateLabel, fileName string) layout.Dimensions {
@@ -2535,6 +2669,7 @@ func settingsColorPreviewStateWidth(th *material.Theme, gtx layout.Context, cfg 
 		"Focused",
 		"Selected Files",
 		"Focused + Selected Files",
+		"Current Dir",
 	}
 	maxW := 0
 	for _, txt := range labels {
@@ -2580,6 +2715,11 @@ func settingsPreviewColorForCategory(palette filePanePalette, key, part string) 
 			return palette.MarkedSelFg
 		}
 		return palette.MarkedSelBg
+	case "current_dir":
+		if part == "text" {
+			return palette.CurrentDirFg
+		}
+		return palette.CurrentDirBg
 	default:
 		if part == "text" {
 			return palette.SelectedFg

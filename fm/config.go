@@ -54,25 +54,6 @@ type ColumnWidths struct {
 	BriefGapDp       int      `yaml:"brief_gap_dp"`
 }
 
-type KeyBindings struct {
-	FocusNextPane string `yaml:"focus_next_pane"`
-	FocusPrevPane string `yaml:"focus_prev_pane"`
-	MoveUp        string `yaml:"move_up"`
-	MoveDown      string `yaml:"move_down"`
-	MoveLeft      string `yaml:"move_left"`
-	MoveRight     string `yaml:"move_right"`
-	PageUp        string `yaml:"page_up"`
-	PageDown      string `yaml:"page_down"`
-	Home          string `yaml:"home"`
-	End           string `yaml:"end"`
-	Activate      string `yaml:"activate"`
-	View          string `yaml:"view"`
-	Copy          string `yaml:"copy"`
-	RenameMove    string `yaml:"rename_move"`
-	Create        string `yaml:"create"`
-	Delete        string `yaml:"delete"`
-}
-
 type SortConfig struct {
 	DefaultKey       string `yaml:"default_key"`
 	Descending       bool   `yaml:"descending"`
@@ -86,6 +67,10 @@ type FontConfig struct {
 	RegularPath string  `yaml:"regular_path"`
 	MediumPath  string  `yaml:"medium_path"`
 	BoldPath    string  `yaml:"bold_path"`
+}
+
+type GeneralConfig struct {
+	DimInactivePanes bool `yaml:"dim_inactive_panes"`
 }
 
 type ViewerAssociation struct {
@@ -124,19 +109,20 @@ func (a AssociationProgram) MarshalYAML() (any, error) {
 }
 
 type ViewerConfig struct {
-	Mode                 string              `yaml:"mode"`
-	Shell                string              `yaml:"shell"`
-	Command              string              `yaml:"command"`
-	Associations         []ViewerAssociation `yaml:"associations,omitempty"`
-	AssociatedExtensions []string            `yaml:"associated_extensions,omitempty"`
-	CommandByTarget      map[string]string   `yaml:"command_by_target"`
-	CommandHistory       []string            `yaml:"command_history"`
-	WordSelectRegex      string              `yaml:"word_select_regex"`
-	FontSizeSp           float32             `yaml:"font_size_sp"`
-	WordWrap             bool                `yaml:"word_wrap"`
-	MaxReadMB            float32             `yaml:"max_read_mb"`
-	CommandAutoRefresh   bool                `yaml:"command_auto_refresh"`
-	CommandRefreshMs     int                 `yaml:"command_refresh_ms"`
+	Mode                    string              `yaml:"mode"`
+	Shell                   string              `yaml:"shell"`
+	Command                 string              `yaml:"command"`
+	Associations            []ViewerAssociation `yaml:"associations,omitempty"`
+	AssociatedExtensions    []string            `yaml:"associated_extensions,omitempty"`
+	CommandByTarget         map[string]string   `yaml:"command_by_target"`
+	CommandHistory          []string            `yaml:"command_history"`
+	WordSelectRegex         string              `yaml:"word_select_regex"`
+	FontSizeSp              float32             `yaml:"font_size_sp"`
+	WordWrap                bool                `yaml:"word_wrap"`
+	MaxReadMB               float32             `yaml:"max_read_mb"`
+	CommandAutoRefresh      bool                `yaml:"command_auto_refresh"`
+	CommandRefreshMs        int                 `yaml:"command_refresh_ms"`
+	HideFunctionBarWhenOpen bool                `yaml:"hide_function_bar_when_open"`
 }
 
 type SSHSetup struct {
@@ -158,9 +144,9 @@ type Config struct {
 	FavoriteLocations []string             `yaml:"favorite_locations"`
 	NameCompact       NameCompact          `yaml:"name_compact"`
 	Columns           ColumnWidths         `yaml:"columns"`
-	KeyBindings       KeyBindings          `yaml:"key_bindings"`
 	Sort              SortConfig           `yaml:"sort"`
 	Font              FontConfig           `yaml:"font"`
+	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
 	Viewer            ViewerConfig         `yaml:"viewer"`
@@ -194,24 +180,6 @@ func DefaultConfig() *Config {
 			BriefWidthDp:     180,
 			BriefGapDp:       4,
 		},
-		KeyBindings: KeyBindings{
-			FocusNextPane: "tab",
-			FocusPrevPane: "shift+tab",
-			MoveUp:        "up",
-			MoveDown:      "down",
-			MoveLeft:      "left",
-			MoveRight:     "right",
-			PageUp:        "pgup",
-			PageDown:      "pgdown",
-			Home:          "home",
-			End:           "end",
-			Activate:      "enter",
-			View:          "f3",
-			Copy:          "f5",
-			RenameMove:    "f6",
-			Create:        "f7",
-			Delete:        "f8",
-		},
 		Sort: SortConfig{
 			DefaultKey:       "name",
 			Descending:       false,
@@ -225,6 +193,9 @@ func DefaultConfig() *Config {
 			MediumPath:  "assets/FiraCode-Medium.ttf",
 			BoldPath:    "assets/FiraCode-Bold.ttf",
 		},
+		General: GeneralConfig{
+			DimInactivePanes: false,
+		},
 		Colors: ColorsConfig{
 			FilePaneBackground:  DefaultFilePaneBackgroundHex,
 			FilePaneText:        DefaultFilePaneTextHex,
@@ -236,21 +207,24 @@ func DefaultConfig() *Config {
 			SelectedFilesText:   DefaultFilePaneSelectedTextHex,
 			FocusedSelected:     DefaultFilePaneFocusedSelectedHex,
 			FocusedSelectedText: DefaultFilePaneFocusedSelectedTextHex,
+			CurrentDirBg:        DefaultCurrentDirBackgroundHex,
+			CurrentDirText:      DefaultCurrentDirTextHex,
 		},
 		Associations: nil,
 		Viewer: ViewerConfig{
-			Mode:               "file",
-			Shell:              "auto",
-			Command:            "cat {path}",
-			Associations:       nil,
-			CommandByTarget:    map[string]string{},
-			CommandHistory:     []string{},
-			WordSelectRegex:    "[a-zA-Z0-9]+",
-			FontSizeSp:         13,
-			WordWrap:           false,
-			MaxReadMB:          1,
-			CommandAutoRefresh: true,
-			CommandRefreshMs:   1500,
+			Mode:                    "file",
+			Shell:                   "auto",
+			Command:                 "cat {path}",
+			Associations:            nil,
+			CommandByTarget:         map[string]string{},
+			CommandHistory:          []string{},
+			WordSelectRegex:         "[a-zA-Z0-9]+",
+			FontSizeSp:              13,
+			WordWrap:                false,
+			MaxReadMB:               1,
+			CommandAutoRefresh:      true,
+			CommandRefreshMs:        1500,
+			HideFunctionBarWhenOpen: true,
 		},
 		SSH: SSHConfig{
 			Setups: []SSHSetup{},
@@ -333,55 +307,6 @@ func (c *Config) normalize() {
 		c.Columns.BriefGapDp = 4
 	}
 
-	if c.KeyBindings.FocusNextPane == "" {
-		c.KeyBindings.FocusNextPane = "tab"
-	}
-	if c.KeyBindings.FocusPrevPane == "" {
-		c.KeyBindings.FocusPrevPane = "shift+tab"
-	}
-	if c.KeyBindings.MoveUp == "" {
-		c.KeyBindings.MoveUp = "up"
-	}
-	if c.KeyBindings.MoveDown == "" {
-		c.KeyBindings.MoveDown = "down"
-	}
-	if c.KeyBindings.MoveLeft == "" {
-		c.KeyBindings.MoveLeft = "left"
-	}
-	if c.KeyBindings.MoveRight == "" {
-		c.KeyBindings.MoveRight = "right"
-	}
-	if c.KeyBindings.PageUp == "" {
-		c.KeyBindings.PageUp = "pgup"
-	}
-	if c.KeyBindings.PageDown == "" {
-		c.KeyBindings.PageDown = "pgdown"
-	}
-	if c.KeyBindings.Home == "" {
-		c.KeyBindings.Home = "home"
-	}
-	if c.KeyBindings.End == "" {
-		c.KeyBindings.End = "end"
-	}
-	if c.KeyBindings.Activate == "" {
-		c.KeyBindings.Activate = "enter"
-	}
-	if c.KeyBindings.View == "" {
-		c.KeyBindings.View = "f3"
-	}
-	if c.KeyBindings.Copy == "" {
-		c.KeyBindings.Copy = "f5"
-	}
-	if c.KeyBindings.RenameMove == "" {
-		c.KeyBindings.RenameMove = "f6"
-	}
-	if c.KeyBindings.Create == "" {
-		c.KeyBindings.Create = "f7"
-	}
-	if c.KeyBindings.Delete == "" {
-		c.KeyBindings.Delete = "f8"
-	}
-
 	if c.Sort.DefaultKey == "" {
 		c.Sort.DefaultKey = "name"
 	}
@@ -417,6 +342,8 @@ func (c *Config) normalize() {
 	c.Colors.SelectedFilesText = NormalizeHexColor(c.Colors.SelectedFilesText, DefaultFilePaneSelectedTextHex)
 	c.Colors.FocusedSelected = NormalizeHexColor(c.Colors.FocusedSelected, DefaultFilePaneFocusedSelectedHex)
 	c.Colors.FocusedSelectedText = NormalizeHexColor(c.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
+	c.Colors.CurrentDirBg = NormalizeHexColor(c.Colors.CurrentDirBg, DefaultCurrentDirBackgroundHex)
+	c.Colors.CurrentDirText = NormalizeHexColor(c.Colors.CurrentDirText, DefaultCurrentDirTextHex)
 
 	switch c.Viewer.Mode {
 	case "file", "hex", "command":

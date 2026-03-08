@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	functionBarTopInsetDp   = 4
-	functionBarOuterInsetDp = 8
+	functionBarTopInsetDp   = 0
+	functionBarOuterInsetDp = 0
 	functionBarStripDp      = 22
 	functionBarPopupGapDp   = 4
 )
@@ -110,14 +110,35 @@ func (ui *UI) ConsumeWindowCloseRequest() bool {
 	return true
 }
 
+func (ui *UI) functionBarAutoHiddenForViewer() bool {
+	return ui != nil &&
+		ui.fileViewer != nil &&
+		ui.fmCfg != nil &&
+		ui.fmCfg.Viewer.HideFunctionBarWhenOpen
+}
+
+func (ui *UI) functionBarVisible() bool {
+	if ui == nil {
+		return false
+	}
+	if ui.functionBarAutoHiddenForViewer() {
+		return ui.functionBarViewerShown
+	}
+	return !ui.functionBarHidden
+}
+
 func (ui *UI) toggleFunctionBarVisibility(now time.Time) bool {
 	if ui == nil {
 		return false
 	}
-	ui.functionBarHidden = !ui.functionBarHidden
+	if ui.functionBarAutoHiddenForViewer() {
+		ui.functionBarViewerShown = !ui.functionBarViewerShown
+	} else {
+		ui.functionBarHidden = !ui.functionBarHidden
+	}
 	ui.closeFunctionBarToolsMenu()
 	ui.setToolbarHover("", now)
-	if ui.functionBarHidden && ui.Tabs.Value == "tab0" {
+	if !ui.functionBarVisible() && ui.Tabs.Value == "tab0" {
 		if pane := ui.activePane(); pane != nil {
 			pane.setNotice("function bar hidden; press F11 to show it again", now)
 		}
@@ -469,7 +490,7 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 	hoverKey := ""
 	hoverIndex := -1
 	for i, spec := range specs {
-		if spec.enabled && spec.click != nil && spec.click.Hovered() {
+		if spec.click != nil && spec.click.Hovered() {
 			hoverKey = spec.keyLabel
 			hoverIndex = i
 		}
@@ -500,6 +521,7 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 		Left:  unit.Dp(functionBarOuterInsetDp),
 		Right: unit.Dp(functionBarOuterInsetDp),
 	}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		barRadius := 0
 		outerW := gtx.Constraints.Max.X
 		if outerW < 1 {
 			outerW = 1
@@ -517,16 +539,13 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 		return fixedWidth(gtx, outerW, func(gtx layout.Context) layout.Dimensions {
 			return fillRoundedBox(
 				gtx,
-				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+				barRadius,
 				color.NRGBA{R: 24, G: 24, B: 24, A: 255},
 				color.NRGBA{R: 255, G: 255, B: 255, A: 22},
 				func(gtx layout.Context) layout.Dimensions {
 					return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-							innerR := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
-							if innerR < 1 {
-								innerR = 1
-							}
+							innerR := barRadius
 
 							if sliderAlpha > 0 && len(widths) > 0 {
 								baseIdx := int(sliderPos)
@@ -587,8 +606,8 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 												fg = mixNRGBA(fg, color.NRGBA{R: 170, G: 176, B: 188, A: 255}, 0.35)
 											}
 											if !spec.enabled {
-												bg = color.NRGBA{}
-												fg = dimColor(fg, 112)
+												bg = dimColor(bg, uint8(float32(bg.A)*0.6))
+												fg = mixNRGBA(dimColor(fg, 112), fg, hoverFill*0.55+proximity*0.35)
 											}
 
 											dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {

@@ -138,6 +138,7 @@ type UI struct {
 	toolbarPulseAt              time.Time
 	functionBarClicks           [10]widget.Clickable
 	functionBarHidden           bool
+	functionBarViewerShown      bool
 	functionBarToolsOpen        bool
 	functionBarToolsButtonRect  image.Rectangle
 	functionBarToolsRect        image.Rectangle
@@ -658,7 +659,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if ui == nil || ui.functionBarHidden {
+					if ui == nil || !ui.functionBarVisible() {
 						return layout.Dimensions{}
 					}
 					return ui.layoutFunctionBar(th, gtx)

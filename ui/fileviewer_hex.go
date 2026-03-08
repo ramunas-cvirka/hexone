@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 
 	"gioui.org/font"
@@ -60,8 +61,16 @@ type hexViewerState struct {
 	selectID   pointer.ID
 	dragAnchor int64
 
-	selectionStart int64
-	selectionLen   int64
+	selectionStart   int64
+	selectionLen     int64
+	autoScrollActive bool
+	autoScrollDir    int
+	autoScrollStep   int
+	autoScrollAt     time.Time
+	cancelPending    bool
+	cancelUntil      time.Time
+	pointerOutside   bool
+	selectPos        image.Point
 
 	groupBytes int
 	hexByteX   []int
@@ -162,6 +171,10 @@ func (v *hexViewerState) clearSelection() {
 	v.dragAnchor = 0
 	v.selectionStart = 0
 	v.selectionLen = 0
+	v.cancelPending = false
+	v.cancelUntil = time.Time{}
+	v.pointerOutside = false
+	v.stopAutoScroll()
 }
 
 func (v *hexViewerState) hasSelection() bool {
@@ -210,6 +223,146 @@ func (v *hexViewerState) setSelectionFromAnchor(anchor, head int64) {
 
 	v.selectionStart = start
 	v.selectionLen = end - start + 1
+}
+
+func (v *hexViewerState) stopAutoScroll() {
+	v.autoScrollActive = false
+	v.autoScrollDir = 0
+	v.autoScrollStep = 0
+	v.autoScrollAt = time.Time{}
+}
+
+func (v *hexViewerState) beginCancelGrace(now time.Time) {
+	v.cancelPending = true
+	v.cancelUntil = now.Add(streamCancelGrace)
+}
+
+func (v *hexViewerState) clearCancelGrace() {
+	v.cancelPending = false
+	v.cancelUntil = time.Time{}
+}
+
+func (v *hexViewerState) expireCancelGrace(now time.Time) bool {
+	if v.autoScrollActive && v.selecting {
+		return false
+	}
+	if !v.cancelPending || v.cancelUntil.IsZero() || now.Before(v.cancelUntil) {
+		return false
+	}
+	v.clearCancelGrace()
+	v.selecting = false
+	v.stopAutoScroll()
+	return true
+}
+
+func (v *hexViewerState) renderedLineCount() int {
+	if v == nil {
+		return 0
+	}
+	total := int(v.totalLines() - v.topLine)
+	if total < 0 {
+		total = 0
+	}
+	if v.visibleLines < 1 {
+		if total > 0 {
+			return 1
+		}
+		return 0
+	}
+	if total > v.visibleLines {
+		total = v.visibleLines
+	}
+	return total
+}
+
+func (v *hexViewerState) autoScrollParams(pos image.Point) (int, int) {
+	if v == nil || v.lineH <= 0 {
+		return 0, 0
+	}
+	rendered := v.renderedLineCount()
+	if rendered < 1 {
+		return 0, 0
+	}
+	body := v.hexRect.Union(v.textRect)
+	if body.Dx() <= 0 || body.Dy() <= 0 {
+		return 0, 0
+	}
+	top := body.Min.Y
+	bottom := body.Min.Y + rendered*v.lineH
+	dist := 0
+	dir := 0
+	switch {
+	case pos.Y < top:
+		dir = -1
+		dist = top - pos.Y
+	case pos.Y >= bottom:
+		dir = 1
+		dist = pos.Y - bottom + 1
+	default:
+		return 0, 0
+	}
+	step := 1
+	if dist > streamAutoScrollMidPx {
+		step = 7
+	} else if dist > streamAutoScrollNearPx {
+		step = 4
+	} else {
+		step = 2
+	}
+	return dir, step
+}
+
+func (v *hexViewerState) updateAutoScroll(pos image.Point, now time.Time) {
+	if !v.selecting {
+		v.stopAutoScroll()
+		return
+	}
+	if v.pointerOutside && v.autoScrollActive {
+		// Pointer movement outside the app can jitter between synthetic
+		// coordinates. Keep the current autoscroll state stable until re-entry.
+		return
+	}
+	v.selectPos = pos
+	dir, step := v.autoScrollParams(pos)
+	if dir == 0 {
+		if v.autoScrollActive {
+			return
+		}
+		v.stopAutoScroll()
+		return
+	}
+	prevDir := v.autoScrollDir
+	prevStep := v.autoScrollStep
+	wasActive := v.autoScrollActive
+	v.autoScrollActive = true
+	v.autoScrollDir = dir
+	v.autoScrollStep = step
+	if !wasActive || prevDir != dir || prevStep != step {
+		v.autoScrollAt = now
+	} else if v.autoScrollAt.IsZero() {
+		v.autoScrollAt = now.Add(streamAutoScrollTick)
+	}
+}
+
+func (v *hexViewerState) runAutoScroll(now time.Time) bool {
+	if v == nil || !v.autoScrollActive || !v.selecting || v.autoScrollDir == 0 || v.autoScrollStep <= 0 {
+		return false
+	}
+	if now.Before(v.autoScrollAt) {
+		return false
+	}
+	before := v.topLine
+	v.topLine += int64(v.autoScrollDir * v.autoScrollStep)
+	v.clampTop()
+	if byteOff, ok := hexSelectionByteAtPoint(v, v.selectPos); ok {
+		v.setSelectionFromAnchor(v.dragAnchor, byteOff)
+	}
+	if v.topLine == before {
+		v.stopAutoScroll()
+		return false
+	}
+	v.autoScrollAt = now.Add(streamAutoScrollTick)
+	return true
 }
 
 func (v *hexViewerState) selectedBytes() ([]byte, bool) {
@@ -724,6 +877,38 @@ func hexByteAtPoint(v *hexViewerState, pos image.Point) (int64, bool) {
 	return byteOffset, true
 }
 
+func hexSelectionByteAtPoint(v *hexViewerState, pos image.Point) (int64, bool) {
+	if v == nil {
+		return 0, false
+	}
+	body := v.hexRect.Union(v.textRect)
+	if body.Dx() <= 0 || body.Dy() <= 0 {
+		return 0, false
+	}
+	if pos.Y < body.Min.Y {
+		pos.Y = body.Min.Y
+	} else if pos.Y >= body.Max.Y {
+		pos.Y = body.Max.Y - 1
+	}
+	if viewerPointInRect(pos, v.hexRect) || viewerPointInRect(pos, v.textRect) {
+		return hexByteAtPoint(v, pos)
+	}
+	if pos.X < v.hexRect.Min.X {
+		pos.X = v.hexRect.Min.X
+	} else if pos.X >= v.textRect.Max.X {
+		pos.X = v.textRect.Max.X - 1
+	} else if pos.X >= v.hexRect.Max.X && pos.X < v.textRect.Min.X {
+		hexGap := pos.X - (v.hexRect.Max.X - 1)
+		textGap := v.textRect.Min.X - pos.X
+		if hexGap <= textGap {
+			pos.X = v.hexRect.Max.X - 1
+		} else {
+			pos.X = v.textRect.Min.X
+		}
+	}
+	return hexByteAtPoint(v, pos)
+}
+
 func (ui *UI) ensureHexViewer(st *fileViewerState) *hexViewerState {
 	if st == nil {
 		return nil
@@ -941,6 +1126,19 @@ func (ui *UI) layoutHexOutputView(th *material.Theme, gtx layout.Context, st *fi
 	v.ensureMetrics(ui, th, gtx)
 	v.computeLayout(size)
 	ui.handleHexViewerEvents(gtx, st)
+	if v.expireCancelGrace(gtx.Now) {
+		st.markUserBrowsing(gtx.Now)
+	}
+	if v.runAutoScroll(gtx.Now) {
+		st.markUserBrowsing(gtx.Now)
+		ui.startHexViewerLoad(st, false)
+	}
+	if v.autoScrollActive && !v.autoScrollAt.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: v.autoScrollAt})
+	}
+	if v.cancelPending && !v.cancelUntil.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: v.cancelUntil})
+	}
 	ui.startHexViewerLoad(st, false)
 
 	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
@@ -1158,6 +1356,7 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				ui.startHexViewerLoad(st, false)
 			}
 		case pointer.Press:
+			v.pointerOutside = false
 			if pe.Buttons.Contain(pointer.ButtonSecondary) {
 				st.menuOpen = true
 				st.menuPos = pos
@@ -1180,6 +1379,10 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 					v.selectID = pe.PointerID
 					v.dragAnchor = byteOff
 					v.setSelectionRange(byteOff, 1)
+					v.selectPos = pos
+					v.clearCancelGrace()
+					v.pointerOutside = false
+					v.stopAutoScroll()
 					gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
 				} else if viewerPointInRect(pos, v.hexRect) || viewerPointInRect(pos, v.textRect) {
 					// Keep nearest-byte behavior for awkward edge presses.
@@ -1191,6 +1394,10 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 					}
 					v.dragAnchor = last
 					v.setSelectionRange(last, 1)
+					v.selectPos = pos
+					v.clearCancelGrace()
+					v.pointerOutside = false
+					v.stopAutoScroll()
 					gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
 				} else {
 					v.clearSelection()
@@ -1206,9 +1413,11 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				st.markUserBrowsing(gtx.Now)
 			}
 			if v.selecting && pe.PointerID == v.selectID {
-				if byteOff, ok := hexByteAtPoint(v, pos); ok {
+				v.selectPos = pos
+				if byteOff, ok := hexSelectionByteAtPoint(v, pos); ok {
 					v.setSelectionFromAnchor(v.dragAnchor, byteOff)
 				}
+				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)
 			}
 			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
@@ -1217,20 +1426,43 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				v.dragging = false
 			}
 			if v.selecting && pe.PointerID == v.selectID {
-				v.selecting = false
+				if v.cancelPending {
+					v.beginCancelGrace(gtx.Now)
+				} else {
+					v.selecting = false
+					v.clearCancelGrace()
+					v.stopAutoScroll()
+				}
 			}
 			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
 		case pointer.Cancel:
+			v.pointerOutside = true
 			if v.dragging && pe.PointerID == v.dragID {
 				v.dragging = false
 			}
 			if v.selecting && pe.PointerID == v.selectID {
-				v.selecting = false
+				v.beginCancelGrace(gtx.Now)
+			} else {
+				v.clearCancelGrace()
 			}
 			v.hoverTrack = false
 		case pointer.Move, pointer.Enter:
+			if pe.Kind == pointer.Enter {
+				v.pointerOutside = false
+			}
+			if v.selecting {
+				v.selectPos = pos
+				v.updateAutoScroll(pos, gtx.Now)
+				st.markUserBrowsing(gtx.Now)
+			}
 			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
 		case pointer.Leave:
+			v.pointerOutside = true
+			if v.selecting {
+				v.selectPos = pos
+				v.updateAutoScroll(pos, gtx.Now)
+				st.markUserBrowsing(gtx.Now)
+			}
 			v.hoverTrack = false
 		}
 	}

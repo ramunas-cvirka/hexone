@@ -1,15 +1,15 @@
 window:
-    x: 604
-    "y": 289
+    x: 678
+    "y": 347
     has_position: true
-    width: 1760
+    width: 1479
     height: 859
     px_per_dp: 1
     mode: windowed
 active_tab: tab0
 active_pane: 0
 panes:
-    - dir: C:\Go\pkg\windows_386
-      selected_path: C:\Go\pkg\windows_386\sync.a
+    - dir: C:\
+      selected_path: C:\AMD
     - dir: D:\AsmSource
       selected_path: D:\AsmSource\testas

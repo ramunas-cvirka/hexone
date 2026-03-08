@@ -20,6 +20,11 @@ import (
 	"gioui.org/widget/material"
 )
 
+type viewerHeaderDetailPart struct {
+	Text  string
+	Color color.NRGBA
+}
+
 func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	st := ui.fileViewer
 	if st == nil {
@@ -61,7 +66,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		ui.setFileViewerMode("command", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	if st.autoRefreshClick.Clicked(gtx) {
+	if ui.viewerShowsAutoRefreshButton(st) && st.autoRefreshClick.Clicked(gtx) {
 		ui.toggleFileViewerAutoRefresh(gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
@@ -180,6 +185,9 @@ func (ui *UI) handleFileViewerRootPointerEvents(gtx layout.Context, st *fileView
 		pe, ok := ev.(pointer.Event)
 		if !ok || pe.Kind != pointer.Press {
 			continue
+		}
+		if pe.Buttons.Contain(pointer.ButtonSecondary) {
+			st.menuPos = pe.Position.Round()
 		}
 		if st.commandAreaPress != nil {
 			if _, ok := st.commandAreaPress[pe.PointerID]; ok {
@@ -565,6 +573,14 @@ func (ui *UI) fileViewerHeaderTitle(st *fileViewerState) string {
 	return "viewer"
 }
 
+func isViewerHeaderSizeStatus(status string) bool {
+	status = strings.ToLower(strings.TrimSpace(status))
+	if status == "" || !strings.HasSuffix(status, " bytes") {
+		return false
+	}
+	return strings.HasPrefix(status, "file: ") || strings.HasPrefix(status, "remote file: ")
+}
+
 func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRGBA) {
 	if st == nil {
 		return "", hintColor
@@ -592,8 +608,10 @@ func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRG
 		statusText = "streaming, truncated"
 		statusColor = color.NRGBA{R: 252, G: 224, B: 186, A: 255}
 	default:
-		statusText = st.status
-		statusColor = color.NRGBA{R: 220, G: 228, B: 244, A: 255}
+		if !isViewerHeaderSizeStatus(st.status) {
+			statusText = st.status
+			statusColor = color.NRGBA{R: 220, G: 228, B: 244, A: 255}
+		}
 	}
 	if st.mode == "command" && st.commandInfinite {
 		if statusText == "" {
@@ -601,19 +619,41 @@ func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRG
 			statusColor = color.NRGBA{R: 220, G: 232, B: 255, A: 255}
 		}
 	}
-	if !st.updatedAt.IsZero() {
-		pulledText := "pulled at " + st.updatedAt.Format("15:04:05")
-		if statusText == "" {
-			return pulledText, color.NRGBA{R: 194, G: 208, B: 232, A: 255}
-		}
-		return statusText + " | " + pulledText, statusColor
-	}
 	return statusText, statusColor
+}
+
+func (ui *UI) fileViewerHeaderDetails(st *fileViewerState) []viewerHeaderDetailPart {
+	if st == nil {
+		return nil
+	}
+	statusText, statusColor := ui.fileViewerHeaderStatusText(st)
+	parts := make([]viewerHeaderDetailPart, 0, 2)
+	if statusText != "" {
+		parts = append(parts, viewerHeaderDetailPart{
+			Text:  statusText,
+			Color: statusColor,
+		})
+	}
+	if !st.updatedAt.IsZero() {
+		parts = append(parts, viewerHeaderDetailPart{
+			Text:  "updated at " + st.updatedAt.Format("15:04:05"),
+			Color: color.NRGBA{R: 194, G: 208, B: 232, A: 255},
+		})
+	}
+	return parts
+}
+
+func measureWidgetUnconstrained(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	gtx2 := gtx
+	var measureOps op.Ops
+	gtx2.Ops = &measureOps
+	gtx2.Constraints = layout.Constraints{Min: image.Point{}, Max: image.Point{X: 1 << 30, Y: 1 << 30}}
+	return w(gtx2)
 }
 
 func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
 	title := ui.fileViewerHeaderTitle(st)
-	detail, detailColor := ui.fileViewerHeaderStatusText(st)
+	details := ui.fileViewerHeaderDetails(st)
 	titleLbl := material.Body2(th, title)
 	titleLbl.Font.Typeface = ui.mainTypeface()
 	titleLbl.Font.Weight = font.Medium
@@ -623,15 +663,66 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 	if maxTitleW := gtx.Dp(unit.Dp(220)); titleW > maxTitleW {
 		titleW = maxTitleW
 	}
-	detailW := 0
-	if detail != "" {
-		detailLbl := material.Body2(th, detail)
-		detailLbl.Font.Typeface = ui.mainTypeface()
-		detailLbl.TextSize = ui.viewerTextSize()
-		detailW = measureLabelUnconstrained(gtx, detailLbl).Size.X
-		detailW += gtx.Dp(unit.Dp(2))
-		if maxDetailW := gtx.Dp(unit.Dp(240)); detailW > maxDetailW {
-			detailW = maxDetailW
+	buttonW := measureWidgetUnconstrained(gtx, func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFileViewerInfoButtons(th, gtx, st, stripH)
+	}).Size.X
+	spaceW := gtx.Dp(unit.Dp(7))
+	dividerW := gtx.Dp(unit.Dp(1))
+	if dividerW < 1 {
+		dividerW = 1
+	}
+	detailAvail := gtx.Constraints.Max.X - titleW - buttonW - spaceW
+	if len(details) > 0 {
+		detailAvail -= spaceW + dividerW + spaceW
+	}
+	if detailAvail < 0 {
+		detailAvail = 0
+	}
+	statusW := 0
+	pulledW := 0
+	if len(details) == 1 {
+		lbl := material.Body2(th, details[0].Text)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.TextSize = ui.viewerTextSize()
+		statusW = measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(2))
+		if statusW > detailAvail {
+			statusW = detailAvail
+		}
+	} else if len(details) >= 2 {
+		statusLbl := material.Body2(th, details[0].Text)
+		statusLbl.Font.Typeface = ui.mainTypeface()
+		statusLbl.TextSize = ui.viewerTextSize()
+		statusPreferred := measureLabelUnconstrained(gtx, statusLbl).Size.X + gtx.Dp(unit.Dp(2))
+
+		pulledLbl := material.Body2(th, details[1].Text)
+		pulledLbl.Font.Typeface = ui.mainTypeface()
+		pulledLbl.TextSize = ui.viewerTextSize()
+		pulledPreferred := measureLabelUnconstrained(gtx, pulledLbl).Size.X + gtx.Dp(unit.Dp(2))
+
+		innerAvail := detailAvail - (spaceW + dividerW + spaceW)
+		if innerAvail < 0 {
+			innerAvail = 0
+		}
+		pulledW = pulledPreferred
+		if pulledW > innerAvail {
+			pulledW = innerAvail
+		}
+		statusW = innerAvail - pulledW
+		if statusW > statusPreferred {
+			statusW = statusPreferred
+		}
+		if statusW < 0 {
+			statusW = 0
+		}
+		remaining := innerAvail - statusW
+		if remaining < 0 {
+			remaining = 0
+		}
+		if pulledW > remaining {
+			pulledW = remaining
+		}
+		if pulledW < 0 {
+			pulledW = 0
 		}
 	}
 	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
@@ -655,7 +746,7 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if detail == "" {
+				if len(details) == 0 {
 					return layout.Dimensions{}
 				}
 				return layout.Inset{Left: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -665,21 +756,57 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(7)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return fixedWidth(gtx, detailW, func(gtx layout.Context) layout.Dimensions {
-								return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-									return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-											lbl := material.Body2(th, detail)
-											lbl.Font.Typeface = ui.mainTypeface()
-											lbl.TextSize = ui.viewerTextSize()
-											lbl.Color = detailColor
-											lbl.MaxLines = 1
-											lbl.Truncator = "..."
-											return lbl.Layout(gtx)
+							children := make([]layout.FlexChild, 0, 3)
+							if len(details) > 0 {
+								children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									w := statusW
+									if len(details) == 1 {
+										w = statusW
+									}
+									return fixedWidth(gtx, w, func(gtx layout.Context) layout.Dimensions {
+										return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+											return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+												return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Body2(th, details[0].Text)
+													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.TextSize = ui.viewerTextSize()
+													lbl.Color = details[0].Color
+													lbl.MaxLines = 1
+													lbl.Truncator = "..."
+													return lbl.Layout(gtx)
+												})
+											})
 										})
 									})
-								})
-							})
+								}))
+							}
+							if len(details) >= 2 {
+								children = append(children,
+									layout.Rigid(layout.Spacer{Width: unit.Dp(7)}.Layout),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return ui.layoutFileViewerInfoDivider(gtx, stripH)
+									}),
+									layout.Rigid(layout.Spacer{Width: unit.Dp(7)}.Layout),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return fixedWidth(gtx, pulledW, func(gtx layout.Context) layout.Dimensions {
+											return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+												return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+													return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+														lbl := material.Body2(th, details[1].Text)
+														lbl.Font.Typeface = ui.mainTypeface()
+														lbl.TextSize = ui.viewerTextSize()
+														lbl.Color = details[1].Color
+														lbl.MaxLines = 1
+														lbl.Truncator = "..."
+														return lbl.Layout(gtx)
+													})
+												})
+											})
+										})
+									}),
+								)
+							}
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 						}),
 					)
 				})
@@ -709,10 +836,14 @@ func (ui *UI) layoutFileViewerInfoDivider(gtx layout.Context, stripH int) layout
 	})
 }
 
+func (ui *UI) viewerShowsAutoRefreshButton(st *fileViewerState) bool {
+	return st != nil && st.mode == "command" && !st.commandInfinite
+}
+
 func (ui *UI) layoutFileViewerInfoButtons(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
 	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
 		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			if st.mode != "command" {
+			if !ui.viewerShowsAutoRefreshButton(st) {
 				return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
 			}
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,

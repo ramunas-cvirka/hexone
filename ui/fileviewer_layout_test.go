@@ -84,6 +84,30 @@ func TestFileViewerRootPressClosesPopupBeforeCancelingEdit(t *testing.T) {
 	}
 }
 
+func TestFileViewerRootSecondaryPressUpdatesMenuAnchor(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{
+		menuOpen: true,
+		menuPos:  image.Pt(12, 18),
+	}
+	ui.fileViewer = st
+
+	gtx, router := testPointerContext()
+	primePointerFilter(router, &st.rootPointerTag)
+	registerPointerTag(router, gtx.Ops, &st.rootPointerTag)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonSecondary,
+		Position: f32.Pt(50, 70),
+	})
+
+	ui.handleFileViewerRootPointerEvents(gtx, st)
+
+	if got := st.menuPos; got != image.Pt(50, 70) {
+		t.Fatalf("menuPos=%v want %v", got, image.Pt(50, 70))
+	}
+}
+
 func TestFileViewerTabAnimationFollowsHistoryToggle(t *testing.T) {
 	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
 	st := &fileViewerState{mode: "hex"}
@@ -113,6 +137,55 @@ func TestFileViewerTabAnimationFollowsHistoryToggle(t *testing.T) {
 	}
 	if fillHistory <= 0 || fillHistory >= 1 {
 		t.Fatalf("history fill=%v want between 0 and 1", fillHistory)
+	}
+}
+
+func TestFileViewerHeaderDetailsDropPlainFileSizeStatus(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{
+		status:    "file: 74748 bytes",
+		updatedAt: time.Date(2026, time.March, 8, 11, 4, 22, 0, time.UTC),
+	}
+
+	parts := ui.fileViewerHeaderDetails(st)
+	if len(parts) != 1 {
+		t.Fatalf("detail parts=%d want 1", len(parts))
+	}
+	if got := parts[0].Text; got != "updated at 11:04:22" {
+		t.Fatalf("detail text=%q want %q", got, "updated at 11:04:22")
+	}
+}
+
+func TestFileViewerHeaderDetailsKeepStreamingStatus(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{
+		status:    "streaming",
+		updatedAt: time.Date(2026, time.March, 8, 11, 4, 22, 0, time.UTC),
+	}
+
+	parts := ui.fileViewerHeaderDetails(st)
+	if len(parts) != 2 {
+		t.Fatalf("detail parts=%d want 2", len(parts))
+	}
+	if got := parts[0].Text; got != "streaming" {
+		t.Fatalf("status part=%q want %q", got, "streaming")
+	}
+	if got := parts[1].Text; got != "updated at 11:04:22" {
+		t.Fatalf("updated part=%q want %q", got, "updated at 11:04:22")
+	}
+}
+
+func TestViewerShowsAutoRefreshButtonOnlyForNonStreamingCommand(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+
+	if ui.viewerShowsAutoRefreshButton(&fileViewerState{mode: "file"}) {
+		t.Fatal("file mode should not show refresh button")
+	}
+	if !ui.viewerShowsAutoRefreshButton(&fileViewerState{mode: "command"}) {
+		t.Fatal("non-streaming command mode should show refresh button")
+	}
+	if ui.viewerShowsAutoRefreshButton(&fileViewerState{mode: "command", commandInfinite: true}) {
+		t.Fatal("streaming command mode should not show refresh button")
 	}
 }
 

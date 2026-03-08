@@ -46,33 +46,29 @@ type fileKeyMap struct {
 }
 
 func newFileKeyMap(cfg *fm.Config) fileKeyMap {
-	if cfg == nil {
-		cfg = fm.DefaultConfig()
-	}
-
-	source := cfg.KeyBindings
+	_ = cfg
 	specs := []struct {
 		action   fileAction
 		raw      string
 		fallback string
 	}{
-		{action: fileActionFocusNextPane, raw: source.FocusNextPane, fallback: "tab"},
-		{action: fileActionFocusPrevPane, raw: source.FocusPrevPane, fallback: "shift+tab"},
-		{action: fileActionMoveUp, raw: source.MoveUp, fallback: "up"},
-		{action: fileActionMoveDown, raw: source.MoveDown, fallback: "down"},
-		{action: fileActionMoveLeft, raw: source.MoveLeft, fallback: "left"},
-		{action: fileActionMoveRight, raw: source.MoveRight, fallback: "right"},
-		{action: fileActionPageUp, raw: source.PageUp, fallback: "pgup"},
-		{action: fileActionPageDown, raw: source.PageDown, fallback: "pgdown"},
-		{action: fileActionHome, raw: source.Home, fallback: "home"},
-		{action: fileActionEnd, raw: source.End, fallback: "end"},
-		{action: fileActionActivate, raw: source.Activate, fallback: "enter"},
+		{action: fileActionFocusNextPane, raw: "", fallback: "tab"},
+		{action: fileActionFocusPrevPane, raw: "", fallback: "shift+tab"},
+		{action: fileActionMoveUp, raw: "", fallback: "up"},
+		{action: fileActionMoveDown, raw: "", fallback: "down"},
+		{action: fileActionMoveLeft, raw: "", fallback: "left"},
+		{action: fileActionMoveRight, raw: "", fallback: "right"},
+		{action: fileActionPageUp, raw: "", fallback: "pgup"},
+		{action: fileActionPageDown, raw: "", fallback: "pgdown"},
+		{action: fileActionHome, raw: "", fallback: "home"},
+		{action: fileActionEnd, raw: "", fallback: "end"},
+		{action: fileActionActivate, raw: "", fallback: "enter"},
 		{action: fileActionMarkSelectNext, raw: "", fallback: "insert"},
-		{action: fileActionView, raw: source.View, fallback: "f3"},
-		{action: fileActionCopy, raw: source.Copy, fallback: "f5"},
-		{action: fileActionRenameMove, raw: source.RenameMove, fallback: "f6"},
-		{action: fileActionCreate, raw: source.Create, fallback: "f7"},
-		{action: fileActionDelete, raw: source.Delete, fallback: "f8"},
+		{action: fileActionView, raw: "", fallback: "f3"},
+		{action: fileActionCopy, raw: "", fallback: "f5"},
+		{action: fileActionRenameMove, raw: "", fallback: "f6"},
+		{action: fileActionCreate, raw: "", fallback: "f7"},
+		{action: fileActionDelete, raw: "", fallback: "f8"},
 	}
 
 	out := fileKeyMap{

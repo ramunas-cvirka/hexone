@@ -136,6 +136,12 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 		ev, ok := gtx.Event(
 			key.Filter{Name: key.NameEscape},
 			key.Filter{Name: key.NameF3},
+			key.Filter{Name: key.NameUpArrow},
+			key.Filter{Name: key.NameDownArrow},
+			key.Filter{Name: key.NamePageUp},
+			key.Filter{Name: key.NamePageDown},
+			key.Filter{Name: key.NameHome},
+			key.Filter{Name: key.NameEnd},
 			key.Filter{Name: "c", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "C", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "c", Required: key.ModShortcut, Optional: anyMods},
@@ -154,6 +160,37 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 		}
 		if ke.Name == key.NameF3 && ke.State == key.Release {
 			ui.clearFileViewHotkeyHold()
+			continue
+		}
+		if viewerScrollKeySupported(ke.Name) {
+			switch ke.State {
+			case key.Press:
+				st := ui.fileViewer
+				if st == nil || st.commandEditOn || st.historyOpen || ke.Modifiers != 0 {
+					continue
+				}
+				if viewerScrollRepeatableKey(ke.Name) {
+					if ui.held[string(ke.Name)] {
+						continue
+					}
+					ui.held[string(ke.Name)] = true
+				}
+				if !ui.performFileViewerKeyScroll(gtx.Now, ke.Name) {
+					if viewerScrollRepeatableKey(ke.Name) {
+						ui.stopFileViewerScrollRepeat(ke.Name)
+					}
+					continue
+				}
+				gtx.Execute(op.InvalidateCmd{})
+				if viewerScrollRepeatableKey(ke.Name) {
+					ui.startFileViewerScrollRepeat(ke.Name, gtx.Now)
+					gtx.Execute(op.InvalidateCmd{At: ui.rep.next})
+				}
+			case key.Release:
+				if viewerScrollRepeatableKey(ke.Name) {
+					ui.stopFileViewerScrollRepeat(ke.Name)
+				}
+			}
 			continue
 		}
 		if ke.State != key.Press {
@@ -196,6 +233,7 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
+	ui.pumpFileViewerScrollRepeat(gtx)
 }
 
 func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
@@ -332,7 +370,9 @@ func (ui *UI) closeFileViewer() {
 		}
 	}
 	ui.clearFileViewHotkeyHold()
+	ui.clearFileViewerScrollHold()
 	ui.fileViewer = nil
+	ui.functionBarViewerShown = false
 }
 
 func (ui *UI) clearFileViewHotkeyHold() {
@@ -340,6 +380,114 @@ func (ui *UI) clearFileViewHotkeyHold() {
 		return
 	}
 	ui.held[fileActionKey(fileActionView)] = false
+}
+
+func (ui *UI) clearFileViewerScrollHold() {
+	ui.stopFileViewerScrollRepeat(key.NameUpArrow)
+	ui.stopFileViewerScrollRepeat(key.NameDownArrow)
+	ui.stopFileViewerScrollRepeat(key.NamePageUp)
+	ui.stopFileViewerScrollRepeat(key.NamePageDown)
+}
+
+func viewerScrollKeySupported(name key.Name) bool {
+	switch name {
+	case key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown, key.NameHome, key.NameEnd:
+		return true
+	default:
+		return false
+	}
+}
+
+func viewerScrollRepeatableKey(name key.Name) bool {
+	switch name {
+	case key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown:
+		return true
+	default:
+		return false
+	}
+}
+
+func (ui *UI) performFileViewerKeyScroll(now time.Time, name key.Name) bool {
+	st := ui.fileViewer
+	if st == nil || st.commandEditOn || st.historyOpen {
+		return false
+	}
+	st.markUserBrowsing(now)
+	changed := false
+	switch name {
+	case key.NameUpArrow:
+		changed = viewerScrollByLines(st, -1)
+	case key.NameDownArrow:
+		changed = viewerScrollByLines(st, 1)
+	case key.NamePageUp:
+		changed = viewerScrollByPage(st, -1)
+	case key.NamePageDown:
+		changed = viewerScrollByPage(st, 1)
+	case key.NameHome:
+		changed = viewerScrollToStart(st)
+	case key.NameEnd:
+		changed = viewerScrollToEnd(st)
+	}
+	if changed && st.mode == "hex" && st.hex != nil {
+		ui.startHexViewerLoad(st, false)
+	}
+	return changed
+}
+
+func (ui *UI) startFileViewerScrollRepeat(name key.Name, now time.Time) {
+	ui.rep.active = true
+	ui.rep.pane = -1
+	ui.rep.name = string(name)
+	ui.rep.started = now
+	ui.rep.slow = repeatSlow
+	ui.rep.fast = repeatFast
+	ui.rep.accelAfter = repeatAccelAfter
+	ui.rep.period = ui.rep.slow
+	ui.rep.next = now.Add(repeatStartDelay)
+}
+
+func (ui *UI) stopFileViewerScrollRepeat(name key.Name) {
+	if ui == nil {
+		return
+	}
+	if ui.held != nil {
+		ui.held[string(name)] = false
+	}
+	if ui.rep.active && ui.rep.name == string(name) {
+		ui.rep.active = false
+		ui.rep.pane = -1
+	}
+}
+
+func (ui *UI) pumpFileViewerScrollRepeat(gtx layout.Context) {
+	if ui == nil || !ui.rep.active {
+		return
+	}
+	name := key.Name(ui.rep.name)
+	if !viewerScrollRepeatableKey(name) {
+		return
+	}
+	st := ui.fileViewer
+	if st == nil || st.commandEditOn || st.historyOpen {
+		ui.rep.active = false
+		ui.rep.pane = -1
+		return
+	}
+	if gtx.Now.Sub(ui.rep.started) >= ui.rep.accelAfter && ui.rep.period != ui.rep.fast {
+		ui.rep.period = ui.rep.fast
+		if ui.rep.next.Before(gtx.Now) {
+			ui.rep.next = gtx.Now.Add(ui.rep.period)
+		}
+	}
+	if !gtx.Now.Before(ui.rep.next) {
+		if !ui.performFileViewerKeyScroll(gtx.Now, name) {
+			ui.rep.active = false
+			ui.rep.pane = -1
+			return
+		}
+		ui.rep.next = gtx.Now.Add(ui.rep.period)
+	}
+	gtx.Execute(op.InvalidateCmd{At: ui.rep.next})
 }
 
 func (ui *UI) startFileViewerLoad(now time.Time) {
@@ -700,41 +848,130 @@ func viewerScrollToLine(st *fileViewerState, line int) {
 	st.contentEditor.SetCaret(pos, pos)
 }
 
-func viewerScrollByLines(st *fileViewerState, lines int) {
+func viewerScrollByLines(st *fileViewerState, lines int) bool {
 	if st == nil || lines == 0 {
-		return
+		return false
 	}
-	line, _ := st.contentEditor.CaretPos()
-	viewerScrollToLine(st, line+lines)
+	if st.mode == "hex" {
+		if st.hex == nil {
+			return false
+		}
+		before := st.hex.topLine
+		st.hex.topLine += int64(lines)
+		st.hex.clampTop()
+		return st.hex.topLine != before
+	}
+	before := st.stream.topLine
+	st.stream.scrollByLines(lines)
+	return st.stream.topLine != before
+}
+
+func viewerScrollByPage(st *fileViewerState, pages int) bool {
+	if st == nil || pages == 0 {
+		return false
+	}
+	lines := viewerPageScrollLines(st)
+	if lines < 1 {
+		lines = 1
+	}
+	return viewerScrollByLines(st, pages*lines)
+}
+
+func viewerPageScrollLines(st *fileViewerState) int {
+	if st == nil {
+		return 1
+	}
+	visible := 1
+	if st.mode == "hex" {
+		if st.hex != nil && st.hex.visibleLines > 0 {
+			visible = st.hex.visibleLines
+		}
+	} else if st.stream.visibleLines > 0 {
+		visible = st.stream.visibleLines
+	}
+	if visible <= 1 {
+		return 1
+	}
+	return visible - 1
+}
+
+func viewerScrollToStart(st *fileViewerState) bool {
+	if st == nil {
+		return false
+	}
+	if st.mode == "hex" {
+		if st.hex == nil {
+			return false
+		}
+		if st.hex.topLine == 0 {
+			return false
+		}
+		st.hex.topLine = 0
+		st.hex.clampTop()
+		return true
+	}
+	if st.stream.topLine == 0 {
+		return false
+	}
+	st.stream.topLine = 0
+	st.stream.clampTop()
+	return true
+}
+
+func viewerScrollToEnd(st *fileViewerState) bool {
+	if st == nil {
+		return false
+	}
+	if st.mode == "hex" {
+		if st.hex == nil {
+			return false
+		}
+		visible := st.hex.visibleLines
+		if visible < 1 {
+			visible = 1
+		}
+		maxTop := st.hex.totalLines() - int64(visible)
+		if maxTop < 0 {
+			maxTop = 0
+		}
+		if st.hex.topLine == maxTop {
+			return false
+		}
+		st.hex.topLine = maxTop
+		st.hex.clampTop()
+		return true
+	}
+	totalLines := len(st.stream.lines)
+	if totalLines < 1 {
+		totalLines = 1
+	}
+	visible := st.stream.visibleLines
+	if visible < 1 {
+		visible = 1
+	}
+	maxTop := totalLines - visible
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	if st.stream.topLine == maxTop {
+		return false
+	}
+	st.stream.topLine = maxTop
+	st.stream.clampTop()
+	return true
 }
 
 func viewerScrollByDelta(st *fileViewerState, delta float32) {
 	if st == nil || delta == 0 {
 		return
 	}
-	if delta > 1 {
-		delta = 1
-	} else if delta < -1 {
-		delta = -1
-	}
-	if (delta > 0 && st.scrollCarry < 0) || (delta < 0 && st.scrollCarry > 0) {
-		st.scrollCarry = 0
-	}
-	st.scrollCarry += delta
-
-	steps := 0
-	for st.scrollCarry >= 1 {
-		steps++
-		st.scrollCarry -= 1
-	}
-	for st.scrollCarry <= -1 {
-		steps--
-		st.scrollCarry += 1
-	}
-	if steps == 0 {
+	if st.mode == "hex" {
+		if st.hex != nil {
+			st.hex.scrollByDelta(delta)
+		}
 		return
 	}
-	viewerScrollByLines(st, steps)
+	st.stream.scrollByDelta(delta)
 }
 
 func viewerScrollFromScrollbarPos(st *fileViewerState, y int) {

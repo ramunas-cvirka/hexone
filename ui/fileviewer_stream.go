@@ -408,11 +408,16 @@ func (v *streamOutputView) autoScrollParams(pos image.Point) (int, int) {
 }
 
 func (v *streamOutputView) updateAutoScroll(pos image.Point, now time.Time) {
-	v.selectPos = pos
 	if !v.selectingText {
 		v.stopAutoScroll()
 		return
 	}
+	if v.pointerOutside && v.autoScrollActive {
+		// Pointer movement outside the app can report unstable coordinates.
+		// Preserve the last active edge/step until the pointer returns.
+		return
+	}
+	v.selectPos = pos
 	dir, step := v.autoScrollParams(pos)
 	if dir == 0 {
 		if v.autoScrollActive {
@@ -426,13 +431,14 @@ func (v *streamOutputView) updateAutoScroll(pos image.Point, now time.Time) {
 	v.autoScrollStopAt = time.Time{}
 	prevDir := v.autoScrollDir
 	prevStep := v.autoScrollStep
+	wasActive := v.autoScrollActive
 	v.autoScrollActive = true
 	v.autoScrollDir = dir
 	v.autoScrollStep = step
-	if prevDir != dir || prevStep != step {
+	if !wasActive || prevDir != dir || prevStep != step {
 		// React immediately when user changes drag side/distance.
 		v.autoScrollAt = now
-	} else if v.autoScrollAt.IsZero() || now.After(v.autoScrollAt) {
+	} else if v.autoScrollAt.IsZero() {
 		v.autoScrollAt = now.Add(streamAutoScrollTick)
 	}
 }
@@ -1433,12 +1439,24 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 			if pe.Kind == pointer.Enter {
 				v.pointerOutside = false
 			}
+			if v.selectingText {
+				v.selectPos = pos
+				v.selectDirty = true
+				v.updateAutoScroll(pos, gtx.Now)
+				st.markUserBrowsing(gtx.Now)
+			}
 			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
 			v.hoverThumb = viewerPointInRect(pos, v.thumbRect)
 			v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
 			v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
 		case pointer.Leave:
 			v.pointerOutside = true
+			if v.selectingText {
+				v.selectPos = pos
+				v.selectDirty = true
+				v.updateAutoScroll(pos, gtx.Now)
+				st.markUserBrowsing(gtx.Now)
+			}
 			v.hoverTrack = false
 			v.hoverThumb = false
 			v.hoverHTrack = false
