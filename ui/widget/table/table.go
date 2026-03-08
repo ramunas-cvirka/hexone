@@ -99,14 +99,20 @@ type Table struct {
 	OnClick       func(row int) // mouse click
 	OnDoubleClick func(row int) // mouse double-click
 	OnSelect      func(row int) // selection change
+	IsMarked      func(row int) bool
 
-	TextSize   unit.Sp
-	RowHeight  unit.Dp
-	RowPadY    unit.Dp
-	Bg         color.NRGBA
-	HoverBg    color.NRGBA
-	SelectedBg color.NRGBA
-	SelectedFg *color.NRGBA
+	TextSize    unit.Sp
+	RowHeight   unit.Dp
+	RowPadY     unit.Dp
+	Bg          color.NRGBA
+	HoverBg     color.NRGBA
+	HoverFg     *color.NRGBA
+	MarkedBg    color.NRGBA
+	MarkedFg    *color.NRGBA
+	SelectedBg  color.NRGBA
+	MarkedSelBg color.NRGBA
+	MarkedSelFg *color.NRGBA
+	SelectedFg  *color.NRGBA
 
 	BriefColumnWidth unit.Dp
 	BriefGap         unit.Dp
@@ -143,7 +149,9 @@ func New(cols []Column) *Table {
 		RowPadY:          unit.Dp(2),
 		Bg:               color.NRGBA{R: 32, G: 32, B: 32, A: 255},
 		HoverBg:          color.NRGBA{R: 45, G: 45, B: 45, A: 255},
+		MarkedBg:         color.NRGBA{R: 52, G: 64, B: 92, A: 255},
 		SelectedBg:       color.NRGBA{R: 60, G: 60, B: 80, A: 255},
+		MarkedSelBg:      color.NRGBA{R: 76, G: 92, B: 136, A: 255},
 		BriefColumnWidth: unit.Dp(220),
 		BriefGap:         unit.Dp(12),
 	}
@@ -900,6 +908,22 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 	})
 }
 
+func (t *Table) rowColors(row int, hovered, marked bool) (color.NRGBA, *color.NRGBA) {
+	if row == t.Selected {
+		if marked && t.MarkedSelBg.A != 0 {
+			return t.MarkedSelBg, t.MarkedSelFg
+		}
+		return t.SelectedBg, t.SelectedFg
+	}
+	if marked {
+		return t.MarkedBg, t.MarkedFg
+	}
+	if hovered {
+		return t.HoverBg, t.HoverFg
+	}
+	return color.NRGBA{}, nil
+}
+
 func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, rowHpx int) layout.Dimensions {
 	return t.List.Layout(gtx, n, func(gtx layout.Context, row int) layout.Dimensions {
 		if row < 0 || row >= len(t.rowClicks) {
@@ -929,12 +953,8 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 			}
 		}
 
-		bg := color.NRGBA{}
-		if row == t.Selected {
-			bg = t.SelectedBg
-		} else if click.Hovered() {
-			bg = t.HoverBg
-		}
+		marked := t.IsMarked != nil && t.IsMarked(row)
+		bg, fg := t.rowColors(row, click.Hovered(), marked)
 
 		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			if bg.A != 0 {
@@ -988,8 +1008,8 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 					if awareOK {
 						txt, st = aware.CellWithWidth(row, col, contentW)
 					}
-					if row == t.Selected && t.SelectedFg != nil {
-						st.Color = *t.SelectedFg
+					if fg != nil {
+						st.Color = *fg
 					}
 
 					align := text.Start
@@ -1199,12 +1219,8 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 		}
 	}
 
-	bg := color.NRGBA{}
-	if row == t.Selected {
-		bg = t.SelectedBg
-	} else if click.Hovered() {
-		bg = t.HoverBg
-	}
+	marked := t.IsMarked != nil && t.IsMarked(row)
+	bg, fg := t.rowColors(row, click.Hovered(), marked)
 
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		if bg.A != 0 {
@@ -1250,8 +1266,8 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 			if aware, ok := m.(WidthAwareModel); ok {
 				txt, st = aware.CellWithWidth(row, 0, contentW)
 			}
-			if row == t.Selected && t.SelectedFg != nil {
-				st.Color = *t.SelectedFg
+			if fg != nil {
+				st.Color = *fg
 			}
 
 			lbl := material.Label(th, t.TextSize, txt)

@@ -1109,6 +1109,8 @@ func convertCommandKey(k rune) (key.Name, bool) {
 		n = key.NameDeleteBackward
 	case C.NSDeleteFunctionKey:
 		n = key.NameDeleteForward
+	case C.NSInsertFunctionKey:
+		n = key.NameInsert
 	case '\t', 0x19:
 		n = key.NameTab
 	case C.NSPageUpFunctionKey:

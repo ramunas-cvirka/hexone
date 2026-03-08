@@ -14,7 +14,6 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/io/key"
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -687,85 +686,20 @@ func (ui *UI) layoutFileCreateKindTabs(th *material.Theme, gtx layout.Context, s
 	if animPos {
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					w := gtx.Constraints.Max.X
-					if w < 2 {
-						w = 2
-					}
-					innerR := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
-					if innerR < 1 {
-						innerR = 1
-					}
-					half := w / 2
-					if half < 1 {
-						half = 1
-					}
-					sliderX := int(float32(half) * pos)
-					if sliderX < 0 {
-						sliderX = 0
-					}
-					if sliderX > w-half {
-						sliderX = w - half
-					}
-					sliderRect := image.Rect(sliderX, 0, sliderX+half, stripH)
-					innerClip := clip.UniformRRect(image.Rect(0, 0, w, stripH), innerR).Push(gtx.Ops)
-					paint.FillShape(gtx.Ops, color.NRGBA{R: 54, G: 54, B: 54, A: 255}, clip.UniformRRect(sliderRect, innerR).Op(gtx.Ops))
-
-					dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return fixedWidth(gtx, half, func(gtx layout.Context) layout.Dimensions {
-								return st.kindFolderClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									active := clamp01(fillFolder*0.8 + (1-pos)*0.45)
-									fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, active)
-									fg = mixNRGBA(fg, color.NRGBA{R: 244, G: 244, B: 244, A: 255}, clamp01(hoverFolder*0.75+pulseFolder*0.25))
-									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										lbl := material.Body2(th, "Folder")
-										lbl.Font.Typeface = ui.mainTypeface()
-										lbl.Font.Weight = font.Medium
-										lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
-										lbl.Color = fg
-										lbl.MaxLines = 1
-										dims := lbl.Layout(gtx)
-										defer clip.Rect(image.Rectangle{Max: image.Pt(half, stripH)}).Push(gtx.Ops).Pop()
-										pointer.CursorPointer.Add(gtx.Ops)
-										return dims
-									})
-								})
-							})
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return fixedWidth(gtx, w-half, func(gtx layout.Context) layout.Dimensions {
-								return st.kindFileClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									active := clamp01(fillFile*0.8 + pos*0.45)
-									fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, active)
-									fg = mixNRGBA(fg, color.NRGBA{R: 244, G: 244, B: 244, A: 255}, clamp01(hoverFile*0.75+pulseFile*0.25))
-									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										lbl := material.Body2(th, "File")
-										lbl.Font.Typeface = ui.mainTypeface()
-										lbl.Font.Weight = font.Medium
-										lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
-										lbl.Color = fg
-										lbl.MaxLines = 1
-										dims := lbl.Layout(gtx)
-										defer clip.Rect(image.Rectangle{Max: image.Pt(w-half, stripH)}).Push(gtx.Ops).Pop()
-										pointer.CursorPointer.Add(gtx.Ops)
-										return dims
-									})
-								})
-							})
-						}),
-					)
-					innerClip.Pop()
-					return dims
-				})
-			})
+	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, ui.fmCfg, 10), []slidingTabSpec{
+		{
+			Label:      "Folder",
+			Click:      &st.kindFolderClick,
+			ActiveFill: fillFolder,
+			HoverFill:  hoverFolder,
+			PulseFill:  pulseFolder,
 		},
-	)
+		{
+			Label:      "File",
+			Click:      &st.kindFileClick,
+			ActiveFill: fillFile,
+			HoverFill:  hoverFile,
+			PulseFill:  pulseFile,
+		},
+	})
 }

@@ -136,6 +136,20 @@ type UI struct {
 	toolbarHoverAt              time.Time
 	toolbarPulseKey             string
 	toolbarPulseAt              time.Time
+	functionBarClicks           [10]widget.Clickable
+	functionBarHidden           bool
+	functionBarToolsOpen        bool
+	functionBarToolsButtonRect  image.Rectangle
+	functionBarToolsRect        image.Rectangle
+	functionBarToolClicks       []widget.Clickable
+	functionBarPopupGlobalTag   uiEventTag
+	functionBarPopupBodyTag     uiEventTag
+	functionBarSliderPrevIndex  int
+	functionBarSliderIndex      int
+	functionBarSliderPrevShown  bool
+	functionBarSliderShown      bool
+	functionBarSliderAnimAt     time.Time
+	requestedWindowClose        bool
 	filePanes                   []*filePaneState
 	fmCfg                       *fm.Config
 	configPath                  string
@@ -174,10 +188,12 @@ func NewUI(cfg *fm.Config) *UI {
 		cfg = fm.DefaultConfig()
 	}
 	ui := &UI{
-		fmCfg:      cfg,
-		configPath: resolveUIConfigPath(),
-		typeface:   font.Typeface(cfg.Font.Typeface),
-		textSize:   fontSizeFromConfig(cfg),
+		fmCfg:                      cfg,
+		configPath:                 resolveUIConfigPath(),
+		typeface:                   font.Typeface(cfg.Font.Typeface),
+		textSize:                   fontSizeFromConfig(cfg),
+		functionBarSliderPrevIndex: -1,
+		functionBarSliderIndex:     -1,
 	}
 	ui.Tabs.Value = "tab0"
 
@@ -326,6 +342,7 @@ func (ui *UI) setActiveTab(key string, now time.Time) {
 	if ui == nil || key == "" || ui.Tabs.Value == key {
 		return
 	}
+	ui.closeFunctionBarToolsMenu()
 	ui.toolbarPrevTab = ui.Tabs.Value
 	ui.toolbarAnimAt = now
 	ui.Tabs.Value = key
@@ -641,7 +658,10 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutTabs(th, gtx)
+					if ui == nil || ui.functionBarHidden {
+						return layout.Dimensions{}
+					}
+					return ui.layoutFunctionBar(th, gtx)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					switch ui.Tabs.Value {
@@ -662,6 +682,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 					}
 				}),
 			)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFunctionBarPopup(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsModal(th, gtx)
@@ -808,11 +831,15 @@ func (ui *UI) handleProtocolDropdownOutsideClick(gtx layout.Context) {
 }
 
 func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
-	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil || ui.Tabs.Value == "tab0" {
+	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil {
+		return
+	}
+	if ui.Tabs.Value == "tab0" && !ui.functionBarToolsOpen {
 		return
 	}
 	switched := false
 	closedProtoDropdown := false
+	closedTools := false
 	for {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
 		if !ok {
@@ -820,6 +847,14 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 		}
 		ke, ok := ev.(key.Event)
 		if !ok || ke.State != key.Press || ke.Name != key.NameEscape {
+			continue
+		}
+		if ui.functionBarToolsOpen {
+			ui.closeFunctionBarToolsMenu()
+			closedTools = true
+			continue
+		}
+		if ui.Tabs.Value == "tab0" {
 			continue
 		}
 		if ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
@@ -832,7 +867,7 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 		ui.resetKeys()
 		switched = true
 	}
-	if switched || closedProtoDropdown {
+	if switched || closedProtoDropdown || closedTools {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 }
@@ -841,8 +876,13 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 	anyMods := ^key.Modifiers(0)
 	for {
 		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameF1, Optional: anyMods},
+			key.Filter{Name: key.NameF2, Optional: anyMods},
 			key.Filter{Name: key.NameF3, Optional: anyMods},
 			key.Filter{Name: key.NameF4, Optional: anyMods},
+			key.Filter{Name: key.NameF9, Optional: anyMods},
+			key.Filter{Name: key.NameF10, Optional: anyMods},
+			key.Filter{Name: key.NameF11, Optional: anyMods},
 			key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
@@ -856,6 +896,20 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			continue
 		}
 		switch ke.Name {
+		case key.NameF1:
+			if ke.State != key.Press || ke.Modifiers != 0 {
+				continue
+			}
+			if ui.performFunctionBarAction(functionBarActionHelp, gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF2:
+			if ke.State != key.Press || ke.Modifiers != 0 {
+				continue
+			}
+			if ui.performFunctionBarAction(functionBarActionWIP, gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case key.NameF3:
 			if ke.State == key.Release {
 				ui.clearFileViewHotkeyHold()
@@ -868,23 +922,9 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ke.Modifiers != 0 {
 				continue
 			}
-			if ui == nil || ui.Tabs.Value != "tab0" {
-				continue
+			if ui.performFunctionBarAction(functionBarActionView, gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
 			}
-			if ui.settingsModal != nil || ui.sshModal != nil {
-				continue
-			}
-			if ui.fileViewer != nil {
-				ui.startFileViewerLoad(gtx.Now)
-				continue
-			}
-			if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil {
-				continue
-			}
-			if ui.pathEditActive() {
-				continue
-			}
-			ui.startFileViewer(ui.activeFilePane, gtx.Now)
 		case key.NameF4:
 			if ke.State != key.Press {
 				continue
@@ -892,22 +932,30 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ke.Modifiers != 0 {
 				continue
 			}
-			if ui == nil || ui.Tabs.Value != "tab0" {
+			if ui.performFunctionBarAction(functionBarActionOpen, gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF9:
+			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.settingsModal != nil || ui.sshModal != nil {
+			if ui.performFunctionBarAction(functionBarActionTools, gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF10:
+			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.fileViewer != nil {
+			if ui.performFunctionBarAction(functionBarActionExit, gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF11:
+			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil {
-				continue
+			if ui.toggleFunctionBarVisibility(gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
 			}
-			if ui.pathEditActive() {
-				continue
-			}
-			ui.startFileExternalOpenAction(ui.activeFilePane, gtx.Now)
 		case "F", "f":
 			if ke.State != key.Press {
 				continue

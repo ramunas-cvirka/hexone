@@ -161,6 +161,7 @@ type Config struct {
 	KeyBindings       KeyBindings          `yaml:"key_bindings"`
 	Sort              SortConfig           `yaml:"sort"`
 	Font              FontConfig           `yaml:"font"`
+	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
 	Viewer            ViewerConfig         `yaml:"viewer"`
 	SSH               SSHConfig            `yaml:"ssh"`
@@ -223,6 +224,18 @@ func DefaultConfig() *Config {
 			RegularPath: "assets/FiraCode-Regular.ttf",
 			MediumPath:  "assets/FiraCode-Medium.ttf",
 			BoldPath:    "assets/FiraCode-Bold.ttf",
+		},
+		Colors: ColorsConfig{
+			FilePaneBackground:  DefaultFilePaneBackgroundHex,
+			FilePaneText:        DefaultFilePaneTextHex,
+			Hover:               DefaultFilePaneHoverHex,
+			HoverText:           DefaultFilePaneHoverTextHex,
+			Selection:           DefaultFilePaneSelectionHex,
+			SelectionText:       DefaultFilePaneSelectionTextHex,
+			SelectedFiles:       DefaultFilePaneSelectedFilesHex,
+			SelectedFilesText:   DefaultFilePaneSelectedTextHex,
+			FocusedSelected:     DefaultFilePaneFocusedSelectedHex,
+			FocusedSelectedText: DefaultFilePaneFocusedSelectedTextHex,
 		},
 		Associations: nil,
 		Viewer: ViewerConfig{
@@ -394,6 +407,16 @@ func (c *Config) normalize() {
 	if c.Font.BoldPath == "" {
 		c.Font.BoldPath = "assets/FiraCode-Bold.ttf"
 	}
+	c.Colors.FilePaneBackground = NormalizeHexColor(c.Colors.FilePaneBackground, DefaultFilePaneBackgroundHex)
+	c.Colors.FilePaneText = NormalizeHexColor(c.Colors.FilePaneText, DefaultFilePaneTextHex)
+	c.Colors.Hover = NormalizeHexColor(c.Colors.Hover, DefaultFilePaneHoverHex)
+	c.Colors.HoverText = NormalizeHexColor(c.Colors.HoverText, DefaultFilePaneHoverTextHex)
+	c.Colors.Selection = NormalizeHexColor(c.Colors.Selection, DefaultFilePaneSelectionHex)
+	c.Colors.SelectionText = NormalizeHexColor(c.Colors.SelectionText, DefaultFilePaneSelectionTextHex)
+	c.Colors.SelectedFiles = NormalizeHexColor(c.Colors.SelectedFiles, DefaultFilePaneSelectedFilesHex)
+	c.Colors.SelectedFilesText = NormalizeHexColor(c.Colors.SelectedFilesText, DefaultFilePaneSelectedTextHex)
+	c.Colors.FocusedSelected = NormalizeHexColor(c.Colors.FocusedSelected, DefaultFilePaneFocusedSelectedHex)
+	c.Colors.FocusedSelectedText = NormalizeHexColor(c.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
 
 	switch c.Viewer.Mode {
 	case "file", "hex", "command":

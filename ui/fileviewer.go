@@ -48,11 +48,12 @@ type fileViewerEventTag struct {
 }
 
 type fileViewerState struct {
-	pane   int
-	path   string
-	name   string
-	mode   string
-	remote *paneSSHSession
+	pane    int
+	path    string
+	name    string
+	mode    string
+	tabPrev string
+	remote  *paneSSHSession
 
 	backdropClick    widget.Clickable
 	closeClick       widget.Clickable
@@ -78,6 +79,7 @@ type fileViewerState struct {
 	wordSelectRE    *regexp.Regexp
 	wordSelectExpr  string
 	updatedAt       time.Time
+	tabAnimAt       time.Time
 	stream          streamOutputView
 	hex             *hexViewerState
 	historyOpen     bool
@@ -116,6 +118,7 @@ type fileViewerState struct {
 	watchModTime   time.Time
 	resultCh       chan fileViewerResult
 	historyClicks  map[string]*widget.Clickable
+	tabAnim        segmentedAnimState
 }
 
 type fileViewerResult struct {
@@ -946,19 +949,108 @@ func normalizeViewerMode(mode string) string {
 	}
 }
 
+func viewerTabIndex(key string) int {
+	switch key {
+	case "hex":
+		return 1
+	case "command":
+		return 2
+	case "history":
+		return 3
+	default:
+		return 0
+	}
+}
+
+func (st *fileViewerState) activeTabKey() string {
+	if st == nil {
+		return "file"
+	}
+	if st.historyOpen {
+		return "history"
+	}
+	return normalizeViewerMode(st.mode)
+}
+
+func (st *fileViewerState) setHistoryOpen(open bool, now time.Time) {
+	if st == nil || st.historyOpen == open {
+		return
+	}
+	prev := st.activeTabKey()
+	st.historyOpen = open
+	if next := st.activeTabKey(); next != prev {
+		st.tabPrev = prev
+		st.tabAnimAt = now
+	}
+}
+
+func (st *fileViewerState) tabFill(now time.Time, key string) (float32, bool) {
+	if st == nil || key == "" {
+		return 0, false
+	}
+	current := st.activeTabKey()
+	if st.tabPrev == "" || st.tabAnimAt.IsZero() || st.tabPrev == current {
+		if key == current {
+			return 1, false
+		}
+		return 0, false
+	}
+	elapsed := now.Sub(st.tabAnimAt)
+	if elapsed >= toolbarAnimDur {
+		st.tabPrev = ""
+		st.tabAnimAt = time.Time{}
+		if key == current {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
+	if key == current {
+		return t, true
+	}
+	if key == st.tabPrev {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func (st *fileViewerState) tabPosition(now time.Time) (float32, bool) {
+	if st == nil {
+		return 0, false
+	}
+	current := float32(viewerTabIndex(st.activeTabKey()))
+	if st.tabPrev == "" || st.tabAnimAt.IsZero() || st.tabPrev == st.activeTabKey() {
+		return current, false
+	}
+	prev := float32(viewerTabIndex(st.tabPrev))
+	elapsed := now.Sub(st.tabAnimAt)
+	if elapsed >= toolbarAnimDur {
+		st.tabPrev = ""
+		st.tabAnimAt = time.Time{}
+		return current, false
+	}
+	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
+	return prev + (current-prev)*t, true
+}
+
 func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 	st := ui.fileViewer
 	if st == nil {
 		return
 	}
 	mode = normalizeViewerMode(mode)
-	if mode == st.mode {
+	if mode == st.mode && !st.historyOpen {
 		return
 	}
+	prevTab := st.activeTabKey()
 	st.mode = mode
 	st.commandEditOn = false
 	st.commandFocus = false
 	st.historyOpen = false
+	if nextTab := st.activeTabKey(); nextTab != prevTab {
+		st.tabPrev = prevTab
+		st.tabAnimAt = now
+	}
 	if st.mode == "command" {
 		st.command = ui.viewerCommandForTarget(st.path, st.remote, st.command)
 		if st.command == "" {
@@ -1001,12 +1093,12 @@ func (ui *UI) toggleFileViewerAutoRefresh(now time.Time) {
 	}
 }
 
-func (ui *UI) startViewerCommandEdit() {
+func (ui *UI) startViewerCommandEdit(now time.Time) {
 	st := ui.fileViewer
 	if st == nil || st.mode != "command" {
 		return
 	}
-	st.historyOpen = false
+	st.setHistoryOpen(false, now)
 	st.commandEditOn = true
 	st.commandFocus = true
 	st.commandEditor.SetText(st.command)
@@ -1035,10 +1127,16 @@ func (ui *UI) applyViewerCommandEdit(now time.Time) {
 		return
 	}
 	st.command = cmd
+	prevTab := st.activeTabKey()
 	st.mode = "command"
 	st.commandInfinite = viewerCommandLooksInfinite(st.command)
 	st.commandEditOn = false
 	st.commandFocus = false
+	st.setHistoryOpen(false, now)
+	if nextTab := st.activeTabKey(); nextTab != prevTab {
+		st.tabPrev = prevTab
+		st.tabAnimAt = now
+	}
 	if err := ui.rememberViewerCommand(st, cmd); err != nil {
 		st.err = err.Error()
 		return
@@ -1055,12 +1153,17 @@ func (ui *UI) applyViewerHistoryCommand(cmd string, now time.Time) {
 	if cmd == "" {
 		return
 	}
+	prevTab := st.activeTabKey()
 	st.mode = "command"
 	st.command = cmd
 	st.commandInfinite = viewerCommandLooksInfinite(cmd)
 	st.commandEditOn = false
 	st.commandFocus = false
-	st.historyOpen = false
+	st.setHistoryOpen(false, now)
+	if nextTab := st.activeTabKey(); nextTab != prevTab {
+		st.tabPrev = prevTab
+		st.tabAnimAt = now
+	}
 	st.commandEditor.SetText(cmd)
 	if err := ui.rememberViewerCommand(st, cmd); err != nil {
 		st.err = err.Error()

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"hexone/filesys"
 	"hexone/fm"
 	uitheme "hexone/ui/theme"
@@ -28,6 +29,7 @@ type fileMoveState struct {
 	pane int
 	row  int
 
+	sources []fileMoveSource
 	srcPath string
 	srcName string
 	srcInfo fileCopyPathInfo
@@ -54,6 +56,16 @@ type fileMoveState struct {
 	actionsAnim segmentedAnimState
 }
 
+type fileMoveSource struct {
+	Path string
+	Name string
+}
+
+type fileMovePlan struct {
+	srcPath string
+	dstPath string
+}
+
 func (ui *UI) startFileMoveDialog(idx int, now time.Time) {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return
@@ -63,15 +75,16 @@ func (ui *UI) startFileMoveDialog(idx int, now time.Time) {
 		return
 	}
 	row := pane.table.Selected
-	entry := pane.model.Entry(row)
-	if entry == nil || entry.Path == "" {
+	selected := pane.selectedEntriesForAction()
+	if len(selected) == 0 {
+		if entry := pane.selectedEntry(); entry != nil && entry.Kind == filesys.EntryParent {
+			pane.setNotice("cannot rename/move parent entry", now)
+			return
+		}
 		pane.setNotice("nothing selected to rename/move", now)
 		return
 	}
-	if entry.Kind == filesys.EntryParent {
-		pane.setNotice("cannot rename/move parent entry", now)
-		return
-	}
+	entry := selected[0]
 
 	ui.setActiveFilePane(idx)
 	pane.stopPathEdit()
@@ -107,10 +120,18 @@ func (ui *UI) startFileMoveDialog(idx int, now time.Time) {
 		pane.setNotice(err.Error(), now)
 		return
 	}
+	sources := make([]fileMoveSource, 0, len(selected))
+	for _, item := range selected {
+		sources = append(sources, fileMoveSource{
+			Path: item.Path,
+			Name: item.DisplayName,
+		})
+	}
 
 	st := &fileMoveState{
 		pane:     idx,
 		row:      row,
+		sources:  sources,
 		srcPath:  entry.Path,
 		srcName:  entry.DisplayName,
 		srcInfo:  srcInfo,
@@ -121,6 +142,16 @@ func (ui *UI) startFileMoveDialog(idx int, now time.Time) {
 	targetDefault, err := resolveFileOpTargetPath(st.endpoint, targetDir, st.endpoint.baseName(entry.Path))
 	if err != nil || strings.TrimSpace(targetDefault) == "" {
 		targetDefault = entry.Path
+	}
+	if len(sources) > 1 {
+		targetDefault = strings.TrimSpace(targetDir)
+		if targetDefault == "" {
+			if st.endpoint.isRemote() {
+				targetDefault = "/"
+			} else {
+				targetDefault = "."
+			}
+		}
 	}
 
 	st.dstEdit.SingleLine = true
@@ -143,6 +174,42 @@ func (ui *UI) clearFileMoveHotkeyHold() {
 	ui.held[fileActionKey(fileActionRenameMove)] = false
 }
 
+func (st *fileMoveState) multiSource() bool {
+	return st != nil && len(st.sources) > 1
+}
+
+func (st *fileMoveState) sourceCount() int {
+	if st == nil {
+		return 0
+	}
+	if len(st.sources) > 0 {
+		return len(st.sources)
+	}
+	if strings.TrimSpace(st.srcPath) != "" {
+		return 1
+	}
+	return 0
+}
+
+func (st *fileMoveState) sourceSummary() string {
+	count := st.sourceCount()
+	if count <= 1 {
+		return st.srcPath
+	}
+	return fmt.Sprintf("%d items selected", count)
+}
+
+func (st *fileMoveState) sourcePreviewLines() []string {
+	if st == nil || len(st.sources) == 0 {
+		return nil
+	}
+	labels := make([]string, 0, len(st.sources))
+	for _, src := range st.sources {
+		labels = append(labels, fileOpPreviewLabel(src.Name, src.Path))
+	}
+	return fileOpPreviewLines(labels)
+}
+
 func (st *fileMoveState) refreshPreview() {
 	if st == nil {
 		return
@@ -152,6 +219,15 @@ func (st *fileMoveState) refreshPreview() {
 	st.dstPath = ""
 	st.dstInfo = fileCopyPathInfo{}
 	if raw == "" {
+		return
+	}
+	if st.multiSource() {
+		dstDir, dstInfo, err := inspectExistingMoveDestinationDir(st.endpoint, raw)
+		if err != nil {
+			return
+		}
+		st.dstPath = dstDir
+		st.dstInfo = dstInfo
 		return
 	}
 
@@ -185,6 +261,46 @@ func (ui *UI) submitFileMoveDialog(now time.Time) {
 	raw := strings.TrimSpace(st.dstEdit.Text())
 	if raw == "" {
 		st.lastErr = "destination path is empty"
+		return
+	}
+	if st.multiSource() {
+		dstDir, dstInfo, plans, err := st.buildMovePlans(raw)
+		if err != nil {
+			st.lastErr = err.Error()
+			return
+		}
+		st.dstRaw = raw
+		st.dstPath = dstDir
+		st.dstInfo = dstInfo
+		st.lastErr = ""
+		st.running = true
+		st.doneCh = make(chan error, 1)
+
+		remote := st.remote
+		doneCh := st.doneCh
+		go func(plans []fileMovePlan) {
+			for _, plan := range plans {
+				if remote != nil {
+					client := remote.sftpClient()
+					if client == nil {
+						doneCh <- errors.New("sftp session is not connected")
+						return
+					}
+					if err := client.Rename(plan.srcPath, plan.dstPath); err != nil {
+						doneCh <- err
+						return
+					}
+					continue
+				}
+				if err := os.Rename(plan.srcPath, plan.dstPath); err != nil {
+					doneCh <- err
+					return
+				}
+			}
+			doneCh <- nil
+		}(plans)
+
+		_ = now
 		return
 	}
 	dst, err := st.effectiveDestinationPath(raw)
@@ -265,15 +381,40 @@ func (ui *UI) finishFileMove(now time.Time) {
 	if remoteMove {
 		remoteSetup = st.remote.setup
 	}
-	srcPath := filepath.Clean(st.srcPath)
-	dstPath := filepath.Clean(st.dstPath)
-	srcDir := filepath.Clean(filepath.Dir(srcPath))
-	dstDir := filepath.Clean(filepath.Dir(dstPath))
+	cleanPath := filepath.Clean
+	dirName := filepath.Dir
+	joinPath := filepath.Join
+	baseName := filepath.Base
 	if remoteMove {
-		srcPath = path.Clean(st.srcPath)
-		dstPath = path.Clean(st.dstPath)
-		srcDir = path.Clean(path.Dir(srcPath))
-		dstDir = path.Clean(path.Dir(dstPath))
+		cleanPath = path.Clean
+		dirName = path.Dir
+		joinPath = path.Join
+		baseName = path.Base
+	}
+
+	sources := st.sources
+	if len(sources) == 0 && strings.TrimSpace(st.srcPath) != "" {
+		sources = []fileMoveSource{{Path: st.srcPath, Name: st.srcName}}
+	}
+	sourcePaths := make(map[string]struct{}, len(sources))
+	destPaths := make(map[string]struct{}, len(sources))
+	sourceDirs := make(map[string]struct{}, len(sources))
+	destDirs := make(map[string]struct{}, 1)
+	primaryDestPath := ""
+	for i, src := range sources {
+		srcPath := cleanPath(src.Path)
+		sourcePaths[srcPath] = struct{}{}
+		sourceDirs[dirName(srcPath)] = struct{}{}
+
+		dstPath := cleanPath(st.dstPath)
+		if st.multiSource() {
+			dstPath = cleanPath(joinPath(st.dstPath, baseName(srcPath)))
+		}
+		destPaths[dstPath] = struct{}{}
+		destDirs[dirName(dstPath)] = struct{}{}
+		if i == 0 {
+			primaryDestPath = dstPath
+		}
 	}
 
 	if st.remote != nil {
@@ -299,16 +440,20 @@ func (ui *UI) finishFileMove(now time.Time) {
 				continue
 			}
 			curDir := path.Clean(pane.dir)
-			if curDir != srcDir && curDir != dstDir {
-				continue
+			if _, ok := sourceDirs[curDir]; !ok {
+				if _, ok := destDirs[curDir]; !ok {
+					continue
+				}
 			}
 		} else {
 			if pane.remoteConnected() {
 				continue
 			}
 			curDir := filepath.Clean(pane.dir)
-			if !samePath(curDir, srcDir) && !samePath(curDir, dstDir) {
-				continue
+			if _, ok := sourceDirs[curDir]; !ok {
+				if _, ok := destDirs[curDir]; !ok {
+					continue
+				}
 			}
 		}
 
@@ -323,12 +468,29 @@ func (ui *UI) finishFileMove(now time.Time) {
 			paneDir = path.Clean(pane.dir)
 		}
 		primaryPath := ""
-		if paneDir == dstDir {
-			primaryPath = dstPath
+		if _, ok := destDirs[paneDir]; ok {
+			primaryPath = primaryDestPath
 		}
 		secondaryPath := ""
-		if selectedPath != "" && !samePathFn(selectedPath, srcPath) {
-			secondaryPath = selectedPath
+		if selectedPath != "" {
+			skip := false
+			for moved := range sourcePaths {
+				if samePathFn(selectedPath, moved) {
+					skip = true
+					break
+				}
+			}
+			if !skip {
+				for moved := range destPaths {
+					if samePathFn(selectedPath, moved) {
+						skip = true
+						break
+					}
+				}
+			}
+			if !skip {
+				secondaryPath = selectedPath
+			}
 		}
 
 		row := selectedRow
@@ -337,6 +499,7 @@ func (ui *UI) finishFileMove(now time.Time) {
 		}
 		ui.requestPaneLoadWithSelection(i, pane.dir, primaryPath, secondaryPath, row)
 	}
+	_ = now
 }
 
 func (ui *UI) closeFileMoveDialog() {
@@ -511,7 +674,13 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 
 	meta := formatCopyPathInfo(st.srcInfo)
 	sameTarget := st.previewSameTarget()
-	if st.dstInfo.Exists && !sameTarget {
+	if st.multiSource() {
+		meta = st.sourceSummary()
+		if st.dstInfo.Exists {
+			meta = "dst: " + formatCopyPathInfo(st.dstInfo)
+		}
+	}
+	if st.dstInfo.Exists && !sameTarget && !st.multiSource() {
 		meta = "dst exists: " + formatCopyPathInfo(st.dstInfo)
 	}
 	metaLbl := material.Caption(th, meta)
@@ -525,7 +694,11 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					title := material.Body1(th, "Rename / Move")
+					titleText := "Rename / Move"
+					if st.multiSource() {
+						titleText = "Move"
+					}
+					title := material.Body1(th, titleText)
 					title.Font.Typeface = ui.mainTypeface()
 					title.Font.Weight = font.Bold
 					title.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
@@ -538,11 +711,32 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 			)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-		layout.Rigid(sourceHdr.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.multiSource() {
+				sourceHdr.Text = "Sources"
+			}
+			return sourceHdr.Layout(gtx)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
-		layout.Rigid(sourcePath.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.multiSource() {
+				sourcePath.Text = st.sourceSummary()
+			}
+			return sourcePath.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !st.multiSource() {
+				return layout.Dimensions{}
+			}
+			return ui.layoutFileOpPreviewList(th, gtx, st.sourcePreviewLines())
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(dstHdr.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.multiSource() {
+				dstHdr.Text = "Destination Directory"
+			}
+			return dstHdr.Layout(gtx)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.running {
@@ -577,7 +771,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.lastErr == "" {
 				actionLabel, runningLabel := st.actionLabels()
-				if !st.running && (!st.dstInfo.Exists || sameTarget) {
+				if !st.running && (!st.dstInfo.Exists || sameTarget || st.multiSource()) {
 					return layout.Dimensions{}
 				}
 				if st.running {
@@ -622,6 +816,13 @@ func (st *fileMoveState) resolvedDestinationPath() string {
 	if st == nil {
 		return ""
 	}
+	if st.multiSource() {
+		dst, _, err := inspectExistingMoveDestinationDir(st.endpoint, st.dstEdit.Text())
+		if err != nil {
+			return ""
+		}
+		return dst
+	}
 	dst, err := st.effectiveDestinationPath(st.dstEdit.Text())
 	if err != nil {
 		return ""
@@ -633,6 +834,9 @@ func (st *fileMoveState) previewSameTarget() bool {
 	if st == nil {
 		return false
 	}
+	if st.multiSource() {
+		return false
+	}
 	dst := st.resolvedDestinationPath()
 	if dst == "" {
 		return false
@@ -642,6 +846,9 @@ func (st *fileMoveState) previewSameTarget() bool {
 
 func (st *fileMoveState) actionLabels() (label string, running string) {
 	if st == nil {
+		return "Move", "Moving..."
+	}
+	if st.multiSource() {
 		return "Move", "Moving..."
 	}
 	dst := st.resolvedDestinationPath()
@@ -669,6 +876,58 @@ func (st *fileMoveState) effectiveDestinationPath(raw string) (string, error) {
 		dst = st.endpoint.join(dst, st.endpoint.baseName(st.srcPath))
 	}
 	return dst, nil
+}
+
+func (st *fileMoveState) buildMovePlans(raw string) (string, fileCopyPathInfo, []fileMovePlan, error) {
+	if st == nil {
+		return "", fileCopyPathInfo{}, nil, errors.New("move state is nil")
+	}
+	dstDir, dstInfo, err := inspectExistingMoveDestinationDir(st.endpoint, raw)
+	if err != nil {
+		return "", fileCopyPathInfo{}, nil, err
+	}
+	plans := make([]fileMovePlan, 0, len(st.sources))
+	for _, src := range st.sources {
+		srcPath, err := st.endpoint.normalizeSourcePath(src.Path)
+		if err != nil {
+			return "", fileCopyPathInfo{}, nil, err
+		}
+		dstPath := st.endpoint.join(dstDir, st.endpoint.baseName(srcPath))
+		if st.endpoint.samePath(srcPath, dstPath) {
+			return "", fileCopyPathInfo{}, nil, errors.New("source and destination are the same")
+		}
+		if existing, err := endpointLstat(st.endpoint, dstPath); err == nil && existing != nil {
+			label := st.endpoint.baseName(dstPath)
+			if strings.TrimSpace(label) == "" {
+				label = dstPath
+			}
+			return "", fileCopyPathInfo{}, nil, fmt.Errorf("destination already exists: %s", label)
+		}
+		plans = append(plans, fileMovePlan{
+			srcPath: srcPath,
+			dstPath: dstPath,
+		})
+	}
+	return dstDir, dstInfo, plans, nil
+}
+
+func inspectExistingMoveDestinationDir(ep copyEndpoint, raw string) (string, fileCopyPathInfo, error) {
+	dstDir, err := resolveFileOpTargetPath(ep, ep.dir, raw)
+	if err != nil {
+		return "", fileCopyPathInfo{}, err
+	}
+	info := fileCopyPathInfo{Path: dstDir}
+	dstStat, err := endpointStat(ep, dstDir)
+	if err != nil {
+		return "", fileCopyPathInfo{}, errors.New("destination directory does not exist")
+	}
+	if dstStat == nil || !dstStat.IsDir() {
+		return "", fileCopyPathInfo{}, errors.New("destination must be a directory")
+	}
+	info.Exists = true
+	info.IsDir = true
+	info.ModTime = dstStat.ModTime()
+	return dstDir, info, nil
 }
 
 func (ui *UI) fileMoveDefaultTargetDir(srcIdx int, srcEndpoint copyEndpoint) string {

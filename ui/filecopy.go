@@ -30,6 +30,7 @@ type fileCopyState struct {
 	srcPane int
 	dstPane int
 
+	sources []fileCopySource
 	srcPath string
 	dstPath string
 	dstRaw  string
@@ -55,6 +56,18 @@ type fileCopyState struct {
 	progressCh  chan filesys.CopyProgress
 	doneCh      chan error
 	actionsAnim segmentedAnimState
+}
+
+type fileCopySource struct {
+	Path string
+	Name string
+}
+
+type fileCopyPlan struct {
+	srcPath      string
+	dstPath      string
+	entriesTotal int
+	bytesTotal   int64
 }
 
 type fileCopyPathInfo struct {
@@ -141,13 +154,13 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	if pane == nil {
 		return
 	}
-	entry := pane.selectedEntry()
-	if entry == nil || entry.Path == "" {
+	selected := pane.selectedEntriesForAction()
+	if len(selected) == 0 {
+		if entry := pane.selectedEntry(); entry != nil && entry.Kind == filesys.EntryParent {
+			pane.setNotice("cannot copy parent entry", now)
+			return
+		}
 		pane.setNotice("nothing selected to copy", now)
-		return
-	}
-	if entry.Kind == filesys.EntryParent {
-		pane.setNotice("cannot copy parent entry", now)
 		return
 	}
 
@@ -179,13 +192,25 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 			dstDir = "."
 		}
 	}
-	dstDefault := dstEndpoint.join(dstDir, srcEndpoint.baseName(entry.Path))
+	sources := make([]fileCopySource, 0, len(selected))
+	for _, entry := range selected {
+		sources = append(sources, fileCopySource{
+			Path: entry.Path,
+			Name: entry.DisplayName,
+		})
+	}
+	first := sources[0]
+	dstDefault := dstEndpoint.join(dstDir, srcEndpoint.baseName(first.Path))
+	if len(sources) > 1 {
+		dstDefault = dstDir
+	}
 
 	st := &fileCopyState{
 		pane:        idx,
 		srcPane:     idx,
 		dstPane:     dstPaneIdx,
-		srcPath:     entry.Path,
+		sources:     sources,
+		srcPath:     first.Path,
 		dstPath:     dstDefault,
 		dstRaw:      dstDefault,
 		srcEndpoint: srcEndpoint,
@@ -211,6 +236,71 @@ func (ui *UI) clearFileCopyHotkeyHold() {
 	ui.held[fileActionKey(fileActionCopy)] = false
 }
 
+func (st *fileCopyState) multiSource() bool {
+	return st != nil && len(st.sources) > 1
+}
+
+func (st *fileCopyState) sourceCount() int {
+	if st == nil {
+		return 0
+	}
+	if len(st.sources) > 0 {
+		return len(st.sources)
+	}
+	if strings.TrimSpace(st.srcPath) != "" {
+		return 1
+	}
+	return 0
+}
+
+func (st *fileCopyState) sourceSummary() string {
+	count := st.sourceCount()
+	if count <= 1 {
+		return st.srcPath
+	}
+	return fmt.Sprintf("%d items selected", count)
+}
+
+func (st *fileCopyState) sourcePreviewLines() []string {
+	if st == nil || len(st.sources) == 0 {
+		return nil
+	}
+	labels := make([]string, 0, len(st.sources))
+	for _, src := range st.sources {
+		labels = append(labels, fileOpPreviewLabel(src.Name, src.Path))
+	}
+	return fileOpPreviewLines(labels)
+}
+
+func (st *fileCopyState) buildCopyPlans(dstRaw string) (string, fileCopyPathInfo, []fileCopyPlan, error) {
+	if st == nil {
+		return "", fileCopyPathInfo{}, nil, fmt.Errorf("copy state is nil")
+	}
+	dstDir, dstInfo, err := inspectCopyDestinationDir(st.dstEndpoint, dstRaw)
+	if err != nil {
+		return "", fileCopyPathInfo{}, nil, err
+	}
+	plans := make([]fileCopyPlan, 0, len(st.sources))
+	for _, src := range st.sources {
+		target := st.dstEndpoint.join(dstDir, st.srcEndpoint.baseName(src.Path))
+		dstPath, _, _, err := inspectCopyPaths(st.srcEndpoint, src.Path, st.dstEndpoint, target)
+		if err != nil {
+			return "", fileCopyPathInfo{}, nil, err
+		}
+		srcPath, entriesTotal, bytesTotal, err := collectCopyTransferTotals(st.srcEndpoint, src.Path)
+		if err != nil {
+			return "", fileCopyPathInfo{}, nil, err
+		}
+		plans = append(plans, fileCopyPlan{
+			srcPath:      srcPath,
+			dstPath:      dstPath,
+			entriesTotal: entriesTotal,
+			bytesTotal:   bytesTotal,
+		})
+	}
+	return dstDir, dstInfo, plans, nil
+}
+
 func (st *fileCopyState) refreshPreview() {
 	if st == nil {
 		return
@@ -220,6 +310,18 @@ func (st *fileCopyState) refreshPreview() {
 	if raw == "" {
 		st.dstPath = ""
 		st.dstInfo = fileCopyPathInfo{}
+		return
+	}
+	if st.multiSource() {
+		effectiveDst, dstInfo, err := inspectCopyDestinationDir(st.dstEndpoint, raw)
+		if err != nil {
+			st.dstPath = raw
+			st.dstInfo = fileCopyPathInfo{}
+			return
+		}
+		st.dstPath = effectiveDst
+		st.dstInfo = dstInfo
+		st.srcInfo = fileCopyPathInfo{}
 		return
 	}
 
@@ -246,6 +348,71 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 	}
 
 	st.dstRaw = dst
+	if st.multiSource() {
+		effectiveDst, dstInfo, plans, err := st.buildCopyPlans(dst)
+		if err != nil {
+			st.lastErr = err.Error()
+			return
+		}
+		totalEntries := 0
+		var totalBytes int64
+		for _, plan := range plans {
+			totalEntries += plan.entriesTotal
+			totalBytes += plan.bytesTotal
+		}
+		st.dstInfo = dstInfo
+		st.dstPath = effectiveDst
+		st.srcInfo = fileCopyPathInfo{}
+		st.lastErr = ""
+		st.progress = filesys.CopyProgress{
+			EntriesTotal: totalEntries,
+			BytesTotal:   totalBytes,
+		}
+		st.running = true
+
+		progressCh := make(chan filesys.CopyProgress, 32)
+		doneCh := make(chan error, 1)
+		st.progressCh = progressCh
+		st.doneCh = doneCh
+
+		go func(plans []fileCopyPlan, totalEntries int, totalBytes int64) {
+			sendProgress := func(p filesys.CopyProgress) {
+				for {
+					select {
+					case progressCh <- p:
+						return
+					default:
+					}
+					select {
+					case <-progressCh:
+					default:
+					}
+				}
+			}
+
+			doneEntries := 0
+			var doneBytes int64
+			for _, plan := range plans {
+				err := runCopyBetweenEndpoints(st.srcEndpoint, plan.srcPath, st.dstEndpoint, plan.dstPath, func(progress filesys.CopyProgress) {
+					progress.EntriesDone += doneEntries
+					progress.BytesDone += doneBytes
+					progress.EntriesTotal = totalEntries
+					progress.BytesTotal = totalBytes
+					sendProgress(progress)
+				})
+				if err != nil {
+					doneCh <- err
+					return
+				}
+				doneEntries += plan.entriesTotal
+				doneBytes += plan.bytesTotal
+			}
+			doneCh <- nil
+		}(plans, totalEntries, totalBytes)
+
+		_ = now
+		return
+	}
 	effectiveDst, srcInfo, dstInfo, err := inspectCopyPaths(st.srcEndpoint, st.srcPath, st.dstEndpoint, dst)
 	if err != nil {
 		st.lastErr = err.Error()
@@ -507,7 +674,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 	current := copyProgressCurrent(progress)
 	progressFrac := copyProgressFraction(progress)
 	overwriteLabel := ""
-	if !st.running && st.dstInfo.Exists {
+	if !st.running && st.dstInfo.Exists && !st.multiSource() {
 		overwriteLabel = "Destination exists. Overwrite will replace it."
 	}
 
@@ -528,11 +695,32 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-		layout.Rigid(srcHdr.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.multiSource() {
+				srcHdr.Text = "Sources"
+			}
+			return srcHdr.Layout(gtx)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
-		layout.Rigid(srcText.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.multiSource() {
+				srcText.Text = st.sourceSummary()
+			}
+			return srcText.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if !st.multiSource() {
+				return layout.Dimensions{}
+			}
+			return ui.layoutFileOpPreviewList(th, gtx, st.sourcePreviewLines())
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(dstHdr.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.multiSource() {
+				dstHdr.Text = "Destination Directory"
+			}
+			return dstHdr.Layout(gtx)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.running {
@@ -563,7 +751,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.running || !st.dstInfo.Exists {
+			if st.running || !st.dstInfo.Exists || st.multiSource() {
 				return layout.Dimensions{}
 			}
 			return ui.layoutFileCopyOverwriteInfo(th, gtx, st)
@@ -602,7 +790,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 				label := "Copy"
 				if st.running {
 					label = "Copying..."
-				} else if st.dstInfo.Exists {
+				} else if st.dstInfo.Exists && !st.multiSource() {
 					label = "Overwrite"
 				}
 				return ui.layoutDialogActionPair(
@@ -906,6 +1094,42 @@ func formatCopyPathInfo(info fileCopyPathInfo) string {
 		ts = info.ModTime.Format("2006-01-02 15:04:05")
 	}
 	return formatCopySize(info.Size) + ", " + ts
+}
+
+func inspectCopyDestinationDir(dstEp copyEndpoint, dstRaw string) (string, fileCopyPathInfo, error) {
+	dstNorm, err := dstEp.normalizePath(dstRaw)
+	if err != nil {
+		return "", fileCopyPathInfo{}, err
+	}
+	info := fileCopyPathInfo{Path: dstNorm}
+	if dstStat, err := endpointStat(dstEp, dstNorm); err == nil && dstStat != nil {
+		info.Exists = true
+		info.IsDir = dstStat.IsDir()
+		info.ModTime = dstStat.ModTime()
+		if dstStat.Mode().IsRegular() {
+			info.Size = dstStat.Size()
+		}
+		if !dstStat.IsDir() {
+			return "", info, fmt.Errorf("destination must be a directory when copying multiple items")
+		}
+	}
+	return dstNorm, info, nil
+}
+
+func collectCopyTransferTotals(srcEp copyEndpoint, srcPath string) (string, int, int64, error) {
+	srcNorm, err := srcEp.normalizeSourcePath(srcPath)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	srcInfo, err := endpointLstat(srcEp, srcNorm)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	entries, bytesTotal, err := collectTransferEntries(srcEp, srcNorm, srcInfo)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return srcNorm, len(entries), bytesTotal, nil
 }
 
 func samePath(a, b string) bool {

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"hexone/filesys"
 	uitheme "hexone/ui/theme"
 	"image"
@@ -27,6 +28,7 @@ type fileDeleteState struct {
 	pane int
 	row  int
 
+	targets    []fileDeleteTarget
 	targetPath string
 	targetName string
 	targetInfo fileCopyPathInfo
@@ -44,6 +46,11 @@ type fileDeleteState struct {
 	actionsAnim segmentedAnimState
 }
 
+type fileDeleteTarget struct {
+	Path string
+	Name string
+}
+
 func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return
@@ -53,15 +60,16 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 		return
 	}
 	row := pane.table.Selected
-	entry := pane.model.Entry(row)
-	if entry == nil || entry.Path == "" {
+	selected := pane.selectedEntriesForAction()
+	if len(selected) == 0 {
+		if entry := pane.selectedEntry(); entry != nil && entry.Kind == filesys.EntryParent {
+			pane.setNotice("cannot delete parent entry", now)
+			return
+		}
 		pane.setNotice("nothing selected to delete", now)
 		return
 	}
-	if entry.Kind == filesys.EntryParent {
-		pane.setNotice("cannot delete parent entry", now)
-		return
-	}
+	entry := selected[0]
 
 	ui.setActiveFilePane(idx)
 	pane.stopPathEdit()
@@ -97,10 +105,18 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 		pane.setNotice(err.Error(), now)
 		return
 	}
+	targets := make([]fileDeleteTarget, 0, len(selected))
+	for _, item := range selected {
+		targets = append(targets, fileDeleteTarget{
+			Path: item.Path,
+			Name: item.DisplayName,
+		})
+	}
 
 	ui.fileDelete = &fileDeleteState{
 		pane:       idx,
 		row:        row,
+		targets:    targets,
 		targetPath: entry.Path,
 		targetName: entry.DisplayName,
 		targetInfo: info,
@@ -118,6 +134,46 @@ func (ui *UI) clearFileDeleteHotkeyHold() {
 	ui.held[fileActionKey(fileActionDelete)] = false
 }
 
+func (st *fileDeleteState) multiTarget() bool {
+	return st != nil && len(st.targets) > 1
+}
+
+func (st *fileDeleteState) targetCount() int {
+	if st == nil {
+		return 0
+	}
+	if len(st.targets) > 0 {
+		return len(st.targets)
+	}
+	if strings.TrimSpace(st.targetPath) != "" {
+		return 1
+	}
+	return 0
+}
+
+func (st *fileDeleteState) targetSummary() string {
+	count := st.targetCount()
+	if count <= 1 {
+		target := strings.TrimSpace(st.targetName)
+		if target != "" {
+			return target
+		}
+		return st.targetPath
+	}
+	return fmt.Sprintf("%d items selected", count)
+}
+
+func (st *fileDeleteState) targetPreviewLines() []string {
+	if st == nil || len(st.targets) == 0 {
+		return nil
+	}
+	labels := make([]string, 0, len(st.targets))
+	for _, target := range st.targets {
+		labels = append(labels, fileOpPreviewLabel(target.Name, target.Path))
+	}
+	return fileOpPreviewLines(labels)
+}
+
 func (ui *UI) submitFileDeleteDialog(now time.Time) {
 	st := ui.fileDelete
 	if st == nil || st.running {
@@ -128,14 +184,26 @@ func (ui *UI) submitFileDeleteDialog(now time.Time) {
 	doneCh := make(chan error, 1)
 	st.doneCh = doneCh
 
-	target := st.targetPath
+	targets := st.targets
+	if len(targets) == 0 && strings.TrimSpace(st.targetPath) != "" {
+		targets = []fileDeleteTarget{{Path: st.targetPath, Name: st.targetName}}
+	}
 	remote := st.remote
 	go func() {
-		if remote != nil {
-			doneCh <- deleteRemotePath(remote, target)
-			return
+		for _, target := range targets {
+			if remote != nil {
+				if err := deleteRemotePath(remote, target.Path); err != nil {
+					doneCh <- err
+					return
+				}
+				continue
+			}
+			if err := filesys.DeletePath(target.Path); err != nil {
+				doneCh <- err
+				return
+			}
 		}
-		doneCh <- filesys.DeletePath(target)
+		doneCh <- nil
 	}()
 
 	_ = now
@@ -169,11 +237,22 @@ func (ui *UI) finishFileDelete(now time.Time) {
 	}
 	remoteDelete := st.remote != nil
 	paneIdx := st.pane
-	deletedPath := filepath.Clean(st.targetPath)
-	deletedDir := filepath.Clean(filepath.Dir(deletedPath))
+	cleanPath := filepath.Clean
+	dirName := filepath.Dir
 	if remoteDelete {
-		deletedPath = path.Clean(st.targetPath)
-		deletedDir = path.Clean(path.Dir(deletedPath))
+		cleanPath = path.Clean
+		dirName = path.Dir
+	}
+	targets := st.targets
+	if len(targets) == 0 && strings.TrimSpace(st.targetPath) != "" {
+		targets = []fileDeleteTarget{{Path: st.targetPath, Name: st.targetName}}
+	}
+	deletedPaths := make(map[string]struct{}, len(targets))
+	deletedDirs := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		deletedPath := cleanPath(target.Path)
+		deletedPaths[deletedPath] = struct{}{}
+		deletedDirs[dirName(deletedPath)] = struct{}{}
 	}
 	preferRow := st.row
 
@@ -189,7 +268,7 @@ func (ui *UI) finishFileDelete(now time.Time) {
 				continue
 			}
 			curDir := path.Clean(pane.dir)
-			if curDir != deletedDir {
+			if _, ok := deletedDirs[curDir]; !ok {
 				continue
 			}
 		} else {
@@ -197,7 +276,7 @@ func (ui *UI) finishFileDelete(now time.Time) {
 				continue
 			}
 			curDir := filepath.Clean(pane.dir)
-			if !samePath(curDir, deletedDir) {
+			if _, ok := deletedDirs[curDir]; !ok {
 				continue
 			}
 		}
@@ -212,10 +291,15 @@ func (ui *UI) finishFileDelete(now time.Time) {
 
 		sameSelected := false
 		if selectedPath != "" {
-			if remoteDelete {
-				sameSelected = selectedPath == deletedPath
-			} else {
-				sameSelected = samePath(selectedPath, deletedPath)
+			for deletedPath := range deletedPaths {
+				if remoteDelete {
+					sameSelected = selectedPath == deletedPath
+				} else {
+					sameSelected = samePath(selectedPath, deletedPath)
+				}
+				if sameSelected {
+					break
+				}
 			}
 		}
 		row := 0
@@ -369,7 +453,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 	desc.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 	desc.Color = color.NRGBA{R: 206, G: 186, B: 148, A: 255}
 
-	target := st.targetName
+	target := st.targetSummary()
 	if target == "" {
 		if st.remote != nil {
 			target = path.Base(st.targetPath)
@@ -392,7 +476,11 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 	pathLabel.MaxLines = 1
 	pathLabel.Truncator = "…"
 
-	meta := material.Caption(th, formatCopyPathInfo(st.targetInfo))
+	metaText := formatCopyPathInfo(st.targetInfo)
+	if st.multiTarget() {
+		metaText = fmt.Sprintf("%d items will be deleted", st.targetCount())
+	}
+	meta := material.Caption(th, metaText)
 	meta.Font.Typeface = ui.mainTypeface()
 	meta.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
 	meta.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
@@ -419,7 +507,12 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(targetLabel.Layout),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(pathLabel.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.multiTarget() {
+				return ui.layoutFileOpPreviewList(th, gtx, st.targetPreviewLines())
+			}
+			return pathLabel.Layout(gtx)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(meta.Layout),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),

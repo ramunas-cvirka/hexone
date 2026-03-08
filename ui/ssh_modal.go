@@ -74,6 +74,7 @@ func (ui *UI) openSSHModal() {
 	if ui == nil {
 		return
 	}
+	ui.closeFunctionBarToolsMenu()
 	if ui.fmCfg == nil {
 		ui.fmCfg = fm.DefaultConfig()
 	}

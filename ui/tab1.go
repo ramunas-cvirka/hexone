@@ -56,7 +56,16 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 
 	dims := layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			topInset := unit.Dp(8)
+			if ui != nil && !ui.functionBarHidden {
+				topInset = 0
+			}
+			return layout.Inset{
+				Top:    topInset,
+				Left:   unit.Dp(8),
+				Right:  unit.Dp(8),
+				Bottom: unit.Dp(8),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutFilePanes(th, gtx)
 			})
 		}),
@@ -183,6 +192,12 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 			case fileActionDelete:
 				ui.startFileDeleteDialog(ui.activeFilePane, gtx.Now)
 				ui.rep.active = false
+				continue
+			case fileActionMarkSelectNext:
+				if pane := ui.activePane(); pane != nil && pane.markCurrentAndAdvance() {
+					ui.rep.active = false
+					gtx.Execute(op.InvalidateCmd{})
+				}
 				continue
 			}
 
@@ -394,6 +409,7 @@ func (ui *UI) layoutFilePaneSeams(gtx layout.Context, visible []visiblePane) {
 
 func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, roundLeft, roundRight, drawLeftBorder, drawRightBorder bool) layout.Dimensions {
 	active := idx == ui.activeFilePane
+	palette := filePanePaletteFromConfig(ui.fmCfg)
 
 	radius := gtx.Dp(unit.Dp(filePaneCornerDp))
 	border := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
@@ -401,9 +417,9 @@ func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pa
 		border = color.NRGBA{R: 150, G: 175, B: 240, A: 150}
 	}
 
-	return layoutFilePaneChrome(gtx, active, radius, roundLeft, roundRight, drawLeftBorder, drawRightBorder, func(gtx layout.Context) layout.Dimensions {
+	return layoutFilePaneChrome(gtx, active, radius, roundLeft, roundRight, drawLeftBorder, drawRightBorder, palette.PaneBg, func(gtx layout.Context) layout.Dimensions {
 		return fillFilePaneBox(gtx, radius, roundLeft, roundRight, drawLeftBorder, drawRightBorder,
-			color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+			palette.PaneBg,
 			border,
 			func(gtx layout.Context) layout.Dimensions {
 				return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -737,6 +753,17 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 			row := pane.table.HitRow(pos, total)
 			col := pane.table.HitColumn(pos)
 			if pe.Buttons.Contain(pointer.ButtonPrimary) && row >= 0 && col >= 0 {
+				if pe.Modifiers.Contain(key.ModShift) {
+					prev := pane.table.Selected
+					pane.table.SetSelected(row, total, false)
+					if pane.replaceMarkedRange(prev, row) || prev != pane.table.Selected {
+						selectionChanged = true
+					}
+					continue
+				}
+				if pane.clearMarkedRows() {
+					selectionChanged = true
+				}
 				if pane.registerTablePrimaryClick(row, col, gtx.Now, filePaneTableDoubleClickWindow) {
 					if col == pane.permissionColumnIndex() {
 						if ui.startFilePermDialog(idx, row, gtx.Now) {
@@ -746,6 +773,11 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 						ui.queueFilePaneOpen(idx, row)
 					}
 					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
+			if pe.Buttons.Contain(pointer.ButtonPrimary) && (row < 0 || col < 0) {
+				if pane.clearMarkedRows() {
+					selectionChanged = true
 				}
 			}
 			if !pe.Buttons.Contain(pointer.ButtonSecondary) {
@@ -758,6 +790,11 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 					pane.table.OnSelect(pane.table.Selected)
 				}
 				selectionChanged = true
+			}
+			if row >= 0 && !pane.isMarkedRow(row) {
+				if pane.clearMarkedRows() {
+					selectionChanged = true
+				}
 			}
 			ui.openFilePaneContextMenu(idx, row, pos)
 		}
@@ -2153,7 +2190,7 @@ func fillFilePaneBox(gtx layout.Context, radius int, roundLeft, roundRight, draw
 	return dims
 }
 
-func layoutFilePaneChrome(gtx layout.Context, active bool, radius int, roundLeft, roundRight, drawLeftBorder, drawRightBorder bool, w layout.Widget) layout.Dimensions {
+func layoutFilePaneChrome(gtx layout.Context, active bool, radius int, roundLeft, roundRight, drawLeftBorder, drawRightBorder bool, bg color.NRGBA, w layout.Widget) layout.Dimensions {
 	m := op.Record(gtx.Ops)
 	dims := w(gtx)
 	call := m.Stop()
@@ -2169,7 +2206,7 @@ func layoutFilePaneChrome(gtx layout.Context, active bool, radius int, roundLeft
 		Path:  rr.Path(gtx.Ops),
 		Width: 2,
 	}.Op())
-	maskPaneBorderEdges(gtx, dims.Size, color.NRGBA{R: 18, G: 22, B: 30, A: 255}, drawLeftBorder, drawRightBorder, 2)
+	maskPaneBorderEdges(gtx, dims.Size, bg, drawLeftBorder, drawRightBorder, 2)
 	return dims
 }
 

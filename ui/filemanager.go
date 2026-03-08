@@ -26,8 +26,9 @@ import (
 )
 
 type filePaneModel struct {
-	entries []filesys.Entry
-	cfg     *fm.Config
+	entries       []filesys.Entry
+	cfg           *fm.Config
+	baseTextColor color.NRGBA
 }
 
 type fileSortKey uint8
@@ -57,7 +58,7 @@ func (m *filePaneModel) Entry(row int) *filesys.Entry {
 
 func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 	entry := m.entries[r]
-	st := table.CellStyle{Color: txtColor, Weight: font.Medium}
+	st := table.CellStyle{Color: m.paneTextColor(), Weight: font.Medium}
 
 	switch entry.Kind {
 	case filesys.EntryDir, filesys.EntryParent:
@@ -118,6 +119,13 @@ func (m *filePaneModel) CellWithWidth(r, c, widthPx int) (string, table.CellStyl
 
 func (m *filePaneModel) showPermissionColumn() bool {
 	return m != nil && m.cfg != nil && m.cfg.Columns.ShowPermissions
+}
+
+func (m *filePaneModel) paneTextColor() color.NRGBA {
+	if m != nil && m.baseTextColor.A != 0 {
+		return m.baseTextColor
+	}
+	return txtColor
 }
 
 func (m *filePaneModel) permissionFormat() string {
@@ -242,6 +250,7 @@ type filePaneState struct {
 	err                  string
 	noticeText           string
 	noticeUntil          time.Time
+	markedRows           map[int]struct{}
 }
 
 type filePaneLoadResult struct {
@@ -323,7 +332,20 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	pane.table.RowPadY = unit.Dp(0)
 	pane.table.BriefColumnWidth = scaleDp(cfg.Columns.BriefWidthDp)
 	pane.table.BriefGap = scaleDp(cfg.Columns.BriefGapDp)
-	pane.table.SelectedFg = &color.NRGBA{R: 230, G: 230, B: 255, A: 255}
+	palette := filePanePaletteFromConfig(cfg)
+	pane.table.Bg = palette.PaneBg
+	pane.table.HoverBg = palette.HoverBg
+	pane.table.HoverFg = &palette.HoverFg
+	pane.table.MarkedBg = palette.MarkedBg
+	pane.table.MarkedFg = &palette.MarkedFg
+	pane.table.SelectedBg = palette.SelectedBg
+	pane.table.MarkedSelBg = palette.MarkedSelBg
+	pane.table.MarkedSelFg = &palette.MarkedSelFg
+	pane.table.SelectedFg = &palette.SelectedFg
+	pane.model.baseTextColor = palette.PaneFg
+	pane.table.IsMarked = func(row int) bool {
+		return pane.isMarkedRow(row)
+	}
 	if pane.dir != "" {
 		pane.localDirBeforeRemote = pane.dir
 	}
@@ -418,6 +440,7 @@ func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secon
 	p.err = ""
 	p.noticeText = ""
 	p.noticeUntil = time.Time{}
+	p.clearMarkedRows()
 	p.clearPathClickState()
 	p.clearPendingPathNavigate()
 	p.model.entries = listing.Entries
@@ -757,6 +780,137 @@ func (p *filePaneState) selectedEntry() *filesys.Entry {
 		return nil
 	}
 	return p.model.Entry(p.table.Selected)
+}
+
+func (p *filePaneState) isMarkedRow(row int) bool {
+	if p == nil || len(p.markedRows) == 0 {
+		return false
+	}
+	_, ok := p.markedRows[row]
+	return ok
+}
+
+func (p *filePaneState) hasMarkedRows() bool {
+	return p != nil && len(p.markedRows) > 0
+}
+
+func (p *filePaneState) clearMarkedRows() bool {
+	if p == nil || len(p.markedRows) == 0 {
+		return false
+	}
+	p.markedRows = nil
+	return true
+}
+
+func (p *filePaneState) markRow(row int) bool {
+	if p == nil || p.model == nil {
+		return false
+	}
+	entry := p.model.Entry(row)
+	if entry == nil || entry.Path == "" || entry.Kind == filesys.EntryParent {
+		return false
+	}
+	if p.markedRows == nil {
+		p.markedRows = make(map[int]struct{}, 4)
+	}
+	if _, exists := p.markedRows[row]; exists {
+		return false
+	}
+	p.markedRows[row] = struct{}{}
+	return true
+}
+
+func (p *filePaneState) replaceMarkedRange(start, end int) bool {
+	if p == nil || p.model == nil || p.model.Len() == 0 {
+		return false
+	}
+	if start > end {
+		start, end = end, start
+	}
+	changed := p.clearMarkedRows()
+	for row := start; row <= end; row++ {
+		if p.markRow(row) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (p *filePaneState) markCurrentAndAdvance() bool {
+	if p == nil || p.table == nil || p.model == nil {
+		return false
+	}
+	total := p.model.Len()
+	if total <= 0 {
+		return false
+	}
+	changed := p.markRow(p.table.Selected)
+	if p.table.Selected < total-1 {
+		p.table.SetSelected(p.table.Selected+1, total, true)
+		changed = true
+	}
+	return changed
+}
+
+func (p *filePaneState) markedRowIndexes() []int {
+	if p == nil || len(p.markedRows) == 0 {
+		return nil
+	}
+	rows := make([]int, 0, len(p.markedRows))
+	for row := range p.markedRows {
+		if p.model == nil || p.model.Entry(row) == nil {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	sort.Ints(rows)
+	return rows
+}
+
+func (p *filePaneState) markedPaths() []string {
+	rows := p.markedRowIndexes()
+	if len(rows) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if entry := p.model.Entry(row); entry != nil && entry.Path != "" {
+			paths = append(paths, entry.Path)
+		}
+	}
+	return paths
+}
+
+func (p *filePaneState) restoreMarkedPaths(paths []string) {
+	if p == nil {
+		return
+	}
+	p.markedRows = nil
+	for _, itemPath := range paths {
+		if idx := p.findEntryPathIndex(itemPath); idx >= 0 {
+			p.markRow(idx)
+		}
+	}
+}
+
+func (p *filePaneState) selectedEntriesForAction() []filesys.Entry {
+	if p == nil || p.model == nil {
+		return nil
+	}
+	rows := p.markedRowIndexes()
+	if len(rows) > 0 {
+		out := make([]filesys.Entry, 0, len(rows))
+		for _, row := range rows {
+			if entry := p.model.Entry(row); entry != nil {
+				out = append(out, *entry)
+			}
+		}
+		return out
+	}
+	if entry := p.selectedEntry(); entry != nil && entry.Path != "" && entry.Kind != filesys.EntryParent {
+		return []filesys.Entry{*entry}
+	}
+	return nil
 }
 
 func (p *filePaneState) remoteConnected() bool {
@@ -1575,6 +1729,7 @@ func (p *filePaneState) applySort(preservePath string) {
 	if p == nil || p.model == nil || len(p.model.entries) == 0 {
 		return
 	}
+	markedPaths := p.markedPaths()
 
 	start := 0
 	if p.model.entries[0].Kind == filesys.EntryParent {
@@ -1611,6 +1766,9 @@ func (p *filePaneState) applySort(preservePath string) {
 		if idx := p.findEntryPathIndex(preservePath); idx >= 0 {
 			p.table.SetSelected(idx, p.model.Len(), true)
 		}
+	}
+	if len(markedPaths) > 0 {
+		p.restoreMarkedPaths(markedPaths)
 	}
 }
 

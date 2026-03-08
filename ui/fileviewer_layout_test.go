@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"testing"
+	"time"
 	"unsafe"
 
 	"gioui.org/f32"
@@ -80,6 +81,38 @@ func TestFileViewerRootPressClosesPopupBeforeCancelingEdit(t *testing.T) {
 	}
 	if !st.commandEditOn {
 		t.Fatal("outside press should keep command edit active when it only closes popup")
+	}
+}
+
+func TestFileViewerTabAnimationFollowsHistoryToggle(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	st := &fileViewerState{mode: "hex"}
+
+	if got := st.activeTabKey(); got != "hex" {
+		t.Fatalf("activeTabKey=%q want %q", got, "hex")
+	}
+	st.setHistoryOpen(true, now)
+	if !st.historyOpen {
+		t.Fatal("history should open")
+	}
+	if got := st.tabPrev; got != "hex" {
+		t.Fatalf("tabPrev=%q want %q", got, "hex")
+	}
+
+	pos, anim := st.tabPosition(now.Add(toolbarAnimDur / 2))
+	if !anim {
+		t.Fatal("tabPosition should animate after history opens")
+	}
+	if pos <= 1 || pos >= 3 {
+		t.Fatalf("tabPosition=%v want between 1 and 3", pos)
+	}
+
+	fillHistory, anim := st.tabFill(now.Add(toolbarAnimDur/2), "history")
+	if !anim {
+		t.Fatal("tabFill should animate for history tab")
+	}
+	if fillHistory <= 0 || fillHistory >= 1 {
+		t.Fatalf("history fill=%v want between 0 and 1", fillHistory)
 	}
 }
 

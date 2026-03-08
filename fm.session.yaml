@@ -1,15 +1,15 @@
 window:
-    x: 530
-    "y": 394
+    x: 604
+    "y": 289
     has_position: true
-    width: 1461
+    width: 1760
     height: 859
     px_per_dp: 1
     mode: windowed
 active_tab: tab0
-active_pane: 1
+active_pane: 0
 panes:
-    - dir: C:\
-      selected_path: C:\Windows
-    - dir: C:\toolz\calculators\32-bit ASM Calculator
-      selected_path: C:\toolz\calculators\32-bit ASM Calculator\calc32.ini
+    - dir: C:\Go\pkg\windows_386
+      selected_path: C:\Go\pkg\windows_386\sync.a
+    - dir: D:\AsmSource
+      selected_path: D:\AsmSource\testas

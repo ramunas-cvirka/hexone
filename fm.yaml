@@ -56,23 +56,35 @@ font:
     regular_path: assets/FiraCode-Regular.ttf
     medium_path: assets/FiraCode-Medium.ttf
     bold_path: assets/FiraCode-Bold.ttf
+colors:
+    file_pane_background: '#161E28'
+    file_pane_text: '#D2D2D2'
+    hover: '#1F2E48'
+    hover_text: '#F4F8FF'
+    selection: '#456FCC'
+    selection_text: '#F4F8FF'
+    selected_files: '#2F8B63'
+    selected_files_text: '#F4F8FF'
+    focused_selected: '#3A7C99'
+    focused_selected_text: '#F4F8FF'
 associations:
     - app_path: c:\portable_appz\mpc_be\mpc-be64.exe
       extensions: mkv
     - app_path: c:\portable_appz\xmplay\xmplay.exe
       extensions: mp3, mp4, mp5, mp6
 viewer:
-    mode: command
+    mode: file
     shell: auto
     command: cat {path}
     command_by_target:
+        local:c:\go\pkg\windows_386\sync.a: cat {path}
         local:c:\toolz\calculators\32-bit asm calculator\conv32.ini: cat {path}
         local:c:\users\ramuc\go\src\faag\main.go: tail {path}
         ssh:root@157.180.68.247:22:/opt/gpstrack/log/gpstrack.log: tail -f {path} | grep --line-buffered 4a17100a
     command_history:
         - cat {path}
-        - tail {path}
         - tail -f {path} | grep --line-buffered 4a17100a
+        - tail {path}
     word_select_regex: '[a-zA-Z0-9]+'
     font_size_sp: 13
     word_wrap: false

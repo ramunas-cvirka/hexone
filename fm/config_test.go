@@ -186,6 +186,53 @@ func TestNormalizeViewerModeAcceptsHex(t *testing.T) {
 	}
 }
 
+func TestNormalizeColors(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Colors.FilePaneBackground = "161e28"
+	cfg.Colors.FilePaneText = "badtext"
+	cfg.Colors.Hover = "hover"
+	cfg.Colors.HoverText = "hovertext"
+	cfg.Colors.Selection = "bad"
+	cfg.Colors.SelectionText = "oops"
+	cfg.Colors.SelectedFiles = "#2f8b63"
+	cfg.Colors.SelectedFilesText = "oops"
+	cfg.Colors.FocusedSelected = "focused"
+	cfg.Colors.FocusedSelectedText = "focusedtext"
+
+	cfg.normalize()
+
+	if cfg.Colors.FilePaneBackground != DefaultFilePaneBackgroundHex {
+		t.Fatalf("FilePaneBackground=%q, want %q", cfg.Colors.FilePaneBackground, DefaultFilePaneBackgroundHex)
+	}
+	if cfg.Colors.FilePaneText != DefaultFilePaneTextHex {
+		t.Fatalf("FilePaneText=%q, want %q", cfg.Colors.FilePaneText, DefaultFilePaneTextHex)
+	}
+	if cfg.Colors.Hover != DefaultFilePaneHoverHex {
+		t.Fatalf("Hover=%q, want %q", cfg.Colors.Hover, DefaultFilePaneHoverHex)
+	}
+	if cfg.Colors.HoverText != DefaultFilePaneHoverTextHex {
+		t.Fatalf("HoverText=%q, want %q", cfg.Colors.HoverText, DefaultFilePaneHoverTextHex)
+	}
+	if cfg.Colors.Selection != DefaultFilePaneSelectionHex {
+		t.Fatalf("Selection=%q, want %q", cfg.Colors.Selection, DefaultFilePaneSelectionHex)
+	}
+	if cfg.Colors.SelectionText != DefaultFilePaneSelectionTextHex {
+		t.Fatalf("SelectionText=%q, want %q", cfg.Colors.SelectionText, DefaultFilePaneSelectionTextHex)
+	}
+	if cfg.Colors.SelectedFiles != DefaultFilePaneSelectedFilesHex {
+		t.Fatalf("SelectedFiles=%q, want %q", cfg.Colors.SelectedFiles, DefaultFilePaneSelectedFilesHex)
+	}
+	if cfg.Colors.SelectedFilesText != DefaultFilePaneSelectedTextHex {
+		t.Fatalf("SelectedFilesText=%q, want %q", cfg.Colors.SelectedFilesText, DefaultFilePaneSelectedTextHex)
+	}
+	if cfg.Colors.FocusedSelected != DefaultFilePaneFocusedSelectedHex {
+		t.Fatalf("FocusedSelected=%q, want %q", cfg.Colors.FocusedSelected, DefaultFilePaneFocusedSelectedHex)
+	}
+	if cfg.Colors.FocusedSelectedText != DefaultFilePaneFocusedSelectedTextHex {
+		t.Fatalf("FocusedSelectedText=%q, want %q", cfg.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
+	}
+}
+
 func mustMarshalConfig(t *testing.T, cfg *Config) []byte {
 	t.Helper()
 	data, err := yaml.Marshal(cfg)

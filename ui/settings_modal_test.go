@@ -21,8 +21,9 @@ func TestSettingsTabIndexOrder(t *testing.T) {
 	}{
 		{key: "viewer", want: 0},
 		{key: "associations", want: 1},
-		{key: "general", want: 2},
-		{key: "config", want: 3},
+		{key: "colors", want: 2},
+		{key: "general", want: 3},
+		{key: "config", want: 4},
 	}
 	for _, tc := range cases {
 		if got := settingsTabIndex(tc.key); got != tc.want {
@@ -311,5 +312,94 @@ func TestViewerAssociationNoticeTextUsesCurrentEditorState(t *testing.T) {
 	got := st.viewerAssociationNoticeText()
 	if !strings.Contains(got, "mp3 association changed") {
 		t.Fatalf("viewerAssociationNoticeText=%q, want change notice", got)
+	}
+}
+
+func TestSettingsColorSwatchGroupsIncludeNearbyCurrentColor(t *testing.T) {
+	groups := settingsColorSwatchGroups("#2D9AA5")
+	if len(groups) == 0 {
+		t.Fatal("expected swatch groups")
+	}
+	if groups[0].label != "Nearby" {
+		t.Fatalf("first group label=%q want Nearby", groups[0].label)
+	}
+	want := fm.NormalizeHexColor("#2D9AA5", "")
+	found := false
+	for _, hex := range groups[0].hexes {
+		if fm.NormalizeHexColor(hex, "") == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("nearby swatches do not include current color %q: %#v", want, groups[0].hexes)
+	}
+}
+
+func TestSettingsColorCategoriesSeparateFocusedStates(t *testing.T) {
+	st := &settingsModalState{
+		colorSelection:           "#3456AA",
+		colorSelectionText:       "#F2F7FF",
+		colorFocusedSelected:     "#447F9C",
+		colorFocusedSelectedText: "#F6FBFF",
+	}
+	if got := settingsColorLabel("selection"); got != "Focused" {
+		t.Fatalf("selection label=%q want %q", got, "Focused")
+	}
+	if got := settingsColorLabel("focused_selected"); got != "Focused + Selected Files" {
+		t.Fatalf("focused_selected label=%q want %q", got, "Focused + Selected Files")
+	}
+	if got := st.colorValue("selection"); got != "#3456AA" {
+		t.Fatalf("selection background=%q want %q", got, "#3456AA")
+	}
+	if got := st.colorValue("focused_selected"); got != "#447F9C" {
+		t.Fatalf("focused_selected background=%q want %q", got, "#447F9C")
+	}
+	if got := st.colorTextValue("selection"); got != "#F2F7FF" {
+		t.Fatalf("selection text=%q want %q", got, "#F2F7FF")
+	}
+	if got := st.colorTextValue("focused_selected"); got != "#F6FBFF" {
+		t.Fatalf("focused_selected text=%q want %q", got, "#F6FBFF")
+	}
+}
+
+func TestDraftFilePanePaletteAppliesExplicitTextColors(t *testing.T) {
+	st := &settingsModalState{
+		colorPaneBackground:      "#101820",
+		colorPaneText:            "#C8D0D8",
+		colorHover:               "#20354F",
+		colorHoverText:           "#EAF3FF",
+		colorSelection:           "#3456AA",
+		colorSelectionText:       "#F2F7FF",
+		colorSelectedFiles:       "#286F57",
+		colorSelectedFilesText:   "#E6F7EE",
+		colorFocusedSelected:     "#447F9C",
+		colorFocusedSelectedText: "#F6FBFF",
+	}
+
+	palette, errText := st.draftFilePanePalette(fm.DefaultConfig())
+	if errText != "" {
+		t.Fatalf("unexpected draft palette error: %q", errText)
+	}
+	if got := fm.FormatHexColor(palette.PaneFg); got != "#C8D0D8" {
+		t.Fatalf("PaneFg=%q want %q", got, "#C8D0D8")
+	}
+	if got := fm.FormatHexColor(palette.HoverBg); got != "#20354F" {
+		t.Fatalf("HoverBg=%q want %q", got, "#20354F")
+	}
+	if got := fm.FormatHexColor(palette.HoverFg); got != "#EAF3FF" {
+		t.Fatalf("HoverFg=%q want %q", got, "#EAF3FF")
+	}
+	if got := fm.FormatHexColor(palette.SelectedFg); got != "#F2F7FF" {
+		t.Fatalf("SelectedFg=%q want %q", got, "#F2F7FF")
+	}
+	if got := fm.FormatHexColor(palette.MarkedFg); got != "#E6F7EE" {
+		t.Fatalf("MarkedFg=%q want %q", got, "#E6F7EE")
+	}
+	if got := fm.FormatHexColor(palette.MarkedSelBg); got != "#447F9C" {
+		t.Fatalf("MarkedSelBg=%q want %q", got, "#447F9C")
+	}
+	if got := fm.FormatHexColor(palette.MarkedSelFg); got != "#F6FBFF" {
+		t.Fatalf("MarkedSelFg=%q want %q", got, "#F6FBFF")
 	}
 }

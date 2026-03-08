@@ -1,0 +1,860 @@
+package ui
+
+import (
+	"image"
+	"image/color"
+	"time"
+
+	"gioui.org/font"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
+)
+
+const (
+	functionBarTopInsetDp   = 4
+	functionBarOuterInsetDp = 8
+	functionBarStripDp      = 22
+	functionBarPopupGapDp   = 4
+)
+
+type functionBarAction uint8
+
+const (
+	functionBarActionHelp functionBarAction = iota
+	functionBarActionWIP
+	functionBarActionView
+	functionBarActionOpen
+	functionBarActionCopy
+	functionBarActionMove
+	functionBarActionCreate
+	functionBarActionDelete
+	functionBarActionTools
+	functionBarActionExit
+)
+
+type functionBarButtonSpec struct {
+	action     functionBarAction
+	keyLabel   string
+	label      string
+	click      *widget.Clickable
+	activeFill float32
+	enabled    bool
+}
+
+type functionBarToolSpec struct {
+	key    string
+	label  string
+	active bool
+}
+
+func registerPopupArea(gtx layout.Context, tag event.Tag, size image.Point) {
+	if tag == nil || size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, tag)
+	pass.Pop()
+}
+
+func popupPressed(gtx layout.Context, tag event.Tag) bool {
+	if tag == nil {
+		return false
+	}
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: tag,
+			Kinds:  pointer.Press,
+		})
+		if !ok {
+			return false
+		}
+		pe, ok := ev.(pointer.Event)
+		if ok && pe.Kind == pointer.Press && pe.Buttons.Contain(pointer.ButtonPrimary) {
+			return true
+		}
+	}
+}
+
+func (ui *UI) hasBlockingFileDialog() bool {
+	return ui != nil && (ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil)
+}
+
+func (ui *UI) closeFunctionBarToolsMenu() {
+	if ui == nil {
+		return
+	}
+	ui.functionBarToolsOpen = false
+	ui.functionBarToolsRect = image.Rectangle{}
+}
+
+func (ui *UI) requestWindowClose() {
+	if ui == nil {
+		return
+	}
+	ui.requestedWindowClose = true
+}
+
+func (ui *UI) ConsumeWindowCloseRequest() bool {
+	if ui == nil || !ui.requestedWindowClose {
+		return false
+	}
+	ui.requestedWindowClose = false
+	return true
+}
+
+func (ui *UI) toggleFunctionBarVisibility(now time.Time) bool {
+	if ui == nil {
+		return false
+	}
+	ui.functionBarHidden = !ui.functionBarHidden
+	ui.closeFunctionBarToolsMenu()
+	ui.setToolbarHover("", now)
+	if ui.functionBarHidden && ui.Tabs.Value == "tab0" {
+		if pane := ui.activePane(); pane != nil {
+			pane.setNotice("function bar hidden; press F11 to show it again", now)
+		}
+	}
+	return true
+}
+
+func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
+	if ui == nil {
+		return false
+	}
+	switch action {
+	case functionBarActionExit:
+		return true
+	case functionBarActionTools:
+		return ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
+	}
+
+	if ui.Tabs.Value != "tab0" || ui.settingsModal != nil || ui.sshModal != nil || ui.pathEditActive() {
+		return false
+	}
+
+	switch action {
+	case functionBarActionHelp, functionBarActionWIP:
+		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
+	case functionBarActionView:
+		if ui.fileViewer != nil {
+			return true
+		}
+		return !ui.hasBlockingFileDialog()
+	case functionBarActionOpen:
+		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
+	case functionBarActionCopy, functionBarActionMove, functionBarActionCreate, functionBarActionDelete:
+		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
+	default:
+		return false
+	}
+}
+
+func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) bool {
+	if ui == nil {
+		return false
+	}
+	switch action {
+	case functionBarActionHelp:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		if pane := ui.activePane(); pane != nil {
+			pane.setNotice("help is not implemented yet", now)
+			return true
+		}
+	case functionBarActionWIP:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		if pane := ui.activePane(); pane != nil {
+			pane.setNotice("F2 is not implemented yet", now)
+			return true
+		}
+	case functionBarActionView:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		if ui.fileViewer != nil {
+			ui.startFileViewerLoad(now)
+			return true
+		}
+		ui.startFileViewer(ui.activeFilePane, now)
+		return true
+	case functionBarActionOpen:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.startFileExternalOpenAction(ui.activeFilePane, now)
+		return true
+	case functionBarActionCopy:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.startFileCopyDialog(ui.activeFilePane, now)
+		return true
+	case functionBarActionMove:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.startFileMoveDialog(ui.activeFilePane, now)
+		return true
+	case functionBarActionCreate:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.startFileCreateDialog(ui.activeFilePane, now)
+		return true
+	case functionBarActionDelete:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.startFileDeleteDialog(ui.activeFilePane, now)
+		return true
+	case functionBarActionTools:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		if ui.functionBarToolsOpen {
+			ui.closeFunctionBarToolsMenu()
+		} else {
+			ui.functionBarToolsOpen = true
+		}
+		return true
+	case functionBarActionExit:
+		ui.closeFunctionBarToolsMenu()
+		ui.requestWindowClose()
+		return true
+	}
+	return false
+}
+
+func (ui *UI) functionBarButtonSpecs() []functionBarButtonSpec {
+	return []functionBarButtonSpec{
+		{action: functionBarActionHelp, keyLabel: "F1", label: "Help", click: &ui.functionBarClicks[0], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionHelp)},
+		{action: functionBarActionWIP, keyLabel: "F2", label: "WIP", click: &ui.functionBarClicks[1], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionWIP)},
+		{action: functionBarActionView, keyLabel: "F3", label: "View", click: &ui.functionBarClicks[2], activeFill: boolFill(ui.fileViewer != nil), enabled: ui.functionBarActionEnabled(functionBarActionView)},
+		{action: functionBarActionOpen, keyLabel: "F4", label: "Open", click: &ui.functionBarClicks[3], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
+		{action: functionBarActionCopy, keyLabel: "F5", label: "Copy", click: &ui.functionBarClicks[4], activeFill: boolFill(ui.fileCopy != nil), enabled: ui.functionBarActionEnabled(functionBarActionCopy)},
+		{action: functionBarActionMove, keyLabel: "F6", label: "Move", click: &ui.functionBarClicks[5], activeFill: boolFill(ui.fileMove != nil), enabled: ui.functionBarActionEnabled(functionBarActionMove)},
+		{action: functionBarActionCreate, keyLabel: "F7", label: "New", click: &ui.functionBarClicks[6], activeFill: boolFill(ui.fileCreate != nil), enabled: ui.functionBarActionEnabled(functionBarActionCreate)},
+		{action: functionBarActionDelete, keyLabel: "F8", label: "Delete", click: &ui.functionBarClicks[7], activeFill: boolFill(ui.fileDelete != nil), enabled: ui.functionBarActionEnabled(functionBarActionDelete)},
+		{action: functionBarActionTools, keyLabel: "F9", label: "Tools", click: &ui.functionBarClicks[8], activeFill: ui.functionBarToolsFill(), enabled: ui.functionBarActionEnabled(functionBarActionTools)},
+		{action: functionBarActionExit, keyLabel: "F10", label: "Exit", click: &ui.functionBarClicks[9], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionExit)},
+	}
+}
+
+func boolFill(v bool) float32 {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func (ui *UI) functionBarToolsFill() float32 {
+	if ui == nil {
+		return 0
+	}
+	if ui.functionBarToolsOpen {
+		return 1
+	}
+	if ui.settingsModal != nil || ui.Tabs.Value == "tab1" || ui.Tabs.Value == "tab2" {
+		return 0.7
+	}
+	return 0
+}
+
+func (ui *UI) functionBarTextSize() unit.Sp {
+	if ui == nil {
+		return 11
+	}
+	return scaleConfigFontSize(ui.fmCfg, 11)
+}
+
+func (ui *UI) functionBarButtonText(spec functionBarButtonSpec) string {
+	return spec.keyLabel + " " + spec.label
+}
+
+func dimColor(c color.NRGBA, alpha uint8) color.NRGBA {
+	c.A = alpha
+	return c
+}
+
+func (ui *UI) functionBarWidths(th *material.Theme, gtx layout.Context, specs []functionBarButtonSpec) []int {
+	widths := make([]int, len(specs))
+	if len(specs) == 0 {
+		return widths
+	}
+	total := 0
+	minWidth := gtx.Dp(unit.Dp(42))
+	padding := gtx.Dp(unit.Dp(16))
+	for i, spec := range specs {
+		lbl := material.Body2(th, ui.functionBarButtonText(spec))
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Weight = font.Medium
+		lbl.TextSize = ui.functionBarTextSize()
+		lbl.MaxLines = 1
+		w := measureLabelUnconstrained(gtx, lbl).Size.X + padding
+		if w < minWidth {
+			w = minWidth
+		}
+		widths[i] = w
+		total += w
+	}
+
+	avail := gtx.Constraints.Max.X
+	if avail < len(widths) {
+		avail = len(widths)
+	}
+	if total > avail {
+		scaled := 0
+		for i := range widths {
+			w := widths[i] * avail / total
+			if w < 1 {
+				w = 1
+			}
+			widths[i] = w
+			scaled += w
+		}
+		for i := len(widths) - 1; i >= 0 && scaled < avail; i-- {
+			widths[i]++
+			scaled++
+		}
+		return widths
+	}
+
+	extra := avail - total
+	if extra <= 0 {
+		return widths
+	}
+	add := extra / len(widths)
+	rem := extra % len(widths)
+	for i := range widths {
+		widths[i] += add
+		if i < rem {
+			widths[i]++
+		}
+	}
+	return widths
+}
+
+func (ui *UI) functionBarIndexForAction(specs []functionBarButtonSpec, action functionBarAction) int {
+	for i, spec := range specs {
+		if spec.action == action {
+			return i
+		}
+	}
+	return -1
+}
+
+func (ui *UI) functionBarActiveIndex(specs []functionBarButtonSpec) int {
+	if ui == nil {
+		return -1
+	}
+	switch {
+	case ui.functionBarToolsOpen, ui.settingsModal != nil, ui.Tabs.Value == "tab1", ui.Tabs.Value == "tab2":
+		return ui.functionBarIndexForAction(specs, functionBarActionTools)
+	case ui.fileDelete != nil:
+		return ui.functionBarIndexForAction(specs, functionBarActionDelete)
+	case ui.fileCreate != nil:
+		return ui.functionBarIndexForAction(specs, functionBarActionCreate)
+	case ui.fileMove != nil:
+		return ui.functionBarIndexForAction(specs, functionBarActionMove)
+	case ui.fileCopy != nil:
+		return ui.functionBarIndexForAction(specs, functionBarActionCopy)
+	case ui.fileViewer != nil:
+		return ui.functionBarIndexForAction(specs, functionBarActionView)
+	default:
+		return -1
+	}
+}
+
+func (ui *UI) setFunctionBarSlider(index int, shown bool, now time.Time) {
+	if ui == nil {
+		return
+	}
+	if index < 0 {
+		switch {
+		case ui.functionBarSliderIndex >= 0:
+			index = ui.functionBarSliderIndex
+		case ui.functionBarSliderPrevIndex >= 0:
+			index = ui.functionBarSliderPrevIndex
+		default:
+			index = 0
+		}
+	}
+	if ui.functionBarSliderIndex == index && ui.functionBarSliderShown == shown {
+		return
+	}
+
+	prevIndex := ui.functionBarSliderIndex
+	if prevIndex < 0 || !ui.functionBarSliderShown {
+		prevIndex = index
+	}
+	ui.functionBarSliderPrevIndex = prevIndex
+	ui.functionBarSliderPrevShown = ui.functionBarSliderShown
+	ui.functionBarSliderIndex = index
+	ui.functionBarSliderShown = shown
+	ui.functionBarSliderAnimAt = now
+}
+
+func (ui *UI) functionBarSliderState(now time.Time) (float32, float32, bool) {
+	if ui == nil {
+		return 0, 0, false
+	}
+
+	currentIndex := ui.functionBarSliderIndex
+	if currentIndex < 0 {
+		currentIndex = 0
+	}
+	prevIndex := ui.functionBarSliderPrevIndex
+	if prevIndex < 0 {
+		prevIndex = currentIndex
+	}
+
+	currentAlpha := float32(0)
+	if ui.functionBarSliderShown {
+		currentAlpha = 1
+	}
+	prevAlpha := float32(0)
+	if ui.functionBarSliderPrevShown {
+		prevAlpha = 1
+	}
+
+	if ui.functionBarSliderAnimAt.IsZero() || (prevIndex == currentIndex && prevAlpha == currentAlpha) {
+		return float32(currentIndex), currentAlpha, false
+	}
+
+	elapsed := now.Sub(ui.functionBarSliderAnimAt)
+	if elapsed >= toolbarAnimDur {
+		ui.functionBarSliderPrevIndex = currentIndex
+		ui.functionBarSliderPrevShown = ui.functionBarSliderShown
+		ui.functionBarSliderAnimAt = time.Time{}
+		return float32(currentIndex), currentAlpha, false
+	}
+
+	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
+	pos := float32(prevIndex) + (float32(currentIndex)-float32(prevIndex))*t
+	alpha := prevAlpha + (currentAlpha-prevAlpha)*t
+	return pos, alpha, true
+}
+
+func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	if ui == nil {
+		return layout.Dimensions{}
+	}
+
+	specs := ui.functionBarButtonSpecs()
+	for _, spec := range specs {
+		if spec.click == nil {
+			continue
+		}
+		for spec.click.Clicked(gtx) {
+			ui.setToolbarPulse(spec.keyLabel, gtx.Now)
+			if !ui.performFunctionBarAction(spec.action, gtx.Now) {
+				continue
+			}
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
+	specs = ui.functionBarButtonSpecs()
+	hoverKey := ""
+	hoverIndex := -1
+	for i, spec := range specs {
+		if spec.enabled && spec.click != nil && spec.click.Hovered() {
+			hoverKey = spec.keyLabel
+			hoverIndex = i
+		}
+	}
+	ui.setToolbarHover(hoverKey, gtx.Now)
+
+	activeIndex := ui.functionBarActiveIndex(specs)
+	targetIndex := activeIndex
+	targetShown := activeIndex >= 0
+	if hoverIndex >= 0 {
+		targetIndex = hoverIndex
+		targetShown = true
+	}
+	ui.setFunctionBarSlider(targetIndex, targetShown, gtx.Now)
+	sliderPos, sliderAlpha, sliderAnim := ui.functionBarSliderState(gtx.Now)
+
+	leftPx := gtx.Dp(unit.Dp(functionBarOuterInsetDp))
+	topPx := gtx.Dp(unit.Dp(functionBarTopInsetDp))
+	stripH := gtx.Dp(unit.Dp(functionBarStripDp))
+	if stripH < 1 {
+		stripH = 1
+	}
+	ui.functionBarToolsButtonRect = image.Rectangle{}
+
+	animating := sliderAnim
+	dims := layout.Inset{
+		Top:   unit.Dp(functionBarTopInsetDp),
+		Left:  unit.Dp(functionBarOuterInsetDp),
+		Right: unit.Dp(functionBarOuterInsetDp),
+	}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		outerW := gtx.Constraints.Max.X
+		if outerW < 1 {
+			outerW = 1
+		}
+		widths := ui.functionBarWidths(th, gtx, specs)
+		starts := make([]int, len(widths))
+		totalW := 0
+		for i, w := range widths {
+			starts[i] = totalW
+			totalW += w
+		}
+		if totalW < outerW {
+			totalW = outerW
+		}
+		return fixedWidth(gtx, outerW, func(gtx layout.Context) layout.Dimensions {
+			return fillRoundedBox(
+				gtx,
+				gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+				color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+				color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+							innerR := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
+							if innerR < 1 {
+								innerR = 1
+							}
+
+							if sliderAlpha > 0 && len(widths) > 0 {
+								baseIdx := int(sliderPos)
+								if baseIdx < 0 {
+									baseIdx = 0
+								}
+								if baseIdx > len(widths)-1 {
+									baseIdx = len(widths) - 1
+								}
+								nextIdx := baseIdx + 1
+								if nextIdx > len(widths)-1 {
+									nextIdx = len(widths) - 1
+								}
+								frac := sliderPos - float32(baseIdx)
+								sliderX := int(float32(starts[baseIdx]) + float32(starts[nextIdx]-starts[baseIdx])*frac)
+								sliderW := int(float32(widths[baseIdx]) + float32(widths[nextIdx]-widths[baseIdx])*frac)
+								if sliderW < 1 {
+									sliderW = 1
+								}
+								sliderRect := image.Rect(sliderX, 0, sliderX+sliderW, stripH)
+								innerClip := clip.UniformRRect(image.Rect(0, 0, totalW, stripH), innerR).Push(gtx.Ops)
+								paint.FillShape(gtx.Ops, dimColor(color.NRGBA{R: 56, G: 56, B: 56, A: 255}, uint8(255*clamp01(sliderAlpha))), clip.UniformRRect(sliderRect, innerR).Op(gtx.Ops))
+								innerClip.Pop()
+							}
+
+							cursorX := leftPx + 1
+							y0 := topPx + 1
+							children := make([]layout.FlexChild, 0, len(specs))
+							for i, spec := range specs {
+								i := i
+								spec := spec
+								segW := widths[i]
+								if spec.action == functionBarActionTools {
+									ui.functionBarToolsButtonRect = image.Rect(cursorX, y0, cursorX+segW, y0+stripH)
+								}
+								cursorX += segW
+
+								hoverFill, hoverAnim := ui.toolbarHoverLevel(gtx.Now, spec.keyLabel)
+								pulseFill, pulseAnim := ui.toolbarPulseLevel(gtx.Now, spec.keyLabel)
+								animating = animating || hoverAnim || pulseAnim
+
+								children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return fixedWidth(gtx, segW, func(gtx layout.Context) layout.Dimensions {
+										return spec.click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											hoverFill = clamp01(hoverFill)
+											pulseFill = clamp01(pulseFill)
+											if spec.click.Pressed() && pulseFill < 0.55 {
+												pulseFill = 0.55
+											}
+
+											proximity := clamp01(1-float32Abs(float32(i)-sliderPos)) * clamp01(sliderAlpha)
+											bg := color.NRGBA{}
+											bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 8}, hoverFill*(1-proximity)*0.45)
+											bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 16}, pulseFill*0.18)
+
+											fg := slidingStripTextColor(proximity, hoverFill, pulseFill)
+											if spec.action == functionBarActionWIP {
+												fg = mixNRGBA(fg, color.NRGBA{R: 170, G: 176, B: 188, A: 255}, 0.35)
+											}
+											if !spec.enabled {
+												bg = color.NRGBA{}
+												fg = dimColor(fg, 112)
+											}
+
+											dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+												return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Body2(th, ui.functionBarButtonText(spec))
+													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.Font.Weight = font.Medium
+													lbl.TextSize = ui.functionBarTextSize()
+													lbl.Color = fg
+													lbl.MaxLines = 1
+													return lbl.Layout(gtx)
+												})
+											})
+											if spec.enabled {
+												defer clip.Rect(image.Rectangle{Max: image.Pt(segW, stripH)}).Push(gtx.Ops).Pop()
+												pointer.CursorPointer.Add(gtx.Ops)
+											}
+											return dims
+										})
+									})
+								}))
+							}
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+						})
+					})
+				},
+			)
+		})
+	})
+	if animating {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	return dims
+}
+
+func (ui *UI) ensureFunctionBarToolClicks(n int) {
+	if ui == nil {
+		return
+	}
+	if n <= cap(ui.functionBarToolClicks) {
+		ui.functionBarToolClicks = ui.functionBarToolClicks[:n]
+		return
+	}
+	old := ui.functionBarToolClicks
+	ui.functionBarToolClicks = make([]widget.Clickable, n)
+	copy(ui.functionBarToolClicks, old)
+}
+
+func (ui *UI) functionBarToolSpecs() []functionBarToolSpec {
+	active := "files"
+	switch {
+	case ui == nil:
+		active = "files"
+	case ui.settingsModal != nil:
+		active = "settings"
+	case ui.Tabs.Value == "tab1":
+		active = "hex"
+	case ui.Tabs.Value == "tab2":
+		active = "protocol"
+	}
+	return []functionBarToolSpec{
+		{key: "files", label: "File Manager", active: active == "files"},
+		{key: "hex", label: "Hex to ASCII", active: active == "hex"},
+		{key: "protocol", label: "Protocol Analyzer", active: active == "protocol"},
+		{key: "settings", label: "Settings", active: active == "settings"},
+	}
+}
+
+func (ui *UI) activateFunctionBarTool(key string, now time.Time) {
+	if ui == nil {
+		return
+	}
+	ui.closeFunctionBarToolsMenu()
+	switch key {
+	case "files":
+		ui.setActiveTab("tab0", now)
+	case "hex":
+		ui.setActiveTab("tab1", now)
+	case "protocol":
+		ui.setActiveTab("tab2", now)
+	case "settings":
+		ui.openSettingsModal()
+	}
+}
+
+func (ui *UI) functionBarToolsAnchorRect(gtx layout.Context) image.Rectangle {
+	if ui != nil && ui.functionBarToolsButtonRect.Dx() > 0 && ui.functionBarToolsButtonRect.Dy() > 0 {
+		return ui.functionBarToolsButtonRect
+	}
+	x := gtx.Dp(unit.Dp(functionBarOuterInsetDp)) + 1
+	y := gtx.Dp(unit.Dp(functionBarTopInsetDp)) + 1
+	h := gtx.Dp(unit.Dp(functionBarStripDp))
+	if h < 1 {
+		h = 1
+	}
+	return image.Rect(x, y, x, y+h)
+}
+
+func (ui *UI) handleFunctionBarPopupOutsideClick(gtx layout.Context) {
+	if ui == nil || !ui.functionBarToolsOpen {
+		return
+	}
+	pressedPopup := popupPressed(gtx, &ui.functionBarPopupBodyTag)
+	closed := false
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &ui.functionBarPopupGlobalTag,
+			Kinds:  pointer.Press,
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok || pe.Kind != pointer.Press || !pe.Buttons.Contain(pointer.ButtonPrimary) {
+			continue
+		}
+		if ui.functionBarClicks[8].Hovered() || pressedPopup {
+			continue
+		}
+		ui.closeFunctionBarToolsMenu()
+		closed = true
+	}
+	if closed {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+}
+
+func (ui *UI) registerFunctionBarPopupGlobalPointer(gtx layout.Context) {
+	if ui == nil || !ui.functionBarToolsOpen {
+		return
+	}
+	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &ui.functionBarPopupGlobalTag)
+	pass.Pop()
+}
+
+func (ui *UI) functionBarToolCardWidth(th *material.Theme, gtx layout.Context, items []functionBarToolSpec) int {
+	maxTextW := 0
+	for _, item := range items {
+		lbl := material.Body2(th, item.label)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Weight = font.Medium
+		lbl.TextSize = scaleThemeFontSize(th, 11)
+		lbl.MaxLines = 1
+		if w := measureLabelUnconstrained(gtx, lbl).Size.X; w > maxTextW {
+			maxTextW = w
+		}
+	}
+	if maxTextW == 0 {
+		maxTextW = gtx.Dp(unit.Dp(96))
+	}
+	width := maxTextW + gtx.Dp(unit.Dp(30))
+	if width < gtx.Dp(unit.Dp(156)) {
+		width = gtx.Dp(unit.Dp(156))
+	}
+	if width > gtx.Constraints.Max.X {
+		width = gtx.Constraints.Max.X
+	}
+	if width < 1 {
+		width = 1
+	}
+	return width
+}
+
+func (ui *UI) layoutFunctionBarToolOption(th *material.Theme, gtx layout.Context, click *widget.Clickable, item functionBarToolSpec) layout.Dimensions {
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		bg := color.NRGBA{}
+		fg := txtColor
+		if item.active {
+			bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
+			fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
+		} else if click.Hovered() {
+			bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
+			fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+		}
+		dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, item.label)
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Weight = font.Medium
+				lbl.TextSize = scaleThemeFontSize(th, 11)
+				lbl.Color = fg
+				lbl.MaxLines = 1
+				return lbl.Layout(gtx)
+			})
+		})
+		defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
+		return dims
+	})
+}
+
+func (ui *UI) layoutFunctionBarToolsCard(th *material.Theme, gtx layout.Context, items []functionBarToolSpec) layout.Dimensions {
+	width := ui.functionBarToolCardWidth(th, gtx, items)
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		dims := fillRoundedBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+			color.NRGBA{R: 20, G: 24, B: 34, A: 250},
+			color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+			func(gtx layout.Context) layout.Dimensions {
+				children := make([]layout.FlexChild, 0, len(items)+2)
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, "Tools")
+						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.Font.Weight = font.Medium
+						lbl.TextSize = scaleThemeFontSize(th, 10)
+						lbl.Color = color.NRGBA{R: 170, G: 180, B: 205, A: 255}
+						lbl.MaxLines = 1
+						return lbl.Layout(gtx)
+					})
+				}))
+				for i, item := range items {
+					i := i
+					item := item
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFunctionBarToolOption(th, gtx, &ui.functionBarToolClicks[i], item)
+					}))
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			},
+		)
+		registerPopupArea(gtx, &ui.functionBarPopupBodyTag, dims.Size)
+		return dims
+	})
+}
+
+func (ui *UI) layoutFunctionBarPopup(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	if ui == nil || !ui.functionBarToolsOpen {
+		return layout.Dimensions{}
+	}
+
+	items := ui.functionBarToolSpecs()
+	ui.ensureFunctionBarToolClicks(len(items))
+	for i, item := range items {
+		if i >= len(ui.functionBarToolClicks) {
+			break
+		}
+		for ui.functionBarToolClicks[i].Clicked(gtx) {
+			ui.activateFunctionBarTool(item.key, gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
+			return layout.Dimensions{}
+		}
+	}
+
+	m := op.Record(gtx.Ops)
+	card := ui.layoutFunctionBarToolsCard(th, gtx, items)
+	call := m.Stop()
+
+	anchorRect := ui.functionBarToolsAnchorRect(gtx)
+	anchor := image.Point{
+		X: anchorRect.Min.X,
+		Y: anchorRect.Max.Y + gtx.Dp(unit.Dp(functionBarPopupGapDp)),
+	}
+	anchor = clampFilePaneMenuPoint(anchor, card.Size, gtx.Constraints.Max)
+	ui.functionBarToolsRect = image.Rectangle{Min: anchor, Max: anchor.Add(card.Size)}
+
+	bodyClip := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
+	offset := op.Offset(anchor).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	offset.Pop()
+	bodyClip.Pop()
+
+	ui.handleFunctionBarPopupOutsideClick(gtx)
+	ui.registerFunctionBarPopupGlobalPointer(gtx)
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
