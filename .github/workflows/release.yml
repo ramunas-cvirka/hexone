@@ -21,6 +21,24 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install Linux GUI test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc \
+            pkg-config \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libgles2-mesa-dev \
+            libegl1-mesa-dev \
+            libffi-dev \
+            libxcursor-dev \
+            libxfixes-dev \
+            libvulkan-dev
+
       - name: Run Go unit tests
         run: go test ./...
 

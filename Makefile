@@ -5,6 +5,7 @@ CMD := ./cmd/hexone
 DIST_DIR := dist
 
 LINUX_ARCH := amd64
+LINUX_BUILD_TAGS := nox11
 LINUX_STAGE := $(DIST_DIR)/$(APP)-linux-$(LINUX_ARCH)
 LINUX_BIN := $(LINUX_STAGE)/$(APP)
 LINUX_ZIP := $(DIST_DIR)/$(APP)_linux_$(LINUX_ARCH).zip
@@ -43,7 +44,7 @@ build-linux: | $(DIST_DIR)
 	fi
 	rm -rf "$(LINUX_STAGE)"
 	mkdir -p "$(LINUX_STAGE)"
-	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -o "$(LINUX_BIN)" $(CMD)
+	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -tags "$(LINUX_BUILD_TAGS)" -o "$(LINUX_BIN)" $(CMD)
 	cp protocols.yaml "$(LINUX_STAGE)/protocols.yaml"
 
 build-macos: | $(DIST_DIR)
