@@ -49,7 +49,7 @@ build-linux: | $(DIST_DIR)
 	rm -rf "$(LINUX_STAGE)"
 	mkdir -p "$(LINUX_STAGE)" "$(LINUX_LIB_DIR)" "$(LINUX_STAGE)/share/applications" "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps"
 	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -tags nowayland -o "$(LINUX_BIN)" $(CMD)
-	patchelf --set-rpath '$$ORIGIN/lib' "$(LINUX_BIN)"
+	patchelf --force-rpath --set-rpath '$$ORIGIN/lib' "$(LINUX_BIN)"
 	@if [ "$$(patchelf --print-rpath "$(LINUX_BIN)")" != '$$ORIGIN/lib' ]; then \
 		echo "failed to set Linux rpath on $(LINUX_BIN)"; \
 		exit 1; \
@@ -64,6 +64,7 @@ build-linux: | $(DIST_DIR)
 			exit 1; \
 		fi; \
 		cp -L "$$path" "$(LINUX_LIB_DIR)/$$lib"; \
+		patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/$$lib"; \
 	done
 	cp protocols.yaml "$(LINUX_STAGE)/protocols.yaml"
 
@@ -101,7 +102,7 @@ build-all: build-linux build-macos build-windows
 
 package-linux: build-linux
 	rm -f "$(LINUX_ZIP)"
-	cd "$(DIST_DIR)" && zip -rq "$(notdir $(LINUX_ZIP))" "$(notdir $(LINUX_STAGE))"
+	cd "$(LINUX_STAGE)" && zip -rq "../$(notdir $(LINUX_ZIP))" .
 
 package-macos: build-macos
 	rm -f "$(MACOS_DMG)"
@@ -109,7 +110,7 @@ package-macos: build-macos
 
 package-windows: build-windows
 	rm -f "$(WINDOWS_ZIP)"
-	cd "$(DIST_DIR)" && zip -rq "$(notdir $(WINDOWS_ZIP))" "$(notdir $(WINDOWS_STAGE))"
+	cd "$(WINDOWS_STAGE)" && zip -rq "../$(notdir $(WINDOWS_ZIP))" .
 
 package-all: package-linux package-macos package-windows
 
