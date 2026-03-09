@@ -1,6 +1,8 @@
 package fm
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -212,6 +214,26 @@ func TestDefaultConfigDimsInactivePanes(t *testing.T) {
 	out := string(mustMarshalConfig(t, cfg))
 	if !strings.Contains(out, "dim_inactive_panes: false") {
 		t.Fatalf("serialized config missing general dim_inactive_panes:\n%s", out)
+	}
+}
+
+func TestLoadConfigEnsuringFileCreatesDefaultWhenMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fm.yaml")
+
+	cfg, err := LoadConfigEnsuringFile(path)
+	if err != nil {
+		t.Fatalf("LoadConfigEnsuringFile: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("LoadConfigEnsuringFile returned nil config")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected config file to be created: %v", err)
+	}
+
+	saved := LoadConfig(path)
+	if saved.Viewer.HideFunctionBarWhenOpen != cfg.Viewer.HideFunctionBarWhenOpen {
+		t.Fatal("saved config should round-trip defaults")
 	}
 }
 

@@ -1,2 +1,9 @@
-hexone
-hexone.exe
+/hexone
+/hexone.exe
+/fm.yaml
+/fm.session.yaml
+/.idea/
+/.vscode/
+/.vs/
+/.fleet/
+*.code-workspace

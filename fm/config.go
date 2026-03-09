@@ -1,6 +1,7 @@
 package fm
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -259,6 +260,16 @@ func LoadConfig(path string) *Config {
 
 	cfg.normalize()
 	return cfg
+}
+
+func LoadConfigEnsuringFile(path string) (*Config, error) {
+	cfg := LoadConfig(path)
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, SaveConfig(path, cfg)
+		}
+	}
+	return cfg, nil
 }
 
 func (c *Config) normalize() {

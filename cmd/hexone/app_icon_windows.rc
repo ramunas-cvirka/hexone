@@ -1,0 +1,6 @@
+// Windows executable icon resource for Hexone.
+//
+// Regenerate the compiled resource after changing ../../assets/icons/hexone.ico:
+//   windres.exe -i cmd/hexone/app_icon_windows.rc -o cmd/hexone/hexone_windows.syso -O coff
+
+1 ICON "..\\..\\assets\\icons\\hexone.ico"
