@@ -63,10 +63,13 @@ jobs:
             patchelf \
             pkg-config \
             zip \
+            libxcb-xkb1 \
+            libxcb-xkb-dev \
             libwayland-dev \
             libx11-dev \
             libx11-xcb-dev \
             libxkbcommon-dev \
+            libxkbcommon-x11-0 \
             libxkbcommon-x11-dev \
             libgles2-mesa-dev \
             libegl1-mesa-dev \

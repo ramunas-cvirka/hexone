@@ -50,12 +50,20 @@ build-linux: | $(DIST_DIR)
 	mkdir -p "$(LINUX_STAGE)" "$(LINUX_LIB_DIR)" "$(LINUX_STAGE)/share/applications" "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps"
 	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -tags nowayland -o "$(LINUX_BIN)" $(CMD)
 	patchelf --set-rpath '$$ORIGIN/lib' "$(LINUX_BIN)"
+	@if [ "$$(patchelf --print-rpath "$(LINUX_BIN)")" != '$$ORIGIN/lib' ]; then \
+		echo "failed to set Linux rpath on $(LINUX_BIN)"; \
+		exit 1; \
+	fi
 	chmod +x "$(LINUX_BIN)"
 	cp packaging/linux/hexone.desktop "$(LINUX_STAGE)/share/applications/hexone.desktop"
 	cp appicon/hexone_icon_art.png "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/hexone.png"
 	for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do \
 		path=$$(ldconfig -p | awk -v lib="$$lib" '$$1 == lib { print $$NF; exit }'); \
-		if [ -n "$$path" ]; then cp -L "$$path" "$(LINUX_LIB_DIR)/$$lib"; fi; \
+		if [ -z "$$path" ]; then \
+			echo "missing required Linux runtime library: $$lib"; \
+			exit 1; \
+		fi; \
+		cp -L "$$path" "$(LINUX_LIB_DIR)/$$lib"; \
 	done
 	cp protocols.yaml "$(LINUX_STAGE)/protocols.yaml"
 
