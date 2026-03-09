@@ -14,7 +14,6 @@ import (
 	"gioui.org/app"
 	"gioui.org/font"
 	"gioui.org/font/opentype"
-	"gioui.org/io/system"
 	"gioui.org/op"
 	"gioui.org/text"
 	"gioui.org/unit"
@@ -87,6 +86,7 @@ func buildFontCollection(cfg *fm.Config) ([]text.FontFace, error) {
 func run(window *app.Window) error {
 	cfgPath := appdata.ConfigPath()
 	sessionPath := appdata.SessionPath()
+	useClientChrome := useClientWindowChrome()
 
 	cfg, err := fm.LoadConfigEnsuringFile(cfgPath)
 	if err != nil {
@@ -94,6 +94,9 @@ func run(window *app.Window) error {
 	}
 	session := fm.LoadSession(sessionPath)
 	window.Option(app.Title(appicon.AppTitle))
+	if useClientChrome {
+		window.Option(app.Decorated(false))
+	}
 	windowstate.ApplyWindowOptions(window, session)
 	th := material.NewTheme()
 	collection, err := buildFontCollection(cfg)
@@ -107,6 +110,7 @@ func run(window *app.Window) error {
 
 	var ops op.Ops
 	mainUI := ui.NewUI(cfg)
+	mainUI.SetWindowChrome(useClientChrome, sessionMode(session))
 	windowTracker := windowstate.NewTracker(session)
 	iconSetter := appicon.NewSetter()
 	sessionApplied := false
@@ -125,12 +129,13 @@ func run(window *app.Window) error {
 			iconSetter.HandleViewEvent(typ)
 		case app.ConfigEvent:
 			windowTracker.ObserveConfig(typ.Config)
+			mainUI.SetWindowChrome(useClientChrome, typ.Config.Mode)
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, typ)
 			mainUI.Layout(th, gtx)
 			typ.Frame(gtx.Ops)
-			if mainUI.ConsumeWindowCloseRequest() {
-				window.Perform(system.ActionClose)
+			if actions := mainUI.ConsumeWindowActions(); actions != 0 {
+				window.Perform(actions)
 			}
 			windowTracker.ObserveFrame(gtx.Metric)
 			if !sessionApplied {
@@ -139,5 +144,21 @@ func run(window *app.Window) error {
 				window.Invalidate()
 			}
 		}
+	}
+}
+
+func sessionMode(session *fm.SessionState) app.WindowMode {
+	if session == nil {
+		return app.Windowed
+	}
+	switch session.Window.Mode {
+	case "maximized":
+		return app.Maximized
+	case "fullscreen":
+		return app.Fullscreen
+	case "minimized":
+		return app.Minimized
+	default:
+		return app.Windowed
 	}
 }

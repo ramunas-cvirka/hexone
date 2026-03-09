@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -z "${XDG_DATA_DIRS:-}" ]; then
+	export XDG_DATA_DIRS="$HERE/share:/usr/local/share:/usr/share"
+else
+	export XDG_DATA_DIRS="$HERE/share:$XDG_DATA_DIRS"
+fi
+if [ -d "$HERE/lib" ]; then
+	if [ -z "${LD_LIBRARY_PATH:-}" ]; then
+		export LD_LIBRARY_PATH="$HERE/lib"
+	else
+		export LD_LIBRARY_PATH="$HERE/lib:$LD_LIBRARY_PATH"
+	fi
+fi
+if [ -n "${DISPLAY:-}" ] && [ -z "${HEXONE_USE_WAYLAND:-}" ]; then
+	export WAYLAND_DISPLAY=hexone-disable-wayland
+fi
+export GIO_LAUNCHED_DESKTOP_FILE="$HERE/share/applications/hexone.desktop"
+export GIO_LAUNCHED_DESKTOP_FILE_PID=$$
+
+exec "$HERE/hexone-bin" "$@"

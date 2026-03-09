@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=hexone
+Comment=Hex-oriented file manager and protocol analyzer
+Exec=hexone %U
+Icon=hexone
+Terminal=false
+Categories=Utility;Development;
+StartupNotify=true
+StartupWMClass=hexone
