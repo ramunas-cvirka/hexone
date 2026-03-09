@@ -153,16 +153,18 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 	switch action {
 	case functionBarActionExit:
 		return true
+	case functionBarActionHelp:
+		return ui.helpModal == nil && ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
 	case functionBarActionTools:
-		return ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
+		return ui.helpModal == nil && ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
 	}
 
-	if ui.Tabs.Value != "tab0" || ui.settingsModal != nil || ui.sshModal != nil || ui.pathEditActive() {
+	if ui.Tabs.Value != "tab0" || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.pathEditActive() {
 		return false
 	}
 
 	switch action {
-	case functionBarActionHelp, functionBarActionWIP:
+	case functionBarActionWIP:
 		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
 	case functionBarActionView:
 		if ui.fileViewer != nil {
@@ -187,10 +189,8 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
-		if pane := ui.activePane(); pane != nil {
-			pane.setNotice("help is not implemented yet", now)
-			return true
-		}
+		ui.openHelpModal()
+		return true
 	case functionBarActionWIP:
 		if !ui.functionBarActionEnabled(action) {
 			return false

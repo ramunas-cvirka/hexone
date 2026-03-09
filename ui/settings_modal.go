@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	resources "hexone"
 	"hexone/fm"
 	uitheme "hexone/ui/theme"
 	"hexone/ui/widget/table"
@@ -88,7 +89,12 @@ type settingsModalState struct {
 	colorCurrentDirText      string
 	viewCommandEdit          widget.Editor
 	viewShellEdit            widget.Editor
+	paneFontSizeEdit         widget.Editor
 	viewFontSizeEdit         widget.Editor
+	paneFontFamily           string
+	viewFontFamily           string
+	paneFontFamilyClicks     []widget.Clickable
+	viewFontFamilyClicks     []widget.Clickable
 	generalDimInactiveBool   widget.Bool
 	viewHideFunctionBarBool  widget.Bool
 	viewAssocExtEdit         widget.Editor
@@ -207,6 +213,8 @@ func (ui *UI) openSettingsModal() {
 		st.colorTextValueEdit.Submit = false
 		st.viewShellEdit.SingleLine = true
 		st.viewShellEdit.Submit = false
+		st.paneFontSizeEdit.SingleLine = true
+		st.paneFontSizeEdit.Submit = false
 		st.viewFontSizeEdit.SingleLine = true
 		st.viewFontSizeEdit.Submit = false
 		st.viewAssocExtEdit.SingleLine = true
@@ -259,7 +267,10 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorPickerTarget = ""
 	st.viewCommandEdit.SetText(cfg.Viewer.Command)
 	st.viewShellEdit.SetText(normalizeViewerShellInput(cfg.Viewer.Shell))
+	st.paneFontSizeEdit.SetText(formatConfigFloat(cfg.Font.SizeSp))
 	st.viewFontSizeEdit.SetText(formatConfigFloat(cfg.Viewer.FontSizeSp))
+	st.paneFontFamily = cfg.Font.Typeface
+	st.viewFontFamily = cfg.Viewer.Typeface
 	st.generalDimInactiveBool.Value = cfg.General.DimInactivePanes
 	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
 	st.viewAssocEntries = append([]fm.ViewerAssociation(nil), fm.FlattenAssociationPrograms(cfg.Associations)...)
@@ -1323,13 +1334,27 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if err != nil || viewerFontSize < 6 {
 		return fmt.Errorf("viewer font size must be at least 6")
 	}
+	paneFontSize, err := strconv.ParseFloat(strings.TrimSpace(st.paneFontSizeEdit.Text()), 32)
+	if err != nil || paneFontSize < 6 {
+		return fmt.Errorf("pane font size must be at least 6")
+	}
+	if !resources.IsBundledFontFamily(st.paneFontFamily) && st.paneFontFamily != ui.fmCfg.Font.Typeface {
+		return fmt.Errorf("pane font family is invalid")
+	}
+	if !resources.IsBundledFontFamily(st.viewFontFamily) && st.viewFontFamily != ui.fmCfg.Viewer.Typeface {
+		return fmt.Errorf("viewer font family is invalid")
+	}
 	if strings.TrimSpace(st.viewAssocExtEdit.Text()) != "" || strings.TrimSpace(st.viewAssocAppEdit.Text()) != "" {
 		if _, err := st.upsertCurrentViewerAssociation(); err != nil {
 			return err
 		}
 	}
 
+	ui.fmCfg.Font.Typeface = st.paneFontFamily
+	ui.fmCfg.Font.SizeSp = float32(paneFontSize)
+	ui.fmCfg.Font.ModalSizeSp = float32(paneFontSize) * (15.0 / 14.0)
 	ui.fmCfg.Viewer.Mode = mode
+	ui.fmCfg.Viewer.Typeface = st.viewFontFamily
 	ui.fmCfg.Viewer.Command = cmd
 	ui.fmCfg.Viewer.Shell = shell
 	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
@@ -1793,6 +1818,19 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 	rowLabel := func(txt string) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, true)
 	}
+	bundledFamilies := resources.BundledFontFamilies()
+	st.ensurePaneFontFamilyClicks(len(bundledFamilies))
+	st.ensureViewFontFamilyClicks(len(bundledFamilies))
+	for i, family := range bundledFamilies {
+		if st.paneFontFamilyClicks[i].Clicked(gtx) {
+			st.paneFontFamily = family.Name
+			st.errText = ""
+		}
+		if st.viewFontFamilyClicks[i].Clicked(gtx) {
+			st.viewFontFamily = family.Name
+			st.errText = ""
+		}
+	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(rowLabel("Workspace")),
@@ -1813,7 +1851,70 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+		layout.Rigid(rowLabel("Fonts")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(settingsViewerRowLabel(ui, th, "Pane font face", true)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsFontFamilyPicker(th, gtx, bundledFamilies, st.paneFontFamilyClicks, st.paneFontFamily)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(settingsViewerRowLabel(ui, th, "Pane font size (sp)", true)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			ed := material.Editor(th, &st.paneFontSizeEdit, "14")
+			ed.Font.Typeface = ui.mainTypeface()
+			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			ed.Color = txtColor
+			ed.HintColor = hintColor
+			return ui.layoutEditorWithContextMenu(th, gtx, "settings-pane-font-size", &st.paneFontSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
+				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.paneFontSizeEdit), true, ed.Layout)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(settingsViewerRowLabel(ui, th, "Viewer font face", true)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsFontFamilyPicker(th, gtx, bundledFamilies, st.viewFontFamilyClicks, st.viewFontFamily)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(settingsViewerRowLabel(ui, th, "Viewer font size (sp)", true)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			ed := material.Editor(th, &st.viewFontSizeEdit, "13")
+			ed.Font.Typeface = ui.mainTypeface()
+			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			ed.Color = txtColor
+			ed.HintColor = hintColor
+			return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-font", &st.viewFontSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
+				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewFontSizeEdit), true, ed.Layout)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, "Viewer font is reused across file, hex, and command modes. Fira Code or Consolas are the practical choices for dense output.")
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 11)
+			lbl.Color = hintColor
+			return lbl.Layout(gtx)
+		}),
 	)
+}
+
+func (ui *UI) layoutSettingsFontFamilyPicker(th *material.Theme, gtx layout.Context, families []resources.BundledFontFamily, clicks []widget.Clickable, active string) layout.Dimensions {
+	children := make([]layout.FlexChild, 0, len(families)*2-1)
+	for i, family := range families {
+		if i > 0 {
+			children = append(children, layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout))
+		}
+		i := i
+		family := family
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutModeButton(th, gtx, ui.mainTypeface(), &clicks[i], family.Name, family.Name == active)
+		}))
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 }
 
 func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
@@ -1973,19 +2074,6 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 			ed.HintColor = hintColor
 			return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-shell", &st.viewShellEdit, true, func(gtx layout.Context) layout.Dimensions {
 				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewShellEdit), true, ed.Layout)
-			})
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(rowLabel("Viewer font size (sp)", true)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, &st.viewFontSizeEdit, "13")
-			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-font", &st.viewFontSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewFontSizeEdit), true, ed.Layout)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
@@ -3087,6 +3175,26 @@ func formatConfigFloat(v float32) string {
 		return ""
 	}
 	return strconv.FormatFloat(float64(v), 'f', -1, 32)
+}
+
+func (st *settingsModalState) ensurePaneFontFamilyClicks(n int) {
+	if n <= cap(st.paneFontFamilyClicks) {
+		st.paneFontFamilyClicks = st.paneFontFamilyClicks[:n]
+		return
+	}
+	old := st.paneFontFamilyClicks
+	st.paneFontFamilyClicks = make([]widget.Clickable, n)
+	copy(st.paneFontFamilyClicks, old)
+}
+
+func (st *settingsModalState) ensureViewFontFamilyClicks(n int) {
+	if n <= cap(st.viewFontFamilyClicks) {
+		st.viewFontFamilyClicks = st.viewFontFamilyClicks[:n]
+		return
+	}
+	old := st.viewFontFamilyClicks
+	st.viewFontFamilyClicks = make([]widget.Clickable, n)
+	copy(st.viewFontFamilyClicks, old)
 }
 
 func viewerAssociationDisplayExtension(ext string) string {

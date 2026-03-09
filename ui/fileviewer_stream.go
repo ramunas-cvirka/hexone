@@ -17,10 +17,8 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
-	"golang.org/x/image/math/fixed"
 )
 
 type streamOutputView struct {
@@ -834,7 +832,7 @@ func runeIndexAtByte(s string, byteIdx int) int {
 	return runes
 }
 
-func measureStreamCharWidth(ui *UI, th *material.Theme, gtx layout.Context) int {
+func measureTypefaceCharWidth(ui *UI, th *material.Theme, gtx layout.Context, face font.Typeface) int {
 	fallback := int(float32(gtx.Sp(ui.viewerTextSize()))*0.62 + 0.5)
 	if fallback < 5 {
 		fallback = 5
@@ -842,39 +840,40 @@ func measureStreamCharWidth(ui *UI, th *material.Theme, gtx layout.Context) int 
 	if th == nil || th.Shaper == nil {
 		return fallback
 	}
-	const sample = "MMMMMMMMMM"
-	params := text.Parameters{
-		Font:             font.Font{Typeface: ui.mainTypeface(), Weight: font.Normal},
-		PxPerEm:          fixed.I(gtx.Sp(ui.viewerTextSize())),
-		MaxLines:         1,
-		MaxWidth:         1 << 20,
-		MinWidth:         0,
-		Locale:           gtx.Locale,
-		DisableSpaceTrim: true,
+
+	measureLabelWidth := func(sample string) int {
+		lbl := material.Body2(th, sample)
+		lbl.Font.Typeface = face
+		lbl.Font.Weight = font.Normal
+		lbl.TextSize = ui.viewerTextSize()
+		lbl.MaxLines = 1
+		lbl.Truncator = ""
+		return measureLabelUnconstrained(gtx, lbl).Size.X
 	}
-	th.Shaper.LayoutString(params, sample)
-	var totalAdvance fixed.Int26_6
-	glyphs := 0
-	for g, ok := th.Shaper.NextGlyph(); ok; g, ok = th.Shaper.NextGlyph() {
-		if g.Flags&text.FlagLineBreak != 0 || g.Flags&text.FlagParagraphBreak != 0 {
-			continue
+
+	cw := fallback
+	if single := measureLabelWidth("0"); single > cw {
+		cw = single
+	}
+	if double := measureLabelWidth("00"); double > 0 {
+		doubleCell := (double + 1) / 2
+		if doubleCell > cw {
+			cw = doubleCell
 		}
-		totalAdvance += g.Advance
-		if g.Flags&text.FlagClusterBreak != 0 {
-			glyphs++
-		}
 	}
-	if glyphs <= 0 || totalAdvance <= 0 {
-		return fallback
+	if wide := measureLabelWidth("M"); wide > cw {
+		cw = wide
 	}
-	cw := int((float32(totalAdvance)/64.0)/float32(glyphs) + 0.5)
-	if cw < 5 {
-		return fallback
-	}
-	return cw
+	// Leave a small safety margin so exact-width hex cells don't clip glyph
+	// bounds at larger font sizes.
+	return cw + 1
 }
 
-func measureStreamLineHeight(ui *UI, th *material.Theme, gtx layout.Context) int {
+func measureStreamCharWidth(ui *UI, th *material.Theme, gtx layout.Context) int {
+	return measureTypefaceCharWidth(ui, th, gtx, ui.viewerTypeface())
+}
+
+func measureTypefaceLineHeight(ui *UI, th *material.Theme, gtx layout.Context, face font.Typeface) int {
 	fallback := gtx.Sp(ui.viewerTextSize()) + gtx.Dp(unit.Dp(3))
 	if fallback < 12 {
 		fallback = 12
@@ -886,7 +885,7 @@ func measureStreamLineHeight(ui *UI, th *material.Theme, gtx layout.Context) int
 	measureGTX.Constraints.Min = image.Point{}
 	measureGTX.Constraints.Max = image.Pt(1<<20, 1<<20)
 	lbl := material.Body2(th, "Mg")
-	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.Font.Typeface = face
 	lbl.Font.Weight = font.Normal
 	lbl.TextSize = ui.viewerTextSize()
 	lbl.MaxLines = 1
@@ -896,6 +895,10 @@ func measureStreamLineHeight(ui *UI, th *material.Theme, gtx layout.Context) int
 		return 12
 	}
 	return h
+}
+
+func measureStreamLineHeight(ui *UI, th *material.Theme, gtx layout.Context) int {
+	return measureTypefaceLineHeight(ui, th, gtx, ui.viewerTypeface())
 }
 
 func (v *streamOutputView) scrollByLines(lines int) {
@@ -1548,7 +1551,7 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 		}
 		_ = layout.Inset{Left: unit.Dp(2)}.Layout(lineGTX, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th, lineDraw)
-			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.Font.Typeface = ui.viewerTypeface()
 			lbl.Font.Weight = font.Normal
 			lbl.TextSize = ui.viewerTextSize()
 			lbl.Color = color.NRGBA{R: 220, G: 226, B: 240, A: 255}
@@ -1667,7 +1670,7 @@ func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, msg)
-				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Typeface = ui.viewerTypeface()
 				lbl.TextSize = scaleThemeFontSize(th, 9)
 				lbl.Color = color.NRGBA{R: 223, G: 233, B: 249, A: 255}
 				lbl.MaxLines = 1

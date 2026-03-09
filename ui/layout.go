@@ -1,6 +1,7 @@
 package ui
 
 import (
+	resources "hexone"
 	"hexone/fm"
 	"hexone/protocols"
 	"image"
@@ -165,6 +166,7 @@ type UI struct {
 	fileCreate                  *fileCreateState
 	filePerm                    *filePermState
 	fileViewer                  *fileViewerState
+	helpModal                   *helpModalState
 	settingsModal               *settingsModalState
 	sshModal                    *sshModalState
 	editorMenuOpenID            string
@@ -250,6 +252,22 @@ func (ui *UI) mainTypeface() font.Typeface {
 		return font.Typeface("Fira Code")
 	}
 	return ui.typeface
+}
+
+func (ui *UI) viewerTypeface() font.Typeface {
+	if ui == nil || ui.fmCfg == nil || ui.fmCfg.Viewer.Typeface == "" {
+		return ui.mainTypeface()
+	}
+	return font.Typeface(ui.fmCfg.Viewer.Typeface)
+}
+
+func (ui *UI) viewerMonospaceTypeface() font.Typeface {
+	switch string(ui.viewerTypeface()) {
+	case resources.BundledFontFamilyFiraCode, resources.BundledFontFamilyConsolas:
+		return ui.viewerTypeface()
+	default:
+		return font.Typeface(resources.BundledFontFamilyFiraCode)
+	}
 }
 
 func (ui *UI) mainTextSize() unit.Sp {
@@ -688,6 +706,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 			return ui.layoutFunctionBarPopup(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutHelpModal(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsModal(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -832,7 +853,7 @@ func (ui *UI) handleProtocolDropdownOutsideClick(gtx layout.Context) {
 }
 
 func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
-	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil {
+	if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil {
 		return
 	}
 	if ui.Tabs.Value == "tab0" && !ui.functionBarToolsOpen {
@@ -899,6 +920,11 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		switch ke.Name {
 		case key.NameF1:
 			if ke.State != key.Press || ke.Modifiers != 0 {
+				continue
+			}
+			if ui.helpModal != nil {
+				ui.closeHelpModal()
+				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			if ui.performFunctionBarAction(functionBarActionHelp, gtx.Now) {

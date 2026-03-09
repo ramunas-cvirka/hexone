@@ -102,6 +102,7 @@ type Table struct {
 	IsMarked      func(row int) bool
 
 	TextSize    unit.Sp
+	Typeface    font.Typeface
 	RowHeight   unit.Dp
 	RowPadY     unit.Dp
 	Bg          color.NRGBA
@@ -145,6 +146,7 @@ func New(cols []Column) *Table {
 		Selected:         0,
 		Mode:             ModeFull,
 		TextSize:         unit.Sp(15),
+		Typeface:         "",
 		RowHeight:        unit.Dp(24),
 		RowPadY:          unit.Dp(2),
 		Bg:               color.NRGBA{R: 32, G: 32, B: 32, A: 255},
@@ -157,6 +159,16 @@ func New(cols []Column) *Table {
 	}
 	t.List.Axis = layout.Vertical
 	return t
+}
+
+func (t *Table) textTypeface(th *material.Theme) font.Typeface {
+	if t != nil && t.Typeface != "" {
+		return t.Typeface
+	}
+	if th != nil && th.Face != "" {
+		return th.Face
+	}
+	return font.Typeface("sans-serif")
 }
 
 func (t *Table) SetMode(mode Mode) {
@@ -174,6 +186,17 @@ func (t *Table) SetSelected(row, total int, ensureVisible bool) {
 	if ensureVisible {
 		t.pendingEnsure = true
 	}
+}
+
+func (t *Table) ResetPointerState() {
+	if t == nil {
+		return
+	}
+	for i := range t.rowClicks {
+		t.rowClicks[i] = widget.Clickable{}
+	}
+	t.lastClickRow = -1
+	t.lastClickAt = time.Time{}
 }
 
 func (t *Table) ensureClicks(n int) {
@@ -997,6 +1020,7 @@ func (t *Table) rowColors(row int, hovered, marked bool) (color.NRGBA, *color.NR
 }
 
 func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, rowHpx int) layout.Dimensions {
+	face := t.textTypeface(th)
 	return t.List.Layout(gtx, n, func(gtx layout.Context, row int) layout.Dimensions {
 		if row < 0 || row >= len(t.rowClicks) {
 			return layout.Dimensions{}
@@ -1099,9 +1123,9 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 					hideIfTruncated := false
 					_ = layout.Inset{Left: padX, Right: padX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
 						if hasIcon && icon.Kind != IconNone {
-							return layoutCellLabelWithIcon(gtx, th, th.Face, t.TextSize, txt, st, align, hideIfTruncated, icon)
+							return layoutCellLabelWithIcon(gtx, th, face, t.TextSize, txt, st, align, hideIfTruncated, icon)
 						}
-						return layoutCellLabel(gtx, th, th.Face, t.TextSize, txt, st, align, hideIfTruncated)
+						return layoutCellLabel(gtx, th, face, t.TextSize, txt, st, align, hideIfTruncated)
 					})
 					tr.Pop()
 
@@ -1265,6 +1289,7 @@ func maxInt(a, b int) int {
 }
 
 func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, row, n, rowHpx int) layout.Dimensions {
+	face := t.textTypeface(th)
 	if row < 0 || row >= len(t.rowClicks) {
 		return layout.Dimensions{}
 	}
@@ -1346,6 +1371,7 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 			lbl.MaxLines = 1
 			lbl.Truncator = "…"
 			lbl.Color = st.Color
+			lbl.Font.Typeface = face
 			lbl.Font.Weight = st.Weight
 			lbl.Alignment = text.Start
 
@@ -1353,7 +1379,7 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 			cellGtx.Constraints = layout.Exact(image.Pt(maxW, cellH))
 			_ = layout.Inset{Left: padX, Right: padX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
 				if hasIcon && icon.Kind != IconNone {
-					return layoutCellLabelWithIcon(gtx, th, th.Face, t.TextSize, txt, st, text.Start, false, icon)
+					return layoutCellLabelWithIcon(gtx, th, face, t.TextSize, txt, st, text.Start, false, icon)
 				}
 				return lbl.Layout(gtx)
 			})

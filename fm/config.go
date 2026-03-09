@@ -2,6 +2,7 @@ package fm
 
 import (
 	"errors"
+	resources "hexone"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,7 @@ const (
 	defaultApproxCharPx       = 8
 	defaultNameKeepStartChars = 6
 	defaultNameCompactMarker  = ".."
+	retiredBlockZonePath      = "embedded:BlockZone.ttf"
 )
 
 type NameCompact struct {
@@ -111,6 +113,7 @@ func (a AssociationProgram) MarshalYAML() (any, error) {
 
 type ViewerConfig struct {
 	Mode                    string              `yaml:"mode"`
+	Typeface                string              `yaml:"typeface"`
 	Shell                   string              `yaml:"shell"`
 	Command                 string              `yaml:"command"`
 	Associations            []ViewerAssociation `yaml:"associations,omitempty"`
@@ -190,9 +193,9 @@ func DefaultConfig() *Config {
 			Typeface:    "Fira Code",
 			SizeSp:      14,
 			ModalSizeSp: 15,
-			RegularPath: "assets/FiraCode-Regular.ttf",
-			MediumPath:  "assets/FiraCode-Medium.ttf",
-			BoldPath:    "assets/FiraCode-Bold.ttf",
+			RegularPath: resources.EmbeddedRegularFontPath,
+			MediumPath:  resources.EmbeddedMediumFontPath,
+			BoldPath:    resources.EmbeddedBoldFontPath,
 		},
 		General: GeneralConfig{
 			DimInactivePanes: false,
@@ -214,6 +217,7 @@ func DefaultConfig() *Config {
 		Associations: nil,
 		Viewer: ViewerConfig{
 			Mode:                    "file",
+			Typeface:                resources.BundledFontFamilyFiraCode,
 			Shell:                   "auto",
 			Command:                 "cat {path}",
 			Associations:            nil,
@@ -323,7 +327,19 @@ func (c *Config) normalize() {
 	}
 
 	if c.Font.Typeface == "" {
-		c.Font.Typeface = "Fira Code"
+		c.Font.Typeface = resources.BundledFontFamilyFiraCode
+	}
+	if c.Font.Typeface == resources.BundledFontFamilyBlockZone {
+		c.Font.Typeface = resources.BundledFontFamilyFiraCode
+		if c.Font.RegularPath == "" || c.Font.RegularPath == retiredBlockZonePath {
+			c.Font.RegularPath = resources.EmbeddedRegularFontPath
+		}
+		if c.Font.MediumPath == "" || c.Font.MediumPath == retiredBlockZonePath {
+			c.Font.MediumPath = resources.EmbeddedMediumFontPath
+		}
+		if c.Font.BoldPath == "" || c.Font.BoldPath == retiredBlockZonePath {
+			c.Font.BoldPath = resources.EmbeddedBoldFontPath
+		}
 	}
 	if c.Font.SizeSp <= 0 {
 		c.Font.SizeSp = 14
@@ -335,13 +351,22 @@ func (c *Config) normalize() {
 		}
 	}
 	if c.Font.RegularPath == "" {
-		c.Font.RegularPath = "assets/FiraCode-Regular.ttf"
+		c.Font.RegularPath = resources.EmbeddedRegularFontPath
 	}
 	if c.Font.MediumPath == "" {
-		c.Font.MediumPath = "assets/FiraCode-Medium.ttf"
+		c.Font.MediumPath = resources.EmbeddedMediumFontPath
 	}
 	if c.Font.BoldPath == "" {
-		c.Font.BoldPath = "assets/FiraCode-Bold.ttf"
+		c.Font.BoldPath = resources.EmbeddedBoldFontPath
+	}
+	if c.Viewer.Typeface == "" {
+		c.Viewer.Typeface = c.Font.Typeface
+	}
+	if c.Viewer.Typeface == resources.BundledFontFamilyBlockZone {
+		c.Viewer.Typeface = resources.BundledFontFamilyFiraCode
+	}
+	if c.Viewer.Typeface != c.Font.Typeface && !resources.IsBundledFontFamily(c.Viewer.Typeface) {
+		c.Viewer.Typeface = c.Font.Typeface
 	}
 	c.Colors.FilePaneBackground = NormalizeHexColor(c.Colors.FilePaneBackground, DefaultFilePaneBackgroundHex)
 	c.Colors.FilePaneText = NormalizeHexColor(c.Colors.FilePaneText, DefaultFilePaneTextHex)

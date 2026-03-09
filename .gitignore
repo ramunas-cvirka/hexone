@@ -1,7 +1,9 @@
 /hexone
 /hexone.exe
+/dist/
 /fm.yaml
 /fm.session.yaml
+/.qodo/
 /.idea/
 /.vscode/
 /.vs/

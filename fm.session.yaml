@@ -1,15 +1,15 @@
 window:
-    x: 678
-    "y": 347
+    x: 46
+    "y": 1250
     has_position: true
     width: 1479
-    height: 859
+    height: 837
     px_per_dp: 1
     mode: windowed
 active_tab: tab0
 active_pane: 0
 panes:
-    - dir: C:\@downloads
-      selected_path: C:\@downloads\God.of.Gamblers.1989.720p.BluRay.x264-x0r
-    - dir: D:\AsmSource
-      selected_path: D:\AsmSource\testas
+    - dir: /Users
+      selected_path: ""
+    - dir: /Users/ramunas/go/src/hexone
+      selected_path: /Users/ramunas/go/src

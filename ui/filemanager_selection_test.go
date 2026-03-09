@@ -3,6 +3,7 @@ package ui
 import (
 	"hexone/filesys"
 	"testing"
+	"time"
 )
 
 func TestFilePaneMarkCurrentAndAdvance(t *testing.T) {
@@ -78,5 +79,26 @@ func TestFilePaneSelectedEntriesFallbackToCurrentRow(t *testing.T) {
 	}
 	if selected[0].Path != "beta.txt" {
 		t.Fatalf("selected path = %q, want beta.txt", selected[0].Path)
+	}
+}
+
+func TestFilePaneApplyListingClearsTableClickState(t *testing.T) {
+	pane := newFilePaneState(".", nil)
+	pane.tableClickRow = 3
+	pane.tableClickCol = 0
+	pane.tableClickAt = time.Now()
+
+	pane.applyListing(filesys.Listing{
+		Dir: ".",
+		Entries: []filesys.Entry{
+			{Name: "..", Path: "..", Kind: filesys.EntryParent},
+		},
+	}, "", "", 0)
+
+	if pane.tableClickRow != -1 || pane.tableClickCol != -1 {
+		t.Fatalf("table click state = row %d col %d, want cleared", pane.tableClickRow, pane.tableClickCol)
+	}
+	if !pane.tableClickAt.IsZero() {
+		t.Fatal("table click time should be cleared")
 	}
 }

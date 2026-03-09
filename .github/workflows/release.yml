@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run Go unit tests
+        run: go test ./...
+
+  build-linux-windows:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc \
+            pkg-config \
+            libwayland-dev \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libgles2-mesa-dev \
+            libegl1-mesa-dev \
+            libffi-dev \
+            libxcursor-dev \
+            libxfixes-dev \
+            libvulkan-dev
+
+      - name: Build Linux and Windows binaries
+        run: make build-linux build-windows
+
+      - name: Upload Linux binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexone-linux-amd64
+          path: dist/hexone-linux-amd64
+
+      - name: Upload Windows binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexone-windows-amd64
+          path: dist/hexone-windows-amd64.exe
+
+  build-macos:
+    runs-on: macos-13
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Build macOS binary
+        run: make build-macos
+
+      - name: Upload macOS binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexone-macos-amd64
+          path: dist/hexone-macos-amd64
+
+  release:
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux-windows
+      - build-macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download built binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/binaries
+
+      - name: Create portable ZIP archives
+        run: |
+          rm -rf dist/release
+          mkdir -p dist/release
+
+          cp dist/binaries/hexone-linux-amd64/hexone-linux-amd64 dist/release/hexone-linux-amd64
+          cp dist/binaries/hexone-macos-amd64/hexone-macos-amd64 dist/release/hexone-macos-amd64
+          cp dist/binaries/hexone-windows-amd64/hexone-windows-amd64.exe dist/release/hexone-windows-amd64.exe
+
+          for os in linux macos windows; do
+            stage="dist/release/${os}/hexone_portable"
+            mkdir -p "${stage}"
+
+            case "${os}" in
+              linux)
+                cp dist/release/hexone-linux-amd64 "${stage}/hexone"
+                ;;
+              macos)
+                cp dist/release/hexone-macos-amd64 "${stage}/hexone"
+                ;;
+              windows)
+                cp dist/release/hexone-windows-amd64.exe "${stage}/hexone.exe"
+                ;;
+            esac
+
+            cp protocols.yaml "${stage}/"
+
+            (
+              cd "dist/release/${os}"
+              zip -r "../../hexone_${os}_portable.zip" hexone_portable
+            )
+          done
+
+      - name: Extract changelog section for this tag
+        run: |
+          TAG="${{ github.ref_name }}"
+          awk -v tag="## ${TAG}" '
+            index($0, tag) == 1 {found=1}
+            found {
+              if ($0 ~ /^## / && index($0, tag) != 1) exit
+              print
+            }
+          ' CHANGELOG.md > RELEASE_BODY.md
+
+          if [ ! -s RELEASE_BODY.md ]; then
+            printf "## %s\n\n- No changelog notes found for this tag.\n" "$TAG" > RELEASE_BODY.md
+          fi
+
+          echo "=== Extracted changelog ==="
+          cat RELEASE_BODY.md
+
+      - name: Create GitHub Release and upload ZIP files
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_BODY.md
+          files: |
+            dist/hexone_linux_portable.zip
+            dist/hexone_macos_portable.zip
+            dist/hexone_windows_portable.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

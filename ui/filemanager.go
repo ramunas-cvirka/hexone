@@ -341,6 +341,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	pane.tableClickRow = -1
 	pane.tableClickCol = -1
 	pane.table.TextSize = scaleConfigFontSize(cfg, 13)
+	pane.table.Typeface = font.Typeface(cfg.Font.Typeface)
 	pane.table.RowHeight = scaleDp(18)
 	pane.table.RowPadY = unit.Dp(0)
 	pane.table.BriefColumnWidth = scaleDp(cfg.Columns.BriefWidthDp)
@@ -455,6 +456,10 @@ func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secon
 	p.noticeUntil = time.Time{}
 	p.stopInlineNameEdit()
 	p.clearMarkedRows()
+	if p.table != nil {
+		p.table.ResetPointerState()
+	}
+	p.clearTableClickState()
 	p.clearPathClickState()
 	p.clearPendingPathNavigate()
 	p.model.entries = listing.Entries
@@ -622,6 +627,15 @@ func (p *filePaneState) clearPathClickState() {
 	}
 	p.pathClickKey = ""
 	p.pathClickAt = time.Time{}
+}
+
+func (p *filePaneState) clearTableClickState() {
+	if p == nil {
+		return
+	}
+	p.tableClickRow = -1
+	p.tableClickCol = -1
+	p.tableClickAt = time.Time{}
 }
 
 func (p *filePaneState) registerTablePrimaryClick(row, col int, now time.Time, window time.Duration) bool {
@@ -862,6 +876,19 @@ func splitRemotePathSegments(dir string) []filePathSegment {
 		out = append(out, filePathSegment{label: label, path: current})
 	}
 	return out
+}
+
+func remotePathDisplaySegments(address, dir string) []filePathSegment {
+	segments := splitRemotePathSegments(dir)
+	if len(segments) == 0 {
+		segments = []filePathSegment{{label: "/", path: "/"}}
+	}
+	address = strings.TrimSpace(address)
+	if address == "" {
+		address = "ssh"
+	}
+	segments[0].label = address + segments[0].label
+	return segments
 }
 
 func (p *filePaneState) selectedEntry() *filesys.Entry {
@@ -2111,6 +2138,10 @@ func (ui *UI) requestPaneLoadWithSelection(idx int, dir, primaryPath, secondaryP
 	pane.closeDriveMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
+	if pane.table != nil {
+		pane.table.ResetPointerState()
+	}
+	pane.clearTableClickState()
 
 	if pane.remoteConnected() {
 		if err := pane.load(dir); err != nil {

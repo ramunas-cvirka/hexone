@@ -97,11 +97,11 @@ func (v *hexViewerState) ensureMetrics(ui *UI, th *material.Theme, gtx layout.Co
 	if v == nil {
 		return
 	}
-	v.charW = measureStreamCharWidth(ui, th, gtx)
+	v.charW = measureTypefaceCharWidth(ui, th, gtx, ui.viewerMonospaceTypeface())
 	if v.charW < 1 {
 		v.charW = 1
 	}
-	v.lineH = measureStreamLineHeight(ui, th, gtx)
+	v.lineH = measureTypefaceLineHeight(ui, th, gtx, ui.viewerMonospaceTypeface())
 	if v.lineH < 1 {
 		v.lineH = 1
 	}
@@ -1193,7 +1193,7 @@ func (ui *UI) drawHexLineLabel(th *material.Theme, gtx layout.Context, pos image
 	lineGTX := gtx
 	lineGTX.Constraints = layout.Exact(image.Pt(width, gtx.Constraints.Max.Y))
 	lbl := material.Body2(th, text)
-	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.Font.Typeface = ui.viewerMonospaceTypeface()
 	lbl.Font.Weight = font.Normal
 	lbl.TextSize = ui.viewerTextSize()
 	lbl.Color = fg
@@ -1211,7 +1211,7 @@ func (ui *UI) drawMonoCell(th *material.Theme, gtx layout.Context, pos image.Poi
 	lineGTX := gtx
 	lineGTX.Constraints = layout.Exact(image.Pt(width, gtx.Constraints.Max.Y))
 	lbl := material.Body2(th, text)
-	lbl.Font.Typeface = "monospace"
+	lbl.Font.Typeface = ui.viewerMonospaceTypeface()
 	lbl.Font.Weight = font.Normal
 	lbl.TextSize = ui.viewerTextSize()
 	lbl.Color = fg

@@ -455,6 +455,11 @@ func (ui *UI) editorForMenuID(id string) (*widget.Editor, bool) {
 			return nil, false
 		}
 		return &ui.settingsModal.viewFontSizeEdit, true
+	case "settings-pane-font-size":
+		if ui.settingsModal == nil {
+			return nil, false
+		}
+		return &ui.settingsModal.paneFontSizeEdit, true
 	case "settings-view-assoc-ext":
 		if ui.settingsModal == nil {
 			return nil, false

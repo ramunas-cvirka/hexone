@@ -1111,16 +1111,36 @@ func filePanePathRowColors(palette filePanePalette) (bg, border color.NRGBA) {
 	return bg, border
 }
 
+func filePanePathHoverColors(palette filePanePalette) (bg, fg, border color.NRGBA) {
+	bg = mixNRGBA(palette.CurrentDirBg, palette.HoverBg, 0.78)
+	bg.A = 255
+	fg = bestContrastColor(bg, palette.HoverFg, palette.CurrentDirFg)
+	border = mixNRGBA(fg, bg, 0.52)
+	border.A = 88
+	return bg, fg, border
+}
+
 func (ui *UI) layoutFilePanePathSegmentLabel(th *material.Theme, gtx layout.Context, label string, bg, fg, border color.NRGBA, weight font.Weight) layout.Dimensions {
+	segH := gtx.Constraints.Min.Y
+	if gtx.Constraints.Max.Y > segH {
+		segH = gtx.Constraints.Max.Y
+	}
+	if segH < 1 {
+		segH = gtx.Dp(unit.Dp(18))
+	}
 	content := func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, label)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.Font.Weight = weight
-			lbl.TextSize = scaleThemeFontSize(th, 11)
-			lbl.Color = fg
-			lbl.MaxLines = 1
-			return lbl.Layout(gtx)
+		return fixedHeight(gtx, segH, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, label)
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Weight = weight
+					lbl.TextSize = scaleThemeFontSize(th, 11)
+					lbl.Color = fg
+					lbl.MaxLines = 1
+					return lbl.Layout(gtx)
+				})
+			})
 		})
 	}
 	if bg.A == 0 && border.A == 0 {
@@ -1153,10 +1173,9 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 				address = prefix
 			}
 		}
-		segments := splitRemotePathSegments(pane.dir)
-		totalClicks := len(segments) + 1 // address + remote path segments
-		pane.ensurePathClicks(totalClicks)
-		for i := 0; i < totalClicks; i++ {
+		segments := remotePathDisplaySegments(address, pane.dir)
+		pane.ensurePathClicks(len(segments))
+		for i := range segments {
 			click := &pane.pathSegClicks[i]
 			for {
 				_, ok := click.Update(gtx)
@@ -1169,12 +1188,8 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 				pane.closeFavoriteMenu()
 				pane.closeContextMenu()
 				pane.clearPendingPathNavigate()
-				switch {
-				case i == 0:
-					pane.queuePathNavigate("/", gtx.Now.Add(filePanePathClickDelay))
-					gtx.Execute(op.InvalidateCmd{At: pane.pendingPathAt})
-				case i-1 != len(segments)-1:
-					pane.queuePathNavigate(segments[i-1].path, gtx.Now.Add(filePanePathClickDelay))
+				if i != len(segments)-1 {
+					pane.queuePathNavigate(segments[i].path, gtx.Now.Add(filePanePathClickDelay))
 					gtx.Execute(op.InvalidateCmd{At: pane.pendingPathAt})
 				}
 			}
@@ -1184,28 +1199,12 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 		}
 
 		pathBaseColor := filePanePathBaseColor(palette)
-		pathHoverBg := palette.HoverBg
-		pathHoverColor := bestContrastColor(pathHoverBg, palette.HoverFg, palette.PaneFg)
-		addrBaseColor := filePanePathMutedColor(palette)
-		addrHoverColor := pathHoverColor
-		children := make([]layout.FlexChild, 0, len(segments)+1)
-		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			click := &pane.pathSegClicks[0]
-			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				bg := color.NRGBA{}
-				lblColor := addrBaseColor
-				border := color.NRGBA{}
-				if click.Hovered() {
-					bg = pathHoverBg
-					lblColor = addrHoverColor
-				}
-				return ui.layoutFilePanePathSegmentLabel(th, gtx, address, bg, lblColor, border, font.Medium)
-			})
-		}))
+		pathHoverBg, pathHoverColor, pathHoverBorder := filePanePathHoverColors(palette)
+		children := make([]layout.FlexChild, 0, len(segments))
 		for i := range segments {
 			i := i
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				click := &pane.pathSegClicks[i+1]
+				click := &pane.pathSegClicks[i]
 				return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					bg := color.NRGBA{}
 					lblColor := pathBaseColor
@@ -1214,6 +1213,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 					if click.Hovered() {
 						bg = pathHoverBg
 						lblColor = pathHoverColor
+						border = pathHoverBorder
 					}
 					if i == len(segments)-1 {
 						weight = font.Medium
@@ -1257,8 +1257,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 
 	children := make([]layout.FlexChild, 0, len(segments))
 	baseColor := filePanePathBaseColor(palette)
-	hoverBg := palette.HoverBg
-	hoverColor := bestContrastColor(hoverBg, palette.HoverFg, palette.PaneFg)
+	hoverBg, hoverColor, hoverBorder := filePanePathHoverColors(palette)
 	for i := range segments {
 		i := i
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1271,6 +1270,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 				if click.Hovered() {
 					bg = hoverBg
 					lblColor = hoverColor
+					border = hoverBorder
 				}
 				if i == len(segments)-1 {
 					weight = font.Medium
@@ -1317,8 +1317,7 @@ func (ui *UI) layoutFilePanePathEditor(th *material.Theme, gtx layout.Context, i
 			continue
 		}
 		pane.stopPathEdit()
-		gtx.Execute(key.FocusCmd{})
-		return ui.layoutFilePanePath(th, gtx, idx, pane, active)
+		return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
 	}
 	for {
 		ev, ok := pane.pathEdit.Update(gtx)
@@ -1332,14 +1331,14 @@ func (ui *UI) layoutFilePanePathEditor(th *material.Theme, gtx layout.Context, i
 		}
 	}
 	if !pane.pathEditing {
-		return ui.layoutFilePanePath(th, gtx, idx, pane, active)
+		return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
 	}
 	if pane.pathEditFocus {
 		pane.pathEditFocus = false
 		gtx.Execute(key.FocusCmd{Tag: &pane.pathEdit})
 	} else if !gtx.Focused(&pane.pathEdit) {
 		pane.stopPathEdit()
-		return ui.layoutFilePanePath(th, gtx, idx, pane, active)
+		return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
 	}
 
 	ed := material.Editor(th, &pane.pathEdit, "")

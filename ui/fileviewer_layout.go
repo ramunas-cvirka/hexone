@@ -111,7 +111,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 				}
 				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, st.err)
-					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Typeface = ui.viewerTypeface()
 					lbl.TextSize = scaleThemeFontSize(th, 10)
 					lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
 					lbl.MaxLines = 2
@@ -141,7 +141,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 										return ui.layoutHexOutputView(th, gtx, st)
 									}
 									wait := material.Body2(th, "Loading...")
-									wait.Font.Typeface = ui.mainTypeface()
+									wait.Font.Typeface = ui.viewerTypeface()
 									wait.TextSize = ui.viewerTextSize()
 									wait.Color = hintColor
 									return wait.Layout(gtx)
@@ -486,7 +486,7 @@ func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Con
 						return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								lbl := material.Body2(th, "Copy")
-								lbl.Font.Typeface = ui.mainTypeface()
+								lbl.Font.Typeface = ui.viewerTypeface()
 								lbl.Font.Weight = font.Medium
 								lbl.TextSize = scaleThemeFontSize(th, 10)
 								lbl.Color = color.NRGBA{R: 224, G: 234, B: 252, A: 255}
@@ -655,7 +655,7 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 	title := ui.fileViewerHeaderTitle(st)
 	details := ui.fileViewerHeaderDetails(st)
 	titleLbl := material.Body2(th, title)
-	titleLbl.Font.Typeface = ui.mainTypeface()
+	titleLbl.Font.Typeface = ui.viewerTypeface()
 	titleLbl.Font.Weight = font.Medium
 	titleLbl.TextSize = ui.viewerTextSize()
 	titleW := measureLabelUnconstrained(gtx, titleLbl).Size.X
@@ -682,7 +682,7 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 	pulledW := 0
 	if len(details) == 1 {
 		lbl := material.Body2(th, details[0].Text)
-		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Typeface = ui.viewerTypeface()
 		lbl.TextSize = ui.viewerTextSize()
 		statusW = measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(2))
 		if statusW > detailAvail {
@@ -690,12 +690,12 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 		}
 	} else if len(details) >= 2 {
 		statusLbl := material.Body2(th, details[0].Text)
-		statusLbl.Font.Typeface = ui.mainTypeface()
+		statusLbl.Font.Typeface = ui.viewerTypeface()
 		statusLbl.TextSize = ui.viewerTextSize()
 		statusPreferred := measureLabelUnconstrained(gtx, statusLbl).Size.X + gtx.Dp(unit.Dp(2))
 
 		pulledLbl := material.Body2(th, details[1].Text)
-		pulledLbl.Font.Typeface = ui.mainTypeface()
+		pulledLbl.Font.Typeface = ui.viewerTypeface()
 		pulledLbl.TextSize = ui.viewerTextSize()
 		pulledPreferred := measureLabelUnconstrained(gtx, pulledLbl).Size.X + gtx.Dp(unit.Dp(2))
 
@@ -733,7 +733,7 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 						return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								lbl := material.Body2(th, title)
-								lbl.Font.Typeface = ui.mainTypeface()
+								lbl.Font.Typeface = ui.viewerTypeface()
 								lbl.Font.Weight = font.Medium
 								lbl.TextSize = ui.viewerTextSize()
 								lbl.Color = color.NRGBA{R: 224, G: 234, B: 252, A: 255}
@@ -768,7 +768,7 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 											return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 												return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 													lbl := material.Body2(th, details[0].Text)
-													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.Font.Typeface = ui.viewerTypeface()
 													lbl.TextSize = ui.viewerTextSize()
 													lbl.Color = details[0].Color
 													lbl.MaxLines = 1
@@ -793,7 +793,7 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 												return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 													return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 														lbl := material.Body2(th, details[1].Text)
-														lbl.Font.Typeface = ui.mainTypeface()
+														lbl.Font.Typeface = ui.viewerTypeface()
 														lbl.TextSize = ui.viewerTextSize()
 														lbl.Color = details[1].Color
 														lbl.MaxLines = 1
@@ -864,7 +864,7 @@ func (ui *UI) layoutFileViewerHeaderSegment(th *material.Theme, gtx layout.Conte
 		return layout.Inset{Left: unit.Dp(9), Right: unit.Dp(9)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Typeface = ui.viewerTypeface()
 				if bold {
 					lbl.Font.Weight = font.Medium
 				}
@@ -975,7 +975,7 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 		commandText = "cat {fullpath}"
 	}
 	measure := material.Body2(th, commandText)
-	measure.Font.Typeface = ui.mainTypeface()
+	measure.Font.Typeface = ui.viewerTypeface()
 	measure.Font.Weight = font.Medium
 	measure.TextSize = ui.viewerTextSize()
 	desiredW := measureLabelUnconstrained(gtx, measure).Size.X + gtx.Dp(unit.Dp(18))
@@ -991,7 +991,7 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
 					if st.commandEditOn {
 						ed := material.Editor(th, &st.commandEditor, "cat {fullpath}")
-						ed.Font.Typeface = ui.mainTypeface()
+						ed.Font.Typeface = ui.viewerTypeface()
 						ed.TextSize = ui.viewerTextSize()
 						ed.Color = fg
 						ed.HintColor = color.NRGBA{R: 176, G: 160, B: 116, A: 255}
@@ -1009,7 +1009,7 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 								gtx.Constraints.Min.X = gtx.Constraints.Max.X
 								return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 									lbl := material.Body2(th, label)
-									lbl.Font.Typeface = ui.mainTypeface()
+									lbl.Font.Typeface = ui.viewerTypeface()
 									lbl.TextSize = ui.viewerTextSize()
 									lbl.Font.Weight = font.Medium
 									lbl.Color = fg
@@ -1077,7 +1077,7 @@ func (ui *UI) layoutFileViewerHistoryListRows(th *material.Theme, gtx layout.Con
 	if len(rows) == 0 {
 		return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th, "No past commands")
-			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.Font.Typeface = ui.viewerTypeface()
 			lbl.TextSize = scaleThemeFontSize(th, 8)
 			lbl.Color = color.NRGBA{R: 162, G: 172, B: 190, A: 255}
 			lbl.MaxLines = 1
@@ -1113,7 +1113,7 @@ func (ui *UI) layoutFileViewerHistoryListRows(th *material.Theme, gtx layout.Con
 func (ui *UI) fileViewerHistoryRows(th *material.Theme, gtx layout.Context, history []string) ([][]string, int) {
 	if len(history) == 0 {
 		lbl := material.Body2(th, "No past commands")
-		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Typeface = ui.viewerTypeface()
 		lbl.TextSize = scaleThemeFontSize(th, 8)
 		return nil, measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(18))
 	}
@@ -1162,7 +1162,7 @@ func (ui *UI) fileViewerHistoryRows(th *material.Theme, gtx layout.Context, hist
 
 func (ui *UI) fileViewerHistoryChipWidth(th *material.Theme, gtx layout.Context, label string) int {
 	lbl := material.Body2(th, label)
-	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.Font.Typeface = ui.viewerTypeface()
 	lbl.TextSize = scaleThemeFontSize(th, 8)
 	lbl.MaxLines = 1
 	w := measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(10))
@@ -1193,7 +1193,7 @@ func (ui *UI) layoutFileViewerHistoryChip(th *material.Theme, gtx layout.Context
 			return fillRoundedBox(gtx, gtx.Dp(unit.Dp(5)), bg, bd, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, label)
-					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Typeface = ui.viewerTypeface()
 					lbl.TextSize = scaleThemeFontSize(th, 8)
 					lbl.Color = color.NRGBA{R: 245, G: 231, B: 180, A: 255}
 					lbl.MaxLines = 1
