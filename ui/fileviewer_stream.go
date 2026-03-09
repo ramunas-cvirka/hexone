@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -34,14 +35,15 @@ type streamOutputView struct {
 
 	pointerTag struct{}
 
-	trackRect  image.Rectangle
-	thumbRect  image.Rectangle
-	hTrackRect image.Rectangle
-	hThumbRect image.Rectangle
-	textRect   image.Rectangle
-	charW      int
-	lineH      int
-	textPad    int
+	trackRect   image.Rectangle
+	thumbRect   image.Rectangle
+	hTrackRect  image.Rectangle
+	hThumbRect  image.Rectangle
+	textRect    image.Rectangle
+	charAdvance float32
+	charW       int
+	lineH       int
+	textPad     int
 
 	metricsReady  bool
 	metricsTextSp unit.Sp
@@ -56,9 +58,11 @@ type streamOutputView struct {
 	dragging      bool
 	dragID        pointer.ID
 	dragTopLine   int
+	dragGrabY     int
 	hDragging     bool
 	hDragID       pointer.ID
 	hDragCol      int
+	hDragGrabX    int
 	selectingText bool
 	selectID      pointer.ID
 	selAnchor     int
@@ -116,6 +120,7 @@ func (v *streamOutputView) ensureTextMetrics(ui *UI, th *material.Theme, gtx lay
 		v.metricsTextSp == textSize &&
 		v.metricsPxDp == gtx.Metric.PxPerDp &&
 		v.metricsPxSp == gtx.Metric.PxPerSp &&
+		v.charAdvance > 0 &&
 		v.charW > 0 &&
 		v.lineH > 0 {
 		return
@@ -124,11 +129,16 @@ func (v *streamOutputView) ensureTextMetrics(ui *UI, th *material.Theme, gtx lay
 	if lineHeight < 1 {
 		lineHeight = 1
 	}
-	charW := measureStreamCharWidth(ui, th, gtx)
+	charAdvance := measureStreamCharAdvance(ui, th, gtx)
+	if charAdvance <= 0 {
+		charAdvance = 1
+	}
+	charW := int(math.Ceil(float64(charAdvance)))
 	if charW < 1 {
 		charW = 1
 	}
 	v.lineH = lineHeight
+	v.charAdvance = charAdvance
 	v.charW = charW
 	v.metricsReady = true
 	v.metricsTextSp = textSize
@@ -325,6 +335,15 @@ func (v *streamOutputView) clearSelection() {
 	v.selectDirty = false
 	v.cancelPending = false
 	v.cancelUntil = time.Time{}
+	v.pointerOutside = false
+	v.stopAutoScroll()
+}
+
+func (v *streamOutputView) stopTextSelectionDrag() {
+	v.selectingText = false
+	v.selectID = 0
+	v.selectDirty = false
+	v.clearCancelGrace()
 	v.pointerOutside = false
 	v.stopAutoScroll()
 }
@@ -604,7 +623,7 @@ func (v *streamOutputView) rowFromPointY(y int) (int, bool) {
 }
 
 func (v *streamOutputView) pointOverSelectableText(pos image.Point) bool {
-	if len(v.lines) == 0 || v.charW <= 0 || !viewerPointInRect(pos, v.textRect) {
+	if len(v.lines) == 0 || v.charAdvance <= 0 || !viewerPointInRect(pos, v.textRect) {
 		return false
 	}
 	row, ok := v.rowFromPointY(pos.Y)
@@ -626,7 +645,7 @@ func (v *streamOutputView) pointOverSelectableText(pos image.Point) bool {
 	if maxCol <= 0 {
 		return false
 	}
-	return x < maxCol*v.charW
+	return x < v.colOffsetPx(maxCol)
 }
 
 func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
@@ -674,8 +693,8 @@ func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
 	}
 	x := pos.X - v.textRect.Min.X - v.textPad
 	col := 0
-	if x > 0 && v.charW > 0 {
-		col = x / v.charW
+	if x > 0 {
+		col = v.colFromX(x)
 	}
 	if !v.wrapEnabled {
 		col += v.hCol
@@ -873,6 +892,39 @@ func measureStreamCharWidth(ui *UI, th *material.Theme, gtx layout.Context) int 
 	return measureTypefaceCharWidth(ui, th, gtx, ui.viewerTypeface())
 }
 
+func measureTypefaceCharAdvance(ui *UI, th *material.Theme, gtx layout.Context, face font.Typeface) float32 {
+	fallback := float32(gtx.Sp(ui.viewerTextSize())) * 0.62
+	if fallback < 5 {
+		fallback = 5
+	}
+	if th == nil || th.Shaper == nil {
+		return fallback
+	}
+
+	measureLabelWidth := func(sample string) int {
+		lbl := material.Body2(th, sample)
+		lbl.Font.Typeface = face
+		lbl.Font.Weight = font.Normal
+		lbl.TextSize = ui.viewerTextSize()
+		lbl.MaxLines = 1
+		lbl.Truncator = ""
+		return measureLabelUnconstrained(gtx, lbl).Size.X
+	}
+
+	const sampleCount = 32
+	if width := measureLabelWidth(strings.Repeat("0", sampleCount)); width > 0 {
+		return float32(width) / sampleCount
+	}
+	if width := measureLabelWidth(strings.Repeat("M", sampleCount)); width > 0 {
+		return float32(width) / sampleCount
+	}
+	return fallback
+}
+
+func measureStreamCharAdvance(ui *UI, th *material.Theme, gtx layout.Context) float32 {
+	return measureTypefaceCharAdvance(ui, th, gtx, ui.viewerTypeface())
+}
+
 func measureTypefaceLineHeight(ui *UI, th *material.Theme, gtx layout.Context, face font.Typeface) int {
 	fallback := gtx.Sp(ui.viewerTextSize()) + gtx.Dp(unit.Dp(3))
 	if fallback < 12 {
@@ -951,15 +1003,57 @@ func (v *streamOutputView) lineCols(line int) int {
 	return utf8.RuneCountInString(v.lines[line])
 }
 
+func (v *streamOutputView) colOffsetPx(cols int) int {
+	if cols == 0 || v.charAdvance <= 0 {
+		return 0
+	}
+	return int(math.Round(float64(v.charAdvance) * float64(cols)))
+}
+
+func (v *streamOutputView) colFromX(x int) int {
+	if x <= 0 || v.charAdvance <= 0 {
+		return 0
+	}
+	return int(math.Floor(float64(x) / float64(v.charAdvance)))
+}
+
+func (v *streamOutputView) minCellWidthPx() int {
+	if v.charW > 0 {
+		return v.charW
+	}
+	if v.charAdvance > 0 {
+		if w := int(math.Ceil(float64(v.charAdvance))); w > 0 {
+			return w
+		}
+	}
+	return 1
+}
+
 func (v *streamOutputView) visibleCols(textW int) int {
-	if textW <= 0 || v.charW <= 0 {
+	if textW <= 0 || v.charAdvance <= 0 {
 		return 1
 	}
-	cols := (textW - v.textPad) / v.charW
+	cols := int(math.Floor(float64(textW-v.textPad) / float64(v.charAdvance)))
 	if cols < 1 {
 		cols = 1
 	}
 	return cols
+}
+
+func (v *streamOutputView) linePaintSpec(line string) (text string, offsetX int) {
+	offsetX = v.textPad
+	if !v.wrapEnabled {
+		fromCol := v.hCol
+		if fromCol < 0 {
+			fromCol = 0
+		}
+		maxCol := utf8.RuneCountInString(line)
+		if fromCol > maxCol {
+			fromCol = maxCol
+		}
+		return line[byteIndexAtRune(line, fromCol):], offsetX
+	}
+	return line, offsetX
 }
 
 func (v *streamOutputView) maxHCol(textW int) int {
@@ -1070,6 +1164,10 @@ func (v *streamOutputView) computeScrollbar(size image.Point, viewportH, scrollb
 }
 
 func (v *streamOutputView) estimatedTopFromY(y int) int {
+	return v.estimatedTopFromDragY(y, v.thumbRect.Dy()/2)
+}
+
+func (v *streamOutputView) estimatedTopFromDragY(y, grabY int) int {
 	total := len(v.lines)
 	if total <= 0 {
 		return 0
@@ -1088,7 +1186,13 @@ func (v *streamOutputView) estimatedTopFromY(y int) int {
 	if maxTravel <= 0 {
 		return 0
 	}
-	dragY := y - track.Min.Y - thumb.Dy()/2
+	if grabY < 0 {
+		grabY = 0
+	}
+	if grabY > thumb.Dy() {
+		grabY = thumb.Dy()
+	}
+	dragY := y - track.Min.Y - grabY
 	if dragY < 0 {
 		dragY = 0
 	}
@@ -1104,6 +1208,13 @@ func (v *streamOutputView) estimatedTopFromY(y int) int {
 		top = maxTop
 	}
 	return top
+}
+
+func (v *streamOutputView) verticalThumbGrabY(pos image.Point) int {
+	if thumb := v.thumbRect; thumb.Dy() > 0 && viewerPointInRect(pos, thumb) {
+		return pos.Y - thumb.Min.Y
+	}
+	return v.thumbRect.Dy() / 2
 }
 
 func (v *streamOutputView) computeHorizontalScrollbar(size image.Point, barH int) {
@@ -1162,6 +1273,10 @@ func (v *streamOutputView) computeHorizontalScrollbar(size image.Point, barH int
 }
 
 func (v *streamOutputView) estimatedHColFromX(x int) int {
+	return v.estimatedHColFromDragX(x, v.hThumbRect.Dx()/2)
+}
+
+func (v *streamOutputView) estimatedHColFromDragX(x, grabX int) int {
 	track := v.hTrackRect
 	thumb := v.hThumbRect
 	textW := v.textRect.Dx()
@@ -1173,7 +1288,13 @@ func (v *streamOutputView) estimatedHColFromX(x int) int {
 	if maxTravel <= 0 {
 		return 0
 	}
-	dragX := x - track.Min.X - thumb.Dx()/2
+	if grabX < 0 {
+		grabX = 0
+	}
+	if grabX > thumb.Dx() {
+		grabX = thumb.Dx()
+	}
+	dragX := x - track.Min.X - grabX
 	if dragX < 0 {
 		dragX = 0
 	}
@@ -1189,6 +1310,13 @@ func (v *streamOutputView) estimatedHColFromX(x int) int {
 		col = maxH
 	}
 	return col
+}
+
+func (v *streamOutputView) horizontalThumbGrabX(pos image.Point) int {
+	if thumb := v.hThumbRect; thumb.Dx() > 0 && viewerPointInRect(pos, thumb) {
+		return pos.X - thumb.Min.X
+	}
+	return v.hThumbRect.Dx() / 2
 }
 
 func splitStreamLines(raw string) []string {
@@ -1317,6 +1445,9 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 		pos := pe.Position.Round()
 		switch pe.Kind {
 		case pointer.Scroll:
+			if pe.Scroll.X != 0 || pe.Scroll.Y != 0 {
+				v.stopTextSelectionDrag()
+			}
 			if pe.Scroll.X != 0 {
 				v.scrollHByDelta(pe.Scroll.X, v.textRect.Dx())
 				st.markUserBrowsing(gtx.Now)
@@ -1333,17 +1464,21 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				continue
 			}
 			if pe.Buttons.Contain(pointer.ButtonPrimary) && viewerPointInRect(pos, v.trackRect) {
+				v.stopTextSelectionDrag()
 				v.dragging = true
 				v.dragID = pe.PointerID
-				v.dragTopLine = v.estimatedTopFromY(pos.Y)
+				v.dragGrabY = v.verticalThumbGrabY(pos)
+				v.dragTopLine = v.estimatedTopFromDragY(pos.Y, v.dragGrabY)
 				gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
 				st.markUserBrowsing(gtx.Now)
 				continue
 			}
 			if pe.Buttons.Contain(pointer.ButtonPrimary) && viewerPointInRect(pos, v.hTrackRect) {
+				v.stopTextSelectionDrag()
 				v.hDragging = true
 				v.hDragID = pe.PointerID
-				v.hDragCol = v.estimatedHColFromX(pos.X)
+				v.hDragGrabX = v.horizontalThumbGrabX(pos)
+				v.hDragCol = v.estimatedHColFromDragX(pos.X, v.hDragGrabX)
 				v.hCol = v.hDragCol
 				v.clampHCol(v.textRect.Dx())
 				gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
@@ -1374,11 +1509,11 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 			}
 		case pointer.Drag:
 			if v.dragging && pe.PointerID == v.dragID {
-				v.dragTopLine = v.estimatedTopFromY(pos.Y)
+				v.dragTopLine = v.estimatedTopFromDragY(pos.Y, v.dragGrabY)
 				st.markUserBrowsing(gtx.Now)
 			}
 			if v.hDragging && pe.PointerID == v.hDragID {
-				v.hDragCol = v.estimatedHColFromX(pos.X)
+				v.hDragCol = v.estimatedHColFromDragX(pos.X, v.hDragGrabX)
 				v.hCol = v.hDragCol
 				v.clampHCol(v.textRect.Dx())
 				st.markUserBrowsing(gtx.Now)
@@ -1397,10 +1532,12 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 			if v.dragging && pe.PointerID == v.dragID {
 				v.topLine = v.dragTopLine
 				v.dragging = false
+				v.dragGrabY = 0
 				v.clampTop()
 			}
 			if v.hDragging && pe.PointerID == v.hDragID {
 				v.hDragging = false
+				v.hDragGrabX = 0
 				v.clampHCol(v.textRect.Dx())
 			}
 			if v.selectingText && pe.PointerID == v.selectID {
@@ -1430,10 +1567,12 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 			}
 			if v.dragging && pe.PointerID == v.dragID {
 				v.dragging = false
+				v.dragGrabY = 0
 				v.clampTop()
 			}
 			if v.hDragging && pe.PointerID == v.hDragID {
 				v.hDragging = false
+				v.hDragGrabX = 0
 				v.clampHCol(v.textRect.Dx())
 			}
 			v.hoverTrack = false
@@ -1496,15 +1635,18 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 	y := 0
 	for i := start; i < end; i++ {
 		line := v.lines[i]
-		lineDraw := line
 		lineGTX := gtx
-		lineGTX.Constraints = layout.Exact(image.Pt(textW, lineHeight))
-		offset := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+		lineGTX.Constraints = layout.Constraints{
+			Min: image.Pt(0, lineHeight),
+			Max: image.Pt(1<<20, lineHeight),
+		}
+		lineDraw, textX := v.linePaintSpec(line)
+		offset := op.Offset(image.Pt(textX, y)).Push(gtx.Ops)
 		if from, to, ok := v.selectionColsForLine(i); ok {
-			x0 := v.textPad + (from-v.hCol)*v.charW
-			x1 := v.textPad + (to-v.hCol)*v.charW
+			x0 := v.textPad + v.colOffsetPx(from-v.hCol)
+			x1 := v.textPad + v.colOffsetPx(to-v.hCol)
 			if x1 <= x0 {
-				x1 = x0 + v.charW
+				x1 = x0 + v.minCellWidthPx()
 			}
 			if x0 < textW {
 				if x0 < 0 {
@@ -1519,37 +1661,7 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 				}
 			}
 		}
-		if !v.wrapEnabled {
-			fromCol := v.hCol
-			visCols := v.visibleCols(textW)
-			maxCol := v.lineCols(i)
-			if fromCol < 0 {
-				fromCol = 0
-			}
-			if fromCol > maxCol {
-				fromCol = maxCol
-			}
-			toCol := fromCol + visCols + 1
-			if toCol > maxCol {
-				toCol = maxCol
-			}
-			fromByte := byteIndexAtRune(line, fromCol)
-			toByte := byteIndexAtRune(line, toCol)
-			if fromByte < 0 {
-				fromByte = 0
-			}
-			if toByte < fromByte {
-				toByte = fromByte
-			}
-			if fromByte > len(line) {
-				fromByte = len(line)
-			}
-			if toByte > len(line) {
-				toByte = len(line)
-			}
-			lineDraw = line[fromByte:toByte]
-		}
-		_ = layout.Inset{Left: unit.Dp(2)}.Layout(lineGTX, func(gtx layout.Context) layout.Dimensions {
+		_ = func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th, lineDraw)
 			lbl.Font.Typeface = ui.viewerTypeface()
 			lbl.Font.Weight = font.Normal
@@ -1558,7 +1670,7 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 			lbl.MaxLines = 1
 			lbl.Truncator = ""
 			return lbl.Layout(gtx)
-		})
+		}(lineGTX)
 		offset.Pop()
 		y += lineHeight
 		if y >= textH {

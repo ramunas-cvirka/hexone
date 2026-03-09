@@ -2158,6 +2158,15 @@ func (ui *UI) loadPaneDir(idx int, dir string) bool {
 	return ui.requestPaneLoadWithSelection(idx, dir, "", "", 0)
 }
 
+func (ui *UI) activateFilePanePathSegment(idx int, pane *filePaneState, target string) bool {
+	if ui == nil || pane == nil || strings.TrimSpace(target) == "" {
+		return false
+	}
+	pane.clearPendingPathNavigate()
+	pane.clearPathClickState()
+	return ui.loadPaneDir(idx, target)
+}
+
 func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {
 	anyLoading := false
 	for _, pane := range ui.filePanes {

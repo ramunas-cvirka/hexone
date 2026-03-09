@@ -657,19 +657,19 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 
 	sourceHdr := material.Caption(th, "Source")
 	sourceHdr.Font.Typeface = ui.mainTypeface()
-	sourceHdr.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+	sourceHdr.TextSize = scaleDialogThemeFontSize(th, 9)
 	sourceHdr.Color = hintColor
 
 	sourcePath := material.Body2(th, st.srcPath)
 	sourcePath.Font.Typeface = ui.mainTypeface()
-	sourcePath.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+	sourcePath.TextSize = scaleDialogThemeFontSize(th, 10)
 	sourcePath.Color = txtColor
 	sourcePath.MaxLines = 1
 	sourcePath.Truncator = "…"
 
 	dstHdr := material.Caption(th, "Destination")
 	dstHdr.Font.Typeface = ui.mainTypeface()
-	dstHdr.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+	dstHdr.TextSize = scaleDialogThemeFontSize(th, 9)
 	dstHdr.Color = hintColor
 
 	meta := formatCopyPathInfo(st.srcInfo)
@@ -685,7 +685,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 	}
 	metaLbl := material.Caption(th, meta)
 	metaLbl.Font.Typeface = ui.mainTypeface()
-	metaLbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+	metaLbl.TextSize = scaleDialogThemeFontSize(th, 9)
 	metaLbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
 	metaLbl.MaxLines = 1
 	metaLbl.Truncator = "…"
@@ -701,7 +701,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 					title := material.Body1(th, titleText)
 					title.Font.Typeface = ui.mainTypeface()
 					title.Font.Weight = font.Bold
-					title.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
+					title.TextSize = scaleDialogThemeFontSize(th, 12)
 					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
@@ -742,7 +742,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 			if st.running {
 				lbl := material.Body2(th, st.dstPath)
 				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+				lbl.TextSize = scaleDialogThemeFontSize(th, 10)
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Truncator = "…"
@@ -758,7 +758,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 			}
 			ed := material.Editor(th, &st.dstEdit, "")
 			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			ed.TextSize = scaleDialogThemeFontSize(th, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return ui.layoutEditorWithContextMenu(th, gtx, "filemove-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -777,20 +777,20 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 				if st.running {
 					lbl := material.Caption(th, runningLabel)
 					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+					lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 					lbl.Color = hintColor
 					return lbl.Layout(gtx)
 				}
 				lbl := material.Caption(th, "Destination for "+strings.ToLower(actionLabel)+" already exists.")
 				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+				lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 				lbl.Color = color.NRGBA{R: 196, G: 196, B: 196, A: 255}
 				lbl.MaxLines = 2
 				return lbl.Layout(gtx)
 			}
 			lbl := material.Caption(th, st.lastErr)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 			lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)

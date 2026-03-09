@@ -383,7 +383,7 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 	}
 	targetLabel := material.Body2(th, target)
 	targetLabel.Font.Typeface = ui.mainTypeface()
-	targetLabel.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+	targetLabel.TextSize = scaleDialogThemeFontSize(th, 10)
 	targetLabel.Font.Weight = font.Medium
 	targetLabel.Color = txtColor
 	targetLabel.MaxLines = 1
@@ -391,7 +391,7 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 
 	pathLabel := material.Caption(th, st.targetPath)
 	pathLabel.Font.Typeface = ui.mainTypeface()
-	pathLabel.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+	pathLabel.TextSize = scaleDialogThemeFontSize(th, 9)
 	pathLabel.Color = hintColor
 	pathLabel.MaxLines = 1
 	pathLabel.Truncator = "…"
@@ -403,7 +403,7 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 					title := material.Body1(th, "Permissions")
 					title.Font.Typeface = ui.mainTypeface()
 					title.Font.Weight = font.Bold
-					title.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
+					title.TextSize = scaleDialogThemeFontSize(th, 12)
 					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
@@ -431,7 +431,7 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 			}
 			lbl := material.Caption(th, st.lastErr)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 			lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
@@ -442,7 +442,7 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 			}
 			lbl := material.Caption(th, "Applying permissions...")
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
@@ -474,7 +474,7 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, title)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 10)
 			lbl.Color = color.NRGBA{R: 178, G: 178, B: 178, A: 255}
 			return lbl.Layout(gtx)
 		}
@@ -482,7 +482,7 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 	check := func(idx int) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			cb := material.CheckBox(th, &st.checks[idx], "")
-			cb.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			cb.TextSize = scaleDialogThemeFontSize(th, 10)
 			cb.Font.Typeface = ui.mainTypeface()
 			cb.Color = txtColor
 			return layout.Center.Layout(gtx, cb.Layout)
@@ -492,7 +492,7 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, title)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 10)
 			lbl.Font.Weight = font.Medium
 			lbl.Color = color.NRGBA{R: 196, G: 196, B: 196, A: 255}
 			return layout.Center.Layout(gtx, lbl.Layout)
@@ -558,14 +558,14 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 func (ui *UI) layoutPermDigitsEditor(th *material.Theme, gtx layout.Context, st *filePermState) layout.Dimensions {
 	sym := material.Caption(th, formatPermSymbolicGrouped(st.permMode))
 	sym.Font.Typeface = ui.mainTypeface()
-	sym.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+	sym.TextSize = scaleDialogThemeFontSize(th, 9)
 	sym.Color = color.NRGBA{R: 186, G: 202, B: 216, A: 255}
 
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, "Octal")
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 			lbl.Color = color.NRGBA{R: 178, G: 178, B: 178, A: 255}
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(54)), lbl.Layout)
 		}),
@@ -573,7 +573,7 @@ func (ui *UI) layoutPermDigitsEditor(th *material.Theme, gtx layout.Context, st 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			ed := material.Editor(th, &st.permEdit, "0755")
 			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			ed.TextSize = scaleDialogThemeFontSize(th, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(84)), func(gtx layout.Context) layout.Dimensions {

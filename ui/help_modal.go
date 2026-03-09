@@ -6,11 +6,14 @@ import (
 	"image"
 	"image/color"
 	"strings"
+	"time"
 
 	uitheme "hexone/ui/theme"
 
 	"gioui.org/font"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -52,10 +55,15 @@ type helpModalState struct {
 	backdropClick widget.Clickable
 	closeClick    widget.Clickable
 	sectionClicks []widget.Clickable
-	navList       layout.List
 	bodyList      layout.List
 	doc           helpDocument
 	activeSection int
+	sectionPrev   int
+	sectionAnimAt time.Time
+	tabAnim       segmentedAnimState
+	wantKeyFocus  bool
+	keyTag        struct{}
+	codeBlocks    map[string]*widget.Selectable
 }
 
 type helpInlineToken struct {
@@ -71,7 +79,6 @@ func (ui *UI) openHelpModal() {
 	st := ui.helpModal
 	if st == nil {
 		st = &helpModalState{}
-		st.navList.Axis = layout.Vertical
 		st.bodyList.Axis = layout.Vertical
 	}
 	st.doc = loadHelpDocument()
@@ -80,6 +87,8 @@ func (ui *UI) openHelpModal() {
 		st.activeSection = 0
 	}
 	st.bodyList = layout.List{Axis: layout.Vertical}
+	st.codeBlocks = nil
+	st.wantKeyFocus = true
 	ui.helpModal = st
 }
 
@@ -104,7 +113,6 @@ func loadHelpDocument() helpDocument {
 	doc := parseHelpDocument(resources.EmbeddedHelpSource, resources.HelpMarkdown())
 	if strings.TrimSpace(doc.Title) == "" {
 		doc = parseHelpDocument(resources.EmbeddedHelpSource, fallbackHelpMarkdown())
-		doc.LoadErr = fmt.Sprintf("embedded help content is empty")
 	}
 	return doc
 }
@@ -270,24 +278,118 @@ func parseHelpBullet(line string) (string, bool) {
 func fallbackHelpMarkdown() string {
 	return "# Hexone Help\n\n" +
 		"## Overview\n\n" +
-		"Hexone is a keyboard-focused file manager with extra protocol and text tools.\n" +
-		"This fallback help is bundled into the application binary.\n\n" +
+		"Hexone is a keyboard-focused file manager with extra protocol and text tools.\n\n" +
 		"## Basics\n\n" +
 		"- Press F1 to open or close this help window.\n" +
 		"- Press Esc to close dialogs or return to the file manager.\n" +
 		"- Press F3 to open the viewer for the current selection.\n" +
-		"- Press F4 to open the current file with the system association.\n\n" +
-		"## Packaging\n\n" +
-		"Portable builds only need the app binary plus protocols.yaml.\n\n" +
-		"```text\n" +
-		"protocols.yaml\n" +
-		"```\n"
+		"- Press F4 to open the current file with the system association.\n"
+}
+
+func helpSectionKey(index int) string {
+	return fmt.Sprintf("help-section-%d", index)
+}
+
+func helpCodeBlockKey(sectionIndex, blockIndex int) string {
+	return fmt.Sprintf("help-code-%d-%d", sectionIndex, blockIndex)
+}
+
+func (st *helpModalState) setActiveSection(next int, now time.Time) bool {
+	if st == nil || len(st.doc.Sections) == 0 {
+		return false
+	}
+	if next < 0 {
+		next = 0
+	}
+	if max := len(st.doc.Sections) - 1; next > max {
+		next = max
+	}
+	if st.activeSection == next {
+		return false
+	}
+	st.sectionPrev = st.activeSection
+	st.sectionAnimAt = now
+	st.activeSection = next
+	st.bodyList = layout.List{Axis: layout.Vertical}
+	st.wantKeyFocus = true
+	st.tabAnim.setPulse(helpSectionKey(next), now)
+	return true
+}
+
+func (st *helpModalState) sectionFill(now time.Time, index int) (float32, bool) {
+	if st == nil || index < 0 || index >= len(st.doc.Sections) {
+		return 0, false
+	}
+	current := st.activeSection
+	if st.sectionAnimAt.IsZero() || st.sectionPrev == current {
+		if index == current {
+			return 1, false
+		}
+		return 0, false
+	}
+	elapsed := now.Sub(st.sectionAnimAt)
+	if elapsed >= toolbarAnimDur {
+		st.sectionPrev = current
+		st.sectionAnimAt = time.Time{}
+		if index == current {
+			return 1, false
+		}
+		return 0, false
+	}
+	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
+	if index == current {
+		return t, true
+	}
+	if index == st.sectionPrev {
+		return 1 - t, true
+	}
+	return 0, true
+}
+
+func (st *helpModalState) sectionPosition(now time.Time) (float32, bool) {
+	if st == nil {
+		return 0, false
+	}
+	current := float32(st.activeSection)
+	if st.sectionAnimAt.IsZero() || st.sectionPrev == st.activeSection {
+		return current, false
+	}
+	elapsed := now.Sub(st.sectionAnimAt)
+	if elapsed >= toolbarAnimDur {
+		st.sectionPrev = st.activeSection
+		st.sectionAnimAt = time.Time{}
+		return current, false
+	}
+	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
+	prev := float32(st.sectionPrev)
+	return prev + (current-prev)*t, true
+}
+
+func (st *helpModalState) codeSelectable(sectionIndex, blockIndex int) *widget.Selectable {
+	if st == nil {
+		return nil
+	}
+	if st.codeBlocks == nil {
+		st.codeBlocks = make(map[string]*widget.Selectable)
+	}
+	key := helpCodeBlockKey(sectionIndex, blockIndex)
+	if sel, ok := st.codeBlocks[key]; ok {
+		return sel
+	}
+	sel := &widget.Selectable{}
+	st.codeBlocks[key] = sel
+	return sel
 }
 
 func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	st := ui.helpModal
 	if st == nil {
 		return layout.Dimensions{}
+	}
+	event.Op(gtx.Ops, &st.keyTag)
+	if st.wantKeyFocus {
+		gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+		st.wantKeyFocus = false
 	}
 
 	for {
@@ -307,6 +409,32 @@ func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dim
 			return layout.Dimensions{}
 		}
 	}
+	for {
+		ev, ok := gtx.Event(
+			key.FocusFilter{Target: &st.keyTag},
+			key.Filter{Focus: &st.keyTag, Name: key.NameUpArrow},
+			key.Filter{Focus: &st.keyTag, Name: key.NameDownArrow},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press || ke.Modifiers != 0 {
+			continue
+		}
+		next := st.activeSection
+		switch ke.Name {
+		case key.NameUpArrow:
+			next--
+		case key.NameDownArrow:
+			next++
+		default:
+			continue
+		}
+		if st.setActiveSection(next, gtx.Now) {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
 
 	for st.backdropClick.Clicked(gtx) {
 	}
@@ -316,9 +444,9 @@ func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dim
 	}
 	for i := range st.doc.Sections {
 		for st.sectionClicks[i].Clicked(gtx) {
-			st.activeSection = i
-			st.bodyList = layout.List{Axis: layout.Vertical}
-			gtx.Execute(op.InvalidateCmd{})
+			if st.setActiveSection(i, gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		}
 	}
 
@@ -392,18 +520,15 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 					lbl := material.Body1(th, st.doc.Title)
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.Font.Weight = font.Bold
-					lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
+					lbl.TextSize = scaleDialogThemeFontSize(th, 11)
 					lbl.Color = txtColor
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					text := "F1 or Esc closes this window"
-					if st.doc.SourcePath != "" {
-						text = st.doc.SourcePath + "   " + text
-					}
+					text := "Up/Down switches topics. F1 or Esc closes help."
 					lbl := material.Caption(th, text)
 					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 8)
+					lbl.TextSize = scaleDialogThemeFontSize(th, 8)
 					lbl.Color = hintColor
 					return lbl.Layout(gtx)
 				}),
@@ -419,7 +544,7 @@ func (ui *UI) layoutHelpModalBody(th *material.Theme, gtx layout.Context, st *he
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(220)), func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutHelpSectionList(th, gtx, st)
+				return ui.layoutHelpSectionTabs(th, gtx, st)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
@@ -429,59 +554,129 @@ func (ui *UI) layoutHelpModalBody(th *material.Theme, gtx layout.Context, st *he
 	)
 }
 
-func (ui *UI) layoutHelpSectionList(th *material.Theme, gtx layout.Context, st *helpModalState) layout.Dimensions {
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-		color.NRGBA{R: 24, G: 28, B: 36, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 18},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Caption(th, "Sections")
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.Font.Weight = font.Medium
-						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 8)
-						lbl.Color = hintColor
-						return lbl.Layout(gtx)
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return st.navList.Layout(gtx, len(st.doc.Sections), func(gtx layout.Context, index int) layout.Dimensions {
-							return layout.Inset{Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutHelpSectionButton(th, gtx, st, index)
-							})
-						})
-					}),
-				)
-			})
-		},
-	)
+func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *helpModalState) layout.Dimensions {
+	if st == nil || len(st.doc.Sections) == 0 {
+		return layout.Dimensions{}
+	}
+	hoverKey := ""
+	for i := range st.doc.Sections {
+		if i < len(st.sectionClicks) && st.sectionClicks[i].Hovered() {
+			hoverKey = helpSectionKey(i)
+		}
+	}
+	st.tabAnim.setHover(hoverKey, gtx.Now)
+	pos, animPos := st.sectionPosition(gtx.Now)
+	specs := make([]slidingTabSpec, 0, len(st.doc.Sections))
+	animating := animPos
+	for i, section := range st.doc.Sections {
+		activeFill, activeAnim := st.sectionFill(gtx.Now, i)
+		hoverFill, hoverAnim := st.tabAnim.hoverFill(gtx.Now, helpSectionKey(i))
+		pulseFill, pulseAnim := st.tabAnim.pulseFill(gtx.Now, helpSectionKey(i))
+		specs = append(specs, slidingTabSpec{
+			Label:      section.Title,
+			Click:      &st.sectionClicks[i],
+			ActiveFill: activeFill,
+			HoverFill:  hoverFill,
+			PulseFill:  pulseFill,
+		})
+		animating = animating || activeAnim || hoverAnim || pulseAnim
+	}
+	if animating {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	stripH := gtx.Dp(unit.Dp(30))
+	if stripH < 1 {
+		stripH = 1
+	}
+	sepH := gtx.Dp(unit.Dp(1))
+	if sepH < 1 {
+		sepH = 1
+	}
+	totalH := stripH*len(specs) + sepH*(len(specs)-1)
+	if totalH < stripH {
+		totalH = stripH
+	}
+
+	return fillBgExact(gtx, color.NRGBA{R: 24, G: 24, B: 24, A: 255}, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, totalH, func(gtx layout.Context) layout.Dimensions {
+			w := gtx.Constraints.Max.X
+			if w < 1 {
+				w = 1
+			}
+			step := stripH + sepH
+			sliderY := int(float32(step) * pos)
+			maxSliderY := totalH - stripH
+			if maxSliderY < 0 {
+				maxSliderY = 0
+			}
+			if sliderY < 0 {
+				sliderY = 0
+			}
+			if sliderY > maxSliderY {
+				sliderY = maxSliderY
+			}
+			sliderRect := image.Rect(0, sliderY, w, sliderY+stripH)
+
+			innerClip := clip.Rect(image.Rect(0, 0, w, totalH)).Push(gtx.Ops)
+			paint.FillShape(gtx.Ops, color.NRGBA{R: 54, G: 54, B: 54, A: 255}, clip.Rect(sliderRect).Op())
+
+			children := make([]layout.FlexChild, 0, len(specs)*2)
+			for i, spec := range specs {
+				spec := spec
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutHelpNavSegment(th, gtx, spec.Label, spec.Click, spec.ActiveFill, spec.HoverFill, spec.PulseFill, stripH)
+				}))
+				if i < len(specs)-1 {
+					children = append(children, layout.Rigid(layoutSettingsNavSeparator))
+				}
+			}
+			dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			innerClip.Pop()
+			return dims
+		})
+	})
 }
 
-func (ui *UI) layoutHelpSectionButton(th *material.Theme, gtx layout.Context, st *helpModalState, index int) layout.Dimensions {
-	active := index == st.activeSection
-	bg := color.NRGBA{R: 30, G: 35, B: 46, A: 255}
-	border := color.NRGBA{R: 255, G: 255, B: 255, A: 16}
-	fg := txtColor
-	if active {
-		bg = color.NRGBA{R: 76, G: 88, B: 118, A: 255}
-		border = color.NRGBA{R: 198, G: 212, B: 255, A: 118}
-		fg = color.NRGBA{R: 246, G: 249, B: 255, A: 255}
+func (ui *UI) layoutHelpNavSegment(th *material.Theme, gtx layout.Context, label string, c *widget.Clickable, activeFill, hoverFill, pulseFill float32, stripH int) layout.Dimensions {
+	if c == nil {
+		return layout.Dimensions{}
 	}
-	return st.sectionClicks[index].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, border, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, st.doc.Sections[index].Title)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.Font.Weight = font.Medium
-				lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
-				lbl.Color = fg
-				return lbl.Layout(gtx)
+	dims := fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			activeFill = clamp01(activeFill)
+			hoverFill = clamp01(hoverFill)
+			pulseFill = clamp01(pulseFill)
+			if c.Pressed() && pulseFill < 0.5 {
+				pulseFill = 0.5
+			}
+
+			bg := color.NRGBA{}
+			bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 10}, hoverFill*(1-activeFill))
+			bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 18}, pulseFill*0.25)
+
+			fg := mixNRGBA(txtColor, color.NRGBA{R: 238, G: 238, B: 238, A: 255}, clamp01(activeFill*0.8+0.12))
+			fg = mixNRGBA(fg, color.NRGBA{R: 232, G: 232, B: 232, A: 255}, hoverFill*0.75)
+			fg = mixNRGBA(fg, color.NRGBA{R: 246, G: 246, B: 246, A: 255}, pulseFill*0.25)
+
+			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, label)
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Weight = font.Medium
+					lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+					lbl.Color = fg
+					lbl.MaxLines = 1
+					return layoutVCenteredLabel(gtx, lbl)
+				})
 			})
 		})
 	})
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		return dims
+	}
+	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+	pointer.CursorPointer.Add(gtx.Ops)
+	return dims
 }
 
 func (ui *UI) layoutHelpSectionContent(th *material.Theme, gtx layout.Context, st *helpModalState) layout.Dimensions {
@@ -497,29 +692,10 @@ func (ui *UI) layoutHelpSectionContent(th *material.Theme, gtx layout.Context, s
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body1(th, section.Title)
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.Font.Weight = font.Bold
-						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 11)
-						lbl.Color = txtColor
-						return lbl.Layout(gtx)
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						if st.doc.LoadErr == "" {
-							return layout.Dimensions{}
-						}
-						lbl := material.Caption(th, st.doc.LoadErr)
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 8)
-						lbl.Color = color.NRGBA{R: 226, G: 177, B: 109, A: 255}
-						return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, lbl.Layout)
-					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return st.bodyList.Layout(gtx, len(section.Blocks), func(gtx layout.Context, index int) layout.Dimensions {
 							return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutHelpBlock(th, gtx, section.Blocks[index])
+								return ui.layoutHelpBlock(th, gtx, st, st.activeSection, index, section.Blocks[index])
 							})
 						})
 					}),
@@ -529,14 +705,14 @@ func (ui *UI) layoutHelpSectionContent(th *material.Theme, gtx layout.Context, s
 	)
 }
 
-func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, block helpBlock) layout.Dimensions {
+func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpModalState, sectionIndex, blockIndex int, block helpBlock) layout.Dimensions {
 	switch block.Kind {
 	case helpBlockHeading:
 		return ui.layoutHelpInlineText(
 			th,
 			gtx,
 			block.Text,
-			scaleModalThemeFontSize(th, ui.fmCfg, 10),
+			scaleDialogThemeFontSize(th, 10),
 			color.NRGBA{R: 228, G: 233, B: 244, A: 255},
 			font.Bold,
 		)
@@ -550,7 +726,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, block help
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							bullet := material.Body2(th, "•")
 							bullet.Font.Typeface = ui.mainTypeface()
-							bullet.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+							bullet.TextSize = scaleDialogThemeFontSize(th, 9)
 							bullet.Color = color.NRGBA{R: 155, G: 193, B: 255, A: 255}
 							return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, bullet.Layout)
 						}),
@@ -559,7 +735,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, block help
 								th,
 								gtx,
 								item,
-								scaleModalThemeFontSize(th, ui.fmCfg, 9),
+								scaleDialogThemeFontSize(th, 9),
 								txtColor,
 								font.Normal,
 							)
@@ -574,8 +750,10 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, block help
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(7), Bottom: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, block.Text)
 				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 8)
+				lbl.TextSize = scaleDialogThemeFontSize(th, 8)
 				lbl.Color = color.NRGBA{R: 197, G: 226, B: 255, A: 255}
+				lbl.SelectionColor = color.NRGBA{R: 97, G: 132, B: 204, A: 144}
+				lbl.State = st.codeSelectable(sectionIndex, blockIndex)
 				return lbl.Layout(gtx)
 			})
 		})
@@ -584,7 +762,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, block help
 			th,
 			gtx,
 			block.Text,
-			scaleModalThemeFontSize(th, ui.fmCfg, 9),
+			scaleDialogThemeFontSize(th, 9),
 			txtColor,
 			font.Normal,
 		)

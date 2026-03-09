@@ -1,10 +1,20 @@
 package table
 
 import (
+	"image"
+	"image/color"
 	"testing"
 	"time"
 
+	"gioui.org/font"
+	"gioui.org/io/input"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/paint"
+	"gioui.org/text"
+	"gioui.org/unit"
 	"gioui.org/widget"
+	"gioui.org/widget/material"
 )
 
 func TestResetPointerStateClearsClickMemory(t *testing.T) {
@@ -24,4 +34,48 @@ func TestResetPointerStateClearsClickMemory(t *testing.T) {
 	if len(tbl.rowClicks) != 2 {
 		t.Fatalf("row click count = %d, want 2", len(tbl.rowClicks))
 	}
+}
+
+func TestLayoutCellLabelCentersBaselineInTallCell(t *testing.T) {
+	th := material.NewTheme()
+	rawGtx := testTableLayoutContext(image.Pt(160, 24))
+	helperGtx := testTableLayoutContext(image.Pt(160, 24))
+	colorCall := testTextColorCall(rawGtx)
+
+	lbl := widget.Label{
+		Alignment: text.Start,
+		MaxLines:  1,
+		Truncator: "…",
+	}
+	rawDims, _ := lbl.LayoutDetailed(rawGtx, th.Shaper, font.Font{}, unit.Sp(13), "decoder_2525.go", colorCall)
+	helperDims := layoutCellLabel(helperGtx, th, "", unit.Sp(13), "decoder_2525.go", CellStyle{
+		Color:  color.NRGBA{R: 255, G: 255, B: 255, A: 255},
+		Weight: font.Normal,
+	}, text.Start, false)
+
+	if helperDims.Size != rawDims.Size {
+		t.Fatalf("helper size = %v, want raw size %v", helperDims.Size, rawDims.Size)
+	}
+	if helperDims.Baseline >= rawDims.Baseline {
+		t.Fatalf("helper baseline = %d, want < raw baseline %d", helperDims.Baseline, rawDims.Baseline)
+	}
+}
+
+func testTableLayoutContext(size image.Point) layout.Context {
+	var router input.Router
+	return layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Min: size,
+			Max: size,
+		},
+	}
+}
+
+func testTextColorCall(gtx layout.Context) op.CallOp {
+	m := op.Record(gtx.Ops)
+	paint.ColorOp{Color: color.NRGBA{R: 255, G: 255, B: 255, A: 255}}.Add(gtx.Ops)
+	return m.Stop()
 }

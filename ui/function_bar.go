@@ -12,6 +12,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -611,15 +612,14 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 											}
 
 											dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-												return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-													lbl := material.Body2(th, ui.functionBarButtonText(spec))
-													lbl.Font.Typeface = ui.mainTypeface()
-													lbl.Font.Weight = font.Medium
-													lbl.TextSize = ui.functionBarTextSize()
-													lbl.Color = fg
-													lbl.MaxLines = 1
-													return lbl.Layout(gtx)
-												})
+												lbl := material.Body2(th, ui.functionBarButtonText(spec))
+												lbl.Font.Typeface = ui.mainTypeface()
+												lbl.Font.Weight = font.Medium
+												lbl.TextSize = ui.functionBarTextSize()
+												lbl.Color = fg
+												lbl.MaxLines = 1
+												lbl.Alignment = text.Middle
+												return layoutVCenteredLabel(gtx, lbl)
 											})
 											if spec.enabled {
 												defer clip.Rect(image.Rectangle{Max: image.Pt(segW, stripH)}).Push(gtx.Ops).Pop()
@@ -792,7 +792,7 @@ func (ui *UI) layoutFunctionBarToolOption(th *material.Theme, gtx layout.Context
 				lbl.TextSize = scaleThemeFontSize(th, 11)
 				lbl.Color = fg
 				lbl.MaxLines = 1
-				return lbl.Layout(gtx)
+				return layoutVCenteredLabel(gtx, lbl)
 			})
 		})
 		defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()

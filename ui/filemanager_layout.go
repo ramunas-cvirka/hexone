@@ -27,7 +27,6 @@ import (
 const (
 	filePaneWheelRange             = 1 << 30
 	filePanePathDoubleClickWindow  = 450 * time.Millisecond
-	filePanePathClickDelay         = filePanePathDoubleClickWindow
 	filePaneFavoriteTooltipDelay   = 2 * time.Second
 	filePaneCornerDp               = 8
 	filePaneControlCornerDp        = 6
@@ -1131,15 +1130,13 @@ func (ui *UI) layoutFilePanePathSegmentLabel(th *material.Theme, gtx layout.Cont
 	content := func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, segH, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, label)
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.Font.Weight = weight
-					lbl.TextSize = scaleThemeFontSize(th, 11)
-					lbl.Color = fg
-					lbl.MaxLines = 1
-					return lbl.Layout(gtx)
-				})
+				lbl := material.Body2(th, label)
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Weight = weight
+				lbl.TextSize = scaleThemeFontSize(th, 11)
+				lbl.Color = fg
+				lbl.MaxLines = 1
+				return layoutVCenteredLabel(gtx, lbl)
 			})
 		})
 	}
@@ -1187,10 +1184,11 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 				pane.closeDriveMenu()
 				pane.closeFavoriteMenu()
 				pane.closeContextMenu()
-				pane.clearPendingPathNavigate()
 				if i != len(segments)-1 {
-					pane.queuePathNavigate(segments[i].path, gtx.Now.Add(filePanePathClickDelay))
-					gtx.Execute(op.InvalidateCmd{At: pane.pendingPathAt})
+					if ui.activateFilePanePathSegment(idx, pane, segments[i].path) {
+						gtx.Execute(op.InvalidateCmd{})
+						return ui.layoutFilePanePath(th, gtx, idx, pane, active)
+					}
 				}
 			}
 			if pane.pathEditing {
@@ -1244,10 +1242,11 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 			pane.closeDriveMenu()
 			pane.closeFavoriteMenu()
 			pane.closeContextMenu()
-			pane.clearPendingPathNavigate()
 			if i != len(segments)-1 {
-				pane.queuePathNavigate(segments[i].path, gtx.Now.Add(filePanePathClickDelay))
-				gtx.Execute(op.InvalidateCmd{At: pane.pendingPathAt})
+				if ui.activateFilePanePathSegment(idx, pane, segments[i].path) {
+					gtx.Execute(op.InvalidateCmd{})
+					return ui.layoutFilePanePath(th, gtx, idx, pane, active)
+				}
 			}
 		}
 		if pane.pathEditing {
@@ -1402,7 +1401,7 @@ func (ui *UI) layoutFilePaneSortOptionsStrip(th *material.Theme, gtx layout.Cont
 										lbl.TextSize = scaleThemeFontSize(th, 11)
 										lbl.Color = fg
 										lbl.MaxLines = 1
-										return lbl.Layout(gtx)
+										return layoutVCenteredLabel(gtx, lbl)
 									})
 								})
 							})
@@ -1581,7 +1580,7 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 									lbl.TextSize = scaleThemeFontSize(th, 11)
 									lbl.Color = fg
 									lbl.MaxLines = 1
-									return lbl.Layout(gtx)
+									return layoutVCenteredLabel(gtx, lbl)
 								})
 							})
 						})
@@ -1609,7 +1608,7 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 									lbl.TextSize = scaleThemeFontSize(th, 10)
 									lbl.Color = fg
 									lbl.MaxLines = 1
-									return lbl.Layout(gtx)
+									return layoutVCenteredLabel(gtx, lbl)
 								})
 							})
 						})
@@ -1884,7 +1883,7 @@ func (ui *UI) layoutFilePaneDriveMenuCard(th *material.Theme, gtx layout.Context
 									lbl.TextSize = scaleThemeFontSize(th, 11)
 									lbl.Color = fg
 									lbl.MaxLines = 1
-									return lbl.Layout(gtx)
+									return layoutVCenteredLabel(gtx, lbl)
 								})
 							})
 						})
@@ -2159,7 +2158,7 @@ func (ui *UI) layoutFilePaneFavoriteMenuItem(th *material.Theme, gtx layout.Cont
 		lbl.MaxLines = 1
 		// Suppress right-side ellipsis; we want left-side-only trimming for paths.
 		lbl.Truncator = "\u200b"
-		return lbl.Layout(gtx)
+		return layoutVCenteredLabel(gtx, lbl)
 	}
 
 	bg := color.NRGBA{}
@@ -2353,7 +2352,7 @@ func layoutTinyModeButton(th *material.Theme, gtx layout.Context, typeface font.
 				lbl.TextSize = scaleThemeFontSize(th, 10)
 				lbl.Color = labelColor
 				lbl.MaxLines = 1
-				return lbl.Layout(gtx)
+				return layoutVCenteredLabel(gtx, lbl)
 			})
 		})
 	})
@@ -2416,7 +2415,7 @@ func layoutModeButton(th *material.Theme, gtx layout.Context, typeface font.Type
 				lbl.TextSize = scaleThemeFontSize(th, 11)
 				lbl.Color = labelColor
 				lbl.MaxLines = 1
-				return lbl.Layout(gtx)
+				return layoutVCenteredLabel(gtx, lbl)
 			})
 		})
 	})

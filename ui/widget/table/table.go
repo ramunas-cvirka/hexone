@@ -1,6 +1,7 @@
 package table
 
 import (
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"sort"
@@ -352,18 +353,46 @@ func layoutCellLabel(gtx layout.Context, th *material.Theme, face font.Typeface,
 		Typeface: face,
 		Weight:   st.Weight,
 	}
-
-	if !hideIfTruncated {
-		return lbl.Layout(gtx, th.Shaper, fontSpec, size, txt, textColor)
-	}
+	labelGtx := gtx
+	labelGtx.Constraints.Min.Y = 0
 
 	m := op.Record(gtx.Ops)
-	dims, info := lbl.LayoutDetailed(gtx, th.Shaper, fontSpec, size, txt, textColor)
+	dims, info := lbl.LayoutDetailed(labelGtx, th.Shaper, fontSpec, size, txt, textColor)
 	call := m.Stop()
-	if info.Truncated == 0 {
-		call.Add(gtx.Ops)
+	if !hideIfTruncated || info.Truncated == 0 {
+		offsetY := 0
+		spareY := gtx.Constraints.Max.Y - dims.Size.Y
+		if spareY > 0 {
+			offsetY = spareY / 2
+			if nudge := uitheme.OpticalTextYOffsetPx(gtx, face, size); nudge > 0 {
+				maxExtra := spareY - offsetY
+				if maxExtra < 0 {
+					maxExtra = 0
+				}
+				if nudge > maxExtra {
+					nudge = maxExtra
+				}
+				offsetY += nudge
+			}
+		}
+		if offsetY > 0 {
+			tr := op.Offset(image.Pt(0, offsetY)).Push(gtx.Ops)
+			call.Add(gtx.Ops)
+			tr.Pop()
+		} else {
+			call.Add(gtx.Ops)
+		}
 	}
-	return dims
+
+	out := dims
+	if gtx.Constraints.Max.Y > out.Size.Y {
+		out.Size.Y = gtx.Constraints.Max.Y
+	}
+	out.Size = gtx.Constraints.Constrain(out.Size)
+	if out.Baseline > 0 && out.Size.Y > dims.Size.Y {
+		out.Baseline += (out.Size.Y - dims.Size.Y) / 2
+	}
+	return out
 }
 
 func leadingIconMetrics(cellH int) (size, gap int) {
@@ -1367,21 +1396,13 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 				st.Color = *fg
 			}
 
-			lbl := material.Label(th, t.TextSize, txt)
-			lbl.MaxLines = 1
-			lbl.Truncator = "…"
-			lbl.Color = st.Color
-			lbl.Font.Typeface = face
-			lbl.Font.Weight = st.Weight
-			lbl.Alignment = text.Start
-
 			cellGtx := gtx
 			cellGtx.Constraints = layout.Exact(image.Pt(maxW, cellH))
 			_ = layout.Inset{Left: padX, Right: padX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
 				if hasIcon && icon.Kind != IconNone {
 					return layoutCellLabelWithIcon(gtx, th, face, t.TextSize, txt, st, text.Start, false, icon)
 				}
-				return lbl.Layout(gtx)
+				return layoutCellLabel(gtx, th, face, t.TextSize, txt, st, text.Start, false)
 			})
 
 			return layout.Dimensions{Size: image.Pt(maxW, rowHpx)}

@@ -9,6 +9,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -154,18 +155,17 @@ func (ui *UI) layoutSlidingTabStrip(th *material.Theme, gtx layout.Context, stri
 										bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 14}, pulseFill*0.18)
 										fg := slidingStripTextColor(labelActive, hoverFill, pulseFill)
 										return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-											return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-												lbl := material.Body2(th, spec.Label)
-												lbl.Font.Typeface = ui.mainTypeface()
-												lbl.Font.Weight = font.Medium
-												lbl.TextSize = textSize
-												lbl.Color = fg
-												lbl.MaxLines = 1
-												dims := lbl.Layout(gtx)
-												defer clip.Rect(image.Rectangle{Max: image.Pt(segW, stripH)}).Push(gtx.Ops).Pop()
-												pointer.CursorPointer.Add(gtx.Ops)
-												return dims
-											})
+											lbl := material.Body2(th, spec.Label)
+											lbl.Font.Typeface = ui.mainTypeface()
+											lbl.Font.Weight = font.Medium
+											lbl.TextSize = textSize
+											lbl.Color = fg
+											lbl.MaxLines = 1
+											lbl.Alignment = text.Middle
+											dims := layoutVCenteredLabel(gtx, lbl)
+											defer clip.Rect(image.Rectangle{Max: image.Pt(segW, stripH)}).Push(gtx.Ops).Pop()
+											pointer.CursorPointer.Add(gtx.Ops)
+											return dims
 										})
 									})
 								})

@@ -545,7 +545,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 					title := material.Body1(th, "Create")
 					title.Font.Typeface = ui.mainTypeface()
 					title.Font.Weight = font.Bold
-					title.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 12)
+					title.TextSize = scaleDialogThemeFontSize(th, 12)
 					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
@@ -558,7 +558,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, "Type")
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
@@ -575,7 +575,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, kindTitle+" name/path")
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
@@ -584,7 +584,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 			if st.running {
 				lbl := material.Body2(th, strings.TrimSpace(st.targetPath))
 				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+				lbl.TextSize = scaleDialogThemeFontSize(th, 10)
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Truncator = "…"
@@ -600,7 +600,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 			}
 			ed := material.Editor(th, &st.nameEdit, "")
 			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 10)
+			ed.TextSize = scaleDialogThemeFontSize(th, 10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return ui.layoutEditorWithContextMenu(th, gtx, "filecreate-name", &st.nameEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -611,7 +611,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, pathInfo)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 			lbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
 			lbl.MaxLines = 1
 			lbl.Truncator = "…"
@@ -623,7 +623,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 				if st.running {
 					lbl := material.Caption(th, "Creating...")
 					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+					lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 					lbl.Color = hintColor
 					return lbl.Layout(gtx)
 				}
@@ -631,7 +631,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 			}
 			lbl := material.Caption(th, st.lastErr)
 			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, ui.fmCfg, 9)
+			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 			lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
@@ -686,7 +686,7 @@ func (ui *UI) layoutFileCreateKindTabs(th *material.Theme, gtx layout.Context, s
 	if animPos {
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, ui.fmCfg, 10), []slidingTabSpec{
+	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleDialogThemeFontSize(th, 10), []slidingTabSpec{
 		{
 			Label:      "Folder",
 			Click:      &st.kindFolderClick,

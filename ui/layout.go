@@ -33,6 +33,7 @@ const (
 	repeatFast       = 25 * time.Millisecond
 	repeatAccelAfter = 120 * time.Millisecond
 	defaultUIFontSp  = unit.Sp(14)
+	modalFontScale   = 15.0 / 14.0
 	toolbarAnimDur   = 260 * time.Millisecond
 	toolbarHoverDur  = 120 * time.Millisecond
 	toolbarClickDur  = 140 * time.Millisecond
@@ -312,20 +313,16 @@ func scaleThemeFontSize(th *material.Theme, size unit.Sp) unit.Sp {
 	return scaleFontSize(themeFontSize(th), size)
 }
 
-func scaleModalThemeFontSize(th *material.Theme, cfg *fm.Config, size unit.Sp) unit.Sp {
-	scaled := scaleThemeFontSize(th, size)
-	if cfg == nil || cfg.Font.SizeSp <= 0 || cfg.Font.ModalSizeSp <= 0 {
-		return scaled
-	}
-	factor := cfg.Font.ModalSizeSp / cfg.Font.SizeSp
-	if factor <= 0 {
-		return scaled
-	}
-	out := unit.Sp(float32(scaled) * factor)
+func scaleModalThemeFontSize(th *material.Theme, size unit.Sp) unit.Sp {
+	out := unit.Sp(float32(scaleThemeFontSize(th, size)) * modalFontScale)
 	if out < 1 {
 		return 1
 	}
 	return out
+}
+
+func scaleDialogThemeFontSize(th *material.Theme, size unit.Sp) unit.Sp {
+	return scaleThemeFontSize(th, size)
 }
 
 func scaleConfigFontSize(cfg *fm.Config, size unit.Sp) unit.Sp {
@@ -662,7 +659,16 @@ func vRule(gtx layout.Context, w unit.Dp) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(width, h)}
 }
 
+func (ui *UI) syncThemeRuntime(th *material.Theme) {
+	if th == nil {
+		return
+	}
+	th.Face = ui.mainTypeface()
+	th.TextSize = ui.mainTextSize()
+}
+
 func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	ui.syncThemeRuntime(th)
 	ui.handleGlobalFunctionKeys(gtx)
 	ui.handleGlobalEscapeToFileManager(gtx)
 	ui.handleEditorContextMenuGlobalPresses(gtx)

@@ -66,7 +66,6 @@ type SortConfig struct {
 type FontConfig struct {
 	Typeface    string  `yaml:"typeface"`
 	SizeSp      float32 `yaml:"size_sp"`
-	ModalSizeSp float32 `yaml:"modal_size_sp"`
 	RegularPath string  `yaml:"regular_path"`
 	MediumPath  string  `yaml:"medium_path"`
 	BoldPath    string  `yaml:"bold_path"`
@@ -192,7 +191,6 @@ func DefaultConfig() *Config {
 		Font: FontConfig{
 			Typeface:    "Fira Code",
 			SizeSp:      14,
-			ModalSizeSp: 15,
 			RegularPath: resources.EmbeddedRegularFontPath,
 			MediumPath:  resources.EmbeddedMediumFontPath,
 			BoldPath:    resources.EmbeddedBoldFontPath,
@@ -343,12 +341,6 @@ func (c *Config) normalize() {
 	}
 	if c.Font.SizeSp <= 0 {
 		c.Font.SizeSp = 14
-	}
-	if c.Font.ModalSizeSp < 6 {
-		c.Font.ModalSizeSp = c.Font.SizeSp * (15.0 / 14.0)
-		if c.Font.ModalSizeSp < 6 {
-			c.Font.ModalSizeSp = 15
-		}
 	}
 	if c.Font.RegularPath == "" {
 		c.Font.RegularPath = resources.EmbeddedRegularFontPath

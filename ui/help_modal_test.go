@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"gioui.org/layout"
 )
 
 func TestParseHelpDocumentBuildsSectionsFromMarkdown(t *testing.T) {
@@ -65,5 +68,57 @@ func TestParseHelpInlineTokensDetectsCodeSegments(t *testing.T) {
 	}
 	if codes[0] != "F1" || codes[1] != "Ctrl+F" {
 		t.Fatalf("code tokens=%v want [F1 Ctrl+F]", codes)
+	}
+}
+
+func TestHelpModalSetActiveSectionTracksAnimation(t *testing.T) {
+	st := &helpModalState{
+		doc: helpDocument{
+			Sections: []helpSection{
+				{Title: "Navigation"},
+				{Title: "Viewer"},
+				{Title: "Analyzer"},
+			},
+		},
+		bodyList:      layout.List{Axis: layout.Vertical},
+		activeSection: 0,
+	}
+	now := time.Now()
+	if !st.setActiveSection(2, now) {
+		t.Fatal("setActiveSection should report a change")
+	}
+	if st.activeSection != 2 {
+		t.Fatalf("activeSection=%d want 2", st.activeSection)
+	}
+	if st.sectionPrev != 0 {
+		t.Fatalf("sectionPrev=%d want 0", st.sectionPrev)
+	}
+	if st.sectionAnimAt != now {
+		t.Fatalf("sectionAnimAt=%v want %v", st.sectionAnimAt, now)
+	}
+	if !st.wantKeyFocus {
+		t.Fatal("setActiveSection should request keyboard focus")
+	}
+}
+
+func TestHelpModalCodeSelectableReusesStatePerBlock(t *testing.T) {
+	st := &helpModalState{}
+	first := st.codeSelectable(1, 2)
+	if first == nil {
+		t.Fatal("codeSelectable should return state")
+	}
+	second := st.codeSelectable(1, 2)
+	if second != first {
+		t.Fatal("codeSelectable should reuse the same state for the same block")
+	}
+	other := st.codeSelectable(1, 3)
+	if other == first {
+		t.Fatal("different blocks should not share selectable state")
+	}
+}
+
+func TestFallbackHelpMarkdownOmitsBundledHelpCopy(t *testing.T) {
+	if strings.Contains(strings.ToLower(fallbackHelpMarkdown()), "bundled help") {
+		t.Fatal("fallback help should not mention bundled help")
 	}
 }

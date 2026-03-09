@@ -963,9 +963,11 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 		}
 	}
 	fg := color.NRGBA{R: 245, G: 231, B: 180, A: 255}
-	bg := color.NRGBA{R: 88, G: 70, B: 30, A: 255}
-	if st.commandClick.Hovered() || st.commandEditOn {
-		bg = color.NRGBA{R: 104, G: 82, B: 36, A: 255}
+	bg := color.NRGBA{R: 72, G: 58, B: 28, A: 255}
+	border := color.NRGBA{R: 189, G: 158, B: 84, A: 132}
+	if st.commandClick.Hovered() {
+		bg = color.NRGBA{R: 86, G: 69, B: 33, A: 255}
+		border = color.NRGBA{R: 210, G: 180, B: 100, A: 168}
 	}
 	commandText := st.command
 	if st.commandEditOn {
@@ -987,39 +989,45 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 	}
 	host := func(gtx layout.Context) layout.Dimensions {
 		return fixedWidth(gtx, desiredW, func(gtx layout.Context) layout.Dimensions {
-			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					if st.commandEditOn {
-						ed := material.Editor(th, &st.commandEditor, "cat {fullpath}")
-						ed.Font.Typeface = ui.viewerTypeface()
-						ed.TextSize = ui.viewerTextSize()
-						ed.Color = fg
-						ed.HintColor = color.NRGBA{R: 176, G: 160, B: 116, A: 255}
-						return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+				if st.commandEditOn {
+					ed := material.Editor(th, &st.commandEditor, "cat {fullpath}")
+					ed.Font.Typeface = ui.viewerTypeface()
+					ed.TextSize = ui.viewerTextSize()
+					ed.Color = fg
+					ed.HintColor = color.NRGBA{R: 176, G: 160, B: 116, A: 255}
+					focused := st.commandFocus || gtx.Focused(&st.commandEditor)
+					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints.Min.X = gtx.Constraints.Max.X
+						return layoutNeutralEditorBox(gtx, focused, true, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								gtx.Constraints.Min.X = gtx.Constraints.Max.X
-								return layout.W.Layout(gtx, ed.Layout)
-							})
-						})
-					}
-					label := commandText
-					return st.commandClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								gtx.Constraints.Min.X = gtx.Constraints.Max.X
-								return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body2(th, label)
-									lbl.Font.Typeface = ui.viewerTypeface()
-									lbl.TextSize = ui.viewerTextSize()
-									lbl.Font.Weight = font.Medium
-									lbl.Color = fg
-									lbl.MaxLines = 1
-									lbl.Truncator = "..."
-									return lbl.Layout(gtx)
-								})
+								return ed.Layout(gtx)
 							})
 						})
 					})
+				}
+				label := commandText
+				return st.commandClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return fillRoundedBox(
+						gtx,
+						gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+						bg,
+						border,
+						func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								gtx.Constraints.Min.X = gtx.Constraints.Max.X
+								lbl := material.Body2(th, label)
+								lbl.Font.Typeface = ui.viewerTypeface()
+								lbl.TextSize = ui.viewerTextSize()
+								lbl.Font.Weight = font.Medium
+								lbl.Color = fg
+								lbl.MaxLines = 1
+								lbl.Truncator = "..."
+								return layoutVCenteredLabel(gtx, lbl)
+							})
+						},
+					)
 				})
 			})
 		})

@@ -2,7 +2,10 @@ package ui
 
 import (
 	"image"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"gioui.org/io/input"
 	"gioui.org/layout"
@@ -74,6 +77,39 @@ func TestLayoutFilePanePathEditorUsesWrappedPathAreaWhenInactive(t *testing.T) {
 
 	if editorDims.Size != areaDims.Size {
 		t.Fatalf("inactive editor dims = %v, want path area dims %v", editorDims.Size, areaDims.Size)
+	}
+}
+
+func TestActivateFilePanePathSegmentStartsLoadImmediately(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	root := t.TempDir()
+	target := filepath.Join(root, "logs")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+
+	ui := &UI{fmCfg: cfg}
+	pane := newFilePaneState(root, cfg)
+	pane.pendingPathNav = "/stale"
+	pane.pendingPathAt = time.Now().Add(time.Second)
+	pane.pathClickKey = "row:" + root
+	pane.pathClickAt = time.Now()
+	ui.filePanes = []*filePaneState{pane}
+
+	if !ui.activateFilePanePathSegment(0, pane, target) {
+		t.Fatal("activateFilePanePathSegment returned false")
+	}
+	if pane.pendingPathNav != "" || !pane.pendingPathAt.IsZero() {
+		t.Fatalf("pending path navigate not cleared: %q at %v", pane.pendingPathNav, pane.pendingPathAt)
+	}
+	if pane.pathClickKey != "" || !pane.pathClickAt.IsZero() {
+		t.Fatalf("path click state not cleared: %q at %v", pane.pathClickKey, pane.pathClickAt)
+	}
+	if !pane.loading {
+		t.Fatal("pane not marked loading")
+	}
+	if got, want := pane.loadingDir, filepath.Clean(target); got != want {
+		t.Fatalf("loading dir = %q, want %q", got, want)
 	}
 }
 
