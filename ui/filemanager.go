@@ -198,6 +198,15 @@ type filePaneState struct {
 	pathEdit             widget.Editor
 	pathEditing          bool
 	pathEditFocus        bool
+	inlineNameEdit       widget.Editor
+	inlineNameEditing    bool
+	inlineNameFocus      bool
+	inlineNameRow        int
+	inlineNamePath       string
+	inlineNameOriginal   string
+	inlineNameRect       image.Rectangle
+	inlineNamePendingRow int
+	inlineNamePendingAt  time.Time
 	pathClickKey         string
 	pathClickAt          time.Time
 	pendingPathNav       string
@@ -324,6 +333,10 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	}
 	pane.pathEdit.SingleLine = true
 	pane.pathEdit.Submit = true
+	pane.inlineNameEdit.SingleLine = true
+	pane.inlineNameEdit.Submit = true
+	pane.inlineNameRow = -1
+	pane.inlineNamePendingRow = -1
 	pane.ctxMenuRow = -1
 	pane.tableClickRow = -1
 	pane.tableClickCol = -1
@@ -440,6 +453,7 @@ func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secon
 	p.err = ""
 	p.noticeText = ""
 	p.noticeUntil = time.Time{}
+	p.stopInlineNameEdit()
 	p.clearMarkedRows()
 	p.clearPathClickState()
 	p.clearPendingPathNavigate()
@@ -489,6 +503,7 @@ func (p *filePaneState) beginPathEdit() {
 	if p == nil {
 		return
 	}
+	p.cancelInlineNameEdit()
 	p.clearPathClickState()
 	p.clearPendingPathNavigate()
 	p.pathEditing = true
@@ -511,12 +526,86 @@ func (p *filePaneState) stopPathEdit() {
 	p.pathEditFocus = false
 }
 
+func (p *filePaneState) inlineNameEntry() *filesys.Entry {
+	if p == nil || !p.inlineNameEditing || p.inlineNameRow < 0 || p.model == nil {
+		return nil
+	}
+	return p.model.Entry(p.inlineNameRow)
+}
+
+func (p *filePaneState) beginInlineNameEdit(row int) bool {
+	if p == nil || p.model == nil {
+		return false
+	}
+	entry := p.model.Entry(row)
+	if entry == nil || entry.Path == "" || entry.Kind == filesys.EntryParent {
+		return false
+	}
+	name := strings.TrimSpace(entry.Name)
+	if name == "" {
+		name = p.pathBaseName(entry.Path)
+	}
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	p.stopPathEdit()
+	p.clearPathClickState()
+	p.clearPendingPathNavigate()
+	p.clearPendingInlineNameEdit()
+	p.inlineNameEditing = true
+	p.inlineNameFocus = true
+	p.inlineNameRow = row
+	p.inlineNamePath = entry.Path
+	p.inlineNameOriginal = name
+	p.inlineNameRect = image.Rectangle{}
+	p.inlineNameEdit.SetText(name)
+	p.inlineNameEdit.SetCaret(0, p.inlineNameEdit.Len())
+	return true
+}
+
+func (p *filePaneState) stopInlineNameEdit() {
+	if p == nil {
+		return
+	}
+	p.inlineNameEditing = false
+	p.inlineNameFocus = false
+	p.inlineNameRow = -1
+	p.inlineNamePath = ""
+	p.inlineNameOriginal = ""
+	p.inlineNameRect = image.Rectangle{}
+	p.clearPendingInlineNameEdit()
+}
+
+func (p *filePaneState) cancelInlineNameEdit() {
+	if p == nil {
+		return
+	}
+	p.stopInlineNameEdit()
+	p.inlineNameEdit.SetText("")
+}
+
 func (p *filePaneState) clearPendingPathNavigate() {
 	if p == nil {
 		return
 	}
 	p.pendingPathNav = ""
 	p.pendingPathAt = time.Time{}
+}
+
+func (p *filePaneState) clearPendingInlineNameEdit() {
+	if p == nil {
+		return
+	}
+	p.inlineNamePendingRow = -1
+	p.inlineNamePendingAt = time.Time{}
+}
+
+func (p *filePaneState) queueInlineNameEdit(row int, at time.Time) {
+	if p == nil {
+		return
+	}
+	p.inlineNamePendingRow = row
+	p.inlineNamePendingAt = at
 }
 
 func (p *filePaneState) queuePathNavigate(path string, at time.Time) {
@@ -1921,12 +2010,13 @@ func (ui *UI) stopPathEditExcept(active int) {
 			continue
 		}
 		pane.stopPathEdit()
+		pane.stopInlineNameEdit()
 	}
 }
 
 func (ui *UI) pathEditActive() bool {
 	for _, pane := range ui.filePanes {
-		if pane != nil && pane.pathEditing {
+		if pane != nil && (pane.pathEditing || pane.inlineNameEditing) {
 			return true
 		}
 	}

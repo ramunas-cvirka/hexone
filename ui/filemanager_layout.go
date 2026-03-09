@@ -450,10 +450,13 @@ func (ui *UI) layoutFilePaneBody(th *material.Theme, gtx layout.Context, idx int
 			return ui.layoutFilePaneTable(th, gtx, idx, pane)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePaneInlineNameEditor(th, gtx, idx, pane)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFilePaneNotice(th, gtx, pane)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutFilePaneContextMenu(th, gtx, pane)
+			return ui.layoutFilePaneContextMenu(th, gtx, idx, pane)
 		}),
 	)
 }
@@ -523,7 +526,7 @@ func scaleNoticeAlpha(c color.NRGBA, a float32) color.NRGBA {
 	return c
 }
 
-func (ui *UI) layoutFilePaneContextMenu(th *material.Theme, gtx layout.Context, pane *filePaneState) layout.Dimensions {
+func (ui *UI) layoutFilePaneContextMenu(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
 	if pane == nil || !pane.ctxMenuOpen {
 		return layout.Dimensions{}
 	}
@@ -532,8 +535,9 @@ func (ui *UI) layoutFilePaneContextMenu(th *material.Theme, gtx layout.Context, 
 	pane.ensureContextMenuClicks(len(spec.items))
 	for i, label := range spec.items {
 		if pane.ctxMenuClicks[i].Clicked(gtx) {
+			row := pane.ctxMenuRow
 			pane.closeContextMenu()
-			pane.setNotice(label+" is not implemented yet", gtx.Now)
+			ui.handleFilePaneContextMenuAction(idx, pane, row, label, gtx.Now)
 		}
 	}
 
@@ -681,6 +685,7 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 	}
 
 	total := pane.model.Len()
+	selectedBefore := pane.table.Selected
 	dims := pane.table.Layout(th, gtx, pane.model)
 	if pane.loading {
 		return dims
@@ -714,6 +719,10 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 				continue
 			}
 			pane.clearPathClickState()
+			pane.clearPendingInlineNameEdit()
+			if pane.inlineNameEditing {
+				ui.finishInlineFileNameEdit(idx, gtx.Now, true, true)
+			}
 			if pane.pathEditing {
 				pane.stopPathEdit()
 				pathEditClosed = true
@@ -723,15 +732,24 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 			}
 		case pointer.Press:
 			pane.clearPathClickState()
+			pos := pe.Position.Round()
+			if pane.inlineNameEditing {
+				if pane.inlineNameRect.Dx() > 0 && pane.inlineNameRect.Dy() > 0 &&
+					pos.X >= pane.inlineNameRect.Min.X && pos.X < pane.inlineNameRect.Max.X &&
+					pos.Y >= pane.inlineNameRect.Min.Y && pos.Y < pane.inlineNameRect.Max.Y {
+					continue
+				}
+				ui.finishInlineFileNameEdit(idx, gtx.Now, true, true)
+			}
 			if pane.pathEditing {
 				pane.stopPathEdit()
 				pathEditClosed = true
 			}
-			pos := pe.Position.Round()
 			row := pane.table.HitRow(pos, total)
 			col := pane.table.HitColumn(pos)
 			if pe.Buttons.Contain(pointer.ButtonPrimary) && row >= 0 && col >= 0 {
 				if pe.Modifiers.Contain(key.ModShift) {
+					pane.clearPendingInlineNameEdit()
 					prev := pane.table.Selected
 					pane.table.SetSelected(row, total, false)
 					if pane.replaceMarkedRange(prev, row) || prev != pane.table.Selected {
@@ -739,6 +757,24 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 					}
 					continue
 				}
+				if row == selectedBefore && col == 0 && !pane.hasMarkedRows() {
+					if pane.registerTablePrimaryClick(row, col, gtx.Now, filePaneTableDoubleClickWindow) {
+						pane.clearPendingInlineNameEdit()
+						if col == pane.permissionColumnIndex() {
+							if ui.startFilePermDialog(idx, row, gtx.Now) {
+								selectionChanged = true
+							}
+						} else {
+							ui.queueFilePaneOpen(idx, row)
+						}
+						gtx.Execute(op.InvalidateCmd{})
+					} else {
+						pane.queueInlineNameEdit(row, gtx.Now.Add(filePaneTableDoubleClickWindow))
+						gtx.Execute(op.InvalidateCmd{At: pane.inlineNamePendingAt})
+					}
+					continue
+				}
+				pane.clearPendingInlineNameEdit()
 				if pane.clearMarkedRows() {
 					selectionChanged = true
 				}
@@ -754,6 +790,7 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 				}
 			}
 			if pe.Buttons.Contain(pointer.ButtonPrimary) && (row < 0 || col < 0) {
+				pane.clearPendingInlineNameEdit()
 				if pane.clearMarkedRows() {
 					selectionChanged = true
 				}
@@ -761,6 +798,7 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 			if !pe.Buttons.Contain(pointer.ButtonSecondary) {
 				continue
 			}
+			pane.clearPendingInlineNameEdit()
 			if row >= 0 && row != pane.table.Selected {
 				prev := pane.table.Selected
 				pane.table.SetSelected(row, total, false)
@@ -775,6 +813,14 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 				}
 			}
 			ui.openFilePaneContextMenu(idx, row, pos)
+		}
+	}
+	if pane.inlineNamePendingRow >= 0 {
+		if gtx.Now.Before(pane.inlineNamePendingAt) {
+			gtx.Execute(op.InvalidateCmd{At: pane.inlineNamePendingAt})
+		} else if ui.activatePendingInlineNameEdit(idx, gtx.Now) {
+			selectionChanged = true
+			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
 
@@ -793,6 +839,96 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 	event.Op(gtx.Ops, &pane.tablePointerTag)
 	pass.Pop()
 	return dims
+}
+
+func (ui *UI) layoutFilePaneInlineNameEditor(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
+	if pane == nil || !pane.inlineNameEditing {
+		if pane != nil {
+			pane.inlineNameRect = image.Rectangle{}
+		}
+		return layout.Dimensions{}
+	}
+
+	for {
+		ev, ok := gtx.Event(key.Filter{Focus: &pane.inlineNameEdit, Name: key.NameEscape})
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		ui.finishInlineFileNameEdit(idx, gtx.Now, false, true)
+		return layout.Dimensions{}
+	}
+	for {
+		ev, ok := pane.inlineNameEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		switch submit := ev.(type) {
+		case widget.SubmitEvent:
+			pane.inlineNameEdit.SetText(submit.Text)
+			if ui.finishInlineFileNameEdit(idx, gtx.Now, true, false) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case widget.ChangeEvent:
+			pane.err = ""
+		}
+	}
+	if !pane.inlineNameEditing {
+		pane.inlineNameRect = image.Rectangle{}
+		return layout.Dimensions{}
+	}
+	if pane.inlineNameFocus {
+		pane.inlineNameFocus = false
+		gtx.Execute(key.FocusCmd{Tag: &pane.inlineNameEdit})
+	} else if !gtx.Focused(&pane.inlineNameEdit) {
+		ui.finishInlineFileNameEdit(idx, gtx.Now, true, true)
+		if !pane.inlineNameEditing {
+			pane.inlineNameRect = image.Rectangle{}
+			return layout.Dimensions{}
+		}
+	}
+
+	rect, ok := ui.inlineFileNameEditRect(gtx, pane)
+	if !ok {
+		pane.inlineNameRect = image.Rectangle{}
+		return layout.Dimensions{}
+	}
+	pane.inlineNameRect = rect
+
+	ed := material.Editor(th, &pane.inlineNameEdit, "")
+	ed.Font.Typeface = ui.mainTypeface()
+	ed.TextSize = pane.table.TextSize
+	ed.Color = pane.model.paneTextColor()
+	ed.HintColor = hintColor
+
+	m := op.Record(gtx.Ops)
+	childGTX := gtx
+	childGTX.Constraints = layout.Exact(rect.Size())
+	_ = ui.layoutEditorWithContextMenu(th, childGTX, "pane-name-"+strconv.Itoa(idx), &pane.inlineNameEdit, true, func(gtx layout.Context) layout.Dimensions {
+		return layoutCompactNeutralEditorBox(gtx, gtx.Focused(&pane.inlineNameEdit), true, ed.Layout)
+	})
+	call := m.Stop()
+
+	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+	offset := op.Offset(rect.Min).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	offset.Pop()
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+func (ui *UI) handleFilePaneContextMenuAction(idx int, pane *filePaneState, row int, label string, now time.Time) {
+	if pane == nil {
+		return
+	}
+	switch strings.TrimSpace(label) {
+	case "Rename":
+		_ = ui.startInlineFileNameEdit(idx, row, now)
+	default:
+		pane.setNotice(label+" is not implemented yet", now)
+	}
 }
 
 func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {

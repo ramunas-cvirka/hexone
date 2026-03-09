@@ -9,7 +9,7 @@ window:
 active_tab: tab0
 active_pane: 0
 panes:
-    - dir: C:\
-      selected_path: C:\AMD
+    - dir: C:\@downloads
+      selected_path: C:\@downloads\God.of.Gamblers.1989.720p.BluRay.x264-x0r
     - dir: D:\AsmSource
       selected_path: D:\AsmSource\testas

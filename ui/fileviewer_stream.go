@@ -412,19 +412,21 @@ func (v *streamOutputView) updateAutoScroll(pos image.Point, now time.Time) {
 		v.stopAutoScroll()
 		return
 	}
-	if v.pointerOutside && v.autoScrollActive {
-		// Pointer movement outside the app can report unstable coordinates.
-		// Preserve the last active edge/step until the pointer returns.
+	if viewerPointInRect(pos, v.textRect) {
+		v.pointerOutside = false
+		v.selectPos = pos
+		v.stopAutoScroll()
+		return
+	}
+	dir, step := v.autoScrollParams(pos)
+	if v.pointerOutside && v.autoScrollActive && dir == 0 {
+		// Pointer movement outside the app can report unstable neutral
+		// coordinates. Preserve the last active edge/step until re-entry or a
+		// clearly outside position arrives.
 		return
 	}
 	v.selectPos = pos
-	dir, step := v.autoScrollParams(pos)
 	if dir == 0 {
-		if v.autoScrollActive {
-			// Keep active autoscroll stable even if pointer updates momentarily
-			// report neutral coordinates while dragging outside.
-			return
-		}
 		v.stopAutoScroll()
 		return
 	}

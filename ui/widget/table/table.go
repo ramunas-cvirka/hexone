@@ -811,6 +811,78 @@ func (t *Table) HitColumn(pos image.Point) int {
 	return -1
 }
 
+func (t *Table) RowRect(row, n int) (image.Rectangle, bool) {
+	if t == nil || n <= 0 || row < 0 || row >= n || t.rowHeightPx <= 0 {
+		return image.Rectangle{}, false
+	}
+	switch t.Mode {
+	case ModeBrief:
+		if t.briefRowsPerCol <= 0 || t.briefVisibleCols <= 0 || t.briefColPx <= 0 {
+			return image.Rectangle{}, false
+		}
+		itemCol := row / t.briefRowsPerCol
+		visibleCol := itemCol - t.List.Position.First
+		if visibleCol < 0 || visibleCol >= t.briefVisibleCols {
+			return image.Rectangle{}, false
+		}
+		rowInCol := row % t.briefRowsPerCol
+		x := t.hitOffset.X
+		for i := 0; i < visibleCol; i++ {
+			x += t.briefColPx
+			if i == t.briefVisibleCols-1 {
+				x += t.briefLastColExtraPx
+			}
+			x += t.briefGapPx
+		}
+		w := t.briefColPx
+		if visibleCol == t.briefVisibleCols-1 {
+			w += t.briefLastColExtraPx
+		}
+		y := t.hitOffset.Y + rowInCol*t.rowHeightPx
+		rect := image.Rect(x, y, x+w, y+t.rowHeightPx)
+		if !rect.Overlaps(image.Rect(t.hitOffset.X, t.hitOffset.Y, t.hitOffset.X+t.hitSize.X, t.hitOffset.Y+t.hitSize.Y)) {
+			return image.Rectangle{}, false
+		}
+		return rect, true
+	default:
+		visibleRow := row - t.List.Position.First
+		if visibleRow < 0 {
+			return image.Rectangle{}, false
+		}
+		y := t.hitOffset.Y + visibleRow*t.rowHeightPx
+		rect := image.Rect(t.hitOffset.X, y, t.hitOffset.X+t.hitSize.X, y+t.rowHeightPx)
+		if rect.Min.Y < t.hitOffset.Y || rect.Max.Y > t.hitOffset.Y+t.hitSize.Y {
+			return image.Rectangle{}, false
+		}
+		return rect, true
+	}
+}
+
+func (t *Table) CellRect(row, col, n int) (image.Rectangle, bool) {
+	rowRect, ok := t.RowRect(row, n)
+	if !ok {
+		return image.Rectangle{}, false
+	}
+	if t.Mode != ModeFull {
+		if col != 0 {
+			return image.Rectangle{}, false
+		}
+		return rowRect, true
+	}
+	if col < 0 || col >= len(t.fullModeWidths) {
+		return image.Rectangle{}, false
+	}
+	x := rowRect.Min.X
+	for i := 0; i < col; i++ {
+		x += t.fullModeWidths[i]
+	}
+	w := t.fullModeWidths[col]
+	if w <= 0 {
+		return image.Rectangle{}, false
+	}
+	return image.Rect(x, rowRect.Min.Y, x+w, rowRect.Max.Y), true
+}
+
 func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.Dimensions {
 	n := 0
 	if m != nil {

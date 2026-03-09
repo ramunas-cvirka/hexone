@@ -317,17 +317,22 @@ func (v *hexViewerState) updateAutoScroll(pos image.Point, now time.Time) {
 		v.stopAutoScroll()
 		return
 	}
-	if v.pointerOutside && v.autoScrollActive {
-		// Pointer movement outside the app can jitter between synthetic
-		// coordinates. Keep the current autoscroll state stable until re-entry.
+	body := v.hexRect.Union(v.textRect)
+	if viewerPointInRect(pos, body) {
+		v.pointerOutside = false
+		v.selectPos = pos
+		v.stopAutoScroll()
+		return
+	}
+	dir, step := v.autoScrollParams(pos)
+	if v.pointerOutside && v.autoScrollActive && dir == 0 {
+		// Pointer movement outside the app can jitter between synthetic neutral
+		// coordinates. Keep the current autoscroll state stable until re-entry
+		// or a clearly outside position arrives.
 		return
 	}
 	v.selectPos = pos
-	dir, step := v.autoScrollParams(pos)
 	if dir == 0 {
-		if v.autoScrollActive {
-			return
-		}
 		v.stopAutoScroll()
 		return
 	}
