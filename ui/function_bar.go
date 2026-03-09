@@ -8,7 +8,6 @@ import (
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
-	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -98,14 +97,17 @@ func (ui *UI) closeFunctionBarToolsMenu() {
 }
 
 func (ui *UI) requestWindowClose() {
-	ui.requestWindowAction(system.ActionClose)
+	if ui == nil {
+		return
+	}
+	ui.requestedWindowClose = true
 }
 
 func (ui *UI) ConsumeWindowCloseRequest() bool {
-	if ui == nil || ui.requestedWindowActions&system.ActionClose == 0 {
+	if ui == nil || !ui.requestedWindowClose {
 		return false
 	}
-	ui.requestedWindowActions &^= system.ActionClose
+	ui.requestedWindowClose = false
 	return true
 }
 

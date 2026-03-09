@@ -9,12 +9,10 @@ import (
 	"os"
 	"time"
 
-	"gioui.org/app"
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
-	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -154,12 +152,7 @@ type UI struct {
 	functionBarSliderPrevShown  bool
 	functionBarSliderShown      bool
 	functionBarSliderAnimAt     time.Time
-	requestedWindowActions      system.Action
-	windowChromeEnabled         bool
-	windowMode                  app.WindowMode
-	windowMinimizeClick         widget.Clickable
-	windowMaximizeClick         widget.Clickable
-	windowCloseClick            widget.Clickable
+	requestedWindowClose        bool
 	filePanes                   []*filePaneState
 	fmCfg                       *fm.Config
 	configPath                  string
@@ -687,9 +680,6 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	dims := layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutWindowChrome(th, gtx)
-				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if ui == nil || !ui.functionBarVisible() {
 						return layout.Dimensions{}

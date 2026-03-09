@@ -6,8 +6,7 @@ DIST_DIR := dist
 
 LINUX_ARCH := amd64
 LINUX_STAGE := $(DIST_DIR)/$(APP)-linux-$(LINUX_ARCH)
-LINUX_BIN := $(LINUX_STAGE)/$(APP)-bin
-LINUX_LAUNCHER := $(LINUX_STAGE)/$(APP)
+LINUX_BIN := $(LINUX_STAGE)/$(APP)
 LINUX_LIB_DIR := $(LINUX_STAGE)/lib
 LINUX_ZIP := $(DIST_DIR)/$(APP)_linux_$(LINUX_ARCH).zip
 
@@ -43,11 +42,15 @@ build-linux: | $(DIST_DIR)
 		echo "build-linux requires a Linux host (CGO-enabled Gio build)."; \
 		exit 1; \
 	fi
+	@if ! command -v patchelf >/dev/null 2>&1; then \
+		echo "build-linux requires patchelf to set the Linux rpath."; \
+		exit 1; \
+	fi
 	rm -rf "$(LINUX_STAGE)"
 	mkdir -p "$(LINUX_STAGE)" "$(LINUX_LIB_DIR)" "$(LINUX_STAGE)/share/applications" "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps"
-	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -o "$(LINUX_BIN)" $(CMD)
-	cp packaging/linux/hexone "$(LINUX_LAUNCHER)"
-	chmod +x "$(LINUX_LAUNCHER)" "$(LINUX_BIN)"
+	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -tags nowayland -o "$(LINUX_BIN)" $(CMD)
+	patchelf --set-rpath '$$ORIGIN/lib' "$(LINUX_BIN)"
+	chmod +x "$(LINUX_BIN)"
 	cp packaging/linux/hexone.desktop "$(LINUX_STAGE)/share/applications/hexone.desktop"
 	cp appicon/hexone_icon_art.png "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/hexone.png"
 	for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do \
