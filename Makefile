@@ -1,11 +1,29 @@
-.PHONY: build run test clean build-linux build-macos build-windows build-all
+.PHONY: build run test clean build-linux build-macos build-windows build-all package-linux package-macos package-windows package-all
 
 APP := hexone
 CMD := ./cmd/hexone
 DIST_DIR := dist
-LINUX_BIN := $(DIST_DIR)/$(APP)-linux-amd64
-MACOS_BIN := $(DIST_DIR)/$(APP)-macos-amd64
-WINDOWS_BIN := $(DIST_DIR)/$(APP)-windows-amd64.exe
+
+LINUX_ARCH := amd64
+LINUX_STAGE := $(DIST_DIR)/$(APP)-linux-$(LINUX_ARCH)
+LINUX_BIN := $(LINUX_STAGE)/$(APP)
+LINUX_ZIP := $(DIST_DIR)/$(APP)_linux_$(LINUX_ARCH).zip
+
+MACOS_ARCH := arm64
+MACOS_STAGE := $(DIST_DIR)/$(APP)-macos-$(MACOS_ARCH)
+MACOS_APP := $(MACOS_STAGE)/$(APP).app
+MACOS_CONTENTS := $(MACOS_APP)/Contents
+MACOS_BIN := $(MACOS_CONTENTS)/MacOS/$(APP)
+MACOS_RESOURCES := $(MACOS_CONTENTS)/Resources
+MACOS_PLIST := packaging/macos/Info.plist
+MACOS_ICONSET := $(DIST_DIR)/AppIcon.iconset
+MACOS_ICON_SOURCE := appicon/hexone_icon_art.png
+MACOS_DMG := $(DIST_DIR)/$(APP)_macos_$(MACOS_ARCH).dmg
+
+WINDOWS_ARCH := amd64
+WINDOWS_STAGE := $(DIST_DIR)/$(APP)-windows-$(WINDOWS_ARCH)-portable
+WINDOWS_BIN := $(WINDOWS_STAGE)/$(APP).exe
+WINDOWS_ZIP := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_portable.zip
 
 ifeq ($(OS),Windows_NT)
 BIN := $(APP).exe
@@ -23,19 +41,56 @@ build-linux: | $(DIST_DIR)
 		echo "build-linux requires a Linux host (CGO-enabled Gio build)."; \
 		exit 1; \
 	fi
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -o $(LINUX_BIN) $(CMD)
+	rm -rf "$(LINUX_STAGE)"
+	mkdir -p "$(LINUX_STAGE)"
+	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -o "$(LINUX_BIN)" $(CMD)
+	cp protocols.yaml "$(LINUX_STAGE)/protocols.yaml"
 
 build-macos: | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "darwin" ]; then \
-		echo "build-macos requires a macOS host (CGO-enabled Gio build)."; \
+		echo "build-macos requires a macOS host with sips/iconutil (CGO-enabled Gio build)."; \
 		exit 1; \
 	fi
-	GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build -o $(MACOS_BIN) $(CMD)
+	rm -rf "$(MACOS_STAGE)" "$(MACOS_ICONSET)"
+	mkdir -p "$(MACOS_CONTENTS)/MacOS" "$(MACOS_RESOURCES)"
+	GOOS=darwin GOARCH=$(MACOS_ARCH) CGO_ENABLED=1 go build -o "$(MACOS_BIN)" $(CMD)
+	cp "$(MACOS_PLIST)" "$(MACOS_CONTENTS)/Info.plist"
+	cp protocols.yaml "$(MACOS_RESOURCES)/protocols.yaml"
+	mkdir -p "$(MACOS_ICONSET)"
+	sips -z 16 16 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_16x16.png" >/dev/null
+	sips -z 32 32 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_16x16@2x.png" >/dev/null
+	sips -z 32 32 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_32x32.png" >/dev/null
+	sips -z 64 64 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_32x32@2x.png" >/dev/null
+	sips -z 128 128 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_128x128.png" >/dev/null
+	sips -z 256 256 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_128x128@2x.png" >/dev/null
+	sips -z 256 256 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_256x256.png" >/dev/null
+	sips -z 512 512 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_256x256@2x.png" >/dev/null
+	sips -z 512 512 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_512x512.png" >/dev/null
+	sips -z 1024 1024 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_512x512@2x.png" >/dev/null
+	iconutil -c icns "$(MACOS_ICONSET)" -o "$(MACOS_RESOURCES)/AppIcon.icns"
+	rm -rf "$(MACOS_ICONSET)"
 
 build-windows: | $(DIST_DIR)
-	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-H windowsgui" -o $(WINDOWS_BIN) $(CMD)
+	rm -rf "$(WINDOWS_STAGE)"
+	mkdir -p "$(WINDOWS_STAGE)"
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 go build -ldflags="-H windowsgui" -o "$(WINDOWS_BIN)" $(CMD)
+	cp protocols.yaml "$(WINDOWS_STAGE)/protocols.yaml"
 
 build-all: build-linux build-macos build-windows
+
+package-linux: build-linux
+	rm -f "$(LINUX_ZIP)"
+	cd "$(DIST_DIR)" && zip -rq "$(notdir $(LINUX_ZIP))" "$(notdir $(LINUX_STAGE))"
+
+package-macos: build-macos
+	rm -f "$(MACOS_DMG)"
+	hdiutil create -volname "$(APP)" -srcfolder "$(MACOS_STAGE)" -ov -format UDZO "$(MACOS_DMG)"
+
+package-windows: build-windows
+	rm -f "$(WINDOWS_ZIP)"
+	cd "$(DIST_DIR)" && zip -rq "$(notdir $(WINDOWS_ZIP))" "$(notdir $(WINDOWS_STAGE))"
+
+package-all: package-linux package-macos package-windows
 
 $(DIST_DIR):
 	mkdir -p $(DIST_DIR)

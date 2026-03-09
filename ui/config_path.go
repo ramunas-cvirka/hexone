@@ -1,23 +1,17 @@
 package ui
 
 import (
+	"hexone/appdata"
 	"hexone/fm"
-	"path/filepath"
 )
 
-const uiDefaultConfigPath = "fm.yaml"
-
 func resolveUIConfigPath() string {
-	abs, err := filepath.Abs(uiDefaultConfigPath)
-	if err != nil || abs == "" {
-		return uiDefaultConfigPath
-	}
-	return abs
+	return appdata.ConfigPath()
 }
 
 func (ui *UI) configSavePath() string {
 	if ui == nil || ui.configPath == "" {
-		return uiDefaultConfigPath
+		return appdata.ConfigPath()
 	}
 	return ui.configPath
 }

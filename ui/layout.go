@@ -210,9 +210,7 @@ func NewUI(cfg *fm.Config) *UI {
 	ui.LeftInfo = "0 bytes"
 	ui.held = make(map[string]bool, 16)
 
-	data, _ := os.ReadFile("protocols.yaml")
-
-	ui.ensureTab2Loaded(data)
+	ui.ensureTab2Loaded(resources.ProtocolsYAML())
 	ui.fileKeys = newFileKeyMap(ui.fmCfg)
 
 	cwd, err := os.Getwd()

@@ -43,6 +43,7 @@ jobs:
           sudo apt-get install -y \
             gcc \
             pkg-config \
+            zip \
             libwayland-dev \
             libx11-dev \
             libx11-xcb-dev \
@@ -55,23 +56,26 @@ jobs:
             libxfixes-dev \
             libvulkan-dev
 
-      - name: Build Linux and Windows binaries
-        run: make build-linux build-windows
+      - name: Build Linux release archive
+        run: make package-linux
 
-      - name: Upload Linux binary artifact
+      - name: Build Windows portable release archive
+        run: make package-windows
+
+      - name: Upload Linux release archive
         uses: actions/upload-artifact@v4
         with:
-          name: hexone-linux-amd64
-          path: dist/hexone-linux-amd64
+          name: hexone-linux-amd64-zip
+          path: dist/hexone_linux_amd64.zip
 
-      - name: Upload Windows binary artifact
+      - name: Upload Windows portable release archive
         uses: actions/upload-artifact@v4
         with:
-          name: hexone-windows-amd64
-          path: dist/hexone-windows-amd64.exe
+          name: hexone-windows-amd64-portable-zip
+          path: dist/hexone_windows_amd64_portable.zip
 
   build-macos:
-    runs-on: macos-13
+    runs-on: macos-14
     needs: test
 
     steps:
@@ -83,14 +87,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build macOS binary
-        run: make build-macos
+      - name: Build macOS app disk image
+        run: make package-macos
 
-      - name: Upload macOS binary artifact
+      - name: Upload macOS app disk image
         uses: actions/upload-artifact@v4
         with:
-          name: hexone-macos-amd64
-          path: dist/hexone-macos-amd64
+          name: hexone-macos-arm64-dmg
+          path: dist/hexone_macos_arm64.dmg
 
   release:
     runs-on: ubuntu-latest
@@ -104,43 +108,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download built binaries
+      - name: Download packaged release archives
         uses: actions/download-artifact@v4
         with:
-          path: dist/binaries
-
-      - name: Create portable ZIP archives
-        run: |
-          rm -rf dist/release
-          mkdir -p dist/release
-
-          cp dist/binaries/hexone-linux-amd64/hexone-linux-amd64 dist/release/hexone-linux-amd64
-          cp dist/binaries/hexone-macos-amd64/hexone-macos-amd64 dist/release/hexone-macos-amd64
-          cp dist/binaries/hexone-windows-amd64/hexone-windows-amd64.exe dist/release/hexone-windows-amd64.exe
-
-          for os in linux macos windows; do
-            stage="dist/release/${os}/hexone_portable"
-            mkdir -p "${stage}"
-
-            case "${os}" in
-              linux)
-                cp dist/release/hexone-linux-amd64 "${stage}/hexone"
-                ;;
-              macos)
-                cp dist/release/hexone-macos-amd64 "${stage}/hexone"
-                ;;
-              windows)
-                cp dist/release/hexone-windows-amd64.exe "${stage}/hexone.exe"
-                ;;
-            esac
-
-            cp protocols.yaml "${stage}/"
-
-            (
-              cd "dist/release/${os}"
-              zip -r "../../hexone_${os}_portable.zip" hexone_portable
-            )
-          done
+          path: dist/assets
 
       - name: Extract changelog section for this tag
         run: |
@@ -160,13 +131,13 @@ jobs:
           echo "=== Extracted changelog ==="
           cat RELEASE_BODY.md
 
-      - name: Create GitHub Release and upload ZIP files
+      - name: Create GitHub Release and upload release assets
         uses: softprops/action-gh-release@v2
         with:
           body_path: RELEASE_BODY.md
           files: |
-            dist/hexone_linux_portable.zip
-            dist/hexone_macos_portable.zip
-            dist/hexone_windows_portable.zip
+            dist/assets/hexone-linux-amd64-zip/hexone_linux_amd64.zip
+            dist/assets/hexone-macos-arm64-dmg/hexone_macos_arm64.dmg
+            dist/assets/hexone-windows-amd64-portable-zip/hexone_windows_amd64_portable.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -25,6 +25,9 @@ type BundledFontFamily struct {
 //go:embed HELP.md
 var embeddedHelpMarkdown string
 
+//go:embed protocols.yaml
+var embeddedProtocolsYAML []byte
+
 //go:embed assets/FiraCode-Regular.ttf
 var embeddedRegularFont []byte
 

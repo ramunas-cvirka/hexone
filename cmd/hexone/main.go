@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	resources "hexone"
+	"hexone/appdata"
 	"hexone/appicon"
 	"hexone/fm"
 	"hexone/ui"
@@ -19,8 +20,6 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 )
-
-const sessionPath = "fm.session.yaml"
 
 func main() {
 	if exportPath := os.Getenv("HEXONE_WRITE_DEFAULT_ICON"); exportPath != "" {
@@ -86,7 +85,10 @@ func buildFontCollection(cfg *fm.Config) ([]text.FontFace, error) {
 }
 
 func run(window *app.Window) error {
-	cfg, err := fm.LoadConfigEnsuringFile("fm.yaml")
+	cfgPath := appdata.ConfigPath()
+	sessionPath := appdata.SessionPath()
+
+	cfg, err := fm.LoadConfigEnsuringFile(cfgPath)
 	if err != nil {
 		log.Printf("save default config: %v", err)
 	}

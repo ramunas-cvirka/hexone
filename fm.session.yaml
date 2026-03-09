@@ -1,15 +1,15 @@
 window:
-    x: 311
-    "y": 1194
+    x: 484
+    "y": 262
     has_position: true
     width: 1479
     height: 837
     px_per_dp: 1
     mode: windowed
 active_tab: tab0
-active_pane: 1
+active_pane: 0
 panes:
-    - dir: /Users/ramunas/go/src/hexone
-      selected_path: /Users/ramunas/go/src/hexone/resources_embed.go
-    - dir: /
-      selected_path: /Users
+    - dir: C:\Users
+      selected_path: C:\Users\desktop.ini
+    - dir: C:\
+      selected_path: C:\$GetCurrent
