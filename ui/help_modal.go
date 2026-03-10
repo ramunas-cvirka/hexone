@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	resources "hexone"
+	"hexone/buildinfo"
 	"image"
 	"image/color"
 	"strings"
@@ -525,8 +526,14 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					text := "Up/Down switches topics. F1 or Esc closes help."
-					lbl := material.Caption(th, text)
+					lbl := material.Caption(th, buildinfo.HelpVersionText())
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.TextSize = scaleModalThemeFontSize(th, 8)
+					lbl.Color = hintColor
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(th, "Up/Down switches topics. F1 or Esc closes help.")
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.TextSize = scaleModalThemeFontSize(th, 8)
 					lbl.Color = hintColor

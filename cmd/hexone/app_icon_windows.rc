@@ -1,6 +1,34 @@
-// Windows executable icon resource for Hexone.
+// Windows executable resources for Hexone.
 //
-// Regenerate the compiled resource after changing ../../assets/icons/hexone.ico:
-//   windres.exe -i cmd/hexone/app_icon_windows.rc -o cmd/hexone/hexone_windows.syso -O coff
+// The build target renders this template with the current version and, when
+// windres is available, generates a temporary .syso for the Windows build.
 
 1 ICON "..\\..\\assets\\icons\\hexone.ico"
+
+1 VERSIONINFO
+FILEVERSION @HEXONE_FILE_VERSION_COMMAS@
+PRODUCTVERSION @HEXONE_FILE_VERSION_COMMAS@
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x4L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Ramunas Cvirka\0"
+            VALUE "FileDescription", "Hexone\0"
+            VALUE "FileVersion", "@HEXONE_VERSION@\0"
+            VALUE "InternalName", "hexone\0"
+            VALUE "OriginalFilename", "hexone.exe\0"
+            VALUE "ProductName", "Hexone\0"
+            VALUE "ProductVersion", "@HEXONE_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
