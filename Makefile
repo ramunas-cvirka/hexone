@@ -1,15 +1,26 @@
-.PHONY: build run test clean build-linux build-macos build-windows build-all package-linux package-macos package-windows package-all
+.PHONY: build run test clean build-linux build-macos build-windows build-all package-linux package-macos package-windows package-all windows-resource
 
 APP := hexone
 CMD := ./cmd/hexone
 DIST_DIR := dist
 VERSION_TOOL := ./packaging/derive_version.sh
+comma := ,
 
+ifeq ($(OS),Windows_NT)
+APP_VERSION := $(strip $(shell powershell -NoProfile -Command "$$raw = $$env:HEXONE_VERSION; if ([string]::IsNullOrWhiteSpace($$raw)) { $$raw = git describe --tags --dirty --always --match 'v*' 2>$$null; if ($$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($$raw)) { $$raw = 'dev' } }; $$raw.Trim()"))
+APP_TAG_VERSION := $(strip $(shell powershell -NoProfile -Command "$$tag = $$env:HEXONE_TAG_VERSION; if ([string]::IsNullOrWhiteSpace($$tag)) { $$tag = git describe --tags --abbrev=0 --match 'v*' 2>$$null; if ($$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($$tag)) { $$tag = 'v0.0.0' } }; $$tag.Trim()"))
+APP_COMMIT := $(strip $(shell powershell -NoProfile -Command "$$commit = $$env:HEXONE_COMMIT; if ([string]::IsNullOrWhiteSpace($$commit)) { $$commit = git rev-parse --short HEAD 2>$$null; if ($$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($$commit)) { $$commit = 'unknown' } }; $$commit.Trim()"))
+WINDRES ?= $(strip $(shell powershell -NoProfile -Command "$$cmd = Get-Command windres.exe,x86_64-w64-mingw32-windres,windres -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source; if ($$cmd) { $$cmd }"))
+else
 APP_VERSION := $(shell sh $(VERSION_TOOL) display)
-APP_SEMVER := $(shell sh $(VERSION_TOOL) semver)
-APP_FILE_VERSION := $(shell sh $(VERSION_TOOL) file)
-APP_FILE_VERSION_COMMAS := $(shell sh $(VERSION_TOOL) commas)
+APP_TAG_VERSION := $(shell sh $(VERSION_TOOL) tag)
 APP_COMMIT := $(shell sh $(VERSION_TOOL) commit)
+WINDRES ?= $(strip $(or $(shell command -v windres.exe 2>/dev/null),$(shell command -v x86_64-w64-mingw32-windres 2>/dev/null),$(shell command -v windres 2>/dev/null)))
+endif
+
+APP_SEMVER := $(if $(strip $(HEXONE_SEMVER)),$(strip $(HEXONE_SEMVER)),$(if $(APP_TAG_VERSION),$(patsubst v%,%,$(APP_TAG_VERSION)),0.0.0))
+APP_FILE_VERSION := $(APP_SEMVER).0
+APP_FILE_VERSION_COMMAS := $(subst .,$(comma),$(APP_FILE_VERSION))
 
 GO_LDFLAGS_COMMON := -X hexone/buildinfo.Version=$(APP_VERSION) -X hexone/buildinfo.SemVersion=$(APP_SEMVER) -X hexone/buildinfo.Commit=$(APP_COMMIT)
 
@@ -45,21 +56,23 @@ WINDOWS_STAGE := $(DIST_DIR)/$(APP)-windows-$(WINDOWS_ARCH)-portable
 WINDOWS_BIN := $(WINDOWS_STAGE)/$(APP).exe
 WINDOWS_ZIP := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_portable.zip
 WINDOWS_RC_TEMPLATE := cmd/hexone/app_icon_windows.rc
-WINDOWS_RC_RENDERED := $(DIST_DIR)/hexone_windows.generated.rc
-WINDOWS_SYSO_RENDERED := $(DIST_DIR)/hexone_windows.generated.syso
+WINDOWS_RC_RENDERED := cmd/hexone/hexone_windows.generated.rc
+WINDOWS_SYSO_RENDERED := cmd/hexone/hexone_windows.generated.syso
 WINDOWS_SYSO := cmd/hexone/hexone_windows.syso
 
 ifeq ($(OS),Windows_NT)
 BIN := $(APP).exe
 GO_LDFLAGS_HOST := $(GO_LDFLAGS_COMMON) -H windowsgui
+BUILD_DEPS := windows-resource
 else
 BIN := $(APP)
 GO_LDFLAGS_HOST := $(GO_LDFLAGS_COMMON)
+BUILD_DEPS :=
 endif
 
 GO_LDFLAGS_WINDOWS := $(GO_LDFLAGS_COMMON) -H windowsgui
 
-build:
+build: $(BUILD_DEPS)
 	go build -ldflags="$(GO_LDFLAGS_HOST)" -o $(BIN) $(CMD)
 
 build-linux: | $(DIST_DIR)
@@ -107,6 +120,13 @@ build-macos: | $(DIST_DIR)
 	codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" $(MACOS_APP_CODESIGN_FLAGS) "$(MACOS_APP)"
 	codesign -v --verbose=2 "$(MACOS_APP)"
 
+ifeq ($(OS),Windows_NT)
+build-windows: windows-resource | $(DIST_DIR)
+	@if exist "$(subst /,\,$(WINDOWS_STAGE))" powershell -NoProfile -Command "Remove-Item -LiteralPath '$(subst /,\,$(WINDOWS_STAGE))' -Recurse -Force"
+	@powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '$(subst /,\,$(WINDOWS_STAGE))' | Out-Null"
+	@set GOOS=windows&& set GOARCH=$(WINDOWS_ARCH)&& set CGO_ENABLED=0&& go build -ldflags="$(GO_LDFLAGS_WINDOWS)" -o "$(WINDOWS_BIN)" $(CMD)
+	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'protocols.yaml' -Destination '$(subst /,\,$(WINDOWS_STAGE))\\protocols.yaml' -Force"
+else
 build-windows: | $(DIST_DIR)
 	rm -rf "$(WINDOWS_STAGE)"
 	mkdir -p "$(WINDOWS_STAGE)"
@@ -144,6 +164,29 @@ build-windows: | $(DIST_DIR)
 	cp protocols.yaml "$(WINDOWS_STAGE)/protocols.yaml"; \
 	cleanup; \
 	trap - EXIT INT TERM
+endif
+
+ifeq ($(OS),Windows_NT)
+windows-resource: | $(DIST_DIR)
+	@if "$(WINDRES)"=="" (echo windows-resource requires windres.exe, x86_64-w64-mingw32-windres, or windres. & exit /b 1)
+	@echo "Embedding Windows version $(APP_FILE_VERSION)"
+	@powershell -NoProfile -Command "$$content = Get-Content '$(WINDOWS_RC_TEMPLATE)' -Raw; $$content = $$content.Replace('@HEXONE_VERSION@', '$(APP_VERSION)').Replace('@HEXONE_FILE_VERSION@', '$(APP_FILE_VERSION)').Replace('@HEXONE_FILE_VERSION_COMMAS@', '$(APP_FILE_VERSION_COMMAS)'); [System.IO.File]::WriteAllText('$(WINDOWS_RC_RENDERED)', $$content)"
+	"$(WINDRES)" -i "$(WINDOWS_RC_RENDERED)" -o "$(WINDOWS_SYSO)" -O coff
+	@if exist "$(subst /,\,$(WINDOWS_RC_RENDERED))" del /q "$(subst /,\,$(WINDOWS_RC_RENDERED))"
+else
+windows-resource: | $(DIST_DIR)
+	@if [ -z "$(WINDRES)" ]; then \
+		echo "windows-resource requires windres.exe, x86_64-w64-mingw32-windres, or windres."; \
+		exit 1; \
+	fi
+	@echo "Embedding Windows version $(APP_FILE_VERSION)"
+	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' \
+		-e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
+		-e 's/@HEXONE_FILE_VERSION_COMMAS@/$(APP_FILE_VERSION_COMMAS)/g' \
+		"$(WINDOWS_RC_TEMPLATE)" > "$(WINDOWS_RC_RENDERED)"
+	"$(WINDRES)" -i "$(WINDOWS_RC_RENDERED)" -o "$(WINDOWS_SYSO)" -O coff
+	rm -f "$(WINDOWS_RC_RENDERED)"
+endif
 
 build-all: build-linux build-macos build-windows
 
@@ -166,14 +209,25 @@ package-macos: build-macos
 		xcrun stapler staple "$(MACOS_DMG)"; \
 	fi
 
+ifeq ($(OS),Windows_NT)
+package-windows: build-windows
+	@if exist "$(subst /,\,$(WINDOWS_ZIP))" del /q "$(subst /,\,$(WINDOWS_ZIP))"
+	@powershell -NoProfile -Command "Compress-Archive -Path '$(subst /,\,$(WINDOWS_STAGE))\\*' -DestinationPath '$(subst /,\,$(WINDOWS_ZIP))' -Force"
+else
 package-windows: build-windows
 	rm -f "$(WINDOWS_ZIP)"
 	cd "$(WINDOWS_STAGE)" && zip -rq "../$(notdir $(WINDOWS_ZIP))" .
+endif
 
 package-all: package-linux package-macos package-windows
 
+ifeq ($(OS),Windows_NT)
+$(DIST_DIR):
+	@if not exist "$(subst /,\,$(DIST_DIR))" mkdir "$(subst /,\,$(DIST_DIR))"
+else
 $(DIST_DIR):
 	mkdir -p $(DIST_DIR)
+endif
 
 run:
 	go run -ldflags="$(GO_LDFLAGS_HOST)" $(CMD)

@@ -435,6 +435,32 @@ func TestNormalizeColors(t *testing.T) {
 	}
 }
 
+func TestNormalizeViewerThemeOverrides(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.Background = "viewerbg"
+	cfg.Viewer.Text = "viewtext"
+
+	cfg.normalize()
+
+	if cfg.Viewer.Background != DefaultFilePaneBackgroundHex {
+		t.Fatalf("Viewer.Background=%q, want %q", cfg.Viewer.Background, DefaultFilePaneBackgroundHex)
+	}
+	if cfg.Viewer.Text != DefaultFilePaneTextHex {
+		t.Fatalf("Viewer.Text=%q, want %q", cfg.Viewer.Text, DefaultFilePaneTextHex)
+	}
+
+	cfg.Viewer.Background = "#112233"
+	cfg.Viewer.Text = "aabbcc"
+	cfg.normalize()
+
+	if cfg.Viewer.Background != "#112233" {
+		t.Fatalf("Viewer.Background=%q, want %q", cfg.Viewer.Background, "#112233")
+	}
+	if cfg.Viewer.Text != "#AABBCC" {
+		t.Fatalf("Viewer.Text=%q, want %q", cfg.Viewer.Text, "#AABBCC")
+	}
+}
+
 func mustMarshalConfig(t *testing.T, cfg *Config) []byte {
 	t.Helper()
 	data, err := yaml.Marshal(cfg)

@@ -256,6 +256,9 @@ type filePaneState struct {
 	driveMenuPos          image.Point
 	driveMenuRect         image.Rectangle
 	driveSegmentRect      image.Rectangle
+	driveMenuOpenedAt     time.Time
+	driveMenuHoverID      string
+	driveMenuHoverAnim    segmentedAnimState
 	sortKey               fileSortKey
 	sortDesc              bool
 	dirsFirst             bool
@@ -755,6 +758,8 @@ func (p *filePaneState) closeDriveMenu() {
 	}
 	p.driveMenuOpen = false
 	p.driveMenuRect = image.Rectangle{}
+	p.driveMenuOpenedAt = time.Time{}
+	p.driveMenuHoverID = ""
 }
 
 func (p *filePaneState) openContextMenu(row int, pos image.Point, now time.Time) {
@@ -777,13 +782,16 @@ func (p *filePaneState) openContextMenu(row int, pos image.Point, now time.Time)
 	}
 }
 
-func (p *filePaneState) openDriveMenu(pos image.Point) {
+func (p *filePaneState) openDriveMenu(pos image.Point, now time.Time) {
 	if p == nil {
 		return
 	}
 	p.driveMenuOpen = true
 	p.driveMenuPos = pos
 	p.driveMenuRect = image.Rectangle{}
+	p.driveMenuOpenedAt = now
+	p.driveMenuHoverID = ""
+	p.driveMenuHoverAnim = segmentedAnimState{}
 }
 
 func (p *filePaneState) contextMenuClick(id string) *widget.Clickable {
@@ -2100,7 +2108,7 @@ func (ui *UI) openPaneDriveMenu(idx int) bool {
 	pane.openDriveMenu(image.Point{
 		X: 0,
 		Y: pane.headerHeight + 4,
-	})
+	}, time.Now())
 	return true
 }
 

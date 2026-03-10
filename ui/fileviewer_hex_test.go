@@ -46,6 +46,37 @@ func TestFormatHexLineWithGrouping(t *testing.T) {
 	}
 }
 
+func TestHexViewerComputeScrollbarUsesDragTopWhileDragging(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     4096,
+		bytesPerLine: 16,
+		visibleLines: 8,
+		topLine:      4,
+		dragTop:      40,
+		dragging:     true,
+		trackRect:    image.Rect(0, 0, 6, 160),
+	}
+
+	v.computeScrollbar()
+	dragThumbY := v.thumbRect.Min.Y
+
+	v.dragging = false
+	v.computeScrollbar()
+	liveThumbY := v.thumbRect.Min.Y
+
+	if dragThumbY <= liveThumbY {
+		t.Fatalf("drag thumb Y=%d, want > live thumb Y=%d", dragThumbY, liveThumbY)
+	}
+
+	const totalLines = 256
+	const thumbH = 18
+	wantDragYf := float64(40*(160-thumbH)) / float64(totalLines-8)
+	wantDragY := int(wantDragYf)
+	if dragThumbY != wantDragY {
+		t.Fatalf("drag thumb Y=%d, want %d", dragThumbY, wantDragY)
+	}
+}
+
 func TestHexSelectionByteAtPointClampsOutsideViewerArea(t *testing.T) {
 	v := &hexViewerState{
 		fileSize:     512,

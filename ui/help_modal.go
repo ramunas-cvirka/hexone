@@ -72,6 +72,80 @@ type helpInlineToken struct {
 	Code bool
 }
 
+type helpModalTheme struct {
+	popup         filePanePopupTheme
+	shellBg       color.NRGBA
+	shellBorder   color.NRGBA
+	navBg         color.NRGBA
+	navSliderBg   color.NRGBA
+	contentBg     color.NRGBA
+	contentBorder color.NRGBA
+	headingText   color.NRGBA
+	bulletText    color.NRGBA
+	codeBg        color.NRGBA
+	codeBorder    color.NRGBA
+	codeText      color.NRGBA
+	codeSelection color.NRGBA
+	chipBg        color.NRGBA
+	chipBorder    color.NRGBA
+	chipText      color.NRGBA
+}
+
+func (ui *UI) helpModalColors() helpModalTheme {
+	popup := ui.filePanePopupTheme()
+
+	shellBg := mixNRGBA(popup.Bg, popup.ButtonBg, 0.28)
+	shellBg.A = 248
+	shellBorder := mixNRGBA(popup.Border, popup.ButtonBorder, 0.35)
+	shellBorder.A = 78
+
+	navBg := mixNRGBA(popup.Bg, popup.ButtonBg, 0.62)
+	navBg.A = 244
+	navSliderBg := mixNRGBA(popup.ButtonBg, popup.ActiveBg, 0.86)
+	navSliderBg.A = 248
+
+	contentBg := mixNRGBA(popup.Bg, popup.ButtonBg, 0.72)
+	contentBg.A = 244
+	contentBorder := mixNRGBA(popup.Border, popup.ButtonBorder, 0.52)
+	contentBorder.A = 74
+
+	headingText := mixNRGBA(popup.Text, popup.Title, 0.42)
+	bulletText := mixNRGBA(popup.Text, popup.ActiveText, 0.58)
+
+	codeBg := mixNRGBA(popup.ButtonBg, popup.Bg, 0.78)
+	codeBg.A = 244
+	codeBorder := mixNRGBA(popup.ButtonBorder, popup.Border, 0.52)
+	codeBorder.A = 74
+	codeText := mixNRGBA(popup.Text, popup.Title, 0.18)
+	codeSelection := popup.ActiveBg
+	codeSelection.A = 136
+
+	chipBg := mixNRGBA(popup.ButtonBg, popup.HoverBg, 0.36)
+	chipBg.A = 248
+	chipBorder := mixNRGBA(popup.ButtonBorder, popup.HoverText, 0.16)
+	chipBorder.A = 86
+	chipText := mixNRGBA(popup.Text, popup.HoverText, 0.2)
+
+	return helpModalTheme{
+		popup:         popup,
+		shellBg:       shellBg,
+		shellBorder:   shellBorder,
+		navBg:         navBg,
+		navSliderBg:   navSliderBg,
+		contentBg:     contentBg,
+		contentBorder: contentBorder,
+		headingText:   headingText,
+		bulletText:    bulletText,
+		codeBg:        codeBg,
+		codeBorder:    codeBorder,
+		codeText:      codeText,
+		codeSelection: codeSelection,
+		chipBg:        chipBg,
+		chipBorder:    chipBorder,
+		chipText:      chipText,
+	}
+}
+
 func (ui *UI) openHelpModal() {
 	if ui == nil {
 		return
@@ -387,6 +461,7 @@ func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dim
 	if st == nil {
 		return layout.Dimensions{}
 	}
+	theme := ui.helpModalColors()
 	event.Op(gtx.Ops, &st.keyTag)
 	if st.wantKeyFocus {
 		gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
@@ -478,17 +553,17 @@ func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dim
 				return fillRoundedBox(
 					gtx,
 					gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-					color.NRGBA{R: 17, G: 20, B: 27, A: 252},
-					color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+					theme.shellBg,
+					theme.shellBorder,
 					func(gtx layout.Context) layout.Dimensions {
 						return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return ui.layoutHelpModalHeader(th, gtx, st)
+									return ui.layoutHelpModalHeader(th, gtx, st, theme)
 								}),
 								layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									return ui.layoutHelpModalBody(th, gtx, st)
+									return ui.layoutHelpModalBody(th, gtx, st, theme)
 								}),
 							)
 						})
@@ -513,7 +588,7 @@ func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dim
 	return dims
 }
 
-func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *helpModalState) layout.Dimensions {
+func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *helpModalState, theme helpModalTheme) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -522,21 +597,21 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.Font.Weight = font.Bold
 					lbl.TextSize = scaleModalThemeFontSize(th, 11)
-					lbl.Color = txtColor
+					lbl.Color = theme.popup.Text
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, buildinfo.HelpVersionText())
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.TextSize = scaleModalThemeFontSize(th, 8)
-					lbl.Color = hintColor
+					lbl.Color = theme.popup.Muted
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, "Up/Down switches topics. F1 or Esc closes help.")
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.TextSize = scaleModalThemeFontSize(th, 8)
-					lbl.Color = hintColor
+					lbl.Color = theme.popup.Muted
 					return lbl.Layout(gtx)
 				}),
 			)
@@ -547,21 +622,21 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 	)
 }
 
-func (ui *UI) layoutHelpModalBody(th *material.Theme, gtx layout.Context, st *helpModalState) layout.Dimensions {
+func (ui *UI) layoutHelpModalBody(th *material.Theme, gtx layout.Context, st *helpModalState, theme helpModalTheme) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(220)), func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutHelpSectionTabs(th, gtx, st)
+				return ui.layoutHelpSectionTabs(th, gtx, st, theme)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutHelpSectionContent(th, gtx, st)
+			return ui.layoutHelpSectionContent(th, gtx, st, theme)
 		}),
 	)
 }
 
-func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *helpModalState) layout.Dimensions {
+func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *helpModalState, theme helpModalTheme) layout.Dimensions {
 	if st == nil || len(st.doc.Sections) == 0 {
 		return layout.Dimensions{}
 	}
@@ -604,7 +679,7 @@ func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *
 		totalH = stripH
 	}
 
-	return fillBgExact(gtx, color.NRGBA{R: 24, G: 24, B: 24, A: 255}, func(gtx layout.Context) layout.Dimensions {
+	return fillBgExact(gtx, theme.navBg, func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, totalH, func(gtx layout.Context) layout.Dimensions {
 			w := gtx.Constraints.Max.X
 			if w < 1 {
@@ -625,13 +700,13 @@ func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *
 			sliderRect := image.Rect(0, sliderY, w, sliderY+stripH)
 
 			innerClip := clip.Rect(image.Rect(0, 0, w, totalH)).Push(gtx.Ops)
-			paint.FillShape(gtx.Ops, color.NRGBA{R: 54, G: 54, B: 54, A: 255}, clip.Rect(sliderRect).Op())
+			paint.FillShape(gtx.Ops, theme.navSliderBg, clip.Rect(sliderRect).Op())
 
 			children := make([]layout.FlexChild, 0, len(specs)*2)
 			for i, spec := range specs {
 				spec := spec
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutHelpNavSegment(th, gtx, spec.Label, spec.Click, spec.ActiveFill, spec.HoverFill, spec.PulseFill, stripH)
+					return ui.layoutHelpNavSegment(th, gtx, theme, spec.Label, spec.Click, spec.ActiveFill, spec.HoverFill, spec.PulseFill, stripH)
 				}))
 				if i < len(specs)-1 {
 					children = append(children, layout.Rigid(layoutSettingsNavSeparator))
@@ -644,7 +719,7 @@ func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *
 	})
 }
 
-func (ui *UI) layoutHelpNavSegment(th *material.Theme, gtx layout.Context, label string, c *widget.Clickable, activeFill, hoverFill, pulseFill float32, stripH int) layout.Dimensions {
+func (ui *UI) layoutHelpNavSegment(th *material.Theme, gtx layout.Context, theme helpModalTheme, label string, c *widget.Clickable, activeFill, hoverFill, pulseFill float32, stripH int) layout.Dimensions {
 	if c == nil {
 		return layout.Dimensions{}
 	}
@@ -658,12 +733,19 @@ func (ui *UI) layoutHelpNavSegment(th *material.Theme, gtx layout.Context, label
 			}
 
 			bg := color.NRGBA{}
-			bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 10}, hoverFill*(1-activeFill))
-			bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 18}, pulseFill*0.25)
+			if activeFill > 0 {
+				bg = mixNRGBA(bg, theme.popup.ActiveBg, activeFill)
+			}
+			if hoverFill > 0 {
+				bg = mixNRGBA(bg, theme.popup.HoverBg, hoverFill*(1-activeFill))
+			}
+			if pulseFill > 0 {
+				bg = mixNRGBA(bg, theme.popup.HoverBg, pulseFill*0.18)
+			}
 
-			fg := mixNRGBA(txtColor, color.NRGBA{R: 238, G: 238, B: 238, A: 255}, clamp01(activeFill*0.8+0.12))
-			fg = mixNRGBA(fg, color.NRGBA{R: 232, G: 232, B: 232, A: 255}, hoverFill*0.75)
-			fg = mixNRGBA(fg, color.NRGBA{R: 246, G: 246, B: 246, A: 255}, pulseFill*0.25)
+			fg := mixNRGBA(theme.popup.Text, theme.popup.ActiveText, clamp01(activeFill*0.85))
+			fg = mixNRGBA(fg, theme.popup.HoverText, hoverFill*0.72)
+			fg = mixNRGBA(fg, theme.popup.HoverText, pulseFill*0.2)
 
 			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -686,7 +768,7 @@ func (ui *UI) layoutHelpNavSegment(th *material.Theme, gtx layout.Context, label
 	return dims
 }
 
-func (ui *UI) layoutHelpSectionContent(th *material.Theme, gtx layout.Context, st *helpModalState) layout.Dimensions {
+func (ui *UI) layoutHelpSectionContent(th *material.Theme, gtx layout.Context, st *helpModalState, theme helpModalTheme) layout.Dimensions {
 	if st.activeSection < 0 || st.activeSection >= len(st.doc.Sections) {
 		return layout.Dimensions{}
 	}
@@ -694,15 +776,15 @@ func (ui *UI) layoutHelpSectionContent(th *material.Theme, gtx layout.Context, s
 	return fillRoundedBox(
 		gtx,
 		gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-		color.NRGBA{R: 21, G: 24, B: 31, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 18},
+		theme.contentBg,
+		theme.contentBorder,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return st.bodyList.Layout(gtx, len(section.Blocks), func(gtx layout.Context, index int) layout.Dimensions {
 							return layout.Inset{Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutHelpBlock(th, gtx, st, st.activeSection, index, section.Blocks[index])
+								return ui.layoutHelpBlock(th, gtx, st, theme, st.activeSection, index, section.Blocks[index])
 							})
 						})
 					}),
@@ -712,7 +794,7 @@ func (ui *UI) layoutHelpSectionContent(th *material.Theme, gtx layout.Context, s
 	)
 }
 
-func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpModalState, sectionIndex, blockIndex int, block helpBlock) layout.Dimensions {
+func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpModalState, theme helpModalTheme, sectionIndex, blockIndex int, block helpBlock) layout.Dimensions {
 	switch block.Kind {
 	case helpBlockHeading:
 		return ui.layoutHelpInlineText(
@@ -720,7 +802,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			gtx,
 			block.Text,
 			scaleModalThemeFontSize(th, 10),
-			color.NRGBA{R: 228, G: 233, B: 244, A: 255},
+			theme.headingText,
 			font.Bold,
 		)
 	case helpBlockBullets:
@@ -734,7 +816,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 							bullet := material.Body2(th, "•")
 							bullet.Font.Typeface = ui.mainTypeface()
 							bullet.TextSize = scaleModalThemeFontSize(th, 9)
-							bullet.Color = color.NRGBA{R: 155, G: 193, B: 255, A: 255}
+							bullet.Color = theme.bulletText
 							return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, bullet.Layout)
 						}),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -743,7 +825,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 								gtx,
 								item,
 								scaleModalThemeFontSize(th, 9),
-								txtColor,
+								theme.popup.Text,
 								font.Normal,
 							)
 						}),
@@ -753,13 +835,13 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 		}
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	case helpBlockCode:
-		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), color.NRGBA{R: 14, G: 17, B: 22, A: 255}, color.NRGBA{R: 255, G: 255, B: 255, A: 16}, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), theme.codeBg, theme.codeBorder, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(7), Bottom: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, block.Text)
 				lbl.Font.Typeface = ui.mainTypeface()
 				lbl.TextSize = scaleModalThemeFontSize(th, 8)
-				lbl.Color = color.NRGBA{R: 197, G: 226, B: 255, A: 255}
-				lbl.SelectionColor = color.NRGBA{R: 97, G: 132, B: 204, A: 144}
+				lbl.Color = theme.codeText
+				lbl.SelectionColor = theme.codeSelection
 				lbl.State = st.codeSelectable(sectionIndex, blockIndex)
 				return lbl.Layout(gtx)
 			})
@@ -770,7 +852,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			gtx,
 			block.Text,
 			scaleModalThemeFontSize(th, 9),
-			txtColor,
+			theme.popup.Text,
 			font.Normal,
 		)
 	}
@@ -888,18 +970,19 @@ func (ui *UI) measureHelpInlineToken(gtx layout.Context, th *material.Theme, tok
 }
 
 func (ui *UI) layoutHelpInlineCodeChip(th *material.Theme, gtx layout.Context, text string, size unit.Sp) layout.Dimensions {
+	theme := ui.helpModalColors()
 	return fillRoundedBox(
 		gtx,
 		gtx.Dp(unit.Dp(4)),
-		color.NRGBA{R: 44, G: 53, B: 70, A: 255},
-		color.NRGBA{R: 162, G: 186, B: 226, A: 78},
+		theme.chipBg,
+		theme.chipBorder,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, text)
 				lbl.Font.Typeface = ui.mainTypeface()
 				lbl.Font.Weight = font.Bold
 				lbl.TextSize = size
-				lbl.Color = color.NRGBA{R: 242, G: 247, B: 255, A: 255}
+				lbl.Color = theme.chipText
 				return lbl.Layout(gtx)
 			})
 		},

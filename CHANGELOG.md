@@ -8,6 +8,7 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 - Added an in-app help modal on `F1` with bundled help content.
 - Embedded the default bundled fonts so portable builds no longer need the external `assets/` directory.
+- Added Windows executable metadata resources with Git tag-derived versioning.
 
 ## v0.1.0 - 2026-03-10
 

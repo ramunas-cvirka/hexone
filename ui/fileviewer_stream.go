@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 	"image"
-	"image/color"
 	"math"
 	"regexp"
 	"sort"
@@ -1613,6 +1612,7 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 		return
 	}
 	v := &st.stream
+	theme := ui.fileViewerTheme()
 	if textW <= 0 || lineHeight <= 0 {
 		return
 	}
@@ -1656,7 +1656,7 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 				}
 				if x1 > x0 {
 					selRect := image.Rect(x0, 1, x1, lineHeight-1)
-					paint.FillShape(gtx.Ops, color.NRGBA{R: 98, G: 138, B: 212, A: 118}, clip.Rect(selRect).Op())
+					paint.FillShape(gtx.Ops, theme.Selection, clip.Rect(selRect).Op())
 				}
 			}
 		}
@@ -1665,7 +1665,7 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 			lbl.Font.Typeface = ui.viewerTypeface()
 			lbl.Font.Weight = font.Normal
 			lbl.TextSize = ui.viewerTextSize()
-			lbl.Color = color.NRGBA{R: 220, G: 226, B: 240, A: 255}
+			lbl.Color = theme.Text
 			lbl.MaxLines = 1
 			lbl.Truncator = ""
 			return lbl.Layout(gtx)
@@ -1683,18 +1683,22 @@ func (ui *UI) drawStreamOutputScrollbar(gtx layout.Context, st *fileViewerState)
 		return
 	}
 	v := &st.stream
+	theme := ui.fileViewerTheme()
 	track := v.trackRect
 	thumb := v.thumbRect
 	if track.Dx() <= 0 || track.Dy() <= 0 {
 		return
 	}
-	trackColor := color.NRGBA{R: 255, G: 255, B: 255, A: 24}
+	trackColor := theme.ScrollTrack
 	if v.hoverTrack || v.hoverThumb || v.dragging {
-		trackColor = color.NRGBA{R: 255, G: 255, B: 255, A: 38}
+		trackColor = theme.ScrollTrackHover
 	}
-	thumbColor := color.NRGBA{R: 173, G: 197, B: 238, A: 178}
+	thumbColor := theme.ScrollThumb
 	if v.hoverThumb || v.dragging {
-		thumbColor = color.NRGBA{R: 204, G: 224, B: 255, A: 236}
+		thumbColor = theme.ScrollThumbHover
+	}
+	if v.dragging {
+		thumbColor = theme.ScrollThumbDrag
 	}
 	paint.FillShape(gtx.Ops, trackColor, clip.Rect(track).Op())
 	if thumb.Dx() > 0 && thumb.Dy() > 0 {
@@ -1706,13 +1710,16 @@ func (ui *UI) drawStreamOutputScrollbar(gtx layout.Context, st *fileViewerState)
 	if hTrack.Dx() <= 0 || hTrack.Dy() <= 0 {
 		return
 	}
-	hTrackColor := color.NRGBA{R: 255, G: 255, B: 255, A: 24}
+	hTrackColor := theme.ScrollTrack
 	if v.hoverHTrack || v.hoverHThumb || v.hDragging {
-		hTrackColor = color.NRGBA{R: 255, G: 255, B: 255, A: 38}
+		hTrackColor = theme.ScrollTrackHover
 	}
-	hThumbColor := color.NRGBA{R: 173, G: 197, B: 238, A: 178}
+	hThumbColor := theme.ScrollThumb
 	if v.hoverHThumb || v.hDragging {
-		hThumbColor = color.NRGBA{R: 204, G: 224, B: 255, A: 236}
+		hThumbColor = theme.ScrollThumbHover
+	}
+	if v.hDragging {
+		hThumbColor = theme.ScrollThumbDrag
 	}
 	paint.FillShape(gtx.Ops, hTrackColor, clip.Rect(hTrack).Op())
 	if hThumb.Dx() > 0 && hThumb.Dy() > 0 {
@@ -1728,6 +1735,7 @@ func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st
 	if !v.dragging {
 		return
 	}
+	theme := ui.fileViewerTheme()
 	total := len(v.lines)
 	if total < 1 {
 		total = 1
@@ -1747,7 +1755,7 @@ func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st
 	msg := fmt.Sprintf("~ line %d/%d (%.1f%%)", line, total, percent)
 
 	boxW := gtx.Dp(unit.Dp(162))
-	boxH := gtx.Dp(unit.Dp(22))
+	boxH := gtx.Dp(unit.Dp(24))
 	if boxW < 80 {
 		boxW = 80
 	}
@@ -1776,17 +1784,17 @@ func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st
 	_ = fillRoundedBox(
 		cgtx,
 		cgtx.Dp(unit.Dp(6)),
-		color.NRGBA{R: 28, G: 36, B: 52, A: 246},
-		color.NRGBA{R: 210, G: 224, B: 255, A: 88},
+		theme.TooltipBg,
+		theme.TooltipBorder,
 		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, msg)
 				lbl.Font.Typeface = ui.viewerTypeface()
 				lbl.TextSize = scaleThemeFontSize(th, 9)
-				lbl.Color = color.NRGBA{R: 223, G: 233, B: 249, A: 255}
+				lbl.Color = theme.TooltipText
 				lbl.MaxLines = 1
 				lbl.Truncator = ""
-				return lbl.Layout(gtx)
+				return layoutVCenteredLabel(gtx, lbl)
 			})
 		},
 	)

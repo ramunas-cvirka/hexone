@@ -377,15 +377,16 @@ func TestSettingsColorSwatchGroupsIncludeNearbyCurrentColor(t *testing.T) {
 
 func TestSettingsColorCategoriesSeparateFocusedStates(t *testing.T) {
 	st := &settingsModalState{
+		colorScope:               "panes",
 		colorSelection:           "#3456AA",
 		colorSelectionText:       "#F2F7FF",
 		colorFocusedSelected:     "#447F9C",
 		colorFocusedSelectedText: "#F6FBFF",
 	}
-	if got := settingsColorLabel("selection"); got != "Focused" {
+	if got := settingsColorLabel("panes", "selection"); got != "Focused" {
 		t.Fatalf("selection label=%q want %q", got, "Focused")
 	}
-	if got := settingsColorLabel("focused_selected"); got != "Focused + Selected Files" {
+	if got := settingsColorLabel("panes", "focused_selected"); got != "Focused + Selected Files" {
 		t.Fatalf("focused_selected label=%q want %q", got, "Focused + Selected Files")
 	}
 	if got := st.colorValue("selection"); got != "#3456AA" {
@@ -440,5 +441,37 @@ func TestDraftFilePanePaletteAppliesExplicitTextColors(t *testing.T) {
 	}
 	if got := fm.FormatHexColor(palette.MarkedSelFg); got != "#F6FBFF" {
 		t.Fatalf("MarkedSelFg=%q want %q", got, "#F6FBFF")
+	}
+}
+
+func TestDraftViewerThemeAppliesExplicitOverrides(t *testing.T) {
+	st := &settingsModalState{
+		colorScope:            "viewer",
+		colorViewerBackground: "#112233",
+		colorViewerText:       "#F1E2D3",
+	}
+
+	theme, errText := st.draftViewerTheme(fm.DefaultConfig())
+	if errText != "" {
+		t.Fatalf("unexpected viewer preview error: %q", errText)
+	}
+	if got := fm.FormatHexColor(theme.PanelBg); got != "#112233" {
+		t.Fatalf("PanelBg=%q want %q", got, "#112233")
+	}
+	if got := fm.FormatHexColor(theme.Text); got != "#F1E2D3" {
+		t.Fatalf("Text=%q want %q", got, "#F1E2D3")
+	}
+}
+
+func TestDraftViewerThemeRejectsInvalidViewerColor(t *testing.T) {
+	st := &settingsModalState{
+		colorScope:            "viewer",
+		colorViewerBackground: "oops",
+		colorViewerText:       "#D2D2D2",
+	}
+
+	_, errText := st.draftViewerTheme(fm.DefaultConfig())
+	if !strings.Contains(errText, "Viewer background") {
+		t.Fatalf("errText=%q, want viewer background validation", errText)
 	}
 }

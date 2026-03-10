@@ -61,6 +61,10 @@ type settingsModalState struct {
 	viewModeHoverAt          time.Time
 	viewModePulseKey         string
 	viewModePulseAt          time.Time
+	colorScopePaneClick      widget.Clickable
+	colorScopeViewerClick    widget.Clickable
+	colorScope               string
+	colorScopeAnim           settingsChoiceAnim
 	colorCategoryClick       widget.Clickable
 	colorBgPickerClick       widget.Clickable
 	colorTextPickerClick     widget.Clickable
@@ -91,6 +95,8 @@ type settingsModalState struct {
 	colorFocusedSelectedText string
 	colorCurrentDir          string
 	colorCurrentDirText      string
+	colorViewerBackground    string
+	colorViewerText          string
 	viewCommandEdit          widget.Editor
 	viewShellEdit            widget.Editor
 	paneFontSizeEdit         widget.Editor
@@ -143,13 +149,17 @@ type settingsColorOption struct {
 	label string
 }
 
-var settingsColorOptions = []settingsColorOption{
+var settingsPaneColorOptions = []settingsColorOption{
 	{key: "normal", label: "Normal"},
 	{key: "hover", label: "Hover"},
 	{key: "selection", label: "Focused"},
 	{key: "selected_files", label: "Selected Files"},
 	{key: "focused_selected", label: "Focused + Selected Files"},
 	{key: "current_dir", label: "Current Dir"},
+}
+
+var settingsViewerColorOptions = []settingsColorOption{
+	{key: "normal", label: "Normal"},
 }
 
 var settingsTabOrder = []string{
@@ -269,6 +279,11 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	default:
 		st.colorCategory = "selection"
 	}
+	switch st.colorScope {
+	case "viewer":
+	default:
+		st.colorScope = "panes"
+	}
 	st.colorPaneBackground = cfg.Colors.FilePaneBackground
 	st.colorPaneText = cfg.Colors.FilePaneText
 	st.colorHover = cfg.Colors.Hover
@@ -281,6 +296,9 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorFocusedSelectedText = cfg.Colors.FocusedSelectedText
 	st.colorCurrentDir = cfg.Colors.CurrentDirBg
 	st.colorCurrentDirText = cfg.Colors.CurrentDirText
+	st.colorViewerBackground = cfg.Viewer.Background
+	st.colorViewerText = cfg.Viewer.Text
+	st.colorCategory = normalizeSettingsColorCategory(st.colorScope, st.colorCategory)
 	st.syncColorEditors()
 	st.colorCategoryOpen = false
 	st.colorCategoryOpenedAt = time.Time{}
@@ -311,18 +329,47 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.assocInfoText = ""
 }
 
-func settingsColorLabel(key string) string {
-	for _, opt := range settingsColorOptions {
+func settingsColorOptionsForScope(scope string) []settingsColorOption {
+	switch scope {
+	case "viewer":
+		return settingsViewerColorOptions
+	default:
+		return settingsPaneColorOptions
+	}
+}
+
+func normalizeSettingsColorCategory(scope, key string) string {
+	options := settingsColorOptionsForScope(scope)
+	for _, opt := range options {
+		if opt.key == key {
+			return key
+		}
+	}
+	if scope == "viewer" {
+		return "normal"
+	}
+	return "selection"
+}
+
+func settingsColorLabel(scope, key string) string {
+	for _, opt := range settingsColorOptionsForScope(scope) {
 		if opt.key == key {
 			return opt.label
 		}
 	}
-	return settingsColorOptions[0].label
+	options := settingsColorOptionsForScope(scope)
+	if len(options) == 0 {
+		return ""
+	}
+	return options[0].label
 }
 
 func (st *settingsModalState) colorValue(key string) string {
 	if st == nil {
 		return ""
+	}
+	if st.colorScope == "viewer" {
+		return st.colorViewerBackground
 	}
 	switch key {
 	case "focused_selected":
@@ -342,6 +389,10 @@ func (st *settingsModalState) colorValue(key string) string {
 
 func (st *settingsModalState) setColorValue(key, value string) {
 	if st == nil {
+		return
+	}
+	if st.colorScope == "viewer" {
+		st.colorViewerBackground = value
 		return
 	}
 	switch key {
@@ -364,6 +415,9 @@ func (st *settingsModalState) colorTextValue(key string) string {
 	if st == nil {
 		return ""
 	}
+	if st.colorScope == "viewer" {
+		return st.colorViewerText
+	}
 	switch key {
 	case "focused_selected":
 		return st.colorFocusedSelectedText
@@ -382,6 +436,10 @@ func (st *settingsModalState) colorTextValue(key string) string {
 
 func (st *settingsModalState) setColorTextValue(key, value string) {
 	if st == nil {
+		return
+	}
+	if st.colorScope == "viewer" {
+		st.colorViewerText = value
 		return
 	}
 	switch key {
@@ -412,7 +470,19 @@ func (st *settingsModalState) setColorCategory(key string) {
 	if st == nil || key == "" {
 		return
 	}
-	st.colorCategory = key
+	st.colorCategory = normalizeSettingsColorCategory(st.colorScope, key)
+	st.closeColorCategoryPopup()
+	st.colorPickerOpen = false
+	st.colorPickerTarget = ""
+	st.syncColorEditors()
+}
+
+func (st *settingsModalState) setColorScope(next string, now time.Time) {
+	if st == nil || next == "" || st.colorScope == next {
+		return
+	}
+	st.colorScopeAnim.setValue(&st.colorScope, next, now)
+	st.colorCategory = normalizeSettingsColorCategory(st.colorScope, st.colorCategory)
 	st.closeColorCategoryPopup()
 	st.colorPickerOpen = false
 	st.colorPickerTarget = ""
@@ -651,6 +721,55 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	draft.Colors.CurrentDirBg = fm.NormalizeHexColor(currentDirRaw, currentDirFallback)
 	draft.Colors.CurrentDirText = fm.NormalizeHexColor(currentDirTextRaw, currentDirTextFallback)
 	return filePanePaletteFromConfig(draft), errText
+}
+
+func filePanePaletteToConfigColors(palette filePanePalette) fm.ColorsConfig {
+	return fm.ColorsConfig{
+		FilePaneBackground:  fm.FormatHexColor(palette.PaneBg),
+		FilePaneText:        fm.FormatHexColor(palette.PaneFg),
+		Hover:               fm.FormatHexColor(palette.HoverBg),
+		HoverText:           fm.FormatHexColor(palette.HoverFg),
+		Selection:           fm.FormatHexColor(palette.SelectedBg),
+		SelectionText:       fm.FormatHexColor(palette.SelectedFg),
+		SelectedFiles:       fm.FormatHexColor(palette.MarkedBg),
+		SelectedFilesText:   fm.FormatHexColor(palette.MarkedFg),
+		FocusedSelected:     fm.FormatHexColor(palette.MarkedSelBg),
+		FocusedSelectedText: fm.FormatHexColor(palette.MarkedSelFg),
+		CurrentDirBg:        fm.FormatHexColor(palette.CurrentDirBg),
+		CurrentDirText:      fm.FormatHexColor(palette.CurrentDirFg),
+	}
+}
+
+func (st *settingsModalState) draftViewerTheme(cfg *fm.Config) (fileViewerTheme, string) {
+	palette, errText := st.draftFilePanePalette(cfg)
+	draft := fm.DefaultConfig()
+	if cfg != nil {
+		draft.General = cfg.General
+		draft.Viewer = cfg.Viewer
+	}
+	draft.Colors = filePanePaletteToConfigColors(palette)
+
+	viewBgFallback := fm.DefaultFilePaneBackgroundHex
+	viewTextFallback := fm.DefaultFilePaneTextHex
+	if cfg != nil {
+		viewBgFallback = cfg.Viewer.Background
+		viewTextFallback = cfg.Viewer.Text
+	}
+	viewBg := strings.TrimSpace(st.colorViewerBackground)
+	if viewBg != "" {
+		if _, ok := fm.ParseHexColor(viewBg); !ok && errText == "" {
+			errText = "Viewer background must use #RRGGBB"
+		}
+	}
+	viewText := strings.TrimSpace(st.colorViewerText)
+	if viewText != "" {
+		if _, ok := fm.ParseHexColor(viewText); !ok && errText == "" {
+			errText = "Viewer text must use #RRGGBB"
+		}
+	}
+	draft.Viewer.Background = fm.NormalizeHexColor(viewBg, viewBgFallback)
+	draft.Viewer.Text = fm.NormalizeHexColor(viewText, viewTextFallback)
+	return fileViewerThemeFromConfig(draft), errText
 }
 
 func (st *settingsModalState) viewerAssocRowClick(key string) *widget.Clickable {
@@ -1474,6 +1593,18 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	default:
 		return fmt.Errorf("viewer shell must be auto, sh, or powershell")
 	}
+	viewerBgRaw := strings.TrimSpace(st.colorViewerBackground)
+	c, ok := fm.ParseHexColor(viewerBgRaw)
+	if !ok {
+		return fmt.Errorf("viewer background color must use #RRGGBB")
+	}
+	viewerBg := fm.FormatHexColor(c)
+	viewerTextRaw := strings.TrimSpace(st.colorViewerText)
+	c, ok = fm.ParseHexColor(viewerTextRaw)
+	if !ok {
+		return fmt.Errorf("viewer text color must use #RRGGBB")
+	}
+	viewerText := fm.FormatHexColor(c)
 
 	viewerFontSize, err := strconv.ParseFloat(strings.TrimSpace(st.viewFontSizeEdit.Text()), 32)
 	if err != nil || viewerFontSize < 6 {
@@ -1501,6 +1632,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.Typeface = st.viewFontFamily
 	ui.fmCfg.Viewer.Command = cmd
 	ui.fmCfg.Viewer.Shell = shell
+	ui.fmCfg.Viewer.Background = viewerBg
+	ui.fmCfg.Viewer.Text = viewerText
 	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
 	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value
@@ -2304,8 +2437,242 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	)
 }
 
+func (ui *UI) layoutSettingsColorScopeTabs(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	keys := []string{"panes", "viewer"}
+	if st.colorScopePaneClick.Clicked(gtx) {
+		st.colorScopeAnim.anim.setPulse("panes", gtx.Now)
+		st.setColorScope("panes", gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if st.colorScopeViewerClick.Clicked(gtx) {
+		st.colorScopeAnim.anim.setPulse("viewer", gtx.Now)
+		st.setColorScope("viewer", gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	hoverKey := ""
+	if st.colorScopePaneClick.Hovered() {
+		hoverKey = "panes"
+	}
+	if st.colorScopeViewerClick.Hovered() {
+		hoverKey = "viewer"
+	}
+	st.colorScopeAnim.anim.setHover(hoverKey, gtx.Now)
+	fillPanes, animPanes := st.colorScopeAnim.fill(gtx.Now, st.colorScope, "panes")
+	fillViewer, animViewer := st.colorScopeAnim.fill(gtx.Now, st.colorScope, "viewer")
+	hoverPanes, hoverAnimPanes := st.colorScopeAnim.anim.hoverFill(gtx.Now, "panes")
+	hoverViewer, hoverAnimViewer := st.colorScopeAnim.anim.hoverFill(gtx.Now, "viewer")
+	pulsePanes, pulseAnimPanes := st.colorScopeAnim.anim.pulseFill(gtx.Now, "panes")
+	pulseViewer, pulseAnimViewer := st.colorScopeAnim.anim.pulseFill(gtx.Now, "viewer")
+	pos, animPos := st.colorScopeAnim.position(gtx.Now, st.colorScope, keys)
+	if animPanes || animViewer || hoverAnimPanes || hoverAnimViewer || pulseAnimPanes || pulseAnimViewer || animPos {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	stripH := gtx.Dp(unit.Dp(22))
+	if stripH < 1 {
+		stripH = 1
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, 10), []slidingTabSpec{
+				{
+					Label:      "Panes",
+					Click:      &st.colorScopePaneClick,
+					ActiveFill: fillPanes,
+					HoverFill:  hoverPanes,
+					PulseFill:  pulsePanes,
+				},
+				{
+					Label:      "Viewer",
+					Click:      &st.colorScopeViewerClick,
+					ActiveFill: fillViewer,
+					HoverFill:  hoverViewer,
+					PulseFill:  pulseViewer,
+				},
+			})
+		}),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH+gtx.Dp(unit.Dp(2)))}
+		}),
+	)
+}
+
+func settingsViewerPreviewModeLabel(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "hex":
+		return "Hex"
+	case "command":
+		return "Command"
+	default:
+		return "File"
+	}
+}
+
+func settingsViewerPreviewCommandText(st *settingsModalState) string {
+	if st == nil {
+		return "cat {path}"
+	}
+	cmd := strings.TrimSpace(st.viewCommandEdit.Text())
+	if cmd == "" {
+		cmd = "cat {path}"
+	}
+	return cmd
+}
+
+func (ui *UI) layoutSettingsViewerPreview(th *material.Theme, gtx layout.Context, st *settingsModalState, theme fileViewerTheme) layout.Dimensions {
+	height := gtx.Dp(unit.Dp(154))
+	if height < gtx.Dp(unit.Dp(136)) {
+		height = gtx.Dp(unit.Dp(136))
+	}
+	return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+			theme.PanelBg,
+			theme.PanelBorder,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fillRoundedBox(
+								gtx,
+								gtx.Dp(unit.Dp(filePaneControlCornerDp-1)),
+								theme.HeaderBg,
+								color.NRGBA{},
+								func(gtx layout.Context) layout.Dimensions {
+									return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												lbl := material.Caption(th, settingsViewerPreviewModeLabel(st.viewMode))
+												lbl.Font.Typeface = ui.mainTypeface()
+												lbl.TextSize = scaleModalThemeFontSize(th, 9)
+												lbl.Color = theme.Muted
+												lbl.MaxLines = 1
+												return lbl.Layout(gtx)
+											}),
+											layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+											layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+												lbl := material.Body2(th, "README.md")
+												lbl.Font.Typeface = ui.mainTypeface()
+												lbl.TextSize = scaleModalThemeFontSize(th, 10)
+												lbl.Font.Weight = font.Medium
+												lbl.Color = theme.HeaderText
+												lbl.MaxLines = 1
+												lbl.Truncator = "..."
+												return layoutVCenteredLabel(gtx, lbl)
+											}),
+											layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												return ui.layoutSettingsViewerPreviewCommandChip(th, gtx, settingsViewerPreviewCommandText(st), theme)
+											}),
+										)
+									})
+								},
+							)
+						}),
+						layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									lines := []struct {
+										text string
+										fg   color.NRGBA
+									}{
+										{text: "Viewer colors follow the pane theme by default.", fg: theme.Text},
+										{text: "Set background/text to override just this modal.", fg: theme.Muted},
+										{text: "Static command text uses a brighter shade now.", fg: theme.CommandStaticText},
+										{text: "Hex and stream scrollbars share this accent.", fg: theme.Hint},
+									}
+									children := make([]layout.FlexChild, 0, len(lines)*2)
+									for i, line := range lines {
+										line := line
+										children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											lbl := material.Body2(th, line.text)
+											lbl.Font.Typeface = ui.mainTypeface()
+											lbl.TextSize = scaleModalThemeFontSize(th, 10)
+											lbl.Color = line.fg
+											lbl.MaxLines = 1
+											lbl.Truncator = "..."
+											return lbl.Layout(gtx)
+										}))
+										if i < len(lines)-1 {
+											children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout))
+										}
+									}
+									return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+								}),
+								layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutSettingsViewerPreviewScrollbar(gtx, theme)
+								}),
+							)
+						}),
+					)
+				})
+			},
+		)
+	})
+}
+
+func (ui *UI) layoutSettingsViewerPreviewCommandChip(th *material.Theme, gtx layout.Context, label string, theme fileViewerTheme) layout.Dimensions {
+	lbl := material.Body2(th, label)
+	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.TextSize = scaleModalThemeFontSize(th, 9)
+	lbl.Font.Weight = font.Medium
+	lbl.MaxLines = 1
+	lbl.Truncator = "..."
+	width := measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(20))
+	maxW := gtx.Dp(unit.Dp(210))
+	if width > maxW {
+		width = maxW
+	}
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+			theme.CommandBg,
+			theme.CommandBorder,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, label)
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Font.Weight = font.Medium
+					lbl.Color = theme.CommandStaticText
+					lbl.MaxLines = 1
+					lbl.Truncator = "..."
+					return layoutVCenteredLabel(gtx, lbl)
+				})
+			},
+		)
+	})
+}
+
+func (ui *UI) layoutSettingsViewerPreviewScrollbar(gtx layout.Context, theme fileViewerTheme) layout.Dimensions {
+	trackW := gtx.Dp(unit.Dp(8))
+	trackH := gtx.Dp(unit.Dp(88))
+	if trackW < 6 {
+		trackW = 6
+	}
+	if trackH < 56 {
+		trackH = 56
+	}
+	thumbH := trackH / 4
+	if thumbH < 18 {
+		thumbH = 18
+	}
+	thumbY := (trackH - thumbH) / 2
+	return fixedWidth(gtx, trackW, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
+			paint.FillShape(gtx.Ops, theme.ScrollTrackHover, clip.Rect(image.Rect(0, 0, trackW, trackH)).Op())
+			paint.FillShape(gtx.Ops, theme.ScrollThumbHover, clip.Rect(image.Rect(1, thumbY, trackW-1, thumbY+thumbH)).Op())
+			return layout.Dimensions{Size: image.Pt(trackW, trackH)}
+		})
+	})
+}
+
 func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
-	st.ensureColorOptionClicks(len(settingsColorOptions))
+	options := settingsColorOptionsForScope(st.colorScope)
+	st.ensureColorOptionClicks(len(options))
 
 	for {
 		ev, ok := st.colorValueEdit.Update(gtx)
@@ -2336,7 +2703,7 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 	st.ensureColorSwatchClicks(settingsColorSwatchCount(activeSwatchGroups))
 
 	if st.colorCategoryOpen {
-		for i, opt := range settingsColorOptions {
+		for i, opt := range options {
 			if i >= len(st.colorOptionClicks) {
 				break
 			}
@@ -2386,12 +2753,19 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		st.toggleColorPicker("text")
 	}
 
-	previewPalette, previewErr := st.draftFilePanePalette(ui.fmCfg)
+	previewPalette, panePreviewErr := st.draftFilePanePalette(ui.fmCfg)
+	previewTheme, viewerPreviewErr := st.draftViewerTheme(ui.fmCfg)
 	currentBg := settingsPreviewColorForCategory(previewPalette, st.colorCategory, "background")
+	currentText := settingsPreviewColorForCategory(previewPalette, st.colorCategory, "text")
+	previewErr := panePreviewErr
+	if st.colorScope == "viewer" {
+		currentBg = previewTheme.PanelBg
+		currentText = previewTheme.Text
+		previewErr = viewerPreviewErr
+	}
 	if parsed, ok := fm.ParseHexColor(strings.TrimSpace(st.colorValue(st.colorCategory))); ok {
 		currentBg = parsed
 	}
-	currentText := settingsPreviewColorForCategory(previewPalette, st.colorCategory, "text")
 	if parsed, ok := fm.ParseHexColor(strings.TrimSpace(st.colorTextValue(st.colorCategory))); ok {
 		currentText = parsed
 	}
@@ -2401,10 +2775,16 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(rowLabel("Palette", true)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorScopeTabs(th, gtx, st)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(rowLabel("Color target", true)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsColorCategoryField(th, gtx, st)
+			return ui.layoutSettingsColorCategoryField(th, gtx, st, options)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(rowLabel("Colors (#RRGGBB)", true)),
@@ -2425,7 +2805,11 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Use the same category for both background and text. Hover and Focused + Selected Files are tuned separately.")
+			note := "Use the same category for both background and text. Hover and Focused + Selected Files are tuned separately."
+			if st.colorScope == "viewer" {
+				note = "Viewer colors are saved separately from pane colors. This preview shows the viewer’s own palette."
+			}
+			lbl := material.Caption(th, note)
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleModalThemeFontSize(th, 9)
 			lbl.Color = hintColor
@@ -2449,16 +2833,19 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		layout.Rigid(rowLabel("Preview", true)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.colorScope == "viewer" {
+				return ui.layoutSettingsViewerPreview(th, gtx, st, previewTheme)
+			}
 			return ui.layoutSettingsColorPreview(th, gtx, previewPalette)
 		}),
 	)
 }
 
-func (ui *UI) layoutSettingsColorCategoryField(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+func (ui *UI) layoutSettingsColorCategoryField(th *material.Theme, gtx layout.Context, st *settingsModalState, options []settingsColorOption) layout.Dimensions {
 	if st == nil {
 		return layout.Dimensions{}
 	}
-	width := settingsColorCategoryWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
+	width := settingsColorCategoryWidth(th, gtx, ui.fmCfg, ui.mainTypeface(), options)
 	var btnH int
 	dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2478,15 +2865,15 @@ func (ui *UI) layoutSettingsColorCategoryField(th *material.Theme, gtx layout.Co
 		m := op.Record(gtx.Ops)
 		offset := op.Offset(image.Pt(0, btnH+gtx.Dp(unit.Dp(4))+offsetY))
 		offset.Add(gtx.Ops)
-		ui.layoutSettingsColorCategoryPopup(th, gtx, st, width, alpha)
+		ui.layoutSettingsColorCategoryPopup(th, gtx, st, width, alpha, options)
 		op.Defer(gtx.Ops, m.Stop())
 	}
 	return dims
 }
 
-func settingsColorCategoryWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface) int {
+func settingsColorCategoryWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface, options []settingsColorOption) int {
 	maxTextW := 0
-	for _, opt := range settingsColorOptions {
+	for _, opt := range options {
 		lbl := material.Body2(th, opt.label+"  ▾")
 		lbl.Font.Typeface = face
 		lbl.TextSize = scaleModalThemeFontSize(th, 10)
@@ -2511,7 +2898,7 @@ func settingsColorCategoryWidth(th *material.Theme, gtx layout.Context, cfg *fm.
 }
 
 func (ui *UI) layoutSettingsColorCategoryButton(th *material.Theme, gtx layout.Context, st *settingsModalState, width int) layout.Dimensions {
-	label := settingsColorLabel(st.colorCategory) + "  ▾"
+	label := settingsColorLabel(st.colorScope, st.colorCategory) + "  ▾"
 	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
 		dims := st.colorCategoryClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			bg := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
@@ -2543,8 +2930,9 @@ func (st *settingsModalState) hoveredColorCategoryKey() string {
 	if st == nil {
 		return ""
 	}
+	options := settingsColorOptionsForScope(st.colorScope)
 	hoverID := ""
-	for i, opt := range settingsColorOptions {
+	for i, opt := range options {
 		if i < len(st.colorOptionClicks) && st.colorOptionClicks[i].Hovered() {
 			hoverID = opt.key
 		}
@@ -2552,7 +2940,7 @@ func (st *settingsModalState) hoveredColorCategoryKey() string {
 	return hoverID
 }
 
-func (ui *UI) layoutSettingsColorCategoryPopup(th *material.Theme, gtx layout.Context, st *settingsModalState, width int, alpha float32) layout.Dimensions {
+func (ui *UI) layoutSettingsColorCategoryPopup(th *material.Theme, gtx layout.Context, st *settingsModalState, width int, alpha float32, options []settingsColorOption) layout.Dimensions {
 	gtx2 := gtx
 	maxH := gtx.Dp(unit.Dp(360))
 	if gtx2.Constraints.Max.Y > maxH {
@@ -2572,7 +2960,7 @@ func (ui *UI) layoutSettingsColorCategoryPopup(th *material.Theme, gtx layout.Co
 			scaleColorAlpha(theme.Bg, alpha),
 			scaleColorAlpha(theme.Border, alpha),
 			func(gtx layout.Context) layout.Dimensions {
-				children := make([]layout.FlexChild, 0, len(settingsColorOptions)+1)
+				children := make([]layout.FlexChild, 0, len(options)+1)
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedHeight(gtx, ui.fileContextMenuTitleHeight(gtx), func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -2587,7 +2975,7 @@ func (ui *UI) layoutSettingsColorCategoryPopup(th *material.Theme, gtx layout.Co
 						})
 					})
 				}))
-				for i, opt := range settingsColorOptions {
+				for i, opt := range options {
 					i := i
 					opt := opt
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {

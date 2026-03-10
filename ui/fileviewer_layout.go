@@ -36,6 +36,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 	if st == nil {
 		return layout.Dimensions{}
 	}
+	theme := ui.fileViewerTheme()
 	if st.commandAreaPress != nil {
 		clear(st.commandAreaPress)
 	}
@@ -105,7 +106,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 
 	return st.backdropClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
-		paint.FillShape(gtx.Ops, color.NRGBA{R: 14, G: 18, B: 24, A: 252}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
+		paint.FillShape(gtx.Ops, theme.Backdrop, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
 		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -119,7 +120,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 					lbl := material.Body2(th, st.err)
 					lbl.Font.Typeface = ui.viewerTypeface()
 					lbl.TextSize = scaleThemeFontSize(th, 10)
-					lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
+					lbl.Color = theme.Error
 					lbl.MaxLines = 2
 					lbl.Truncator = "..."
 					return lbl.Layout(gtx)
@@ -134,8 +135,8 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 					return fillRoundedBox(
 						gtx,
 						gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-						color.NRGBA{R: 18, G: 24, B: 34, A: 255},
-						color.NRGBA{R: 255, G: 255, B: 255, A: 8},
+						theme.PanelBg,
+						theme.PanelBorder,
 						func(gtx layout.Context) layout.Dimensions {
 							gtx.Constraints.Min.X = gtx.Constraints.Max.X
 							gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
@@ -149,7 +150,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 									wait := material.Body2(th, "Loading...")
 									wait.Font.Typeface = ui.viewerTypeface()
 									wait.TextSize = ui.viewerTextSize()
-									wait.Color = hintColor
+									wait.Color = theme.Hint
 									return wait.Layout(gtx)
 								}
 								gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
@@ -385,14 +386,15 @@ func (ui *UI) paintFileViewerScrollHint(gtx layout.Context, st *fileViewerState,
 	st.scrollbarLines = totalLines
 	st.scrollbarVisibleN = visibleLines
 
-	trackColor := color.NRGBA{R: 255, G: 255, B: 255, A: 30}
-	thumbColor := color.NRGBA{R: 173, G: 197, B: 238, A: 168}
+	theme := ui.fileViewerTheme()
+	trackColor := theme.ScrollTrack
+	thumbColor := theme.ScrollThumb
 	if st.scrollbarHover {
-		trackColor = color.NRGBA{R: 255, G: 255, B: 255, A: 42}
-		thumbColor = color.NRGBA{R: 194, G: 214, B: 248, A: 214}
+		trackColor = theme.ScrollTrackHover
+		thumbColor = theme.ScrollThumbHover
 	}
 	if st.scrollbarDragging {
-		thumbColor = color.NRGBA{R: 204, G: 224, B: 255, A: 245}
+		thumbColor = theme.ScrollThumbDrag
 	}
 	paint.FillShape(gtx.Ops, trackColor, clip.Rect(track).Op())
 	paint.FillShape(gtx.Ops, thumbColor, clip.Rect(thumb).Op())
@@ -515,11 +517,12 @@ func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Con
 func (ui *UI) layoutFileViewerHeader(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
 	history := ui.viewerHistoryCommands(st.command)
 	stripH := ui.viewerHeaderStripHeight(gtx)
+	theme := ui.fileViewerTheme()
 
 	return fillRoundedBox(
 		gtx,
 		0,
-		color.NRGBA{R: 20, G: 26, B: 38, A: 255},
+		theme.HeaderBg,
 		color.NRGBA{},
 		func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -595,40 +598,41 @@ func isViewerHeaderSizeStatus(status string) bool {
 
 func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRGBA) {
 	if st == nil {
-		return "", hintColor
+		return "", ui.fileViewerTheme().Hint
 	}
+	theme := ui.fileViewerTheme()
 	statusText := ""
-	statusColor := hintColor
+	statusColor := theme.Hint
 	switch st.status {
 	case "", "ready":
 	case "loading...":
 		statusText = "loading"
-		statusColor = color.NRGBA{R: 250, G: 226, B: 172, A: 255}
+		statusColor = theme.StatusWarn
 	case "update pending":
 		statusText = "pending"
-		statusColor = color.NRGBA{R: 246, G: 226, B: 152, A: 255}
+		statusColor = theme.StatusWarn
 	case "nothing to copy":
 		statusText = "nothing to copy"
-		statusColor = color.NRGBA{R: 244, G: 214, B: 214, A: 255}
+		statusColor = theme.StatusError
 	case "truncated":
 		statusText = "truncated"
-		statusColor = color.NRGBA{R: 252, G: 224, B: 186, A: 255}
+		statusColor = theme.StatusWarn
 	case "streaming":
 		statusText = "streaming"
-		statusColor = color.NRGBA{R: 220, G: 232, B: 255, A: 255}
+		statusColor = theme.StatusAccent
 	case "streaming, truncated":
 		statusText = "streaming, truncated"
-		statusColor = color.NRGBA{R: 252, G: 224, B: 186, A: 255}
+		statusColor = theme.StatusWarn
 	default:
 		if !isViewerHeaderSizeStatus(st.status) {
 			statusText = st.status
-			statusColor = color.NRGBA{R: 220, G: 228, B: 244, A: 255}
+			statusColor = theme.StatusAccent
 		}
 	}
 	if st.mode == "command" && st.commandInfinite {
 		if statusText == "" {
 			statusText = "streaming"
-			statusColor = color.NRGBA{R: 220, G: 232, B: 255, A: 255}
+			statusColor = theme.StatusAccent
 		}
 	}
 	return statusText, statusColor
@@ -638,6 +642,7 @@ func (ui *UI) fileViewerHeaderDetails(st *fileViewerState) []viewerHeaderDetailP
 	if st == nil {
 		return nil
 	}
+	theme := ui.fileViewerTheme()
 	statusText, statusColor := ui.fileViewerHeaderStatusText(st)
 	parts := make([]viewerHeaderDetailPart, 0, 2)
 	if statusText != "" {
@@ -649,7 +654,7 @@ func (ui *UI) fileViewerHeaderDetails(st *fileViewerState) []viewerHeaderDetailP
 	if !st.updatedAt.IsZero() {
 		parts = append(parts, viewerHeaderDetailPart{
 			Text:  "updated at " + st.updatedAt.Format("15:04:05"),
-			Color: color.NRGBA{R: 194, G: 208, B: 232, A: 255},
+			Color: theme.Muted,
 		})
 	}
 	return parts
@@ -666,6 +671,7 @@ func measureWidgetUnconstrained(gtx layout.Context, w layout.Widget) layout.Dime
 func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
 	title := ui.fileViewerHeaderTitle(st)
 	details := ui.fileViewerHeaderDetails(st)
+	theme := ui.fileViewerTheme()
 	titleLbl := material.Body2(th, title)
 	titleLbl.Font.Typeface = ui.viewerTypeface()
 	titleLbl.Font.Weight = font.Medium
@@ -748,7 +754,7 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 								lbl.Font.Typeface = ui.viewerTypeface()
 								lbl.Font.Weight = font.Medium
 								lbl.TextSize = ui.viewerTextSize()
-								lbl.Color = color.NRGBA{R: 224, G: 234, B: 252, A: 255}
+								lbl.Color = theme.HeaderText
 								lbl.MaxLines = 1
 								lbl.Truncator = "..."
 								return lbl.Layout(gtx)
@@ -832,6 +838,7 @@ func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, 
 }
 
 func (ui *UI) layoutFileViewerInfoDivider(gtx layout.Context, stripH int) layout.Dimensions {
+	theme := ui.fileViewerTheme()
 	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
 		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			h := stripH - gtx.Dp(unit.Dp(12))
@@ -842,7 +849,7 @@ func (ui *UI) layoutFileViewerInfoDivider(gtx layout.Context, stripH int) layout
 			if w < 1 {
 				w = 1
 			}
-			paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 28}, clip.Rect(image.Rect(0, 0, w, h)).Op())
+			paint.FillShape(gtx.Ops, theme.Divider, clip.Rect(image.Rect(0, 0, w, h)).Op())
 			return layout.Dimensions{Size: image.Pt(w, h)}
 		})
 	})
@@ -974,12 +981,13 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 			ui.cancelViewerCommandEdit()
 		}
 	}
-	fg := color.NRGBA{R: 245, G: 231, B: 180, A: 255}
-	bg := color.NRGBA{R: 72, G: 58, B: 28, A: 255}
-	border := color.NRGBA{R: 189, G: 158, B: 84, A: 132}
+	theme := ui.fileViewerTheme()
+	fg := theme.CommandStaticText
+	bg := theme.CommandBg
+	border := theme.CommandBorder
 	if st.commandClick.Hovered() {
-		bg = color.NRGBA{R: 86, G: 69, B: 33, A: 255}
-		border = color.NRGBA{R: 210, G: 180, B: 100, A: 168}
+		bg = theme.CommandBgHover
+		border = theme.CommandBorderHover
 	}
 	commandText := st.command
 	if st.commandEditOn {
@@ -993,8 +1001,8 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 					ed := material.Editor(th, &st.commandEditor, "cat {fullpath}")
 					ed.Font.Typeface = ui.viewerTypeface()
 					ed.TextSize = ui.viewerTextSize()
-					ed.Color = fg
-					ed.HintColor = color.NRGBA{R: 176, G: 160, B: 116, A: 255}
+					ed.Color = theme.CommandText
+					ed.HintColor = theme.CommandHint
 					focused := st.commandFocus || gtx.Focused(&st.commandEditor)
 					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -1085,12 +1093,13 @@ func (ui *UI) layoutFileViewerHistoryList(th *material.Theme, gtx layout.Context
 	}
 	rows, listW := ui.fileViewerHistoryRows(th, gtx, history)
 
+	theme := ui.fileViewerTheme()
 	return fixedWidth(gtx, listW, func(gtx layout.Context) layout.Dimensions {
 		return fillRoundedBox(
 			gtx,
 			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-			color.NRGBA{R: 18, G: 22, B: 30, A: 255},
-			color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+			theme.HistoryBg,
+			theme.HistoryBorder,
 			func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutFileViewerHistoryListRows(th, gtx, st, rows)
 			},
@@ -1100,11 +1109,12 @@ func (ui *UI) layoutFileViewerHistoryList(th *material.Theme, gtx layout.Context
 
 func (ui *UI) layoutFileViewerHistoryListRows(th *material.Theme, gtx layout.Context, st *fileViewerState, rows [][]string) layout.Dimensions {
 	if len(rows) == 0 {
+		theme := ui.fileViewerTheme()
 		return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th, "No past commands")
 			lbl.Font.Typeface = ui.viewerTypeface()
 			lbl.TextSize = scaleThemeFontSize(th, 8)
-			lbl.Color = color.NRGBA{R: 162, G: 172, B: 190, A: 255}
+			lbl.Color = theme.HistoryMuted
 			lbl.MaxLines = 1
 			return lbl.Layout(gtx)
 		})
@@ -1207,20 +1217,21 @@ func (ui *UI) layoutFileViewerHistoryChip(th *material.Theme, gtx layout.Context
 		return layout.Dimensions{}
 	}
 	w := ui.fileViewerHistoryChipWidth(th, gtx, label)
+	theme := ui.fileViewerTheme()
 	return fixedWidth(gtx, w, func(gtx layout.Context) layout.Dimensions {
 		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			bg := color.NRGBA{R: 74, G: 58, B: 24, A: 255}
-			bd := color.NRGBA{R: 188, G: 160, B: 92, A: 46}
+			bg := theme.HistoryChipBg
+			bd := theme.HistoryChipBorder
 			if click.Hovered() {
-				bg = color.NRGBA{R: 92, G: 72, B: 28, A: 255}
-				bd = color.NRGBA{R: 220, G: 190, B: 110, A: 76}
+				bg = theme.HistoryChipBgHover
+				bd = theme.HistoryChipBorderH
 			}
 			return fillRoundedBox(gtx, gtx.Dp(unit.Dp(5)), bg, bd, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, label)
 					lbl.Font.Typeface = ui.viewerTypeface()
 					lbl.TextSize = scaleThemeFontSize(th, 8)
-					lbl.Color = color.NRGBA{R: 245, G: 231, B: 180, A: 255}
+					lbl.Color = theme.HistoryChipText
 					lbl.MaxLines = 1
 					lbl.Truncator = "..."
 					return lbl.Layout(gtx)

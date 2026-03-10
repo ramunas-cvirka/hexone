@@ -1371,7 +1371,7 @@ func (ui *UI) processFilePaneDriveSegmentInput(gtx layout.Context, idx int, pane
 		pane.openDriveMenu(image.Point{
 			X: pe.Position.Round().X,
 			Y: pane.headerHeight + gtx.Dp(unit.Dp(4)),
-		})
+		}, gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
 }
@@ -2116,11 +2116,17 @@ func (ui *UI) layoutFilePaneDriveMenu(th *material.Theme, gtx layout.Context, id
 		return layout.Dimensions{}
 	}
 
+	alpha, slideY, animating := popupOpenProgress(gtx.Now, pane.driveMenuOpenedAt)
+	if animating {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+	}
 	m := op.Record(gtx.Ops)
-	menuDims := ui.layoutFilePaneDriveMenuCard(th, gtx, pane, drives)
+	menuDims := ui.layoutFilePaneDriveMenuCard(th, gtx, pane, drives, alpha)
 	call := m.Stop()
 
 	anchor := clampFilePaneMenuPoint(pane.driveMenuPos, menuDims.Size, gtx.Constraints.Max)
+	anchor.Y += slideY
+	anchor = clampFilePaneMenuPoint(anchor, menuDims.Size, gtx.Constraints.Max)
 	pane.driveMenuRect = image.Rectangle{Min: anchor, Max: anchor.Add(menuDims.Size)}
 
 	bodyClip := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
@@ -2137,34 +2143,77 @@ func (ui *UI) layoutFilePaneDriveMenu(th *material.Theme, gtx layout.Context, id
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
-func (ui *UI) layoutFilePaneDriveMenuCard(th *material.Theme, gtx layout.Context, pane *filePaneState, drives []string) layout.Dimensions {
-	const menuWidthDp = 78
-	width := gtx.Dp(unit.Dp(menuWidthDp))
+func (ui *UI) driveMenuHoveredID(pane *filePaneState, drives []string) string {
+	if pane == nil {
+		return ""
+	}
+	for i, drive := range drives {
+		if i < len(pane.driveMenuClicks) && pane.driveMenuClicks[i].Hovered() {
+			return drive
+		}
+	}
+	return ""
+}
+
+func (ui *UI) driveMenuCardWidth(th *material.Theme, gtx layout.Context, drives []string) int {
+	maxTextW := 0
+	for _, drive := range drives {
+		lbl := material.Body2(th, drive)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Weight = font.Medium
+		lbl.TextSize = ui.functionBarTextSize()
+		lbl.MaxLines = 1
+		if w := measureLabelUnconstrained(gtx, lbl).Size.X; w > maxTextW {
+			maxTextW = w
+		}
+	}
+	if maxTextW == 0 {
+		maxTextW = gtx.Dp(unit.Dp(64))
+	}
+	width := maxTextW + gtx.Dp(unit.Dp(26))
+	if width < gtx.Dp(unit.Dp(118)) {
+		width = gtx.Dp(unit.Dp(118))
+	}
 	if width > gtx.Constraints.Max.X {
 		width = gtx.Constraints.Max.X
 	}
 	if width < 1 {
 		width = 1
 	}
+	return width
+}
+
+func (ui *UI) layoutFilePaneDriveMenuCard(th *material.Theme, gtx layout.Context, pane *filePaneState, drives []string, alpha float32) layout.Dimensions {
+	width := ui.driveMenuCardWidth(th, gtx, drives)
 	currentDrive := localDriveRoot(pane.displayDir())
+	theme := ui.filePanePopupTheme()
+	hoverID := ui.driveMenuHoveredID(pane, drives)
+	if hoverID != pane.driveMenuHoverID {
+		pane.driveMenuHoverID = hoverID
+		pane.driveMenuHoverAnim.setHover(hoverID, gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
 
 	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
-		return fillRoundedBox(
+		return fillRoundedClipBox(
 			gtx,
 			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-			color.NRGBA{R: 18, G: 22, B: 30, A: 250},
-			color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+			scaleColorAlpha(theme.Bg, alpha),
+			scaleColorAlpha(theme.Border, alpha),
 			func(gtx layout.Context) layout.Dimensions {
 				children := make([]layout.FlexChild, 0, len(drives)+1)
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Caption(th, "Drives")
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleThemeFontSize(th, 10)
-						lbl.Color = color.NRGBA{R: 170, G: 180, B: 205, A: 255}
-						lbl.MaxLines = 1
-						lbl.Font.Weight = font.Medium
-						return lbl.Layout(gtx)
+					return fixedHeight(gtx, ui.fileContextMenuTitleHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Caption(th, "Drives")
+							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Weight = font.Medium
+							lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
+							lbl.Color = scaleColorAlpha(theme.Title, alpha)
+							lbl.MaxLines = 1
+							lbl.Truncator = "…"
+							return layoutVCenteredLabel(gtx, lbl)
+						})
 					})
 				}))
 				for i, drive := range drives {
@@ -2172,28 +2221,26 @@ func (ui *UI) layoutFilePaneDriveMenuCard(th *material.Theme, gtx layout.Context
 					drive := drive
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						active := strings.EqualFold(currentDrive, drive)
-						return pane.driveMenuClicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							bg := color.NRGBA{}
-							fg := txtColor
-							if active {
-								bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
-								fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
-							} else if pane.driveMenuClicks[i].Hovered() {
-								bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-								fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
-							}
-							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body2(th, drive)
-									lbl.Font.Typeface = ui.mainTypeface()
-									lbl.Font.Weight = font.Medium
-									lbl.TextSize = scaleThemeFontSize(th, 11)
-									lbl.Color = fg
-									lbl.MaxLines = 1
-									return layoutVCenteredLabel(gtx, lbl)
-								})
-							})
-						})
+						item := fileContextMenuItem{ID: "drive:" + drive, Label: drive}
+						hoverFill, hoverAnim := pane.driveMenuHoverAnim.hoverFill(gtx.Now, drive)
+						if hoverAnim {
+							gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+						}
+						dims, _, animating := ui.layoutFilePaneContextMenuItem(
+							th,
+							gtx,
+							theme,
+							&pane.driveMenuClicks[i],
+							item,
+							active,
+							hoverFill,
+							alpha,
+							ui.fileContextMenuRowHeight(gtx, item),
+						)
+						if animating {
+							gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+						}
+						return dims
 					}))
 				}
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)

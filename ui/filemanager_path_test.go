@@ -4,6 +4,7 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,14 +17,22 @@ import (
 	"hexone/fm"
 )
 
-func TestSplitFilePathSegmentsCompactUnixLabels(t *testing.T) {
-	segments := splitFilePathSegments("/opt/gpstrack/log")
+func TestSplitFilePathSegmentsCompactLabels(t *testing.T) {
+	root := string(filepath.Separator)
+	input := filepath.Join(root, "opt", "gpstrack", "log")
+
+	segments := splitFilePathSegments(input)
 	if len(segments) != 4 {
 		t.Fatalf("segment count = %d, want 4", len(segments))
 	}
 
-	wantLabels := []string{"/", "opt", "/gpstrack", "/log"}
-	wantPaths := []string{"/", "/opt", "/opt/gpstrack", "/opt/gpstrack/log"}
+	wantLabels := []string{root, "opt", root + "gpstrack", root + "log"}
+	wantPaths := []string{
+		root,
+		filepath.Join(root, "opt"),
+		filepath.Join(root, "opt", "gpstrack"),
+		filepath.Join(root, "opt", "gpstrack", "log"),
+	}
 	for i := range wantLabels {
 		if segments[i].label != wantLabels[i] {
 			t.Fatalf("segment %d label = %q, want %q", i, segments[i].label, wantLabels[i])
@@ -62,6 +71,23 @@ func TestRemotePathDisplaySegmentsDefaultsAddress(t *testing.T) {
 	}
 	if segments[0].path != "/" {
 		t.Fatalf("root path = %q, want /", segments[0].path)
+	}
+}
+
+func TestSplitFilePathSegmentsKeepsVolumeInRootLabel(t *testing.T) {
+	if filepath.VolumeName(`C:\tmp`) == "" {
+		t.Skip("volume-based paths are not supported on this platform")
+	}
+
+	segments := splitFilePathSegments(`C:\opt\gpstrack`)
+	if len(segments) != 3 {
+		t.Fatalf("segment count = %d, want 3", len(segments))
+	}
+	if !strings.HasPrefix(segments[0].label, `C:`) {
+		t.Fatalf("root label = %q, want drive-prefixed root", segments[0].label)
+	}
+	if segments[0].path != `C:\` {
+		t.Fatalf("root path = %q, want %q", segments[0].path, `C:\`)
 	}
 }
 
