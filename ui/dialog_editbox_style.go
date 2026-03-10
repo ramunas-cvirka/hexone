@@ -7,6 +7,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/io/clipboard"
@@ -125,7 +126,9 @@ func (ui *UI) closeEditorContextMenu() {
 	ui.editorMenuPos = image.Point{}
 	ui.editorMenuPressPos = image.Point{}
 	ui.editorMenuRect = image.Rectangle{}
+	ui.editorMenuOpenedAt = time.Time{}
 	ui.editorMenuHoverAction = ""
+	ui.editorMenuHoverAnim = segmentedAnimState{}
 	ui.editorMenuCanPaste = false
 	ui.editorMenuUseExplicitCaret = false
 }
@@ -246,7 +249,9 @@ func (ui *UI) layoutEditorWithContextMenu(th *material.Theme, gtx layout.Context
 			ui.editorMenuOpenID = id
 			ui.editorMenuTarget = ed
 			ui.editorMenuRect = image.Rectangle{}
+			ui.editorMenuOpenedAt = gtx.Now
 			ui.editorMenuHoverAction = ""
+			ui.editorMenuHoverAnim = segmentedAnimState{}
 			ui.editorMenuCanPaste = enabled && !ed.ReadOnly
 			ui.editorMenuUseExplicitCaret = gtx.Focused(ed)
 			if ui.editorMenuPressPos != (image.Point{}) {
@@ -289,10 +294,15 @@ func (ui *UI) layoutEditorContextMenuOverlay(th *material.Theme, gtx layout.Cont
 	menuGtx := gtx
 	menuGtx.Constraints.Min = image.Point{}
 	m := op.Record(gtx.Ops)
-	menuDims := ui.layoutEditorContextMenu(th, menuGtx, id, ui.editorMenuCanPaste)
+	alpha, slideY, animating := popupOpenProgress(gtx.Now, ui.editorMenuOpenedAt)
+	if animating {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+	}
+	menuDims := ui.layoutEditorContextMenu(th, menuGtx, id, ui.editorMenuCanPaste, alpha)
 	call := m.Stop()
 
 	anchor := ui.editorMenuPos
+	anchor.Y += slideY
 	bounds := gtx.Constraints.Max
 	if anchor.X+menuDims.Size.X > bounds.X {
 		anchor.X = bounds.X - menuDims.Size.X
@@ -315,62 +325,76 @@ func (ui *UI) layoutEditorContextMenuOverlay(th *material.Theme, gtx layout.Cont
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
-func (ui *UI) layoutEditorContextMenu(th *material.Theme, gtx layout.Context, id string, pasteEnabled bool) layout.Dimensions {
+func (ui *UI) layoutEditorContextMenu(th *material.Theme, gtx layout.Context, id string, pasteEnabled bool, alpha float32) layout.Dimensions {
 	if ui == nil || id == "" {
 		return layout.Dimensions{}
 	}
-	return fillRoundedBox(
-		gtx,
-		0,
-		color.NRGBA{R: 18, G: 22, B: 30, A: 248},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 24},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return fixedHeight(gtx, ui.editorContextMenuRowHeight(gtx), func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutEditorContextMenuSegment(th, gtx, "Copy", ui.editorMenuHoverAction == "copy", true)
-						})
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return fillBgExact(gtx, color.NRGBA{R: 255, G: 255, B: 255, A: 18}, func(gtx layout.Context) layout.Dimensions {
-							h := gtx.Dp(unit.Dp(1))
-							if h < 1 {
-								h = 1
-							}
-							return layout.Dimensions{Size: image.Pt(ui.editorContextMenuWidth(gtx), h)}
-						})
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return fixedHeight(gtx, ui.editorContextMenuRowHeight(gtx), func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutEditorContextMenuSegment(th, gtx, "Paste", ui.editorMenuHoverAction == "paste", pasteEnabled)
-						})
-					}),
-				)
-			})
-		},
-	)
+	theme := ui.filePanePopupTheme()
+	copyHover, copyAnim := ui.editorMenuHoverAnim.hoverFill(gtx.Now, "copy")
+	pasteHover, pasteAnim := ui.editorMenuHoverAnim.hoverFill(gtx.Now, "paste")
+	if copyAnim || pasteAnim {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+	}
+	return fixedWidth(gtx, ui.editorContextMenuWidth(gtx), func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedClipBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+			scaleColorAlpha(theme.Bg, alpha),
+			scaleColorAlpha(theme.Border, alpha),
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, ui.editorContextMenuRowHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutEditorContextMenuSegment(th, gtx, "Copy", copyHover, true, alpha)
+							})
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, ui.fileContextMenuSeparatorHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									h := gtx.Dp(unit.Dp(1))
+									if h < 1 {
+										h = 1
+									}
+									return fillBgExact(gtx, scaleColorAlpha(theme.Divider, alpha), func(gtx layout.Context) layout.Dimensions {
+										return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, h)}
+									})
+								})
+							})
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, ui.editorContextMenuRowHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutEditorContextMenuSegment(th, gtx, "Paste", pasteHover, pasteEnabled, alpha)
+							})
+						}),
+					)
+				})
+			},
+		)
+	})
 }
 
-func (ui *UI) layoutEditorContextMenuSegment(th *material.Theme, gtx layout.Context, label string, hovered, enabled bool) layout.Dimensions {
+func (ui *UI) layoutEditorContextMenuSegment(th *material.Theme, gtx layout.Context, label string, hoverFill float32, enabled bool, alpha float32) layout.Dimensions {
+	theme := ui.filePanePopupTheme()
 	return fixedWidth(gtx, ui.editorContextMenuWidth(gtx), func(gtx layout.Context) layout.Dimensions {
 		bg := color.NRGBA{}
-		fg := color.NRGBA{R: 214, G: 226, B: 250, A: 255}
+		fg := scaleColorAlpha(theme.Text, alpha)
+		hoverT := smoothstep01(clamp01(hoverFill))
 		if !enabled {
-			fg = color.NRGBA{R: 118, G: 128, B: 146, A: 255}
-		} else if hovered {
-			bg = color.NRGBA{R: 40, G: 54, B: 82, A: 255}
-			fg = color.NRGBA{R: 236, G: 244, B: 255, A: 255}
+			fg = scaleColorAlpha(theme.DisabledText, alpha)
+		} else if hoverT > 0 {
+			bg = scaleColorAlpha(theme.HoverBg, alpha*hoverT)
+			fg = scaleColorAlpha(mixNRGBA(theme.Text, theme.HoverText, hoverT), alpha)
 		}
 		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body2(th, label)
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.Font.Weight = font.Medium
-						lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 10)
+						lbl.TextSize = ui.functionBarTextSize()
 						lbl.Color = fg
 						lbl.MaxLines = 1
 						return lbl.Layout(gtx)
@@ -382,15 +406,11 @@ func (ui *UI) layoutEditorContextMenuSegment(th *material.Theme, gtx layout.Cont
 }
 
 func (ui *UI) editorContextMenuRowHeight(gtx layout.Context) int {
-	h := gtx.Dp(unit.Dp(19))
-	if h < 1 {
-		h = 1
-	}
-	return h
+	return ui.fileContextMenuRowHeight(gtx, fileContextMenuItem{})
 }
 
 func (ui *UI) editorContextMenuWidth(gtx layout.Context) int {
-	w := gtx.Dp(unit.Dp(82))
+	w := gtx.Dp(unit.Dp(88))
 	if w < 1 {
 		w = 1
 	}
@@ -406,10 +426,7 @@ func (ui *UI) editorContextMenuActionAt(gtx layout.Context, pos image.Point) str
 		return ""
 	}
 	rowH := ui.editorContextMenuRowHeight(gtx)
-	divH := gtx.Dp(unit.Dp(1))
-	if divH < 1 {
-		divH = 1
-	}
+	divH := ui.fileContextMenuSeparatorHeight(gtx)
 	localY := pos.Y - ui.editorMenuRect.Min.Y
 	switch {
 	case localY < rowH:

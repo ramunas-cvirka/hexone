@@ -52,8 +52,9 @@ type KeyRepeat struct {
 }
 
 type fileOpenRequest struct {
-	pane int
-	row  int
+	pane           int
+	row            int
+	systemOpenOnly bool
 }
 
 type FieldSpan struct {
@@ -88,7 +89,8 @@ type tab2State struct {
 	hoverSpan       *protocols.Span
 	hoverFromBytes  bool
 
-	protoDropOpen bool
+	protoDropOpen     bool
+	protoDropOpenedAt time.Time
 
 	hoverRowID    string
 	selectedRowID string
@@ -144,6 +146,9 @@ type UI struct {
 	functionBarToolsOpen        bool
 	functionBarToolsButtonRect  image.Rectangle
 	functionBarToolsRect        image.Rectangle
+	functionBarToolsOpenedAt    time.Time
+	functionBarToolsHoverID     string
+	functionBarToolsHoverAnim   segmentedAnimState
 	functionBarToolClicks       []widget.Clickable
 	functionBarPopupGlobalTag   uiEventTag
 	functionBarPopupBodyTag     uiEventTag
@@ -175,7 +180,9 @@ type UI struct {
 	editorMenuPos               image.Point
 	editorMenuPressPos          image.Point
 	editorMenuRect              image.Rectangle
+	editorMenuOpenedAt          time.Time
 	editorMenuHoverAction       string
+	editorMenuHoverAnim         segmentedAnimState
 	editorMenuTags              map[string]*editorMenuEventTag
 	editorMenuCanPaste          bool
 	editorMenuUseExplicitCaret  bool
@@ -229,7 +236,9 @@ func NewUI(cfg *fm.Config) *UI {
 			_ = row
 			ui.setActiveFilePane(idx)
 		}
-		pane.table.OnDoubleClick = nil
+		pane.table.OnDoubleClick = func(row int) {
+			ui.queueFilePaneSystemOpen(idx, row)
+		}
 		pane.table.OnActivate = func(row int) {
 			ui.queueFilePaneOpen(idx, row)
 		}
@@ -774,6 +783,7 @@ func (ui *UI) handleEditorContextMenuGlobalPresses(gtx layout.Context) {
 			hover := ui.editorContextMenuActionAt(gtx, pos)
 			if hover != ui.editorMenuHoverAction {
 				ui.editorMenuHoverAction = hover
+				ui.editorMenuHoverAnim.setHover(hover, gtx.Now)
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case pointer.Press:
@@ -849,6 +859,7 @@ func (ui *UI) handleProtocolDropdownOutsideClick(gtx layout.Context) {
 		}
 
 		st.protoDropOpen = false
+		st.protoDropOpenedAt = time.Time{}
 		closed = true
 	}
 	if closed {
@@ -885,6 +896,7 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 		}
 		if ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
 			ui.tab2State.protoDropOpen = false
+			ui.tab2State.protoDropOpenedAt = time.Time{}
 			closedProtoDropdown = true
 			continue
 		}

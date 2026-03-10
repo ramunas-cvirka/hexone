@@ -67,6 +67,9 @@ type settingsModalState struct {
 	colorValueEdit           widget.Editor
 	colorTextValueEdit       widget.Editor
 	colorCategoryOpen        bool
+	colorCategoryOpenedAt    time.Time
+	colorCategoryHoverID     string
+	colorCategoryHoverAnim   segmentedAnimState
 	colorPickerOpen          bool
 	colorPickerTarget        string
 	popupGlobalPointerTag    uiEventTag
@@ -147,6 +150,14 @@ var settingsColorOptions = []settingsColorOption{
 	{key: "selected_files", label: "Selected Files"},
 	{key: "focused_selected", label: "Focused + Selected Files"},
 	{key: "current_dir", label: "Current Dir"},
+}
+
+var settingsTabOrder = []string{
+	"general",
+	"viewer",
+	"associations",
+	"colors",
+	"config",
 }
 
 type settingsColorSwatchGroup struct {
@@ -272,6 +283,9 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorCurrentDirText = cfg.Colors.CurrentDirText
 	st.syncColorEditors()
 	st.colorCategoryOpen = false
+	st.colorCategoryOpenedAt = time.Time{}
+	st.colorCategoryHoverID = ""
+	st.colorCategoryHoverAnim = segmentedAnimState{}
 	st.colorPickerOpen = false
 	st.colorPickerTarget = ""
 	st.viewCommandEdit.SetText(cfg.Viewer.Command)
@@ -399,10 +413,30 @@ func (st *settingsModalState) setColorCategory(key string) {
 		return
 	}
 	st.colorCategory = key
-	st.colorCategoryOpen = false
+	st.closeColorCategoryPopup()
 	st.colorPickerOpen = false
 	st.colorPickerTarget = ""
 	st.syncColorEditors()
+}
+
+func (st *settingsModalState) openColorCategoryPopup(now time.Time) {
+	if st == nil {
+		return
+	}
+	st.colorCategoryOpen = true
+	st.colorCategoryOpenedAt = now
+	st.colorCategoryHoverID = ""
+	st.colorCategoryHoverAnim = segmentedAnimState{}
+}
+
+func (st *settingsModalState) closeColorCategoryPopup() {
+	if st == nil {
+		return
+	}
+	st.colorCategoryOpen = false
+	st.colorCategoryOpenedAt = time.Time{}
+	st.colorCategoryHoverID = ""
+	st.colorCategoryHoverAnim = segmentedAnimState{}
 }
 
 func (st *settingsModalState) toggleColorPicker(target string) {
@@ -416,7 +450,7 @@ func (st *settingsModalState) toggleColorPicker(target string) {
 	}
 	st.colorPickerOpen = true
 	st.colorPickerTarget = target
-	st.colorCategoryOpen = false
+	st.closeColorCategoryPopup()
 }
 
 func (st *settingsModalState) anyPopupOpen() bool {
@@ -477,7 +511,7 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 			if st.colorCategoryClick.Hovered() || pressedColorCategoryPopup {
 				continue
 			}
-			st.colorCategoryOpen = false
+			st.closeColorCategoryPopup()
 			closed = true
 			continue
 		}
@@ -901,27 +935,34 @@ func (st *settingsModalState) setActiveTab(next string, now time.Time) {
 	st.navPrevTab = st.activeTab
 	st.navAnimAt = now
 	st.activeTab = next
-	st.colorCategoryOpen = false
+	st.closeColorCategoryPopup()
 	st.colorPickerOpen = false
 	st.colorPickerTarget = ""
 	st.viewAssocPickOpen = false
 }
 
 func settingsTabIndex(key string) int {
-	switch key {
-	case "general":
-		return 0
-	case "viewer":
-		return 1
-	case "associations":
-		return 2
-	case "colors":
-		return 3
-	case "config":
-		return 4
-	default:
-		return 0
+	for i, candidate := range settingsTabOrder {
+		if candidate == key {
+			return i
+		}
 	}
+	return 0
+}
+
+func settingsShiftTab(key string, step int) string {
+	if len(settingsTabOrder) == 0 {
+		return ""
+	}
+	if step == 0 {
+		return key
+	}
+	idx := settingsTabIndex(key)
+	idx = (idx + step) % len(settingsTabOrder)
+	if idx < 0 {
+		idx += len(settingsTabOrder)
+	}
+	return settingsTabOrder[idx]
 }
 
 func (st *settingsModalState) tabPosition(now time.Time) (float32, bool) {
@@ -941,6 +982,34 @@ func (st *settingsModalState) tabPosition(now time.Time) (float32, bool) {
 	prev := float32(settingsTabIndex(st.navPrevTab))
 	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
 	return prev + (current-prev)*t, true
+}
+
+func (st *settingsModalState) stepActiveTab(step int, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	next := settingsShiftTab(st.activeTab, step)
+	if next == "" || next == st.activeTab {
+		return false
+	}
+	st.setActiveTab(next, now)
+	st.setPulse(next, now)
+	return true
+}
+
+func (st *settingsModalState) hasFocusedEditor(gtx layout.Context) bool {
+	if st == nil {
+		return false
+	}
+	return gtx.Focused(&st.colorValueEdit) ||
+		gtx.Focused(&st.colorTextValueEdit) ||
+		gtx.Focused(&st.viewCommandEdit) ||
+		gtx.Focused(&st.viewShellEdit) ||
+		gtx.Focused(&st.paneFontSizeEdit) ||
+		gtx.Focused(&st.viewFontSizeEdit) ||
+		gtx.Focused(&st.viewAssocExtEdit) ||
+		gtx.Focused(&st.viewAssocAppEdit) ||
+		gtx.Focused(&st.configEdit)
 }
 
 func settingsViewerRowLabel(ui *UI, th *material.Theme, txt string, enabled bool) layout.Widget {
@@ -1460,7 +1529,7 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 		if ok && ke.State == key.Press && ke.Name == key.NameEscape {
 			if st.colorPickerOpen || st.colorCategoryOpen {
 				st.colorPickerOpen = false
-				st.colorCategoryOpen = false
+				st.closeColorCategoryPopup()
 				st.colorPickerTarget = ""
 				gtx.Execute(op.InvalidateCmd{})
 				break
@@ -1472,6 +1541,33 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 			}
 			ui.closeSettingsModal()
 			return layout.Dimensions{}
+		}
+	}
+
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameUpArrow},
+			key.Filter{Name: key.NameDownArrow},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press || ke.Modifiers != 0 {
+			continue
+		}
+		if st.anyPopupOpen() || st.hasFocusedEditor(gtx) {
+			continue
+		}
+		changed := false
+		switch ke.Name {
+		case key.NameUpArrow:
+			changed = st.stepActiveTab(-1, gtx.Now)
+		case key.NameDownArrow:
+			changed = st.stepActiveTab(1, gtx.Now)
+		}
+		if changed {
+			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
 
@@ -1910,12 +2006,7 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(rowLabel("Workspace")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			cb := material.CheckBox(th, &st.generalDimInactiveBool, "Gray out inactive pane")
-			cb.Font.Typeface = ui.mainTypeface()
-			cb.TextSize = scaleModalThemeFontSize(th, 10)
-			cb.Color = txtColor
-			cb.IconColor = txtColor
-			return cb.Layout(gtx)
+			return ui.layoutThemeCheckbox(th, gtx, &st.generalDimInactiveBool, "Gray out inactive pane", scaleModalThemeFontSize(th, 10))
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2208,12 +2299,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			cb := material.CheckBox(th, &st.viewHideFunctionBarBool, "Hide F1-F10 bar while viewer is open")
-			cb.Font.Typeface = ui.mainTypeface()
-			cb.TextSize = scaleModalThemeFontSize(th, 10)
-			cb.Color = txtColor
-			cb.IconColor = txtColor
-			return cb.Layout(gtx)
+			return ui.layoutThemeCheckbox(th, gtx, &st.viewHideFunctionBarBool, "Hide F1-F10 bar while viewer is open", scaleModalThemeFontSize(th, 10))
 		}),
 	)
 }
@@ -2285,8 +2371,10 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		}
 	}
 	if st.colorCategoryClick.Clicked(gtx) {
-		st.colorCategoryOpen = !st.colorCategoryOpen
 		if st.colorCategoryOpen {
+			st.closeColorCategoryPopup()
+		} else {
+			st.openColorCategoryPopup(gtx.Now)
 			st.colorPickerOpen = false
 			st.colorPickerTarget = ""
 		}
@@ -2383,10 +2471,14 @@ func (ui *UI) layoutSettingsColorCategoryField(th *material.Theme, gtx layout.Co
 		}),
 	)
 	if st.colorCategoryOpen {
+		alpha, offsetY, animating := popupOpenProgress(gtx.Now, st.colorCategoryOpenedAt)
+		if animating {
+			gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+		}
 		m := op.Record(gtx.Ops)
-		offset := op.Offset(image.Pt(0, btnH+gtx.Dp(unit.Dp(4))))
+		offset := op.Offset(image.Pt(0, btnH+gtx.Dp(unit.Dp(4))+offsetY))
 		offset.Add(gtx.Ops)
-		ui.layoutSettingsColorCategoryPopup(th, gtx, st, width)
+		ui.layoutSettingsColorCategoryPopup(th, gtx, st, width, alpha)
 		op.Defer(gtx.Ops, m.Stop())
 	}
 	return dims
@@ -2447,25 +2539,75 @@ func (ui *UI) layoutSettingsColorCategoryButton(th *material.Theme, gtx layout.C
 	})
 }
 
-func (ui *UI) layoutSettingsColorCategoryPopup(th *material.Theme, gtx layout.Context, st *settingsModalState, width int) layout.Dimensions {
+func (st *settingsModalState) hoveredColorCategoryKey() string {
+	if st == nil {
+		return ""
+	}
+	hoverID := ""
+	for i, opt := range settingsColorOptions {
+		if i < len(st.colorOptionClicks) && st.colorOptionClicks[i].Hovered() {
+			hoverID = opt.key
+		}
+	}
+	return hoverID
+}
+
+func (ui *UI) layoutSettingsColorCategoryPopup(th *material.Theme, gtx layout.Context, st *settingsModalState, width int, alpha float32) layout.Dimensions {
 	gtx2 := gtx
 	maxH := gtx.Dp(unit.Dp(360))
 	if gtx2.Constraints.Max.Y > maxH {
 		gtx2.Constraints.Max.Y = maxH
 	}
+	theme := ui.filePanePopupTheme()
+	hoverID := st.hoveredColorCategoryKey()
+	if hoverID != st.colorCategoryHoverID {
+		st.colorCategoryHoverID = hoverID
+		st.colorCategoryHoverAnim.setHover(hoverID, gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	return fixedWidth(gtx2, width, func(gtx layout.Context) layout.Dimensions {
-		dims := fillRoundedBox(
+		dims := fillRoundedClipBox(
 			gtx,
-			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-			color.NRGBA{R: 18, G: 22, B: 30, A: 255},
-			color.NRGBA{R: 255, G: 255, B: 255, A: 18},
+			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+			scaleColorAlpha(theme.Bg, alpha),
+			scaleColorAlpha(theme.Border, alpha),
 			func(gtx layout.Context) layout.Dimensions {
-				children := make([]layout.FlexChild, 0, len(settingsColorOptions))
+				children := make([]layout.FlexChild, 0, len(settingsColorOptions)+1)
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedHeight(gtx, ui.fileContextMenuTitleHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Caption(th, "Color Target")
+							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Weight = font.Medium
+							lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
+							lbl.Color = scaleColorAlpha(theme.Title, alpha)
+							lbl.MaxLines = 1
+							lbl.Truncator = "…"
+							return layoutVCenteredLabel(gtx, lbl)
+						})
+					})
+				}))
 				for i, opt := range settingsColorOptions {
 					i := i
 					opt := opt
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorCategoryOption(th, gtx, &st.colorOptionClicks[i], opt.label, st.colorCategory == opt.key)
+						hoverFill, animating := st.colorCategoryHoverAnim.hoverFill(gtx.Now, opt.key)
+						if animating {
+							gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+						}
+						item := fileContextMenuItem{ID: opt.key, Label: opt.label}
+						dims, _, _ := ui.layoutFilePaneContextMenuItem(
+							th,
+							gtx,
+							theme,
+							&st.colorOptionClicks[i],
+							item,
+							st.colorCategory == opt.key,
+							hoverFill,
+							alpha,
+							ui.fileContextMenuRowHeight(gtx, item),
+						)
+						return dims
 					}))
 				}
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
@@ -2506,7 +2648,6 @@ func (ui *UI) layoutSettingsColorValueField(th *material.Theme, gtx layout.Conte
 	if st == nil {
 		return layout.Dimensions{}
 	}
-	var btnH int
 	btnW := settingsColorPickerButtonWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
 	edW := settingsColorHexEditorWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
 	dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -2522,9 +2663,7 @@ func (ui *UI) layoutSettingsColorValueField(th *material.Theme, gtx layout.Conte
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					d := ui.layoutSettingsColorPickerButton(th, gtx, st, swatch, picker, st.colorPickerOpen && st.colorPickerTarget == pickerTarget, btnW)
-					btnH = d.Size.Y
-					return d
+					return ui.layoutSettingsColorPickerButton(th, gtx, st, swatch, picker, st.colorPickerOpen && st.colorPickerTarget == pickerTarget, btnW)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2544,7 +2683,7 @@ func (ui *UI) layoutSettingsColorValueField(th *material.Theme, gtx layout.Conte
 	)
 	if st.colorPickerOpen && st.colorPickerTarget == pickerTarget {
 		m := op.Record(gtx.Ops)
-		offset := op.Offset(image.Pt(0, dims.Size.Y-btnH+gtx.Dp(unit.Dp(4))))
+		offset := op.Offset(image.Pt(0, dims.Size.Y+gtx.Dp(unit.Dp(4))))
 		offset.Add(gtx.Ops)
 		ui.layoutSettingsColorPickerPopup(th, gtx, st, groups)
 		op.Defer(gtx.Ops, m.Stop())
@@ -3428,7 +3567,7 @@ func (ui *UI) reloadFilePanesForConfig(now time.Time) {
 			ui.setActiveFilePane(idx)
 		}
 		pane.table.OnDoubleClick = func(row int) {
-			ui.queueFilePaneOpen(idx, row)
+			ui.queueFilePaneSystemOpen(idx, row)
 		}
 		pane.table.OnActivate = func(row int) {
 			ui.queueFilePaneOpen(idx, row)

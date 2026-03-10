@@ -466,8 +466,10 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 
 func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *filePermState) layout.Dimensions {
 	const (
-		rowLabelDp = unit.Dp(56)
-		colWidthDp = unit.Dp(52)
+		rowLabelDp  = unit.Dp(56)
+		colWidthDp  = unit.Dp(46)
+		headerGapDp = unit.Dp(2)
+		rowGapDp    = unit.Dp(4)
 	)
 
 	rowLabel := func(title string) layout.Widget {
@@ -481,11 +483,9 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 	}
 	check := func(idx int) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
-			cb := material.CheckBox(th, &st.checks[idx], "")
-			cb.TextSize = scaleDialogThemeFontSize(th, 10)
-			cb.Font.Typeface = ui.mainTypeface()
-			cb.Color = txtColor
-			return layout.Center.Layout(gtx, cb.Layout)
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutThemeCheckbox(th, gtx, &st.checks[idx], "", scaleDialogThemeFontSize(th, 10))
+			})
 		}
 	}
 	colLabel := func(title string) layout.Widget {
@@ -519,6 +519,7 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 				layout.Rigid(cell(colWidthDp, colLabel("Execute"))),
 			)
 		}),
+		layout.Rigid(layout.Spacer{Height: headerGapDp}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(cell(rowLabelDp, rowLabel("Owner"))),
@@ -530,6 +531,7 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 				layout.Rigid(cell(colWidthDp, check(2))),
 			)
 		}),
+		layout.Rigid(layout.Spacer{Height: rowGapDp}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(cell(rowLabelDp, rowLabel("Group"))),
@@ -541,6 +543,7 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 				layout.Rigid(cell(colWidthDp, check(5))),
 			)
 		}),
+		layout.Rigid(layout.Spacer{Height: rowGapDp}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(cell(rowLabelDp, rowLabel("Other"))),

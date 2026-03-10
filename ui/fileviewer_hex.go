@@ -1363,8 +1363,7 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 		case pointer.Press:
 			v.pointerOutside = false
 			if pe.Buttons.Contain(pointer.ButtonSecondary) {
-				st.menuOpen = true
-				st.menuPos = pos
+				st.openContextMenu(pos, gtx.Now)
 				continue
 			}
 			if pe.Buttons.Contain(pointer.ButtonPrimary) && viewerPointInRect(pos, v.trackRect) {
@@ -1377,7 +1376,7 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 			}
 			if pe.Buttons.Contain(pointer.ButtonPrimary) {
 				if st.menuOpen {
-					st.menuOpen = false
+					st.closeContextMenu()
 				}
 				if byteOff, ok := hexByteAtPoint(v, pos); ok {
 					v.selecting = true

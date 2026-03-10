@@ -84,6 +84,34 @@ func TestLargeMacBundleIconKeepsFullArtworkVisible(t *testing.T) {
 	}
 }
 
+func TestPaintRoundedRectKeepsCornersTransparent(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	paintRoundedRect(img, img.Bounds(), 14, color.NRGBA{R: 22, G: 26, B: 36, A: 255})
+	if alpha := img.RGBAAt(0, 0).A; alpha != 0 {
+		t.Fatalf("rounded rect corner alpha=%d want 0", alpha)
+	}
+	if alpha := img.RGBAAt(32, 1).A; alpha == 0 {
+		t.Fatal("rounded rect top edge should remain visible")
+	}
+	if alpha := img.RGBAAt(32, 32).A; alpha == 0 {
+		t.Fatal("rounded rect center should be opaque")
+	}
+}
+
+func TestRenderMacBundleAppIconGeometry(t *testing.T) {
+	size := 128
+	bundle := renderMacBundleAppIcon(size)
+	if bundle.Bounds().Dx() != size || bundle.Bounds().Dy() != size {
+		t.Fatalf("mac bundle icon bounds=%v want %dx%d", bundle.Bounds(), size, size)
+	}
+	if alpha := bundle.RGBAAt(0, 0).A; alpha != 0 {
+		t.Fatalf("mac bundle icon corner alpha=%d want 0", alpha)
+	}
+	if alpha := bundle.RGBAAt(size/2, size/2).A; alpha == 0 {
+		t.Fatal("mac bundle icon center should remain visible")
+	}
+}
+
 func TestVisibleSquareCropKeepsContentCentered(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 100, 100))
 	fill := color.NRGBA{R: 255, G: 255, B: 255, A: 255}

@@ -357,12 +357,14 @@ func (ui *UI) row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *t
 			for click.Clicked(gtx) {
 				st.protoChoice.Value = opt.Name
 				st.protoDropOpen = false
+				st.protoDropOpenedAt = time.Time{}
 			}
 		}
 		if st.protoDropOpen {
 			back := st.click("proto:backdrop")
 			for back.Clicked(gtx) {
 				st.protoDropOpen = false
+				st.protoDropOpenedAt = time.Time{}
 			}
 		}
 	}
@@ -383,7 +385,7 @@ func (ui *UI) row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *t
 			// Record offset of the button so we can anchor popup.
 			// In Gio there is no direct "get current offset" API, but since
 			// we are last in the flex, we can compute it: left = total_width - btnW.
-			d := protocolDropdownButton(th, gtx, st, hoverSeen)
+			d := ui.protocolDropdownButton(th, gtx, st, hoverSeen)
 			btnH = d.Size.Y
 			btnW = d.Size.X
 			_ = btnTop // will be 0 relative to row
@@ -408,7 +410,7 @@ func (ui *UI) row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *t
 		popupY := btnTop + btnH + gtx.Dp(unit.Dp(4))
 		offset := op.Offset(image.Pt(popupX, popupY))
 		offset.Add(gtx.Ops)
-		protocolDropdownPopup(th, gtx, st, hoverSeen, btnW)
+		ui.protocolDropdownPopup(th, gtx, st, hoverSeen, btnW)
 
 		popupCall := m.Stop()
 		op.Defer(gtx.Ops, popupCall)
@@ -417,30 +419,45 @@ func (ui *UI) row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *t
 	return dims
 }
 
-func protocolDropdownButton(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool) layout.Dimensions {
+func (ui *UI) protocolDropdownButton(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool) layout.Dimensions {
 	btn := st.click("proto:btn")
 	for btn.Clicked(gtx) {
 		st.protoDropOpen = !st.protoDropOpen
+		if st.protoDropOpen {
+			st.protoDropOpenedAt = gtx.Now
+		} else {
+			st.protoDropOpenedAt = time.Time{}
+		}
 	}
 
 	label := protocolLabel(st.protoChoice.Value)
 	txt := label + "  ▾"
 
-	w := protocolDropdownWidth(th, gtx, st)
+	w := ui.protocolDropdownWidth(th, gtx, st)
+	popupTheme := ui.filePanePopupTheme()
 	return fixedWidth(gtx, w, func(gtx layout.Context) layout.Dimensions {
 		return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			if btn.Hovered() {
 				*hoverSeen = true
 			}
-			bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
-			bd := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
+			bg := popupTheme.ButtonBg
+			bd := popupTheme.ButtonBorder
+			fg := popupTheme.Text
+			if st.protoDropOpen {
+				bg = popupTheme.ActiveBg
+				fg = popupTheme.ActiveText
+			} else if btn.Hovered() {
+				bg = popupTheme.HoverBg
+				fg = popupTheme.HoverText
+			}
 			return fillRoundedBox(gtx, gtx.Dp(unit.Dp(10)), bg, bd, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, txt)
 					lbl.Font.Typeface = st.typeface
-					lbl.TextSize = scaleThemeFontSize(th, 12)
-					lbl.Color = txtColor
+					lbl.TextSize = ui.functionBarTextSize()
+					lbl.Color = fg
 					lbl.MaxLines = 1
+					lbl.Font.Weight = font.Medium
 					return lbl.Layout(gtx)
 				})
 			})
@@ -449,7 +466,7 @@ func protocolDropdownButton(th *material.Theme, gtx layout.Context, st *tab2Stat
 }
 
 // Popup ONLY draws the option box. Backdrop is handled in stacked overlay.
-func protocolDropdownPopup(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool, width int) layout.Dimensions {
+func (ui *UI) protocolDropdownPopup(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool, width int) layout.Dimensions {
 	opts := protocolOptions(st)
 
 	// Hard clamp popup height (prevents “stretches to bottom”).
@@ -459,17 +476,20 @@ func protocolDropdownPopup(th *material.Theme, gtx layout.Context, st *tab2State
 		gtx2.Constraints.Max.Y = maxH
 	}
 
+	popupTheme := ui.filePanePopupTheme()
+	alpha, offsetY, animating := popupOpenProgress(gtx.Now, st.protoDropOpenedAt)
+	if animating {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+	}
 	return fixedWidth(gtx2, width, func(gtx layout.Context) layout.Dimensions {
-		bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
-		bd := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
-
-		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(10)), bg, bd, func(gtx layout.Context) layout.Dimensions {
+		defer op.Offset(image.Pt(0, offsetY)).Push(gtx.Ops).Pop()
+		return fillRoundedClipBox(gtx, gtx.Dp(unit.Dp(10)), scaleColorAlpha(popupTheme.Bg, alpha), scaleColorAlpha(popupTheme.Border, alpha), func(gtx layout.Context) layout.Dimensions {
 			children := make([]layout.FlexChild, 0, len(opts))
 			for _, opt := range opts {
 				opt := opt
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					click := st.click("proto:" + opt.Name)
-					return dropdownItem(th, gtx, st.typeface, click, opt.Label, st.protoChoice.Value == opt.Name, hoverSeen)
+					return ui.dropdownItem(th, gtx, st.typeface, click, opt.Label, st.protoChoice.Value == opt.Name, hoverSeen, alpha)
 				}))
 			}
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
@@ -477,13 +497,13 @@ func protocolDropdownPopup(th *material.Theme, gtx layout.Context, st *tab2State
 	})
 }
 
-func protocolDropdownWidth(th *material.Theme, gtx layout.Context, st *tab2State) int {
+func (ui *UI) protocolDropdownWidth(th *material.Theme, gtx layout.Context, st *tab2State) int {
 	opts := protocolOptions(st)
 	maxTextW := 0
 	for _, opt := range opts {
 		lbl := material.Body2(th, opt.Label+"  ▾")
 		lbl.Font.Typeface = st.typeface
-		lbl.TextSize = scaleThemeFontSize(th, 12)
+		lbl.TextSize = ui.functionBarTextSize()
 		lbl.MaxLines = 1
 		w := measureLabelUnconstrained(gtx, lbl).Size.X
 		if w > maxTextW {
@@ -493,7 +513,7 @@ func protocolDropdownWidth(th *material.Theme, gtx layout.Context, st *tab2State
 	if maxTextW == 0 {
 		lbl := material.Body2(th, protocolLabel(st.protoChoice.Value)+"  ▾")
 		lbl.Font.Typeface = st.typeface
-		lbl.TextSize = scaleThemeFontSize(th, 12)
+		lbl.TextSize = ui.functionBarTextSize()
 		lbl.MaxLines = 1
 		maxTextW = measureLabelUnconstrained(gtx, lbl).Size.X
 	}
@@ -576,23 +596,27 @@ func protocolLabel(name string) string {
 	return strings.Join(parts, " ")
 }
 
-func dropdownItem(th *material.Theme, gtx layout.Context, typeface font.Typeface, c *widget.Clickable, label string, selected bool, hoverSeen *bool) layout.Dimensions {
+func (ui *UI) dropdownItem(th *material.Theme, gtx layout.Context, typeface font.Typeface, c *widget.Clickable, label string, selected bool, hoverSeen *bool, alpha float32) layout.Dimensions {
+	popupTheme := ui.filePanePopupTheme()
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		if c.Hovered() {
 			*hoverSeen = true
 		}
 		bg := color.NRGBA{A: 0}
+		fg := scaleColorAlpha(popupTheme.Text, alpha)
 		if selected {
-			bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
+			bg = scaleColorAlpha(popupTheme.ActiveBg, alpha)
+			fg = scaleColorAlpha(popupTheme.ActiveText, alpha)
 		} else if c.Hovered() {
-			bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
+			bg = scaleColorAlpha(popupTheme.HoverBg, alpha)
+			fg = scaleColorAlpha(popupTheme.HoverText, alpha)
 		}
 		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, label)
 				lbl.Font.Typeface = typeface
-				lbl.TextSize = scaleThemeFontSize(th, 12)
-				lbl.Color = txtColor
+				lbl.TextSize = ui.functionBarTextSize()
+				lbl.Color = fg
 				lbl.MaxLines = 1
 				lbl.Font.Weight = font.Medium
 				return lbl.Layout(gtx)

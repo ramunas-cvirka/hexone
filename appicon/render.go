@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	"image/png"
 	"os"
@@ -19,11 +20,14 @@ const (
 	AppID    = "hexone"
 	AppTitle = "hexone"
 
-	iconVisibleAlphaThreshold = 24
-	iconVisibleMarginPct      = 0
-	macBundleTinyOverscanPct  = 10
-	macBundleSmallOverscanPct = 6
+	iconVisibleAlphaThreshold  = 24
+	iconVisibleMarginPct       = 0
+	macBundleTinyOverscanPct   = 10
+	macBundleSmallOverscanPct  = 6
+	macBundleBackdropRadiusPct = 23
 )
+
+var macBundleBackdropColor = color.NRGBA{R: 22, G: 26, B: 36, A: 255}
 
 // Embed the canonical icon artwork so every platform icon path is derived from
 // the same source image and does not depend on the working directory.
@@ -127,7 +131,7 @@ func macBundleAppIconPNG(size int) ([]byte, error) {
 		return cached.([]byte), nil
 	}
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, renderOverscannedAppIcon(size, macBundleIconOverscanPct(size))); err != nil {
+	if err := png.Encode(&buf, renderMacBundleAppIcon(size)); err != nil {
 		return nil, err
 	}
 	data := append([]byte(nil), buf.Bytes()...)
@@ -144,6 +148,22 @@ func macBundleIconOverscanPct(size int) int {
 	default:
 		return 0
 	}
+}
+
+func renderMacBundleAppIcon(size int) *image.RGBA {
+	if size < 16 {
+		size = 16
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, size, size))
+	paintRoundedRect(dst, dst.Bounds(), float64(size)*macBundleBackdropRadiusPct/100, macBundleBackdropColor)
+	src, err := defaultAppIconPrepared()
+	if err != nil || src == nil {
+		return dst
+	}
+	overscan := size * macBundleIconOverscanPct(size) / 100
+	drawRect := image.Rect(-overscan, -overscan, size+overscan, size+overscan)
+	xdraw.CatmullRom.Scale(dst, drawRect, src, src.Bounds(), draw.Over, nil)
+	return dst
 }
 
 func defaultAppIconICO() ([]byte, error) {
@@ -356,6 +376,95 @@ func visibleSquareCrop(src image.Image, alphaThreshold uint8, marginPct int) ima
 		crop = crop.Add(image.Pt(0, srcBounds.Max.Y-crop.Max.Y))
 	}
 	return crop.Intersect(srcBounds)
+}
+
+func paintRoundedRect(dst *image.RGBA, rect image.Rectangle, radius float64, fill color.NRGBA) {
+	if dst == nil || rect.Empty() || fill.A == 0 {
+		return
+	}
+	width := rect.Dx()
+	height := rect.Dy()
+	if width < 1 || height < 1 {
+		return
+	}
+	maxRadius := float64(width)
+	if float64(height) < maxRadius {
+		maxRadius = float64(height)
+	}
+	maxRadius *= 0.5
+	if radius < 0 {
+		radius = 0
+	}
+	if radius > maxRadius {
+		radius = maxRadius
+	}
+	const samples = 4
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
+		for x := rect.Min.X; x < rect.Max.X; x++ {
+			coverage := roundedRectPixelCoverage(x, y, rect, radius, samples)
+			if coverage <= 0 {
+				continue
+			}
+			a := uint8(float64(fill.A)*coverage + 0.5)
+			dst.SetRGBA(x, y, color.RGBA{R: fill.R, G: fill.G, B: fill.B, A: a})
+		}
+	}
+}
+
+func roundedRectPixelCoverage(px, py int, rect image.Rectangle, radius float64, samples int) float64 {
+	if samples < 1 {
+		samples = 1
+	}
+	hits := 0
+	total := samples * samples
+	step := 1.0 / float64(samples)
+	for sy := 0; sy < samples; sy++ {
+		y := float64(py) + (float64(sy)+0.5)*step
+		for sx := 0; sx < samples; sx++ {
+			x := float64(px) + (float64(sx)+0.5)*step
+			if pointInRoundedRect(x, y, rect, radius) {
+				hits++
+			}
+		}
+	}
+	return float64(hits) / float64(total)
+}
+
+func pointInRoundedRect(x, y float64, rect image.Rectangle, radius float64) bool {
+	left := float64(rect.Min.X)
+	top := float64(rect.Min.Y)
+	right := float64(rect.Max.X)
+	bottom := float64(rect.Max.Y)
+	if x < left || x >= right || y < top || y >= bottom {
+		return false
+	}
+	if radius <= 0 {
+		return true
+	}
+	if x >= left+radius && x < right-radius {
+		return true
+	}
+	if y >= top+radius && y < bottom-radius {
+		return true
+	}
+
+	cx := x
+	switch {
+	case x < left+radius:
+		cx = left + radius
+	case x >= right-radius:
+		cx = right - radius
+	}
+	cy := y
+	switch {
+	case y < top+radius:
+		cy = top + radius
+	case y >= bottom-radius:
+		cy = bottom - radius
+	}
+	dx := x - cx
+	dy := y - cy
+	return dx*dx+dy*dy <= radius*radius
 }
 
 func visibleAlphaBounds(src image.Image, alphaThreshold uint8) image.Rectangle {

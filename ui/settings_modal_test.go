@@ -32,6 +32,45 @@ func TestSettingsTabIndexOrder(t *testing.T) {
 	}
 }
 
+func TestSettingsShiftTabWraps(t *testing.T) {
+	cases := []struct {
+		key  string
+		step int
+		want string
+	}{
+		{key: "general", step: -1, want: "config"},
+		{key: "config", step: 1, want: "general"},
+		{key: "viewer", step: 1, want: "associations"},
+		{key: "colors", step: -1, want: "associations"},
+	}
+	for _, tc := range cases {
+		if got := settingsShiftTab(tc.key, tc.step); got != tc.want {
+			t.Fatalf("settingsShiftTab(%q, %d)=%q want %q", tc.key, tc.step, got, tc.want)
+		}
+	}
+}
+
+func TestSettingsStepActiveTabSetsPulse(t *testing.T) {
+	now := time.Date(2026, time.March, 10, 12, 0, 0, 0, time.UTC)
+	st := &settingsModalState{activeTab: "general"}
+
+	if !st.stepActiveTab(1, now) {
+		t.Fatal("stepActiveTab should report a tab change")
+	}
+	if st.activeTab != "viewer" {
+		t.Fatalf("activeTab=%q want %q", st.activeTab, "viewer")
+	}
+	if st.navPrevTab != "general" {
+		t.Fatalf("navPrevTab=%q want %q", st.navPrevTab, "general")
+	}
+	if st.navPulseKey != "viewer" {
+		t.Fatalf("navPulseKey=%q want %q", st.navPulseKey, "viewer")
+	}
+	if st.navPulseAt != now {
+		t.Fatalf("navPulseAt=%v want %v", st.navPulseAt, now)
+	}
+}
+
 func TestSettingsTabPositionSlidesToAssociations(t *testing.T) {
 	now := time.Date(2026, time.March, 7, 10, 0, 0, 0, time.UTC)
 	st := &settingsModalState{activeTab: "general"}

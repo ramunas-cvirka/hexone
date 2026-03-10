@@ -3,6 +3,7 @@ package ui
 import (
 	"hexone/filesys"
 	"hexone/fm"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -114,5 +115,94 @@ func TestStartFileExternalOpenFallsBackToSystemAssociation(t *testing.T) {
 	}
 	if pane.noticeText != "" {
 		t.Fatalf("system association open should stay quiet, got notice %q", pane.noticeText)
+	}
+}
+
+func TestDoubleClickFileUsesSystemAssociationOnly(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.fmCfg.Associations = []fm.AssociationProgram{
+		{AppPath: `C:\Apps\pdf.exe`, Extensions: []string{".pdf"}},
+	}
+
+	pane := ui.filePanes[0]
+	pane.model = &filePaneModel{
+		entries: []filesys.Entry{{
+			Path:        `C:\tmp\report.pdf`,
+			DisplayName: "report.pdf",
+			Kind:        filesys.EntryFile,
+		}},
+		cfg: ui.fmCfg,
+	}
+	pane.table.Selected = 0
+
+	var openedPath string
+	prevConfigured := openFileWithConfiguredAppFunc
+	prevSystem := openFileWithSystemAssociationFunc
+	openFileWithConfiguredAppFunc = func(appPath, filePath string) error {
+		t.Fatalf("configured app should not be used on double click, got %q %q", appPath, filePath)
+		return nil
+	}
+	openFileWithSystemAssociationFunc = func(filePath string) error {
+		openedPath = filePath
+		return nil
+	}
+	defer func() {
+		openFileWithConfiguredAppFunc = prevConfigured
+		openFileWithSystemAssociationFunc = prevSystem
+	}()
+
+	if !ui.activateFilePaneDoubleClick(0, 0) {
+		t.Fatal("activateFilePaneDoubleClick returned false")
+	}
+
+	if openedPath != `C:\tmp\report.pdf` {
+		t.Fatalf("opened path = %q, want report.pdf path", openedPath)
+	}
+	if pane.noticeText != "" {
+		t.Fatalf("system association double click should stay quiet, got notice %q", pane.noticeText)
+	}
+}
+
+func TestDoubleClickDirectoryStillNavigates(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	root := t.TempDir()
+	target := filepath.Join(root, "docs")
+
+	pane.dir = root
+	pane.model = &filePaneModel{
+		entries: []filesys.Entry{{
+			Path:        target,
+			DisplayName: "docs",
+			Kind:        filesys.EntryDir,
+			CanEnter:    true,
+		}},
+		cfg: ui.fmCfg,
+	}
+	pane.table.Selected = 0
+
+	prevConfigured := openFileWithConfiguredAppFunc
+	prevSystem := openFileWithSystemAssociationFunc
+	openFileWithConfiguredAppFunc = func(appPath, filePath string) error {
+		t.Fatalf("configured app should not be used for directories, got %q %q", appPath, filePath)
+		return nil
+	}
+	openFileWithSystemAssociationFunc = func(filePath string) error {
+		t.Fatalf("system association should not be used for directories, got %q", filePath)
+		return nil
+	}
+	defer func() {
+		openFileWithConfiguredAppFunc = prevConfigured
+		openFileWithSystemAssociationFunc = prevSystem
+	}()
+
+	if !ui.activateFilePaneDoubleClick(0, 0) {
+		t.Fatal("activateFilePaneDoubleClick returned false")
+	}
+	if !pane.loading {
+		t.Fatal("double click on directory should trigger navigation load")
+	}
+	if got, want := pane.loadingDir, filepath.Clean(target); got != want {
+		t.Fatalf("loading dir = %q, want %q", got, want)
 	}
 }

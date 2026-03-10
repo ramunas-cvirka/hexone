@@ -192,74 +192,85 @@ func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
 }
 
 type filePaneState struct {
-	table                *table.Table
-	model                *filePaneModel
-	pathSegClicks        []widget.Clickable
-	pathEdit             widget.Editor
-	pathEditing          bool
-	pathEditFocus        bool
-	inlineNameEdit       widget.Editor
-	inlineNameEditing    bool
-	inlineNameFocus      bool
-	inlineNameRow        int
-	inlineNamePath       string
-	inlineNameOriginal   string
-	inlineNameRect       image.Rectangle
-	inlineNamePendingRow int
-	inlineNamePendingAt  time.Time
-	pathClickKey         string
-	pathClickAt          time.Time
-	pendingPathNav       string
-	pendingPathAt        time.Time
-	tableClickRow        int
-	tableClickCol        int
-	tableClickAt         time.Time
-	pathRowClick         widget.Clickable
-	modeClick            widget.Clickable
-	sortClick            widget.Clickable
-	favoriteClick        widget.Clickable
-	disconnectClick      widget.Clickable
-	tablePointerTag      uiEventTag
-	sortOptionBtns       [4]widget.Clickable
-	sortMenuOpen         bool
-	favoritePointerTag   uiEventTag
-	favoriteMenuClick    widget.Clickable
-	favoriteOptionClicks []widget.Clickable
-	favoriteRemoveClicks []widget.Clickable
-	favoriteMenuOpen     bool
-	favoriteMenuRect     image.Rectangle
-	favoriteHoverKey     string
-	favoriteHoverLabel   string
-	favoriteHoverAt      time.Time
-	headerHeight         int
-	ctxPointerTag        uiEventTag
-	ctxMenuClicks        []widget.Clickable
-	ctxMenuOpen          bool
-	ctxMenuRow           int
-	ctxMenuPos           image.Point
-	ctxMenuRect          image.Rectangle
-	drivePointerTag      uiEventTag
-	driveMenuPointerTag  uiEventTag
-	driveMenuClicks      []widget.Clickable
-	driveMenuOpen        bool
-	driveMenuPos         image.Point
-	driveMenuRect        image.Rectangle
-	driveSegmentRect     image.Rectangle
-	sortKey              fileSortKey
-	sortDesc             bool
-	dirsFirst            bool
-	remote               *paneSSHSession
-	localDirBeforeRemote string
-	dir                  string
-	loading              bool
-	loadingDir           string
-	loadingStartedAt     time.Time
-	loadSeq              int
-	loadResultCh         chan filePaneLoadResult
-	err                  string
-	noticeText           string
-	noticeUntil          time.Time
-	markedRows           map[int]struct{}
+	table                 *table.Table
+	model                 *filePaneModel
+	pathSegClicks         []widget.Clickable
+	pathEdit              widget.Editor
+	pathEditing           bool
+	pathEditFocus         bool
+	inlineNameEdit        widget.Editor
+	inlineNameEditing     bool
+	inlineNameFocus       bool
+	inlineNameRow         int
+	inlineNamePath        string
+	inlineNameOriginal    string
+	inlineNameRect        image.Rectangle
+	inlineNamePendingRow  int
+	inlineNamePendingAt   time.Time
+	pathClickKey          string
+	pathClickAt           time.Time
+	pendingPathNav        string
+	pendingPathAt         time.Time
+	tableClickRow         int
+	tableClickCol         int
+	tableClickAt          time.Time
+	pathRowClick          widget.Clickable
+	modeClick             widget.Clickable
+	sortClick             widget.Clickable
+	favoriteClick         widget.Clickable
+	disconnectClick       widget.Clickable
+	tablePointerTag       uiEventTag
+	sortOptionBtns        [4]widget.Clickable
+	sortMenuOpen          bool
+	sortMenuOpenedAt      time.Time
+	sortMenuHoverID       string
+	sortMenuHoverAnim     segmentedAnimState
+	favoritePointerTag    uiEventTag
+	favoriteMenuClick     widget.Clickable
+	favoriteOptionClicks  []widget.Clickable
+	favoriteRemoveClicks  []widget.Clickable
+	favoriteMenuOpen      bool
+	favoriteMenuRect      image.Rectangle
+	favoriteMenuOpenedAt  time.Time
+	favoriteMenuHoverID   string
+	favoriteMenuHoverAnim segmentedAnimState
+	favoriteHoverKey      string
+	favoriteHoverLabel    string
+	favoriteHoverAt       time.Time
+	headerHeight          int
+	ctxPointerTag         uiEventTag
+	ctxMenuClicks         map[string]*widget.Clickable
+	ctxMenuOpen           bool
+	ctxMenuRow            int
+	ctxMenuPos            image.Point
+	ctxMenuRects          []image.Rectangle
+	ctxMenuItemRects      map[string]image.Rectangle
+	ctxMenuPath           []string
+	ctxMenuOpenedAt       time.Time
+	ctxMenuHoverID        string
+	ctxMenuHoverAnim      segmentedAnimState
+	drivePointerTag       uiEventTag
+	driveMenuPointerTag   uiEventTag
+	driveMenuClicks       []widget.Clickable
+	driveMenuOpen         bool
+	driveMenuPos          image.Point
+	driveMenuRect         image.Rectangle
+	driveSegmentRect      image.Rectangle
+	sortKey               fileSortKey
+	sortDesc              bool
+	dirsFirst             bool
+	remote                *paneSSHSession
+	localDirBeforeRemote  string
+	dir                   string
+	loading               bool
+	loadingDir            string
+	loadingStartedAt      time.Time
+	loadSeq               int
+	loadResultCh          chan filePaneLoadResult
+	err                   string
+	noticeText            string
+	noticeUntil           time.Time
+	markedRows            map[int]struct{}
 }
 
 type filePaneLoadResult struct {
@@ -677,7 +688,17 @@ func (p *filePaneState) closeContextMenu() {
 	}
 	p.ctxMenuOpen = false
 	p.ctxMenuRow = -1
-	p.ctxMenuRect = image.Rectangle{}
+	p.ctxMenuRects = nil
+	p.ctxMenuPath = nil
+	p.ctxMenuOpenedAt = time.Time{}
+	p.ctxMenuHoverID = ""
+	p.ctxMenuHoverAnim = segmentedAnimState{}
+	if p.table != nil {
+		p.table.ResetPointerState()
+	}
+	if p.ctxMenuItemRects != nil {
+		clear(p.ctxMenuItemRects)
+	}
 }
 
 func (p *filePaneState) closeFavoriteMenu() {
@@ -686,9 +707,46 @@ func (p *filePaneState) closeFavoriteMenu() {
 	}
 	p.favoriteMenuOpen = false
 	p.favoriteMenuRect = image.Rectangle{}
+	p.favoriteMenuOpenedAt = time.Time{}
+	p.favoriteMenuHoverID = ""
+	p.favoriteMenuHoverAnim = segmentedAnimState{}
 	p.favoriteHoverKey = ""
 	p.favoriteHoverLabel = ""
 	p.favoriteHoverAt = time.Time{}
+}
+
+func (p *filePaneState) openFavoriteMenu(now time.Time) {
+	if p == nil {
+		return
+	}
+	p.favoriteMenuOpen = true
+	p.favoriteMenuRect = image.Rectangle{}
+	p.favoriteMenuOpenedAt = now
+	p.favoriteMenuHoverID = ""
+	p.favoriteMenuHoverAnim = segmentedAnimState{}
+	p.favoriteHoverKey = ""
+	p.favoriteHoverLabel = ""
+	p.favoriteHoverAt = time.Time{}
+}
+
+func (p *filePaneState) closeSortMenu() {
+	if p == nil {
+		return
+	}
+	p.sortMenuOpen = false
+	p.sortMenuOpenedAt = time.Time{}
+	p.sortMenuHoverID = ""
+	p.sortMenuHoverAnim = segmentedAnimState{}
+}
+
+func (p *filePaneState) openSortMenu(now time.Time) {
+	if p == nil {
+		return
+	}
+	p.sortMenuOpen = true
+	p.sortMenuOpenedAt = now
+	p.sortMenuHoverID = ""
+	p.sortMenuHoverAnim = segmentedAnimState{}
 }
 
 func (p *filePaneState) closeDriveMenu() {
@@ -699,14 +757,24 @@ func (p *filePaneState) closeDriveMenu() {
 	p.driveMenuRect = image.Rectangle{}
 }
 
-func (p *filePaneState) openContextMenu(row int, pos image.Point) {
+func (p *filePaneState) openContextMenu(row int, pos image.Point, now time.Time) {
 	if p == nil {
 		return
 	}
 	p.ctxMenuOpen = true
 	p.ctxMenuRow = row
 	p.ctxMenuPos = pos
-	p.ctxMenuRect = image.Rectangle{}
+	p.ctxMenuRects = nil
+	p.ctxMenuPath = nil
+	p.ctxMenuOpenedAt = now
+	p.ctxMenuHoverID = ""
+	p.ctxMenuHoverAnim = segmentedAnimState{}
+	if p.table != nil {
+		p.table.ResetPointerState()
+	}
+	if p.ctxMenuItemRects != nil {
+		clear(p.ctxMenuItemRects)
+	}
 }
 
 func (p *filePaneState) openDriveMenu(pos image.Point) {
@@ -718,14 +786,19 @@ func (p *filePaneState) openDriveMenu(pos image.Point) {
 	p.driveMenuRect = image.Rectangle{}
 }
 
-func (p *filePaneState) ensureContextMenuClicks(n int) {
-	if n <= cap(p.ctxMenuClicks) {
-		p.ctxMenuClicks = p.ctxMenuClicks[:n]
-		return
+func (p *filePaneState) contextMenuClick(id string) *widget.Clickable {
+	if p == nil || strings.TrimSpace(id) == "" {
+		return nil
 	}
-	old := p.ctxMenuClicks
-	p.ctxMenuClicks = make([]widget.Clickable, n)
-	copy(p.ctxMenuClicks, old)
+	if p.ctxMenuClicks == nil {
+		p.ctxMenuClicks = make(map[string]*widget.Clickable)
+	}
+	if click, ok := p.ctxMenuClicks[id]; ok {
+		return click
+	}
+	click := &widget.Clickable{}
+	p.ctxMenuClicks[id] = click
+	return click
 }
 
 func (p *filePaneState) ensureFavoriteOptionClicks(n int) {
@@ -1078,11 +1151,6 @@ func (p *filePaneState) contextMenuEntry() *filesys.Entry {
 	return p.model.Entry(p.ctxMenuRow)
 }
 
-type fileContextMenuSpec struct {
-	title string
-	items []string
-}
-
 type fileFavoriteItem struct {
 	label      string
 	targetDir  string
@@ -1090,71 +1158,6 @@ type fileFavoriteItem struct {
 	active     bool
 	disabled   bool
 	removable  bool
-}
-
-func (p *filePaneState) contextMenuSpec() fileContextMenuSpec {
-	entry := p.contextMenuEntry()
-	if entry == nil {
-		return fileContextMenuSpec{
-			title: "This Folder",
-			items: []string{
-				"New Folder",
-				"New File",
-				"Paste",
-				"Refresh",
-				"Properties",
-			},
-		}
-	}
-
-	title := entry.DisplayName
-	if title == "" {
-		title = entry.Name
-	}
-	if title == "" {
-		title = entry.Path
-	}
-
-	switch entry.Kind {
-	case filesys.EntryParent:
-		return fileContextMenuSpec{
-			title: title,
-			items: []string{
-				"Open",
-				"Open in Other Pane",
-				"Copy Path",
-				"Properties",
-			},
-		}
-	case filesys.EntryDir:
-		return fileContextMenuSpec{
-			title: title,
-			items: []string{
-				"Open",
-				"Open in Other Pane",
-				"Rename",
-				"Copy",
-				"Cut",
-				"Delete",
-				"Copy Path",
-				"Properties",
-			},
-		}
-	default:
-		return fileContextMenuSpec{
-			title: title,
-			items: []string{
-				"Open",
-				"Open With...",
-				"Rename",
-				"Copy",
-				"Cut",
-				"Delete",
-				"Copy Path",
-				"Properties",
-			},
-		}
-	}
 }
 
 func normalizeFavoriteLocation(raw string) string {
@@ -1338,10 +1341,6 @@ func (ui *UI) paneFavoriteItems(pane *filePaneState) []fileFavoriteItem {
 		return []fileFavoriteItem{{label: "Add current dir", addCurrent: true}}
 	}
 	items := make([]fileFavoriteItem, 0, 2+len(ui.fmCfg.FavoriteLocations))
-	items = append(items, fileFavoriteItem{
-		label:      "Add current dir",
-		addCurrent: true,
-	})
 
 	hasFavorites := false
 	current := ""
@@ -1376,6 +1375,10 @@ func (ui *UI) paneFavoriteItems(pane *filePaneState) []fileFavoriteItem {
 			disabled: true,
 		})
 	}
+	items = append(items, fileFavoriteItem{
+		label:      "Add current dir",
+		addCurrent: true,
+	})
 	return items
 }
 
@@ -2024,7 +2027,7 @@ func (ui *UI) closeSortMenusExcept(active int) {
 		if pane == nil || i == active {
 			continue
 		}
-		pane.sortMenuOpen = false
+		pane.closeSortMenu()
 	}
 }
 
@@ -2090,7 +2093,7 @@ func (ui *UI) openPaneDriveMenu(idx int) bool {
 	ui.closeDriveMenusExcept(idx)
 	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
-	pane.sortMenuOpen = false
+	pane.closeSortMenu()
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
@@ -2157,7 +2160,7 @@ func (ui *UI) requestPaneLoadWithSelection(idx int, dir, primaryPath, secondaryP
 	}
 	ui.setActiveFilePane(idx)
 
-	pane.sortMenuOpen = false
+	pane.closeSortMenu()
 	pane.closeFavoriteMenu()
 	pane.closeDriveMenu()
 	pane.closeContextMenu()
@@ -2301,7 +2304,7 @@ func (ui *UI) togglePaneSortDirection(idx int) {
 	}
 	pane.sortDesc = !pane.sortDesc
 	pane.applySort(preserve)
-	pane.sortMenuOpen = false
+	pane.closeSortMenu()
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 }
@@ -2323,7 +2326,7 @@ func (ui *UI) choosePaneSort(idx int, key fileSortKey) {
 		pane.setSortKey(key)
 		pane.applySort(preserve)
 	}
-	pane.sortMenuOpen = false
+	pane.closeSortMenu()
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 }
@@ -2356,14 +2359,49 @@ func (ui *UI) queueFilePaneOpen(idx, row int) {
 	}
 }
 
+func (ui *UI) queueFilePaneSystemOpen(idx, row int) {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return
+	}
+	ui.pendingFileOpen = &fileOpenRequest{
+		pane:           idx,
+		row:            row,
+		systemOpenOnly: true,
+	}
+}
+
 func (ui *UI) flushPendingFileOpen() bool {
 	req := ui.pendingFileOpen
 	if req == nil {
 		return false
 	}
 	ui.pendingFileOpen = nil
+	if req.systemOpenOnly {
+		return ui.activateFilePaneDoubleClick(req.pane, req.row)
+	}
 	_ = ui.activateFilePaneRow(req.pane, req.row)
 	return true
+}
+
+func (ui *UI) activateFilePaneDoubleClick(idx, row int) bool {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil || pane.model == nil {
+		return false
+	}
+	entry := pane.model.Entry(row)
+	if entry == nil {
+		return false
+	}
+	switch entry.Kind {
+	case filesys.EntryDir, filesys.EntryParent:
+		return ui.activateFilePaneRow(idx, row)
+	default:
+		ui.startFileSystemOpenAction(idx, row, time.Now())
+		return true
+	}
 }
 
 func (ui *UI) activateFilePaneRow(idx, row int) bool {
@@ -2390,7 +2428,7 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 	return true
 }
 
-func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point) {
+func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point, now time.Time) {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return
 	}
@@ -2403,8 +2441,45 @@ func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point) {
 	ui.closeDriveMenusExcept(idx)
 	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
-	pane.sortMenuOpen = false
+	pane.closeSortMenu()
 	pane.closeDriveMenu()
 	pane.closeFavoriteMenu()
-	pane.openContextMenu(row, pos)
+	pane.openContextMenu(row, pos, now)
+}
+
+func (ui *UI) prepareFilePaneContextMenuTarget(pane *filePaneState, row int) bool {
+	if pane == nil || pane.table == nil || row < 0 {
+		return false
+	}
+	total := 0
+	if pane.model != nil {
+		total = pane.model.Len()
+	}
+	selectionChanged := false
+	if row != pane.table.Selected {
+		prev := pane.table.Selected
+		pane.table.SetSelected(row, total, false)
+		if pane.table.OnSelect != nil && prev != pane.table.Selected {
+			pane.table.OnSelect(pane.table.Selected)
+		}
+		selectionChanged = prev != pane.table.Selected
+	}
+	if !pane.isMarkedRow(row) && pane.clearMarkedRows() {
+		selectionChanged = true
+	}
+	return selectionChanged
+}
+
+func (ui *UI) openFilePaneContextMenuAtPointer(idx int, pane *filePaneState, pos image.Point, now time.Time) bool {
+	if pane == nil || pane.table == nil {
+		return false
+	}
+	total := 0
+	if pane.model != nil {
+		total = pane.model.Len()
+	}
+	row := pane.table.HitRow(pos, total)
+	selectionChanged := ui.prepareFilePaneContextMenuTarget(pane, row)
+	ui.openFilePaneContextMenu(idx, row, pos, now)
+	return selectionChanged
 }

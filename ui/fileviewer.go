@@ -101,6 +101,8 @@ type fileViewerState struct {
 	menuOpen          bool
 	menuPos           image.Point
 	menuRect          image.Rectangle
+	menuOpenedAt      time.Time
+	menuHoverID       string
 	menuPointerTag    fileViewerEventTag
 	scrollCarry       float32
 	scrollbarTrack    image.Rectangle
@@ -119,6 +121,7 @@ type fileViewerState struct {
 	resultCh       chan fileViewerResult
 	historyClicks  map[string]*widget.Clickable
 	tabAnim        segmentedAnimState
+	menuHoverAnim  segmentedAnimState
 }
 
 type fileViewerResult struct {
@@ -128,6 +131,28 @@ type fileViewerResult struct {
 	err     string
 	partial bool
 	final   bool
+}
+
+func (st *fileViewerState) openContextMenu(pos image.Point, now time.Time) {
+	if st == nil {
+		return
+	}
+	st.menuOpen = true
+	st.menuPos = pos
+	st.menuOpenedAt = now
+	st.menuHoverID = ""
+	st.menuHoverAnim = segmentedAnimState{}
+}
+
+func (st *fileViewerState) closeContextMenu() {
+	if st == nil {
+		return
+	}
+	st.menuOpen = false
+	st.menuRect = image.Rectangle{}
+	st.menuOpenedAt = time.Time{}
+	st.menuHoverID = ""
+	st.menuHoverAnim = segmentedAnimState{}
 }
 
 func (ui *UI) handleFileViewerKeys(gtx layout.Context) {

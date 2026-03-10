@@ -252,8 +252,7 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 			}
 			if pe.Buttons.Contain(pointer.ButtonSecondary) {
 				st.setHistoryOpen(false, gtx.Now)
-				st.menuOpen = true
-				st.menuPos = pos
+				st.openContextMenu(pos, gtx.Now)
 				continue
 			}
 			if pe.Buttons.Contain(pointer.ButtonPrimary) && st.scrollbarVisible && viewerPointInRect(pos, st.scrollbarTrack) {
@@ -268,7 +267,7 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 				st.markUserBrowsing(gtx.Now)
 				st.setHistoryOpen(false, gtx.Now)
 				if st.menuOpen {
-					st.menuOpen = false
+					st.closeContextMenu()
 				}
 				st.updateScrollbarHover(pos)
 			}
@@ -420,7 +419,7 @@ func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context
 	}
 	if st.copyToggle.Clicked(gtx) {
 		_ = ui.copyFileViewerText(gtx, true)
-		st.menuOpen = false
+		st.closeContextMenu()
 	}
 	for {
 		ev, ok := gtx.Event(pointer.Filter{
@@ -441,18 +440,24 @@ func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context
 		if st.menuRect.Dx() <= 0 || st.menuRect.Dy() <= 0 ||
 			pos.X < st.menuRect.Min.X || pos.X >= st.menuRect.Max.X ||
 			pos.Y < st.menuRect.Min.Y || pos.Y >= st.menuRect.Max.Y {
-			st.menuOpen = false
+			st.closeContextMenu()
 		}
 	}
 	if !st.menuOpen {
 		return layout.Dimensions{}
 	}
 
+	alpha, slideY, animating := popupOpenProgress(gtx.Now, st.menuOpenedAt)
+	if animating {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+	}
 	m := op.Record(gtx.Ops)
-	menuDims := ui.layoutFileViewerContextMenuCard(th, gtx, st)
+	menuDims := ui.layoutFileViewerContextMenuCard(th, gtx, st, alpha)
 	call := m.Stop()
 
-	anchor := clampFilePaneMenuPoint(st.menuPos, menuDims.Size, gtx.Constraints.Max)
+	anchor := st.menuPos
+	anchor.Y += slideY
+	anchor = clampFilePaneMenuPoint(anchor, menuDims.Size, gtx.Constraints.Max)
 	st.menuRect = image.Rectangle{Min: anchor, Max: anchor.Add(menuDims.Size)}
 
 	bodyClip := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
@@ -468,38 +473,39 @@ func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
-func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
-	width := gtx.Dp(unit.Dp(132))
+func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Context, st *fileViewerState, alpha float32) layout.Dimensions {
+	width := gtx.Dp(unit.Dp(96))
 	if width > gtx.Constraints.Max.X {
 		width = gtx.Constraints.Max.X
 	}
 	if width < 1 {
 		width = 1
 	}
+	theme := ui.filePanePopupTheme()
+	item := fileContextMenuItem{ID: "viewer-copy", Label: "Copy"}
 	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
-		return fillRoundedBox(
+		return fillRoundedClipBox(
 			gtx,
 			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-			color.NRGBA{R: 20, G: 24, B: 34, A: 250},
-			color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+			scaleColorAlpha(theme.Bg, alpha),
+			scaleColorAlpha(theme.Border, alpha),
 			func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return st.copyToggle.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						bg := color.NRGBA{R: 96, G: 130, B: 186, A: 24}
-						if st.copyToggle.Hovered() {
-							bg = color.NRGBA{R: 96, G: 130, B: 186, A: 54}
-						}
-						return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body2(th, "Copy")
-								lbl.Font.Typeface = ui.viewerTypeface()
-								lbl.Font.Weight = font.Medium
-								lbl.TextSize = scaleThemeFontSize(th, 10)
-								lbl.Color = color.NRGBA{R: 224, G: 234, B: 252, A: 255}
-								return lbl.Layout(gtx)
-							})
-						})
-					})
+				return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					hoverID := ""
+					if st.copyToggle.Hovered() {
+						hoverID = item.ID
+					}
+					if hoverID != st.menuHoverID {
+						st.menuHoverID = hoverID
+						st.menuHoverAnim.setHover(hoverID, gtx.Now)
+						gtx.Execute(op.InvalidateCmd{})
+					}
+					hoverFill, hoverAnim := st.menuHoverAnim.hoverFill(gtx.Now, item.ID)
+					if hoverAnim {
+						gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+					}
+					dims, _, _ := ui.layoutFilePaneContextMenuItem(th, gtx, theme, &st.copyToggle, item, false, hoverFill, alpha, ui.fileContextMenuRowHeight(gtx, item))
+					return dims
 				})
 			},
 		)

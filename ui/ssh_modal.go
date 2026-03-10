@@ -787,7 +787,7 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 									return toolbarSeparator(gtx, stripH)
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return ui.layoutSSHFooterSegment(th, gtx, &st.saveClick, "Apply", hoverSave, pulseSave, stripH, false, false)
+									return ui.layoutSSHFooterSegment(th, gtx, &st.saveClick, "Save", hoverSave, pulseSave, stripH, false, false)
 								}),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return toolbarSeparator(gtx, stripH)

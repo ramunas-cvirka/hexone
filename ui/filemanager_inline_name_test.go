@@ -206,10 +206,10 @@ func TestHandleFilePaneContextMenuRenameUsesCapturedRow(t *testing.T) {
 	}
 
 	now := time.Date(2026, time.March, 9, 12, 0, 0, 0, time.UTC)
-	pane.openContextMenu(1, image.Point{})
+	pane.openContextMenu(1, image.Point{}, now)
 	row := pane.ctxMenuRow
 	pane.closeContextMenu()
-	ui.handleFilePaneContextMenuAction(0, pane, row, "Rename", now)
+	ui.handleFilePaneContextMenuAction(0, pane, row, filePaneMenuActionRename, now)
 
 	if !pane.inlineNameEditing || pane.inlineNameRow != 1 {
 		t.Fatal("context-menu rename should start editing the clicked row even after the menu closes")

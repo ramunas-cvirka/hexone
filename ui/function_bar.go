@@ -94,6 +94,9 @@ func (ui *UI) closeFunctionBarToolsMenu() {
 	}
 	ui.functionBarToolsOpen = false
 	ui.functionBarToolsRect = image.Rectangle{}
+	ui.functionBarToolsOpenedAt = time.Time{}
+	ui.functionBarToolsHoverID = ""
+	ui.functionBarToolsHoverAnim = segmentedAnimState{}
 }
 
 func (ui *UI) requestWindowClose() {
@@ -248,6 +251,9 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 			ui.closeFunctionBarToolsMenu()
 		} else {
 			ui.functionBarToolsOpen = true
+			ui.functionBarToolsOpenedAt = now
+			ui.functionBarToolsHoverID = ""
+			ui.functionBarToolsHoverAnim = segmentedAnimState{}
 		}
 		return true
 	case functionBarActionExit:
@@ -735,23 +741,13 @@ func (ui *UI) handleFunctionBarPopupOutsideClick(gtx layout.Context) {
 	}
 }
 
-func (ui *UI) registerFunctionBarPopupGlobalPointer(gtx layout.Context) {
-	if ui == nil || !ui.functionBarToolsOpen {
-		return
-	}
-	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
-	pass := pointer.PassOp{}.Push(gtx.Ops)
-	event.Op(gtx.Ops, &ui.functionBarPopupGlobalTag)
-	pass.Pop()
-}
-
 func (ui *UI) functionBarToolCardWidth(th *material.Theme, gtx layout.Context, items []functionBarToolSpec) int {
 	maxTextW := 0
 	for _, item := range items {
 		lbl := material.Body2(th, item.label)
 		lbl.Font.Typeface = ui.mainTypeface()
 		lbl.Font.Weight = font.Medium
-		lbl.TextSize = scaleThemeFontSize(th, 11)
+		lbl.TextSize = ui.functionBarTextSize()
 		lbl.MaxLines = 1
 		if w := measureLabelUnconstrained(gtx, lbl).Size.X; w > maxTextW {
 			maxTextW = w
@@ -760,9 +756,9 @@ func (ui *UI) functionBarToolCardWidth(th *material.Theme, gtx layout.Context, i
 	if maxTextW == 0 {
 		maxTextW = gtx.Dp(unit.Dp(96))
 	}
-	width := maxTextW + gtx.Dp(unit.Dp(30))
-	if width < gtx.Dp(unit.Dp(156)) {
-		width = gtx.Dp(unit.Dp(156))
+	width := maxTextW + gtx.Dp(unit.Dp(26))
+	if width < gtx.Dp(unit.Dp(132)) {
+		width = gtx.Dp(unit.Dp(132))
 	}
 	if width > gtx.Constraints.Max.X {
 		width = gtx.Constraints.Max.X
@@ -773,60 +769,75 @@ func (ui *UI) functionBarToolCardWidth(th *material.Theme, gtx layout.Context, i
 	return width
 }
 
-func (ui *UI) layoutFunctionBarToolOption(th *material.Theme, gtx layout.Context, click *widget.Clickable, item functionBarToolSpec) layout.Dimensions {
-	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		bg := color.NRGBA{}
-		fg := txtColor
-		if item.active {
-			bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
-			fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
-		} else if click.Hovered() {
-			bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-			fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+func (ui *UI) functionBarHoveredToolID(items []functionBarToolSpec) string {
+	if ui == nil {
+		return ""
+	}
+	hoverID := ""
+	for i, item := range items {
+		if i < len(ui.functionBarToolClicks) && ui.functionBarToolClicks[i].Hovered() {
+			hoverID = item.key
 		}
-		dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, item.label)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.Font.Weight = font.Medium
-				lbl.TextSize = scaleThemeFontSize(th, 11)
-				lbl.Color = fg
-				lbl.MaxLines = 1
-				return layoutVCenteredLabel(gtx, lbl)
-			})
-		})
-		defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
-		pointer.CursorPointer.Add(gtx.Ops)
-		return dims
-	})
+	}
+	return hoverID
 }
 
-func (ui *UI) layoutFunctionBarToolsCard(th *material.Theme, gtx layout.Context, items []functionBarToolSpec) layout.Dimensions {
+func (ui *UI) layoutFunctionBarToolOption(th *material.Theme, gtx layout.Context, theme filePanePopupTheme, click *widget.Clickable, item functionBarToolSpec, hoverFill, alpha float32) layout.Dimensions {
+	menuItem := fileContextMenuItem{ID: item.key, Label: item.label}
+	dims, _, _ := ui.layoutFilePaneContextMenuItem(
+		th,
+		gtx,
+		theme,
+		click,
+		menuItem,
+		item.active,
+		hoverFill,
+		alpha,
+		ui.fileContextMenuRowHeight(gtx, menuItem),
+	)
+	return dims
+}
+
+func (ui *UI) layoutFunctionBarToolsCard(th *material.Theme, gtx layout.Context, items []functionBarToolSpec, alpha float32) layout.Dimensions {
 	width := ui.functionBarToolCardWidth(th, gtx, items)
+	theme := ui.filePanePopupTheme()
+	hoverID := ui.functionBarHoveredToolID(items)
+	if hoverID != ui.functionBarToolsHoverID {
+		ui.functionBarToolsHoverID = hoverID
+		ui.functionBarToolsHoverAnim.setHover(hoverID, gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
-		dims := fillRoundedBox(
+		dims := fillRoundedClipBox(
 			gtx,
 			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-			color.NRGBA{R: 20, G: 24, B: 34, A: 250},
-			color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+			scaleColorAlpha(theme.Bg, alpha),
+			scaleColorAlpha(theme.Border, alpha),
 			func(gtx layout.Context) layout.Dimensions {
 				children := make([]layout.FlexChild, 0, len(items)+2)
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Caption(th, "Tools")
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.Font.Weight = font.Medium
-						lbl.TextSize = scaleThemeFontSize(th, 10)
-						lbl.Color = color.NRGBA{R: 170, G: 180, B: 205, A: 255}
-						lbl.MaxLines = 1
-						return lbl.Layout(gtx)
+					return fixedHeight(gtx, ui.fileContextMenuTitleHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Caption(th, "Tools")
+							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Weight = font.Medium
+							lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
+							lbl.Color = scaleColorAlpha(theme.Title, alpha)
+							lbl.MaxLines = 1
+							lbl.Truncator = "…"
+							return layoutVCenteredLabel(gtx, lbl)
+						})
 					})
 				}))
 				for i, item := range items {
 					i := i
 					item := item
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFunctionBarToolOption(th, gtx, &ui.functionBarToolClicks[i], item)
+						hoverFill, animating := ui.functionBarToolsHoverAnim.hoverFill(gtx.Now, item.key)
+						if animating {
+							gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+						}
+						return ui.layoutFunctionBarToolOption(th, gtx, theme, &ui.functionBarToolClicks[i], item, hoverFill, alpha)
 					}))
 				}
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
@@ -855,14 +866,21 @@ func (ui *UI) layoutFunctionBarPopup(th *material.Theme, gtx layout.Context) lay
 		}
 	}
 
+	alpha, slideY, animating := popupOpenProgress(gtx.Now, ui.functionBarToolsOpenedAt)
+	if animating {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+	}
+	blockClip := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
+	event.Op(gtx.Ops, &ui.functionBarPopupGlobalTag)
+	blockClip.Pop()
 	m := op.Record(gtx.Ops)
-	card := ui.layoutFunctionBarToolsCard(th, gtx, items)
+	card := ui.layoutFunctionBarToolsCard(th, gtx, items, alpha)
 	call := m.Stop()
 
 	anchorRect := ui.functionBarToolsAnchorRect(gtx)
 	anchor := image.Point{
 		X: anchorRect.Min.X,
-		Y: anchorRect.Max.Y + gtx.Dp(unit.Dp(functionBarPopupGapDp)),
+		Y: anchorRect.Max.Y + gtx.Dp(unit.Dp(functionBarPopupGapDp)) + slideY,
 	}
 	anchor = clampFilePaneMenuPoint(anchor, card.Size, gtx.Constraints.Max)
 	ui.functionBarToolsRect = image.Rectangle{Min: anchor, Max: anchor.Add(card.Size)}
@@ -874,6 +892,5 @@ func (ui *UI) layoutFunctionBarPopup(th *material.Theme, gtx layout.Context) lay
 	bodyClip.Pop()
 
 	ui.handleFunctionBarPopupOutsideClick(gtx)
-	ui.registerFunctionBarPopupGlobalPointer(gtx)
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
