@@ -7,12 +7,15 @@ import (
 	"unsafe"
 
 	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/input"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
+	"gioui.org/widget/material"
 	"hexone/fm"
 )
 
@@ -186,6 +189,35 @@ func TestViewerShowsAutoRefreshButtonOnlyForNonStreamingCommand(t *testing.T) {
 	}
 	if ui.viewerShowsAutoRefreshButton(&fileViewerState{mode: "command", commandInfinite: true}) {
 		t.Fatal("streaming command mode should not show refresh button")
+	}
+}
+
+func TestFileViewerInlineCommandDisplayWidthLeavesFullTextPadding(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &fileViewerState{
+		mode:    "command",
+		command: "cat {fullpath} --with-longer-token",
+	}
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(960, 48),
+		},
+	}
+
+	dims := ui.layoutFileViewerInlineCommand(th, gtx, st, 24)
+
+	lbl := material.Body2(th, st.command)
+	lbl.Font.Typeface = ui.viewerTypeface()
+	lbl.Font.Weight = font.Medium
+	lbl.TextSize = ui.viewerTextSize()
+	labelW := measureLabelUnconstrained(gtx, lbl).Size.X
+	wantPadding := gtx.Dp(unit.Dp(viewerInlineCommandDisplayInsetDp * 2))
+	if got := dims.Size.X - labelW; got < wantPadding {
+		t.Fatalf("inline command padding=%dpx want at least %dpx", got, wantPadding)
 	}
 }
 

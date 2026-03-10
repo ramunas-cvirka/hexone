@@ -21,6 +21,8 @@ const (
 
 	iconVisibleAlphaThreshold = 24
 	iconVisibleMarginPct      = 0
+	macBundleTinyOverscanPct  = 10
+	macBundleSmallOverscanPct = 6
 )
 
 // Embed the canonical icon artwork so every platform icon path is derived from
@@ -36,12 +38,13 @@ func init() {
 }
 
 var (
-	iconImageCache sync.Map
-	iconICOData    []byte
-	iconICOMu      sync.Mutex
-	iconPNGCache   sync.Map
-	x11IconData    []uint32
-	x11IconDataMu  sync.Mutex
+	iconImageCache  sync.Map
+	iconICOData     []byte
+	iconICOMu       sync.Mutex
+	iconPNGCache    sync.Map
+	macIconPNGCache sync.Map
+	x11IconData     []uint32
+	x11IconDataMu   sync.Mutex
 
 	iconSourceOnce   sync.Once
 	iconSourceImg    image.Image
@@ -66,6 +69,21 @@ func renderDefaultAppIcon(size int) *image.RGBA {
 	}
 
 	iconImageCache.Store(size, dst)
+	return dst
+}
+
+func renderOverscannedAppIcon(size int, overscanPct int) *image.RGBA {
+	if size < 16 {
+		size = 16
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, size, size))
+	src, err := defaultAppIconPrepared()
+	if err != nil || src == nil {
+		return dst
+	}
+	overscan := size * overscanPct / 100
+	drawRect := image.Rect(-overscan, -overscan, size+overscan, size+overscan)
+	xdraw.CatmullRom.Scale(dst, drawRect, src, src.Bounds(), draw.Over, nil)
 	return dst
 }
 
@@ -102,6 +120,30 @@ func defaultAppIconPNG(size int) ([]byte, error) {
 	data := append([]byte(nil), buf.Bytes()...)
 	iconPNGCache.Store(size, data)
 	return data, nil
+}
+
+func macBundleAppIconPNG(size int) ([]byte, error) {
+	if cached, ok := macIconPNGCache.Load(size); ok {
+		return cached.([]byte), nil
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, renderOverscannedAppIcon(size, macBundleIconOverscanPct(size))); err != nil {
+		return nil, err
+	}
+	data := append([]byte(nil), buf.Bytes()...)
+	macIconPNGCache.Store(size, data)
+	return data, nil
+}
+
+func macBundleIconOverscanPct(size int) int {
+	switch {
+	case size <= 32:
+		return macBundleTinyOverscanPct
+	case size <= 64:
+		return macBundleSmallOverscanPct
+	default:
+		return 0
+	}
 }
 
 func defaultAppIconICO() ([]byte, error) {
@@ -170,6 +212,61 @@ func WriteICO(path string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+func WritePNG(path string, size int) error {
+	data, err := defaultAppIconPNG(size)
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return fmt.Errorf("empty icon path")
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func WriteICNS(path string) error {
+	if path == "" {
+		return fmt.Errorf("empty icon path")
+	}
+	type iconChunk struct {
+		typ  string
+		size int
+	}
+	chunks := []iconChunk{
+		{typ: "ic11", size: 32},
+		{typ: "ic12", size: 64},
+		{typ: "ic07", size: 128},
+		{typ: "ic13", size: 256},
+		{typ: "ic08", size: 256},
+		{typ: "ic14", size: 512},
+		{typ: "ic09", size: 512},
+		{typ: "ic10", size: 1024},
+	}
+	type encodedChunk struct {
+		typ  string
+		data []byte
+	}
+	encoded := make([]encodedChunk, 0, len(chunks))
+	total := 8
+	for _, chunk := range chunks {
+		data, err := macBundleAppIconPNG(chunk.size)
+		if err != nil {
+			return err
+		}
+		encoded = append(encoded, encodedChunk{typ: chunk.typ, data: data})
+		total += 8 + len(data)
+	}
+
+	buf := bytes.NewBuffer(make([]byte, 0, total))
+	buf.WriteString("icns")
+	writeBE32(buf, uint32(total))
+	for _, chunk := range encoded {
+		buf.WriteString(chunk.typ)
+		writeBE32(buf, uint32(8+len(chunk.data)))
+		buf.Write(chunk.data)
+	}
+	return os.WriteFile(path, buf.Bytes(), 0o644)
+}
+
 func defaultAppIconX11Data() []uint32 {
 	x11IconDataMu.Lock()
 	defer x11IconDataMu.Unlock()
@@ -205,6 +302,12 @@ func writeLE16(buf *bytes.Buffer, v uint16) {
 func writeLE32(buf *bytes.Buffer, v uint32) {
 	var tmp [4]byte
 	binary.LittleEndian.PutUint32(tmp[:], v)
+	buf.Write(tmp[:])
+}
+
+func writeBE32(buf *bytes.Buffer, v uint32) {
+	var tmp [4]byte
+	binary.BigEndian.PutUint32(tmp[:], v)
 	buf.Write(tmp[:])
 }
 

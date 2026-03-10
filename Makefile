@@ -17,10 +17,18 @@ MACOS_CONTENTS := $(MACOS_APP)/Contents
 MACOS_BIN := $(MACOS_CONTENTS)/MacOS/$(APP)
 MACOS_RESOURCES := $(MACOS_CONTENTS)/Resources
 MACOS_PLIST := packaging/macos/Info.plist
-MACOS_ICONSET := $(DIST_DIR)/AppIcon.iconset
-MACOS_ICON_SOURCE := appicon/hexone_icon_art.png
 MACOS_DMG_STAGE := $(DIST_DIR)/$(APP)-macos-dmg-$(MACOS_ARCH)
 MACOS_DMG := $(DIST_DIR)/$(APP)_macos_$(MACOS_ARCH).dmg
+MACOS_CODESIGN_IDENTITY ?= -
+MACOS_NOTARY_PROFILE ?=
+
+ifeq ($(MACOS_CODESIGN_IDENTITY),-)
+MACOS_APP_CODESIGN_FLAGS := --timestamp=none
+MACOS_DMG_SIGN := false
+else
+MACOS_APP_CODESIGN_FLAGS := --options runtime
+MACOS_DMG_SIGN := true
+endif
 
 WINDOWS_ARCH := amd64
 WINDOWS_STAGE := $(DIST_DIR)/$(APP)-windows-$(WINDOWS_ARCH)-portable
@@ -71,27 +79,17 @@ build-linux: | $(DIST_DIR)
 
 build-macos: | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "darwin" ]; then \
-		echo "build-macos requires a macOS host with sips/iconutil (CGO-enabled Gio build)."; \
+		echo "build-macos requires a macOS host (CGO-enabled Gio build)."; \
 		exit 1; \
 	fi
-	rm -rf "$(MACOS_STAGE)" "$(MACOS_ICONSET)"
+	rm -rf "$(MACOS_STAGE)"
 	mkdir -p "$(MACOS_CONTENTS)/MacOS" "$(MACOS_RESOURCES)"
 	GOOS=darwin GOARCH=$(MACOS_ARCH) CGO_ENABLED=1 go build -o "$(MACOS_BIN)" $(CMD)
 	cp "$(MACOS_PLIST)" "$(MACOS_CONTENTS)/Info.plist"
 	cp protocols.yaml "$(MACOS_RESOURCES)/protocols.yaml"
-	mkdir -p "$(MACOS_ICONSET)"
-	sips -z 16 16 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_16x16.png" >/dev/null
-	sips -z 32 32 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_16x16@2x.png" >/dev/null
-	sips -z 32 32 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_32x32.png" >/dev/null
-	sips -z 64 64 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_32x32@2x.png" >/dev/null
-	sips -z 128 128 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_128x128.png" >/dev/null
-	sips -z 256 256 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_128x128@2x.png" >/dev/null
-	sips -z 256 256 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_256x256.png" >/dev/null
-	sips -z 512 512 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_256x256@2x.png" >/dev/null
-	sips -z 512 512 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_512x512.png" >/dev/null
-	sips -z 1024 1024 "$(MACOS_ICON_SOURCE)" --out "$(MACOS_ICONSET)/icon_512x512@2x.png" >/dev/null
-	iconutil -c icns "$(MACOS_ICONSET)" -o "$(MACOS_RESOURCES)/AppIcon.icns"
-	rm -rf "$(MACOS_ICONSET)"
+	HEXONE_WRITE_DEFAULT_ICON_ICNS="$(MACOS_RESOURCES)/AppIcon.icns" "$(MACOS_BIN)"
+	codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" $(MACOS_APP_CODESIGN_FLAGS) "$(MACOS_APP)"
+	codesign -v --verbose=2 "$(MACOS_APP)"
 
 build-windows: | $(DIST_DIR)
 	rm -rf "$(WINDOWS_STAGE)"
@@ -112,6 +110,13 @@ package-macos: build-macos
 	ditto "$(MACOS_APP)" "$(MACOS_DMG_STAGE)/$(APP).app"
 	ln -s /Applications "$(MACOS_DMG_STAGE)/Applications"
 	hdiutil create -volname "$(APP)" -srcfolder "$(MACOS_DMG_STAGE)" -ov -format UDZO "$(MACOS_DMG)"
+	@if [ "$(MACOS_DMG_SIGN)" = "true" ]; then \
+		codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" "$(MACOS_DMG)"; \
+	fi
+	@if [ -n "$(strip $(MACOS_NOTARY_PROFILE))" ]; then \
+		xcrun notarytool submit "$(MACOS_DMG)" --keychain-profile "$(MACOS_NOTARY_PROFILE)" --wait; \
+		xcrun stapler staple "$(MACOS_DMG)"; \
+	fi
 
 package-windows: build-windows
 	rm -f "$(WINDOWS_ZIP)"

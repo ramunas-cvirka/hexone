@@ -25,6 +25,12 @@ type viewerHeaderDetailPart struct {
 	Color color.NRGBA
 }
 
+const (
+	viewerInlineCommandMinWidthDp       = 96
+	viewerInlineCommandDisplayInsetDp   = 10
+	viewerInlineCommandMeasurePaddingDp = viewerInlineCommandDisplayInsetDp * 2
+)
+
 func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	st := ui.fileViewer
 	if st == nil {
@@ -973,20 +979,7 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 	if st.commandEditOn {
 		commandText = st.commandEditor.Text()
 	}
-	if strings.TrimSpace(commandText) == "" {
-		commandText = "cat {fullpath}"
-	}
-	measure := material.Body2(th, commandText)
-	measure.Font.Typeface = ui.viewerTypeface()
-	measure.Font.Weight = font.Medium
-	measure.TextSize = ui.viewerTextSize()
-	desiredW := measureLabelUnconstrained(gtx, measure).Size.X + gtx.Dp(unit.Dp(18))
-	if desiredW < gtx.Dp(unit.Dp(96)) {
-		desiredW = gtx.Dp(unit.Dp(96))
-	}
-	if maxW := gtx.Constraints.Max.X; maxW > 0 && desiredW > maxW {
-		desiredW = maxW
-	}
+	desiredW := ui.fileViewerInlineCommandWidth(th, gtx, commandText)
 	host := func(gtx layout.Context) layout.Dimensions {
 		return fixedWidth(gtx, desiredW, func(gtx layout.Context) layout.Dimensions {
 			return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
@@ -1047,6 +1040,24 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 		return ui.layoutEditorWithContextMenu(th, gtx, "viewer-command", &st.commandEditor, true, hostWithGuard)
 	}
 	return host(gtx)
+}
+
+func (ui *UI) fileViewerInlineCommandWidth(th *material.Theme, gtx layout.Context, commandText string) int {
+	if strings.TrimSpace(commandText) == "" {
+		commandText = "cat {fullpath}"
+	}
+	measure := material.Body2(th, commandText)
+	measure.Font.Typeface = ui.viewerTypeface()
+	measure.Font.Weight = font.Medium
+	measure.TextSize = ui.viewerTextSize()
+	desiredW := measureLabelUnconstrained(gtx, measure).Size.X + gtx.Dp(unit.Dp(viewerInlineCommandMeasurePaddingDp))
+	if desiredW < gtx.Dp(unit.Dp(viewerInlineCommandMinWidthDp)) {
+		desiredW = gtx.Dp(unit.Dp(viewerInlineCommandMinWidthDp))
+	}
+	if maxW := gtx.Constraints.Max.X; maxW > 0 && desiredW > maxW {
+		desiredW = maxW
+	}
+	return desiredW
 }
 
 func (ui *UI) layoutFileViewerHistoryList(th *material.Theme, gtx layout.Context, st *fileViewerState, history []string) layout.Dimensions {

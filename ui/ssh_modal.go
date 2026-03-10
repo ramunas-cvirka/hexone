@@ -304,7 +304,8 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		return layout.Dimensions{}
 	}
 
-	// Explicitly drain Ctrl/Cmd+F while modal is open to avoid macOS beep.
+	// Explicitly drain Ctrl/Cmd+F while modal is open to avoid macOS beep
+	// without stealing normal editor shortcuts such as paste/select-all.
 	anyMods := ^key.Modifiers(0)
 	for {
 		ev, ok := gtx.Event(
@@ -312,8 +313,6 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 			key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
 			key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
-			key.Filter{Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Required: key.ModShortcut, Optional: anyMods},
 		)
 		if !ok {
 			break

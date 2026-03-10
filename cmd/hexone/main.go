@@ -20,7 +20,21 @@ import (
 	"gioui.org/widget/material"
 )
 
+const defaultExportPNGIconSize = 1024
+
 func main() {
+	if exportPath := os.Getenv("HEXONE_WRITE_DEFAULT_ICON_ICNS"); exportPath != "" {
+		if err := appicon.WriteICNS(exportPath); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if exportPath := os.Getenv("HEXONE_WRITE_DEFAULT_ICON_PNG"); exportPath != "" {
+		if err := appicon.WritePNG(exportPath, defaultExportPNGIconSize); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if exportPath := os.Getenv("HEXONE_WRITE_DEFAULT_ICON"); exportPath != "" {
 		if err := appicon.WriteICO(exportPath); err != nil {
 			log.Fatal(err)

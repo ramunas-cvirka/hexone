@@ -54,6 +54,36 @@ func TestRenderDefaultAppIconGeometry(t *testing.T) {
 	}
 }
 
+func TestMacBundleIconOverscanPct(t *testing.T) {
+	if got := macBundleIconOverscanPct(16); got != macBundleTinyOverscanPct {
+		t.Fatalf("16px overscan = %d, want %d", got, macBundleTinyOverscanPct)
+	}
+	if got := macBundleIconOverscanPct(64); got != macBundleSmallOverscanPct {
+		t.Fatalf("64px overscan = %d, want %d", got, macBundleSmallOverscanPct)
+	}
+	if got := macBundleIconOverscanPct(128); got != 0 {
+		t.Fatalf("128px overscan = %d, want 0", got)
+	}
+}
+
+func TestTinyOverscannedAppIconGrowsVisibleBounds(t *testing.T) {
+	size := 32
+	base := visibleAlphaBounds(renderDefaultAppIcon(size), 8)
+	overscanned := visibleAlphaBounds(renderOverscannedAppIcon(size, macBundleIconOverscanPct(size)), 8)
+	if overscanned.Dx() < base.Dx() || overscanned.Dy() < base.Dy() {
+		t.Fatalf("overscanned icon should not shrink visible bounds: base=%v overscanned=%v", base, overscanned)
+	}
+}
+
+func TestLargeMacBundleIconKeepsFullArtworkVisible(t *testing.T) {
+	size := 128
+	base := visibleAlphaBounds(renderDefaultAppIcon(size), 8)
+	bundle := visibleAlphaBounds(renderOverscannedAppIcon(size, macBundleIconOverscanPct(size)), 8)
+	if bundle != base {
+		t.Fatalf("large bundle icon should match default bounds: base=%v bundle=%v", base, bundle)
+	}
+}
+
 func TestVisibleSquareCropKeepsContentCentered(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 100, 100))
 	fill := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
