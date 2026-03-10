@@ -19,6 +19,7 @@ MACOS_RESOURCES := $(MACOS_CONTENTS)/Resources
 MACOS_PLIST := packaging/macos/Info.plist
 MACOS_ICONSET := $(DIST_DIR)/AppIcon.iconset
 MACOS_ICON_SOURCE := appicon/hexone_icon_art.png
+MACOS_DMG_STAGE := $(DIST_DIR)/$(APP)-macos-dmg-$(MACOS_ARCH)
 MACOS_DMG := $(DIST_DIR)/$(APP)_macos_$(MACOS_ARCH).dmg
 
 WINDOWS_ARCH := amd64
@@ -106,7 +107,11 @@ package-linux: build-linux
 
 package-macos: build-macos
 	rm -f "$(MACOS_DMG)"
-	hdiutil create -volname "$(APP)" -srcfolder "$(MACOS_STAGE)" -ov -format UDZO "$(MACOS_DMG)"
+	rm -rf "$(MACOS_DMG_STAGE)"
+	mkdir -p "$(MACOS_DMG_STAGE)"
+	ditto "$(MACOS_APP)" "$(MACOS_DMG_STAGE)/$(APP).app"
+	ln -s /Applications "$(MACOS_DMG_STAGE)/Applications"
+	hdiutil create -volname "$(APP)" -srcfolder "$(MACOS_DMG_STAGE)" -ov -format UDZO "$(MACOS_DMG)"
 
 package-windows: build-windows
 	rm -f "$(WINDOWS_ZIP)"
