@@ -12,6 +12,16 @@ func ApplyWindowOptions(window *app.Window, session *fm.SessionState) {
 		return
 	}
 	preparePlatformWindowRestore(session)
+	opts := windowOptionsForSession(session)
+	if len(opts) > 0 {
+		window.Option(opts...)
+	}
+}
+
+func windowOptionsForSession(session *fm.SessionState) []app.Option {
+	if session == nil {
+		return nil
+	}
 	pxPerDp := session.Window.PxPerDp
 	if pxPerDp <= 0 {
 		pxPerDp = 1
@@ -24,7 +34,7 @@ func ApplyWindowOptions(window *app.Window, session *fm.SessionState) {
 	if session.Window.Width > 0 && session.Window.Height > 0 {
 		opts = append(opts, app.Size(pxToDp(session.Window.Width), pxToDp(session.Window.Height)))
 	}
-	if session.Window.HasPosition && session.Window.Mode == "windowed" && !sessionWindowPositionLooksHidden(session.Window.X, session.Window.Y) {
+	if session.Window.HasPosition && !sessionWindowPositionLooksHidden(session.Window.X, session.Window.Y) {
 		opts = append(opts, app.Position(pxToDp(session.Window.X), pxToDp(session.Window.Y)))
 	}
 	switch sessionModeToWindowMode(session.Window.Mode) {
@@ -37,9 +47,7 @@ func ApplyWindowOptions(window *app.Window, session *fm.SessionState) {
 	default:
 		// Keep windowed by default.
 	}
-	if len(opts) > 0 {
-		window.Option(opts...)
-	}
+	return opts
 }
 
 // Windows reports minimized/off-screen windows at approximately (-32000, -32000).
