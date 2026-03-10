@@ -194,7 +194,7 @@ func NewUI(cfg *fm.Config) *UI {
 	ui := &UI{
 		fmCfg:                      cfg,
 		configPath:                 resolveUIConfigPath(),
-		typeface:                   font.Typeface(cfg.Font.Typeface),
+		typeface:                   font.Typeface(cfg.General.Typeface),
 		textSize:                   fontSizeFromConfig(cfg),
 		functionBarSliderPrevIndex: -1,
 		functionBarSliderIndex:     -1,
@@ -287,7 +287,7 @@ func fontSizeFromConfig(cfg *fm.Config) unit.Sp {
 	if cfg == nil {
 		return defaultUIFontSp
 	}
-	return normalizeUIFontSize(unit.Sp(cfg.Font.SizeSp))
+	return normalizeUIFontSize(unit.Sp(cfg.General.FontSizeSp))
 }
 
 func themeFontSize(th *material.Theme) unit.Sp {

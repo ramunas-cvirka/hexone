@@ -520,7 +520,7 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 					lbl := material.Body1(th, st.doc.Title)
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.Font.Weight = font.Bold
-					lbl.TextSize = scaleDialogThemeFontSize(th, 11)
+					lbl.TextSize = scaleModalThemeFontSize(th, 11)
 					lbl.Color = txtColor
 					return lbl.Layout(gtx)
 				}),
@@ -528,7 +528,7 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 					text := "Up/Down switches topics. F1 or Esc closes help."
 					lbl := material.Caption(th, text)
 					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleDialogThemeFontSize(th, 8)
+					lbl.TextSize = scaleModalThemeFontSize(th, 8)
 					lbl.Color = hintColor
 					return lbl.Layout(gtx)
 				}),
@@ -663,7 +663,7 @@ func (ui *UI) layoutHelpNavSegment(th *material.Theme, gtx layout.Context, label
 					lbl := material.Body2(th, label)
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.Font.Weight = font.Medium
-					lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+					lbl.TextSize = scaleModalThemeFontSize(th, 10)
 					lbl.Color = fg
 					lbl.MaxLines = 1
 					return layoutVCenteredLabel(gtx, lbl)
@@ -712,7 +712,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			th,
 			gtx,
 			block.Text,
-			scaleDialogThemeFontSize(th, 10),
+			scaleModalThemeFontSize(th, 10),
 			color.NRGBA{R: 228, G: 233, B: 244, A: 255},
 			font.Bold,
 		)
@@ -726,7 +726,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							bullet := material.Body2(th, "•")
 							bullet.Font.Typeface = ui.mainTypeface()
-							bullet.TextSize = scaleDialogThemeFontSize(th, 9)
+							bullet.TextSize = scaleModalThemeFontSize(th, 9)
 							bullet.Color = color.NRGBA{R: 155, G: 193, B: 255, A: 255}
 							return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, bullet.Layout)
 						}),
@@ -735,7 +735,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 								th,
 								gtx,
 								item,
-								scaleDialogThemeFontSize(th, 9),
+								scaleModalThemeFontSize(th, 9),
 								txtColor,
 								font.Normal,
 							)
@@ -750,7 +750,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(7), Bottom: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, block.Text)
 				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleDialogThemeFontSize(th, 8)
+				lbl.TextSize = scaleModalThemeFontSize(th, 8)
 				lbl.Color = color.NRGBA{R: 197, G: 226, B: 255, A: 255}
 				lbl.SelectionColor = color.NRGBA{R: 97, G: 132, B: 204, A: 144}
 				lbl.State = st.codeSelectable(sectionIndex, blockIndex)
@@ -762,7 +762,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			th,
 			gtx,
 			block.Text,
-			scaleDialogThemeFontSize(th, 9),
+			scaleModalThemeFontSize(th, 9),
 			txtColor,
 			font.Normal,
 		)

@@ -278,15 +278,12 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	scaleDp := func(v int) unit.Dp {
 		return scaleFilePaneDp(cfg, v)
 	}
-	fullPad := unit.Dp(cfg.Columns.FullPadDp)
-	if fullPad < 0 {
-		fullPad = 0
-	}
+	fullPad := unit.Dp(fm.ColumnPadDp())
 	dropPriority := filePaneFullDropPriority(cfg)
 	cols := []table.Column{
 		{
-			Width:        scaleDp(cfg.Columns.NameWidthDp),
-			MinWidth:     scaleDp(cfg.Columns.NameMinWidthDp),
+			Width:        scaleDp(fm.NameWidthDp(cfg)),
+			MinWidth:     scaleDp(fm.NameMinWidthDp(cfg)),
 			Flex:         true,
 			Align:        table.AlignStart,
 			PadX:         fullPad,
@@ -295,7 +292,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	}
 	if cfg.Columns.ShowPermissions {
 		cols = append(cols, table.Column{
-			Width:        scaleDp(cfg.Columns.PermWidthDp),
+			Width:        scaleDp(fm.PermWidthDp(cfg)),
 			MinWidth:     scaleDp(fm.PermMinWidthDp(cfg)),
 			Flex:         false,
 			Align:        table.AlignStart,
@@ -305,7 +302,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	}
 	cols = append(cols,
 		table.Column{
-			Width:        scaleDp(cfg.Columns.SizeWidthDp),
+			Width:        scaleDp(fm.SizeWidthDp(cfg)),
 			MinWidth:     scaleDp(fm.SizeMinWidthDp(cfg)),
 			Flex:         false,
 			Align:        table.AlignEnd,
@@ -313,7 +310,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 			DropPriority: dropPriority["size"],
 		},
 		table.Column{
-			Width:        scaleDp(cfg.Columns.DateWidthDp),
+			Width:        scaleDp(fm.DateWidthDp(cfg)),
 			MinWidth:     scaleDp(fm.DateMinWidthDp(cfg)),
 			Flex:         false,
 			Align:        table.AlignStart,
@@ -341,11 +338,11 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	pane.tableClickRow = -1
 	pane.tableClickCol = -1
 	pane.table.TextSize = scaleConfigFontSize(cfg, 13)
-	pane.table.Typeface = font.Typeface(cfg.Font.Typeface)
+	pane.table.Typeface = font.Typeface(cfg.General.Typeface)
 	pane.table.RowHeight = scaleDp(18)
 	pane.table.RowPadY = unit.Dp(0)
-	pane.table.BriefColumnWidth = scaleDp(cfg.Columns.BriefWidthDp)
-	pane.table.BriefGap = scaleDp(cfg.Columns.BriefGapDp)
+	pane.table.BriefColumnWidth = scaleDp(fm.BriefWidthDp(cfg))
+	pane.table.BriefGap = scaleDp(fm.BriefGapDp())
 	palette := filePanePaletteFromConfig(cfg)
 	pane.table.Bg = palette.PaneBg
 	pane.table.HoverBg = palette.HoverBg
@@ -1799,6 +1796,19 @@ func (k fileSortKey) badgeLabel() string {
 	}
 }
 
+func (k fileSortKey) sessionValue() string {
+	switch k {
+	case fileSortExt:
+		return "ext"
+	case fileSortSize:
+		return "size"
+	case fileSortDate:
+		return "date"
+	default:
+		return "name"
+	}
+}
+
 func (p *filePaneState) sortBadgeText() string {
 	if p == nil {
 		return "N↑"
@@ -1815,6 +1825,20 @@ func (p *filePaneState) modeBadgeText() string {
 		return "2C"
 	}
 	return "1C"
+}
+
+func (p *filePaneState) sessionSortKey() string {
+	if p == nil {
+		return "name"
+	}
+	return p.sortKey.sessionValue()
+}
+
+func (p *filePaneState) sessionMode() string {
+	if p != nil && p.table != nil && p.table.Mode == table.ModeBrief {
+		return "brief"
+	}
+	return "full"
 }
 
 func (p *filePaneState) cycleSortKey() {

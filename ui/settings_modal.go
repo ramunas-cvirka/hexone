@@ -276,9 +276,9 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorPickerTarget = ""
 	st.viewCommandEdit.SetText(cfg.Viewer.Command)
 	st.viewShellEdit.SetText(normalizeViewerShellInput(cfg.Viewer.Shell))
-	st.paneFontSizeEdit.SetText(formatConfigFloat(cfg.Font.SizeSp))
+	st.paneFontSizeEdit.SetText(formatConfigFloat(cfg.General.FontSizeSp))
 	st.viewFontSizeEdit.SetText(formatConfigFloat(cfg.Viewer.FontSizeSp))
-	st.paneFontFamily = cfg.Font.Typeface
+	st.paneFontFamily = cfg.General.Typeface
 	st.viewFontFamily = cfg.Viewer.Typeface
 	st.paneFontPickerAnim = settingsChoiceAnim{}
 	st.viewFontPickerAnim = settingsChoiceAnim{}
@@ -1414,7 +1414,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if err != nil || paneFontSize < 6 {
 		return fmt.Errorf("pane font size must be at least 6")
 	}
-	if !resources.IsBundledFontFamily(st.paneFontFamily) && st.paneFontFamily != ui.fmCfg.Font.Typeface {
+	if !resources.IsBundledFontFamily(st.paneFontFamily) && st.paneFontFamily != ui.fmCfg.General.Typeface {
 		return fmt.Errorf("pane font family is invalid")
 	}
 	if !resources.IsBundledFontFamily(st.viewFontFamily) && st.viewFontFamily != ui.fmCfg.Viewer.Typeface {
@@ -1426,8 +1426,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 		}
 	}
 
-	ui.fmCfg.Font.Typeface = st.paneFontFamily
-	ui.fmCfg.Font.SizeSp = float32(paneFontSize)
+	ui.fmCfg.General.Typeface = st.paneFontFamily
+	ui.fmCfg.General.FontSizeSp = float32(paneFontSize)
 	ui.fmCfg.Viewer.Mode = mode
 	ui.fmCfg.Viewer.Typeface = st.viewFontFamily
 	ui.fmCfg.Viewer.Command = cmd
@@ -3370,7 +3370,7 @@ func (ui *UI) applyConfigRuntime(now time.Time) {
 		ui.fmCfg = fm.DefaultConfig()
 	}
 	ui.fileKeys = newFileKeyMap(ui.fmCfg)
-	ui.typeface = font.Typeface(ui.fmCfg.Font.Typeface)
+	ui.typeface = font.Typeface(ui.fmCfg.General.Typeface)
 	ui.textSize = fontSizeFromConfig(ui.fmCfg)
 	if ui.tab2State != nil {
 		ui.tab2State.typeface = ui.mainTypeface()

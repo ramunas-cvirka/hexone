@@ -18,7 +18,6 @@ name_compact:
   approx_char_px: 11
   marker: __
 columns:
-  full_pad_dp: 6
   permission_format: symbolic
   perm_min_width_dp: 10
   size_min_width_dp: 11
@@ -41,13 +40,13 @@ date_formats:
 		t.Fatalf("Marker=%q, want __", cfg.NameCompact.Marker)
 	}
 
-	if got, want := SizeMinWidthDp(cfg), defaultApproxCharPx*5+8+12; got != want {
+	if got, want := SizeMinWidthDp(cfg), defaultApproxCharPx*5+8+8; got != want {
 		t.Fatalf("SizeMinWidthDp=%d, want %d", got, want)
 	}
-	if got, want := PermMinWidthDp(cfg), defaultApproxCharPx*9+12+12; got != want {
+	if got, want := PermMinWidthDp(cfg), defaultApproxCharPx*9+12+8; got != want {
 		t.Fatalf("PermMinWidthDp=%d, want %d", got, want)
 	}
-	if got, want := DateMinWidthDp(cfg), defaultApproxCharPx*5+16+12; got != want {
+	if got, want := DateMinWidthDp(cfg), defaultApproxCharPx*5+16+8; got != want {
 		t.Fatalf("DateMinWidthDp=%d, want %d", got, want)
 	}
 }
@@ -68,6 +67,14 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 		"perm_min_width_dp:",
 		"size_min_width_dp:",
 		"date_min_width_dp:",
+		"name_width_dp:",
+		"name_min_width_dp:",
+		"perm_width_dp:",
+		"full_pad_dp:",
+		"size_width_dp:",
+		"date_width_dp:",
+		"brief_width_dp:",
+		"brief_gap_dp:",
 	} {
 		if strings.Contains(out, disallowed) {
 			t.Fatalf("serialized config still contains %q:\n%s", disallowed, out)
@@ -76,8 +83,124 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	if !strings.Contains(out, "keep_start_chars:") {
 		t.Fatalf("serialized config missing keep_start_chars:\n%s", out)
 	}
+	if !strings.Contains(out, "full_chars:") || !strings.Contains(out, "brief_chars:") {
+		t.Fatalf("serialized config missing character-based column widths:\n%s", out)
+	}
+	if strings.Contains(out, "name_chars:") {
+		t.Fatalf("serialized config should use full_chars instead of name_chars:\n%s", out)
+	}
 	if strings.Contains(out, "key_bindings:") {
 		t.Fatalf("serialized config should not contain legacy key_bindings block:\n%s", out)
+	}
+}
+
+func TestLegacyColumnWidthsMigrateToChars(t *testing.T) {
+	raw := `
+columns:
+  name_width_dp: 180
+  name_min_width_dp: 52
+  perm_width_dp: 92
+  full_pad_dp: 4
+  size_width_dp: 92
+  date_width_dp: 128
+  brief_width_dp: 180
+  brief_gap_dp: 4
+  show_permissions: false
+  permission_format: octal
+  full_drop_priority:
+    - size
+    - date
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.Columns.NameChars, float32(20); got != want {
+		t.Fatalf("Columns.NameChars=%v, want %v", got, want)
+	}
+	if got, want := cfg.Columns.BriefChars, float32(20); got != want {
+		t.Fatalf("Columns.BriefChars=%v, want %v", got, want)
+	}
+	if cfg.Columns.ShowPermissions {
+		t.Fatal("Columns.ShowPermissions should preserve explicit false")
+	}
+	if cfg.Columns.PermissionFormat != "octal" {
+		t.Fatalf("Columns.PermissionFormat=%q, want octal", cfg.Columns.PermissionFormat)
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if strings.Contains(out, "name_width_dp:") || strings.Contains(out, "brief_width_dp:") {
+		t.Fatalf("serialized config should not contain legacy dp widths:\n%s", out)
+	}
+	if !strings.Contains(out, "full_chars: 20") || !strings.Contains(out, "brief_chars: 20") {
+		t.Fatalf("serialized config missing migrated character widths:\n%s", out)
+	}
+}
+
+func TestLegacyNameCharsMigratesToFullChars(t *testing.T) {
+	raw := `
+columns:
+  name_chars: 24
+  brief_chars: 16
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.Columns.NameChars, float32(24); got != want {
+		t.Fatalf("Columns.NameChars=%v, want %v", got, want)
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "full_chars: 24") {
+		t.Fatalf("serialized config missing full_chars:\n%s", out)
+	}
+	if strings.Contains(out, "name_chars:") {
+		t.Fatalf("serialized config should not contain legacy name_chars:\n%s", out)
+	}
+}
+
+func TestLegacyFontBlockMigratesToGeneral(t *testing.T) {
+	raw := `
+font:
+  typeface: Consolas
+  size_sp: 16
+general:
+  dim_inactive_panes: true
+viewer:
+  mode: file
+  shell: auto
+  command: cat {path}
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if cfg.General.Typeface != "Consolas" {
+		t.Fatalf("General.Typeface=%q, want Consolas", cfg.General.Typeface)
+	}
+	if cfg.General.FontSizeSp != 16 {
+		t.Fatalf("General.FontSizeSp=%v, want 16", cfg.General.FontSizeSp)
+	}
+	if !cfg.General.DimInactivePanes {
+		t.Fatal("General.DimInactivePanes should preserve general block values")
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if strings.Contains(out, "\nfont:\n") {
+		t.Fatalf("serialized config should not contain legacy font block:\n%s", out)
+	}
+	if !strings.Contains(out, "general:") || !strings.Contains(out, "typeface: Consolas") || !strings.Contains(out, "font_size_sp: 16") {
+		t.Fatalf("serialized config missing migrated general font settings:\n%s", out)
 	}
 }
 

@@ -19,8 +19,11 @@ type SessionWindow struct {
 }
 
 type SessionPane struct {
-	Dir          string `yaml:"dir"`
-	SelectedPath string `yaml:"selected_path"`
+	Dir            string `yaml:"dir"`
+	SelectedPath   string `yaml:"selected_path"`
+	SortKey        string `yaml:"sort_key"`
+	SortDescending bool   `yaml:"sort_desc"`
+	Mode           string `yaml:"mode"`
 }
 
 type SessionState struct {
@@ -105,9 +108,34 @@ func (s *SessionState) normalize() {
 			dir = filepath.Clean(dir)
 		}
 		out = append(out, SessionPane{
-			Dir:          dir,
-			SelectedPath: strings.TrimSpace(p.SelectedPath),
+			Dir:            dir,
+			SelectedPath:   strings.TrimSpace(p.SelectedPath),
+			SortKey:        normalizeSessionPaneSortKey(p.SortKey),
+			SortDescending: p.SortDescending,
+			Mode:           normalizeSessionPaneMode(p.Mode),
 		})
 	}
 	s.Panes = out
+}
+
+func normalizeSessionPaneSortKey(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "ext", "extension", "type":
+		return "ext"
+	case "size":
+		return "size"
+	case "date", "time", "datetime":
+		return "date"
+	default:
+		return "name"
+	}
+}
+
+func normalizeSessionPaneMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "brief", "2c":
+		return "brief"
+	default:
+		return "full"
+	}
 }

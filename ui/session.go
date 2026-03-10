@@ -2,6 +2,7 @@ package ui
 
 import (
 	"hexone/fm"
+	"hexone/ui/widget/table"
 	"strings"
 )
 
@@ -46,8 +47,11 @@ func (ui *UI) SnapshotSession() *fm.SessionState {
 		}
 
 		s.Panes[i] = fm.SessionPane{
-			Dir:          dir,
-			SelectedPath: selectedPath,
+			Dir:            dir,
+			SelectedPath:   selectedPath,
+			SortKey:        pane.sessionSortKey(),
+			SortDescending: pane.sortDesc,
+			Mode:           pane.sessionMode(),
 		}
 	}
 	return s
@@ -74,13 +78,23 @@ func (ui *UI) ApplySession(s *fm.SessionState) {
 				continue
 			}
 			paneState := s.Panes[i]
+			pane.sortKey = parseFileSortKey(paneState.SortKey)
+			pane.sortDesc = paneState.SortDescending
+			if pane.table != nil {
+				switch strings.ToLower(strings.TrimSpace(paneState.Mode)) {
+				case "brief":
+					pane.table.SetMode(table.ModeBrief)
+				default:
+					pane.table.SetMode(table.ModeFull)
+				}
+			}
 			targetDir := strings.TrimSpace(paneState.Dir)
+			selectedPath := strings.TrimSpace(paneState.SelectedPath)
 			if targetDir != "" {
-				selectedPath := strings.TrimSpace(paneState.SelectedPath)
 				ui.requestPaneLoadWithSelection(i, targetDir, selectedPath, "", 0)
 				continue
 			}
-			selectedPath := strings.TrimSpace(paneState.SelectedPath)
+			pane.applySort(selectedPath)
 			if selectedPath != "" && pane.table != nil && pane.model != nil {
 				if idx := pane.findEntryPathIndex(selectedPath); idx >= 0 {
 					pane.table.SetSelected(idx, pane.model.Len(), false)

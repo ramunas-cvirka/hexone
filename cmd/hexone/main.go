@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	resources "hexone"
 	"hexone/appdata"
 	"hexone/appicon"
@@ -66,22 +65,12 @@ func appendTypefaceFaces(dst []text.FontFace, typeface string, regularPath, medi
 	)
 }
 
-func buildFontCollection(cfg *fm.Config) ([]text.FontFace, error) {
+func buildFontCollection() []text.FontFace {
 	collection := make([]text.FontFace, 0, 12)
 	for _, family := range resources.BundledFontFamilies() {
 		collection = appendTypefaceFaces(collection, family.Name, family.RegularPath, family.MediumPath, family.BoldPath)
 	}
-	if cfg == nil || resources.IsBundledFontFamily(cfg.Font.Typeface) {
-		return collection, nil
-	}
-	if cfg.Font.Typeface == "" {
-		return nil, fmt.Errorf("font.typeface is empty")
-	}
-	if cfg.Font.RegularPath == "" || cfg.Font.MediumPath == "" || cfg.Font.BoldPath == "" {
-		return nil, fmt.Errorf("custom pane font %q requires regular_path, medium_path, and bold_path", cfg.Font.Typeface)
-	}
-	collection = appendTypefaceFaces(collection, cfg.Font.Typeface, cfg.Font.RegularPath, cfg.Font.MediumPath, cfg.Font.BoldPath)
-	return collection, nil
+	return collection
 }
 
 func run(window *app.Window) error {
@@ -96,14 +85,11 @@ func run(window *app.Window) error {
 	window.Option(app.Title(appicon.AppTitle))
 	windowstate.ApplyWindowOptions(window, session)
 	th := material.NewTheme()
-	collection, err := buildFontCollection(cfg)
-	if err != nil {
-		return err
-	}
+	collection := buildFontCollection()
 
 	th.Shaper = text.NewShaper(text.WithCollection(collection))
-	th.Face = font.Typeface(cfg.Font.Typeface)
-	th.TextSize = unit.Sp(cfg.Font.SizeSp)
+	th.Face = font.Typeface(cfg.General.Typeface)
+	th.TextSize = unit.Sp(cfg.General.FontSizeSp)
 
 	var ops op.Ops
 	mainUI := ui.NewUI(cfg)

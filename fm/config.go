@@ -3,6 +3,7 @@ package fm
 import (
 	"errors"
 	resources "hexone"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,7 +17,18 @@ const (
 	defaultApproxCharPx       = 8
 	defaultNameKeepStartChars = 6
 	defaultNameCompactMarker  = ".."
-	retiredBlockZonePath      = "embedded:BlockZone.ttf"
+	defaultColumnPadDp        = 4
+	// Brief mode already has left/right cell padding; keep the explicit
+	// inter-column gap at zero so the visible separation stays near 1ch.
+	defaultBriefGapDp        = 0
+	defaultNameIconReserveDp = 14
+	defaultNameChars         = 20.0
+	defaultBriefChars        = 16.0
+	defaultNameMinWidthDp    = 52
+	defaultPermWidthChars    = 10.5
+	defaultSizeWidthChars    = 10.5
+	defaultDateWidthChars    = 15.0
+	defaultNameTextReserveDp = defaultApproxCharPx/2 + 2
 )
 
 type NameCompact struct {
@@ -44,17 +56,62 @@ func (n *NameCompact) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type ColumnWidths struct {
-	NameWidthDp      int      `yaml:"name_width_dp"`
-	NameMinWidthDp   int      `yaml:"name_min_width_dp"`
-	PermWidthDp      int      `yaml:"perm_width_dp"`
-	FullPadDp        int      `yaml:"full_pad_dp"`
+	NameChars        float32  `yaml:"full_chars"`
+	BriefChars       float32  `yaml:"brief_chars"`
 	FullDropPriority []string `yaml:"full_drop_priority"`
 	ShowPermissions  bool     `yaml:"show_permissions"`
 	PermissionFormat string   `yaml:"permission_format"`
-	SizeWidthDp      int      `yaml:"size_width_dp"`
-	DateWidthDp      int      `yaml:"date_width_dp"`
-	BriefWidthDp     int      `yaml:"brief_width_dp"`
-	BriefGapDp       int      `yaml:"brief_gap_dp"`
+}
+
+type columnWidthsCompat struct {
+	FullChars        float32  `yaml:"full_chars"`
+	NameChars        float32  `yaml:"name_chars"`
+	BriefChars       float32  `yaml:"brief_chars"`
+	FullDropPriority []string `yaml:"full_drop_priority"`
+	ShowPermissions  *bool    `yaml:"show_permissions"`
+	PermissionFormat string   `yaml:"permission_format"`
+
+	NameWidthDp    int `yaml:"name_width_dp"`
+	NameMinWidthDp int `yaml:"name_min_width_dp"`
+	PermWidthDp    int `yaml:"perm_width_dp"`
+	FullPadDp      int `yaml:"full_pad_dp"`
+	SizeWidthDp    int `yaml:"size_width_dp"`
+	DateWidthDp    int `yaml:"date_width_dp"`
+	BriefWidthDp   int `yaml:"brief_width_dp"`
+	BriefGapDp     int `yaml:"brief_gap_dp"`
+}
+
+func (c *ColumnWidths) UnmarshalYAML(node *yaml.Node) error {
+	raw := columnWidthsCompat{}
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+
+	out := defaultColumnWidths()
+	if raw.FullChars > 0 {
+		out.NameChars = normalizeColumnChars(raw.FullChars, defaultNameChars)
+	} else if raw.NameChars > 0 {
+		out.NameChars = normalizeColumnChars(raw.NameChars, defaultNameChars)
+	} else if raw.NameWidthDp > 0 {
+		out.NameChars = legacyWidthDpToChars(raw.NameWidthDp, raw.FullPadDp, true)
+	}
+	if raw.BriefChars > 0 {
+		out.BriefChars = normalizeColumnChars(raw.BriefChars, defaultBriefChars)
+	} else if raw.BriefWidthDp > 0 {
+		out.BriefChars = legacyWidthDpToChars(raw.BriefWidthDp, raw.FullPadDp, true)
+	}
+	if raw.ShowPermissions != nil {
+		out.ShowPermissions = *raw.ShowPermissions
+	}
+	if strings.TrimSpace(raw.PermissionFormat) != "" {
+		out.PermissionFormat = raw.PermissionFormat
+	}
+	if len(raw.FullDropPriority) > 0 {
+		out.FullDropPriority = append([]string(nil), raw.FullDropPriority...)
+	}
+
+	*c = out
+	return nil
 }
 
 type SortConfig struct {
@@ -63,16 +120,15 @@ type SortConfig struct {
 	DirectoriesFirst bool   `yaml:"directories_first"`
 }
 
-type FontConfig struct {
-	Typeface    string  `yaml:"typeface"`
-	SizeSp      float32 `yaml:"size_sp"`
-	RegularPath string  `yaml:"regular_path"`
-	MediumPath  string  `yaml:"medium_path"`
-	BoldPath    string  `yaml:"bold_path"`
+type GeneralConfig struct {
+	Typeface         string  `yaml:"typeface"`
+	FontSizeSp       float32 `yaml:"font_size_sp"`
+	DimInactivePanes bool    `yaml:"dim_inactive_panes"`
 }
 
-type GeneralConfig struct {
-	DimInactivePanes bool `yaml:"dim_inactive_panes"`
+type legacyFontConfig struct {
+	Typeface string  `yaml:"typeface"`
+	SizeSp   float32 `yaml:"size_sp"`
 }
 
 type ViewerAssociation struct {
@@ -148,12 +204,53 @@ type Config struct {
 	NameCompact       NameCompact          `yaml:"name_compact"`
 	Columns           ColumnWidths         `yaml:"columns"`
 	Sort              SortConfig           `yaml:"sort"`
-	Font              FontConfig           `yaml:"font"`
 	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
 	Viewer            ViewerConfig         `yaml:"viewer"`
 	SSH               SSHConfig            `yaml:"ssh"`
+}
+
+func (c *Config) UnmarshalYAML(node *yaml.Node) error {
+	var raw struct {
+		DateFormats       []string             `yaml:"date_formats"`
+		FavoriteLocations []string             `yaml:"favorite_locations"`
+		NameCompact       NameCompact          `yaml:"name_compact"`
+		Columns           *ColumnWidths        `yaml:"columns"`
+		Sort              SortConfig           `yaml:"sort"`
+		Font              legacyFontConfig     `yaml:"font"`
+		General           GeneralConfig        `yaml:"general"`
+		Colors            ColorsConfig         `yaml:"colors"`
+		Associations      []AssociationProgram `yaml:"associations,omitempty"`
+		Viewer            ViewerConfig         `yaml:"viewer"`
+		SSH               SSHConfig            `yaml:"ssh"`
+	}
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	if strings.TrimSpace(raw.General.Typeface) == "" {
+		raw.General.Typeface = raw.Font.Typeface
+	}
+	if raw.General.FontSizeSp <= 0 {
+		raw.General.FontSizeSp = raw.Font.SizeSp
+	}
+	columns := defaultColumnWidths()
+	if raw.Columns != nil {
+		columns = *raw.Columns
+	}
+	*c = Config{
+		DateFormats:       raw.DateFormats,
+		FavoriteLocations: raw.FavoriteLocations,
+		NameCompact:       raw.NameCompact,
+		Columns:           columns,
+		Sort:              raw.Sort,
+		General:           raw.General,
+		Colors:            raw.Colors,
+		Associations:      raw.Associations,
+		Viewer:            raw.Viewer,
+		SSH:               raw.SSH,
+	}
+	return nil
 }
 
 func DefaultConfig() *Config {
@@ -170,32 +267,15 @@ func DefaultConfig() *Config {
 			KeepStartChars: defaultNameKeepStartChars,
 			Marker:         defaultNameCompactMarker,
 		},
-		Columns: ColumnWidths{
-			NameWidthDp:      180,
-			NameMinWidthDp:   52,
-			PermWidthDp:      92,
-			FullPadDp:        4,
-			FullDropPriority: []string{"date", "size", "permissions", "name"},
-			ShowPermissions:  true,
-			PermissionFormat: "auto",
-			SizeWidthDp:      92,
-			DateWidthDp:      128,
-			BriefWidthDp:     180,
-			BriefGapDp:       4,
-		},
+		Columns: defaultColumnWidths(),
 		Sort: SortConfig{
 			DefaultKey:       "name",
 			Descending:       false,
 			DirectoriesFirst: true,
 		},
-		Font: FontConfig{
-			Typeface:    "Fira Code",
-			SizeSp:      14,
-			RegularPath: resources.EmbeddedRegularFontPath,
-			MediumPath:  resources.EmbeddedMediumFontPath,
-			BoldPath:    resources.EmbeddedBoldFontPath,
-		},
 		General: GeneralConfig{
+			Typeface:         resources.BundledFontFamilyFiraCode,
+			FontSizeSp:       14,
 			DimInactivePanes: false,
 		},
 		Colors: ColorsConfig{
@@ -289,17 +369,11 @@ func (c *Config) normalize() {
 		c.NameCompact.Marker = defaultNameCompactMarker
 	}
 
-	if c.Columns.NameWidthDp < 1 {
-		c.Columns.NameWidthDp = 180
+	if c.Columns.NameChars <= 0 {
+		c.Columns.NameChars = defaultNameChars
 	}
-	if c.Columns.NameMinWidthDp < 1 {
-		c.Columns.NameMinWidthDp = 52
-	}
-	if c.Columns.PermWidthDp < 1 {
-		c.Columns.PermWidthDp = 92
-	}
-	if c.Columns.FullPadDp < 1 {
-		c.Columns.FullPadDp = 4
+	if c.Columns.BriefChars <= 0 {
+		c.Columns.BriefChars = defaultBriefChars
 	}
 	c.Columns.FullDropPriority = normalizeFullDropPriority(c.Columns.FullDropPriority)
 	switch c.Columns.PermissionFormat {
@@ -307,58 +381,25 @@ func (c *Config) normalize() {
 	default:
 		c.Columns.PermissionFormat = "auto"
 	}
-	if c.Columns.SizeWidthDp < 1 {
-		c.Columns.SizeWidthDp = 92
-	}
-	if c.Columns.DateWidthDp < 1 {
-		c.Columns.DateWidthDp = 128
-	}
-	if c.Columns.BriefWidthDp < 1 {
-		c.Columns.BriefWidthDp = 180
-	}
-	if c.Columns.BriefGapDp < 0 {
-		c.Columns.BriefGapDp = 4
-	}
 
 	if c.Sort.DefaultKey == "" {
 		c.Sort.DefaultKey = "name"
 	}
 
-	if c.Font.Typeface == "" {
-		c.Font.Typeface = resources.BundledFontFamilyFiraCode
+	if c.General.Typeface == "" || c.General.Typeface == resources.BundledFontFamilyBlockZone || !resources.IsBundledFontFamily(c.General.Typeface) {
+		c.General.Typeface = resources.BundledFontFamilyFiraCode
 	}
-	if c.Font.Typeface == resources.BundledFontFamilyBlockZone {
-		c.Font.Typeface = resources.BundledFontFamilyFiraCode
-		if c.Font.RegularPath == "" || c.Font.RegularPath == retiredBlockZonePath {
-			c.Font.RegularPath = resources.EmbeddedRegularFontPath
-		}
-		if c.Font.MediumPath == "" || c.Font.MediumPath == retiredBlockZonePath {
-			c.Font.MediumPath = resources.EmbeddedMediumFontPath
-		}
-		if c.Font.BoldPath == "" || c.Font.BoldPath == retiredBlockZonePath {
-			c.Font.BoldPath = resources.EmbeddedBoldFontPath
-		}
-	}
-	if c.Font.SizeSp <= 0 {
-		c.Font.SizeSp = 14
-	}
-	if c.Font.RegularPath == "" {
-		c.Font.RegularPath = resources.EmbeddedRegularFontPath
-	}
-	if c.Font.MediumPath == "" {
-		c.Font.MediumPath = resources.EmbeddedMediumFontPath
-	}
-	if c.Font.BoldPath == "" {
-		c.Font.BoldPath = resources.EmbeddedBoldFontPath
+	if c.General.FontSizeSp <= 0 {
+		c.General.FontSizeSp = 14
 	}
 	if c.Viewer.Typeface == "" {
-		c.Viewer.Typeface = c.Font.Typeface
+		c.Viewer.Typeface = c.General.Typeface
 	}
 	if c.Viewer.Typeface == resources.BundledFontFamilyBlockZone {
 		c.Viewer.Typeface = resources.BundledFontFamilyFiraCode
 	}
-	if c.Viewer.Typeface != c.Font.Typeface && !resources.IsBundledFontFamily(c.Viewer.Typeface) {
-		c.Viewer.Typeface = c.Font.Typeface
+	if c.Viewer.Typeface != c.General.Typeface && !resources.IsBundledFontFamily(c.Viewer.Typeface) {
+		c.Viewer.Typeface = c.General.Typeface
 	}
 	c.Colors.FilePaneBackground = NormalizeHexColor(c.Colors.FilePaneBackground, DefaultFilePaneBackgroundHex)
 	c.Colors.FilePaneText = NormalizeHexColor(c.Colors.FilePaneText, DefaultFilePaneTextHex)
@@ -453,7 +494,7 @@ func (c *Config) normalize() {
 		c.Viewer.WordSelectRegex = "[a-zA-Z0-9]+"
 	}
 	if c.Viewer.FontSizeSp < 6 {
-		c.Viewer.FontSizeSp = c.Font.SizeSp * (13.0 / 14.0)
+		c.Viewer.FontSizeSp = c.General.FontSizeSp * (13.0 / 14.0)
 		if c.Viewer.FontSizeSp < 6 {
 			c.Viewer.FontSizeSp = 13
 		}
@@ -803,8 +844,107 @@ func GroupViewerAssociations(raw []ViewerAssociation) []AssociationProgram {
 	return out
 }
 
+func defaultColumnWidths() ColumnWidths {
+	return ColumnWidths{
+		NameChars:        defaultNameChars,
+		BriefChars:       defaultBriefChars,
+		FullDropPriority: []string{"date", "size", "permissions", "name"},
+		ShowPermissions:  true,
+		PermissionFormat: "auto",
+	}
+}
+
+func normalizeColumnChars(v, fallback float32) float32 {
+	if v <= 0 {
+		return fallback
+	}
+	if v < 1 {
+		return 1
+	}
+	return v
+}
+
+func roundLegacyColumnChars(v float32) float32 {
+	rounded := float32(math.Round(float64(v*2.0))) / 2.0
+	if rounded < 1 {
+		return 1
+	}
+	return rounded
+}
+
+func legacyWidthDpToChars(widthDp, padDp int, includeIcon bool) float32 {
+	if widthDp < 1 {
+		return 0
+	}
+	if padDp < 1 {
+		padDp = defaultColumnPadDp
+	}
+	textWidth := widthDp - 2*padDp
+	if includeIcon {
+		textWidth -= defaultNameIconReserveDp
+	}
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	return roundLegacyColumnChars(float32(textWidth) / float32(defaultApproxCharPx))
+}
+
+func columnWidthDp(chars float32, includeIcon bool) int {
+	textWidth := int(math.Round(float64(normalizeColumnChars(chars, 1) * float32(defaultApproxCharPx))))
+	if textWidth < 1 {
+		textWidth = 1
+	}
+	width := textWidth + columnPadReserveDp()
+	if includeIcon {
+		width += defaultNameIconReserveDp
+	}
+	return width
+}
+
+func ColumnPadDp() int {
+	return defaultColumnPadDp
+}
+
+func BriefGapDp() int {
+	return defaultBriefGapDp
+}
+
+func NameWidthDp(cfg *Config) int {
+	if cfg == nil {
+		return columnWidthDp(defaultNameChars, true)
+	}
+	return columnWidthDp(cfg.Columns.NameChars, true)
+}
+
+func NameMinWidthDp(cfg *Config) int {
+	width := NameWidthDp(cfg)
+	if width < defaultNameMinWidthDp {
+		return width
+	}
+	return defaultNameMinWidthDp
+}
+
+func PermWidthDp(cfg *Config) int {
+	return columnWidthDp(defaultPermWidthChars, false)
+}
+
+func SizeWidthDp(cfg *Config) int {
+	return columnWidthDp(defaultSizeWidthChars, false)
+}
+
+func DateWidthDp(cfg *Config) int {
+	return columnWidthDp(defaultDateWidthChars, false)
+}
+
+func BriefWidthDp(cfg *Config) int {
+	if cfg == nil {
+		return briefMinWidthDp(defaultBriefChars)
+	}
+	return briefMinWidthDp(cfg.Columns.BriefChars)
+}
+
 func SizeMinWidthDp(cfg *Config) int {
-	padReserve := fullPadReserveDp(cfg)
+	padReserve := columnPadReserveDp()
 	return defaultApproxCharPx*5 + 8 + padReserve
 }
 
@@ -813,7 +953,7 @@ func PermMinWidthDp(cfg *Config) int {
 	if cfg != nil && cfg.Columns.PermissionFormat == "symbolic" {
 		permChars = 9
 	}
-	padReserve := fullPadReserveDp(cfg)
+	padReserve := columnPadReserveDp()
 	return defaultApproxCharPx*permChars + 12 + padReserve
 }
 
@@ -828,17 +968,18 @@ func DateMinWidthDp(cfg *Config) int {
 			}
 		}
 	}
-	padReserve := fullPadReserveDp(cfg)
+	padReserve := columnPadReserveDp()
 	return defaultApproxCharPx*shortestDate + 16 + padReserve
 }
 
-func fullPadReserveDp(cfg *Config) int {
-	if cfg == nil {
-		return 8
+func columnPadReserveDp() int {
+	return 2 * defaultColumnPadDp
+}
+
+func briefMinWidthDp(chars float32) int {
+	textWidth := int(math.Round(float64(normalizeColumnChars(chars, 1) * float32(defaultApproxCharPx))))
+	if textWidth < 1 {
+		textWidth = 1
 	}
-	pad := cfg.Columns.FullPadDp
-	if pad < 1 {
-		pad = 4
-	}
-	return 2 * pad
+	return textWidth + defaultNameTextReserveDp + columnPadReserveDp() + defaultNameIconReserveDp
 }

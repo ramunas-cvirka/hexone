@@ -428,6 +428,17 @@ func adaptiveCellPadX(gtx layout.Context, requested unit.Dp, cellW int) unit.Dp 
 	return pad
 }
 
+func adaptiveBriefCellPadX(gtx layout.Context, requested unit.Dp, cellW int) unit.Dp {
+	if requested <= 0 {
+		return 0
+	}
+	pad := requested / 2
+	if pad < 1 {
+		pad = 1
+	}
+	return adaptiveCellPadX(gtx, pad, cellW)
+}
+
 func mustIcon(ic *widget.Icon, err error) *widget.Icon {
 	if err != nil {
 		panic(err)
@@ -1283,19 +1294,7 @@ func (t *Table) briefMinColumnWidthPx(gtx layout.Context) int {
 	if base < 1 {
 		base = 1
 	}
-	minW := base / 2
-	if minW < 1 {
-		minW = 1
-	}
-	if len(t.Columns) > 0 {
-		if colMin := gtx.Dp(t.Columns[0].MinWidth); colMin > minW {
-			minW = colMin
-		}
-	}
-	if minW > base {
-		minW = base
-	}
-	return minW
+	return base
 }
 
 func (t *Table) briefColumnWidthPx(col int) int {
@@ -1364,7 +1363,7 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 			if len(t.Columns) > 0 {
 				padX = t.Columns[0].PadX
 			}
-			padX = adaptiveCellPadX(gtx, padX, maxW)
+			padX = adaptiveBriefCellPadX(gtx, padX, maxW)
 			contentW := maxW - 2*gtx.Dp(padX)
 			if contentW < 0 {
 				contentW = 0
