@@ -3,11 +3,11 @@
 Hexone is a keyboard-first desktop file manager with a built-in text/hex/command viewer.
 
 <p align="center">
-  <img src="assets/main.png" alt="Hexone main view" width="78%" />
+  <img src="assets/main.png" alt="Hexone main view" />
 </p>
 
 <p align="center">
-  <img src="assets/viewer.png" alt="Hexone viewer" width="78%" />
+  <img src="assets/viewer.png" alt="Hexone viewer" />
 </p>
 
 ## Features
