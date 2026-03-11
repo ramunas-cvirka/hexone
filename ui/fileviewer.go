@@ -31,6 +31,7 @@ import (
 
 const (
 	viewerDefaultMaxLoadBytes = 1 << 20
+	viewerHexCopyMaxBytes     = 1 << 20
 	viewerCommandExecTimeout  = 15 * time.Second
 	viewerCommandStreamTick   = 180 * time.Millisecond
 	viewerDefaultRefreshMs    = 1500
@@ -267,12 +268,26 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 		return false
 	}
 	if st.mode == "hex" && st.hex != nil {
-		data, ok := st.hex.selectedBytes()
-		if !ok && fallbackAll && len(st.hex.buffer) > 0 {
+		var data []byte
+		if st.hex.hasSelection() {
+			if st.hex.selectionLen > viewerHexCopyMaxBytes {
+				st.status = "hex copy is limited to 1 MiB"
+				return false
+			}
+			var ok bool
+			data, ok = st.hex.selectedBytes()
+			if !ok {
+				st.status = "selection is not loaded"
+				return false
+			}
+		} else if fallbackAll && len(st.hex.buffer) > 0 {
+			if len(st.hex.buffer) > viewerHexCopyMaxBytes {
+				st.status = "hex copy is limited to 1 MiB"
+				return false
+			}
 			data = append([]byte(nil), st.hex.buffer...)
-			ok = true
 		}
-		if !ok || len(data) == 0 {
+		if len(data) == 0 {
 			st.status = "nothing to copy"
 			return false
 		}

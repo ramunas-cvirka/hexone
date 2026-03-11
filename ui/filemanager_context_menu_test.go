@@ -8,6 +8,10 @@ import (
 )
 
 func TestFilePaneContextMenuSpecForFileUsesNestedSupportedActions(t *testing.T) {
+	prevManagerName := systemFileManagerNameFunc
+	systemFileManagerNameFunc = func() string { return "Test Manager" }
+	defer func() { systemFileManagerNameFunc = prevManagerName }()
+
 	cfg := fm.DefaultConfig()
 	cfg.Associations = []fm.AssociationProgram{
 		{AppPath: "/Applications/VLC.app", Extensions: []string{".mp4"}},
@@ -27,6 +31,7 @@ func TestFilePaneContextMenuSpecForFileUsesNestedSupportedActions(t *testing.T) 
 
 	spec := ui.filePaneContextMenuSpec(0, pane)
 	assertMenuHasLabel(t, spec.Items, "Open")
+	assertMenuHasLabel(t, spec.Items, "Reveal in Test Manager")
 	openWith := assertMenuHasLabel(t, spec.Items, "Open With")
 	if openWith.Submenu == nil {
 		t.Fatal("Open With submenu should exist for local files")
@@ -44,6 +49,28 @@ func TestFilePaneContextMenuSpecForFileUsesNestedSupportedActions(t *testing.T) 
 	assertMenuHasLabel(t, ops.Submenu.Items, "Copy..")
 	assertMenuHasLabel(t, ops.Submenu.Items, "Move..")
 	assertMenuHasLabel(t, ops.Submenu.Items, "Delete..")
+}
+
+func TestFilePaneContextMenuSpecForDirectoryIncludesSystemFileManager(t *testing.T) {
+	prevManagerName := systemFileManagerNameFunc
+	systemFileManagerNameFunc = func() string { return "Test Manager" }
+	defer func() { systemFileManagerNameFunc = prevManagerName }()
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	pane.model = &filePaneModel{
+		entries: []filesys.Entry{{
+			Path:        "/tmp/docs",
+			DisplayName: "docs",
+			Kind:        filesys.EntryDir,
+		}},
+		cfg: ui.fmCfg,
+	}
+	pane.ctxMenuRow = 0
+
+	spec := ui.filePaneContextMenuSpec(0, pane)
+	assertMenuHasLabel(t, spec.Items, "Open in Test Manager")
+	assertMenuMissingLabel(t, spec.Items, "Reveal in Test Manager")
 }
 
 func TestFileOpenWithAppsForPathSortsBestMatchFirst(t *testing.T) {

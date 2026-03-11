@@ -813,15 +813,13 @@ func formatHexSelectionCopy(data []byte) string {
 	if len(data) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.Grow(len(data)*3 - 1)
+	const digits = "0123456789ABCDEF"
+	out := make([]byte, len(data)*2)
 	for i, v := range data {
-		if i > 0 {
-			b.WriteByte(' ')
-		}
-		fmt.Fprintf(&b, "%02X", v)
+		out[i*2] = digits[v>>4]
+		out[i*2+1] = digits[v&0x0F]
 	}
-	return b.String()
+	return string(out)
 }
 
 func hexByteAtPoint(v *hexViewerState, pos image.Point) (int64, bool) {

@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -50,9 +51,10 @@ type functionBarButtonSpec struct {
 }
 
 type functionBarToolSpec struct {
-	key    string
-	label  string
-	active bool
+	key      string
+	label    string
+	shortcut string
+	active   bool
 }
 
 func registerPopupArea(gtx layout.Context, tag event.Tag, size image.Point) {
@@ -97,6 +99,7 @@ func (ui *UI) closeFunctionBarToolsMenu() {
 	ui.functionBarToolsOpenedAt = time.Time{}
 	ui.functionBarToolsHoverID = ""
 	ui.functionBarToolsHoverAnim = segmentedAnimState{}
+	ui.functionBarToolsSelected = -1
 }
 
 func (ui *UI) requestWindowClose() {
@@ -250,10 +253,12 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		if ui.functionBarToolsOpen {
 			ui.closeFunctionBarToolsMenu()
 		} else {
+			items := ui.functionBarToolSpecs()
 			ui.functionBarToolsOpen = true
 			ui.functionBarToolsOpenedAt = now
 			ui.functionBarToolsHoverID = ""
 			ui.functionBarToolsHoverAnim = segmentedAnimState{}
+			ui.functionBarToolsSelected = functionBarDefaultToolIndex(items)
 		}
 		return true
 	case functionBarActionExit:
@@ -675,11 +680,94 @@ func (ui *UI) functionBarToolSpecs() []functionBarToolSpec {
 		active = "protocol"
 	}
 	return []functionBarToolSpec{
-		{key: "files", label: "File Manager", active: active == "files"},
 		{key: "hex", label: "Hex to ASCII", active: active == "hex"},
 		{key: "protocol", label: "Protocol Analyzer", active: active == "protocol"},
-		{key: "settings", label: "Settings", active: active == "settings"},
+		{key: "settings", label: "Settings", shortcut: "Ctrl+S", active: active == "settings"},
 	}
+}
+
+func functionBarDefaultToolIndex(items []functionBarToolSpec) int {
+	if len(items) == 0 {
+		return -1
+	}
+	for i, item := range items {
+		if item.active {
+			return i
+		}
+	}
+	return 0
+}
+
+func clampFunctionBarToolIndex(index, n int) int {
+	if n <= 0 {
+		return -1
+	}
+	if index < 0 {
+		return 0
+	}
+	if index >= n {
+		return n - 1
+	}
+	return index
+}
+
+func (ui *UI) setFunctionBarToolSelection(index int, items []functionBarToolSpec) bool {
+	if ui == nil {
+		return false
+	}
+	next := clampFunctionBarToolIndex(index, len(items))
+	if next < 0 {
+		next = functionBarDefaultToolIndex(items)
+	}
+	if ui.functionBarToolsSelected == next {
+		return false
+	}
+	ui.functionBarToolsSelected = next
+	return true
+}
+
+func (ui *UI) currentFunctionBarToolSelection(items []functionBarToolSpec) int {
+	if ui == nil {
+		return -1
+	}
+	if idx := clampFunctionBarToolIndex(ui.functionBarToolsSelected, len(items)); idx >= 0 {
+		return idx
+	}
+	return functionBarDefaultToolIndex(items)
+}
+
+func (ui *UI) moveFunctionBarToolSelection(delta int) bool {
+	if ui == nil || !ui.functionBarToolsOpen || delta == 0 {
+		return false
+	}
+	items := ui.functionBarToolSpecs()
+	if len(items) == 0 {
+		return false
+	}
+	index := ui.currentFunctionBarToolSelection(items)
+	if index < 0 {
+		return false
+	}
+	index += delta
+	if index < 0 {
+		index = len(items) - 1
+	} else if index >= len(items) {
+		index = 0
+	}
+	return ui.setFunctionBarToolSelection(index, items)
+}
+
+func (ui *UI) activateSelectedFunctionBarTool(now time.Time) bool {
+	if ui == nil || !ui.functionBarToolsOpen {
+		return false
+	}
+	items := ui.functionBarToolSpecs()
+	index := ui.currentFunctionBarToolSelection(items)
+	if index < 0 || index >= len(items) {
+		return false
+	}
+	ui.activateFunctionBarTool(items[index].key, now)
+	return true
 }
 
 func (ui *UI) activateFunctionBarTool(key string, now time.Time) {
@@ -749,7 +837,16 @@ func (ui *UI) functionBarToolCardWidth(th *material.Theme, gtx layout.Context, i
 		lbl.Font.Weight = font.Medium
 		lbl.TextSize = ui.functionBarTextSize()
 		lbl.MaxLines = 1
-		if w := measureLabelUnconstrained(gtx, lbl).Size.X; w > maxTextW {
+		w := measureLabelUnconstrained(gtx, lbl).Size.X
+		if item.shortcut != "" {
+			shortcut := material.Caption(th, item.shortcut)
+			shortcut.Font.Typeface = ui.mainTypeface()
+			shortcut.Font.Weight = font.Medium
+			shortcut.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
+			shortcut.MaxLines = 1
+			w += gtx.Dp(unit.Dp(18)) + measureLabelUnconstrained(gtx, shortcut).Size.X
+		}
+		if w > maxTextW {
 			maxTextW = w
 		}
 	}
@@ -782,26 +879,127 @@ func (ui *UI) functionBarHoveredToolID(items []functionBarToolSpec) string {
 	return hoverID
 }
 
-func (ui *UI) layoutFunctionBarToolOption(th *material.Theme, gtx layout.Context, theme filePanePopupTheme, click *widget.Clickable, item functionBarToolSpec, hoverFill, alpha float32) layout.Dimensions {
+func (ui *UI) functionBarHoveredToolIndex(items []functionBarToolSpec) int {
+	if ui == nil {
+		return -1
+	}
+	for i := range items {
+		if i < len(ui.functionBarToolClicks) && ui.functionBarToolClicks[i].Hovered() {
+			return i
+		}
+	}
+	return -1
+}
+
+func (ui *UI) layoutFunctionBarToolOption(th *material.Theme, gtx layout.Context, theme filePanePopupTheme, click *widget.Clickable, item functionBarToolSpec, selected bool, selectedFill, alpha float32) layout.Dimensions {
+	if click == nil {
+		return layout.Dimensions{}
+	}
 	menuItem := fileContextMenuItem{ID: item.key, Label: item.label}
-	dims, _, _ := ui.layoutFilePaneContextMenuItem(
-		th,
-		gtx,
-		theme,
-		click,
-		menuItem,
-		item.active,
-		hoverFill,
-		alpha,
-		ui.fileContextMenuRowHeight(gtx, menuItem),
-	)
-	return dims
+	rowH := ui.fileContextMenuRowHeight(gtx, menuItem)
+	selectedT := smoothstep01(clamp01(selectedFill))
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+
+		bg := color.NRGBA{}
+		fg := scaleColorAlpha(theme.Text, alpha)
+		detailColor := scaleColorAlpha(theme.Muted, alpha)
+		weight := font.Medium
+
+		if item.active {
+			bg = scaleColorAlpha(mixNRGBA(theme.Bg, theme.ActiveBg, 0.58), alpha)
+			fg = scaleColorAlpha(theme.ActiveText, alpha)
+			detailColor = scaleColorAlpha(mixNRGBA(theme.ActiveText, theme.ActiveBg, 0.42), alpha)
+		}
+
+		accent := color.NRGBA{}
+		if selected && selectedT > 0 {
+			selectedBg := mixNRGBA(theme.HoverBg, theme.ActiveBg, 0.42)
+			selectedText := bestContrastColor(selectedBg, theme.ActiveText, theme.HoverText, theme.Text)
+			selectedDetail := mixNRGBA(selectedText, selectedBg, 0.46)
+			if item.active {
+				bg = scaleColorAlpha(mixNRGBA(bg, selectedBg, 0.82*selectedT), alpha)
+				fg = scaleColorAlpha(mixNRGBA(theme.ActiveText, selectedText, 0.44*selectedT), alpha)
+				detailColor = scaleColorAlpha(mixNRGBA(detailColor, selectedDetail, 0.6*selectedT), alpha)
+			} else {
+				bg = scaleColorAlpha(mixNRGBA(theme.Bg, selectedBg, 0.9*selectedT), alpha)
+				fg = scaleColorAlpha(mixNRGBA(theme.Text, selectedText, 0.88*selectedT), alpha)
+				detailColor = scaleColorAlpha(mixNRGBA(theme.Muted, selectedDetail, 0.76*selectedT), alpha)
+			}
+			accent = scaleColorAlpha(mixNRGBA(selectedText, theme.ActiveBg, 0.16), alpha*selectedT)
+		}
+
+		return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+			m := op.Record(gtx.Ops)
+			dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(th, item.label)
+							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.TextSize = ui.functionBarTextSize()
+							lbl.Font.Weight = weight
+							lbl.Color = fg
+							lbl.MaxLines = 1
+							lbl.Truncator = "…"
+							return layoutVCenteredLabel(gtx, lbl)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							if item.shortcut == "" {
+								return layout.Dimensions{}
+							}
+							return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Caption(th, item.shortcut)
+								lbl.Font.Typeface = ui.mainTypeface()
+								lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
+								lbl.Font.Weight = font.Medium
+								lbl.Color = detailColor
+								lbl.MaxLines = 1
+								return layoutVCenteredLabel(gtx, lbl)
+							})
+						}),
+					)
+				})
+			})
+			call := m.Stop()
+			call.Add(gtx.Ops)
+			if accent.A != 0 && dims.Size.X > 0 && dims.Size.Y > 0 {
+				yPad := gtx.Dp(unit.Dp(3))
+				if yPad*2 >= dims.Size.Y {
+					yPad = 0
+				}
+				w := gtx.Dp(unit.Dp(3))
+				if w < 1 {
+					w = 1
+				}
+				x := gtx.Dp(unit.Dp(2))
+				if x+w > dims.Size.X {
+					x = 0
+				}
+				rect := image.Rect(x, yPad, x+w, dims.Size.Y-yPad)
+				if rect.Dx() > 0 && rect.Dy() > 0 {
+					paint.FillShape(gtx.Ops, accent, clip.UniformRRect(rect, w).Op(gtx.Ops))
+				}
+			}
+			return dims
+		})
+	})
 }
 
 func (ui *UI) layoutFunctionBarToolsCard(th *material.Theme, gtx layout.Context, items []functionBarToolSpec, alpha float32) layout.Dimensions {
 	width := ui.functionBarToolCardWidth(th, gtx, items)
 	theme := ui.filePanePopupTheme()
-	hoverID := ui.functionBarHoveredToolID(items)
+	hoverIndex := ui.functionBarHoveredToolIndex(items)
+	if hoverIndex >= 0 && hoverIndex != ui.functionBarToolsSelected {
+		ui.functionBarToolsSelected = hoverIndex
+	}
+	selectedIndex := ui.currentFunctionBarToolSelection(items)
+	hoverID := ""
+	if hoverIndex >= 0 && hoverIndex < len(items) {
+		hoverID = items[hoverIndex].key
+	} else if selectedIndex >= 0 && selectedIndex < len(items) {
+		hoverID = items[selectedIndex].key
+	}
 	if hoverID != ui.functionBarToolsHoverID {
 		ui.functionBarToolsHoverID = hoverID
 		ui.functionBarToolsHoverAnim.setHover(hoverID, gtx.Now)
@@ -837,7 +1035,7 @@ func (ui *UI) layoutFunctionBarToolsCard(th *material.Theme, gtx layout.Context,
 						if animating {
 							gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
 						}
-						return ui.layoutFunctionBarToolOption(th, gtx, theme, &ui.functionBarToolClicks[i], item, hoverFill, alpha)
+						return ui.layoutFunctionBarToolOption(th, gtx, theme, &ui.functionBarToolClicks[i], item, i == selectedIndex, hoverFill, alpha)
 					}))
 				}
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
@@ -893,4 +1091,37 @@ func (ui *UI) layoutFunctionBarPopup(th *material.Theme, gtx layout.Context) lay
 
 	ui.handleFunctionBarPopupOutsideClick(gtx)
 	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+func (ui *UI) handleFunctionBarPopupKeys(gtx layout.Context) {
+	if ui == nil || !ui.functionBarToolsOpen {
+		return
+	}
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameUpArrow},
+			key.Filter{Name: key.NameDownArrow},
+			key.Filter{Name: key.NameEnter},
+			key.Filter{Name: key.NameReturn},
+		)
+		if !ok {
+			return
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press || ke.Modifiers != 0 {
+			continue
+		}
+		handled := false
+		switch ke.Name {
+		case key.NameUpArrow:
+			handled = ui.moveFunctionBarToolSelection(-1)
+		case key.NameDownArrow:
+			handled = ui.moveFunctionBarToolSelection(1)
+		case key.NameEnter, key.NameReturn:
+			handled = ui.activateSelectedFunctionBarTool(gtx.Now)
+		}
+		if handled {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
 }

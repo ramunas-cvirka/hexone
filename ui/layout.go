@@ -149,6 +149,7 @@ type UI struct {
 	functionBarToolsOpenedAt    time.Time
 	functionBarToolsHoverID     string
 	functionBarToolsHoverAnim   segmentedAnimState
+	functionBarToolsSelected    int
 	functionBarToolClicks       []widget.Clickable
 	functionBarPopupGlobalTag   uiEventTag
 	functionBarPopupBodyTag     uiEventTag
@@ -203,6 +204,7 @@ func NewUI(cfg *fm.Config) *UI {
 		configPath:                 resolveUIConfigPath(),
 		typeface:                   font.Typeface(cfg.General.Typeface),
 		textSize:                   fontSizeFromConfig(cfg),
+		functionBarToolsSelected:   -1,
 		functionBarSliderPrevIndex: -1,
 		functionBarSliderIndex:     -1,
 	}
@@ -677,6 +679,7 @@ func (ui *UI) syncThemeRuntime(th *material.Theme) {
 func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.syncThemeRuntime(th)
 	ui.handleGlobalFunctionKeys(gtx)
+	ui.handleFunctionBarPopupKeys(gtx)
 	ui.handleGlobalEscapeToFileManager(gtx)
 	ui.handleEditorContextMenuGlobalPresses(gtx)
 	ui.handleEditorContextMenuClipboardEvents(gtx)
@@ -925,6 +928,10 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
 			key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Name: "S", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "s", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
 		)
 		if !ok {
 			return
@@ -1021,6 +1028,21 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				continue
 			}
 			ui.openSSHModal()
+			gtx.Execute(op.InvalidateCmd{})
+		case "S", "s":
+			if ke.State != key.Press {
+				continue
+			}
+			if ke.Modifiers != key.ModCtrl && ke.Modifiers != key.ModShortcut {
+				continue
+			}
+			if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
+				continue
+			}
+			if ui.pathEditActive() {
+				continue
+			}
+			ui.activateFunctionBarTool("settings", gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}

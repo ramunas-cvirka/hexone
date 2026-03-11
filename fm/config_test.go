@@ -341,7 +341,7 @@ func TestDefaultConfigDimsInactivePanes(t *testing.T) {
 }
 
 func TestLoadConfigEnsuringFileCreatesDefaultWhenMissing(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "fm.yaml")
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
 
 	cfg, err := LoadConfigEnsuringFile(path)
 	if err != nil {
@@ -439,6 +439,7 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Viewer.Background = "viewerbg"
 	cfg.Viewer.Text = "viewtext"
+	cfg.Viewer.Selection = "viewsel"
 
 	cfg.normalize()
 
@@ -448,9 +449,13 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	if cfg.Viewer.Text != DefaultFilePaneTextHex {
 		t.Fatalf("Viewer.Text=%q, want %q", cfg.Viewer.Text, DefaultFilePaneTextHex)
 	}
+	if cfg.Viewer.Selection != DefaultFilePaneSelectionHex {
+		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, DefaultFilePaneSelectionHex)
+	}
 
 	cfg.Viewer.Background = "#112233"
 	cfg.Viewer.Text = "aabbcc"
+	cfg.Viewer.Selection = "3355dd"
 	cfg.normalize()
 
 	if cfg.Viewer.Background != "#112233" {
@@ -458,6 +463,9 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	}
 	if cfg.Viewer.Text != "#AABBCC" {
 		t.Fatalf("Viewer.Text=%q, want %q", cfg.Viewer.Text, "#AABBCC")
+	}
+	if cfg.Viewer.Selection != "#3355DD" {
+		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, "#3355DD")
 	}
 }
 

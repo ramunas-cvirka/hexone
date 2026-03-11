@@ -3,8 +3,8 @@
 package appdata
 
 const (
-	configFileName  = "fm.yaml"
-	sessionFileName = "fm.session.yaml"
+	configFileName  = "hexone.yaml"
+	sessionFileName = "hexone.session.yaml"
 )
 
 func ConfigPath() string {

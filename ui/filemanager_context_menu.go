@@ -3,6 +3,7 @@ package ui
 import (
 	"hexone/filesys"
 	"hexone/fm"
+	"hexone/ui/platform"
 	"io"
 	"path"
 	"path/filepath"
@@ -28,6 +29,7 @@ const (
 	filePaneMenuActionNewFile           = "new-file"
 	filePaneMenuActionRefresh           = "refresh"
 	filePaneMenuActionOpenWithSystem    = "open-with-system"
+	filePaneMenuActionSystemFileManager = "system-file-manager"
 	filePaneMenuActionOpenWithAppPrefix = "open-with-app:"
 	filePaneContextMenuRootWidthDp      = 180
 	filePaneContextMenuCompactWidthDp   = 124
@@ -135,6 +137,20 @@ func replaceFileContextMenuPathLevel(path []string, level int, id string) []stri
 	return next
 }
 
+func filePaneSystemFileManagerLabel(entry *filesys.Entry) string {
+	name := strings.TrimSpace(systemFileManagerNameFunc())
+	if name == "" {
+		name = strings.TrimSpace(platform.SystemFileManagerName())
+	}
+	if name == "" {
+		name = "File Manager"
+	}
+	if entry != nil && entry.Kind != filesys.EntryDir && entry.Kind != filesys.EntryParent {
+		return "Reveal in " + name
+	}
+	return "Open in " + name
+}
+
 func equalStringSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -163,6 +179,11 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 			fileContextMenuActionItem("refresh", "Refresh", filePaneMenuActionRefresh),
 			fileContextMenuActionItem("copy-path", "Copy Path", filePaneMenuActionCopyPath),
 		}
+		if !pane.remoteConnected() {
+			root.Items = append(root.Items[:2], append([]fileContextMenuItem{
+				fileContextMenuActionItem("system-file-manager", filePaneSystemFileManagerLabel(nil), filePaneMenuActionSystemFileManager),
+			}, root.Items[2:]...)...)
+		}
 		return root
 	}
 
@@ -179,6 +200,7 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 	root.Title = title
 
 	otherPaneAvailable := ui != nil && ui.contextMenuOtherPaneIndex(idx) >= 0
+	localFileManagerAvailable := !pane.remoteConnected()
 	fileOpsMenu := ui.filePaneFileOpsMenuSpec()
 
 	switch entry.Kind {
@@ -186,6 +208,9 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		root.Items = append(root.Items, fileContextMenuActionItem("open", "Open", filePaneMenuActionOpen))
 		if otherPaneAvailable {
 			root.Items = append(root.Items, fileContextMenuActionItem("open-other", "Open in Other Pane", filePaneMenuActionOpenOtherPane))
+		}
+		if localFileManagerAvailable {
+			root.Items = append(root.Items, fileContextMenuActionItem("system-file-manager", filePaneSystemFileManagerLabel(entry), filePaneMenuActionSystemFileManager))
 		}
 		root.Items = append(root.Items,
 			fileContextMenuSeparator("sep-copy-path"),
@@ -195,6 +220,9 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		root.Items = append(root.Items, fileContextMenuActionItem("open", "Open", filePaneMenuActionOpen))
 		if otherPaneAvailable {
 			root.Items = append(root.Items, fileContextMenuActionItem("open-other", "Open in Other Pane", filePaneMenuActionOpenOtherPane))
+		}
+		if localFileManagerAvailable {
+			root.Items = append(root.Items, fileContextMenuActionItem("system-file-manager", filePaneSystemFileManagerLabel(entry), filePaneMenuActionSystemFileManager))
 		}
 		root.Items = append(root.Items,
 			fileContextMenuSeparator("sep-edit"),
@@ -211,6 +239,9 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		}
 		if menu := ui.filePaneOpenWithMenuSpec(pane, entry); menu != nil {
 			root.Items = append(root.Items, fileContextMenuSubmenuItem("open-with", "Open With", menu))
+		}
+		if localFileManagerAvailable {
+			root.Items = append(root.Items, fileContextMenuActionItem("system-file-manager", filePaneSystemFileManagerLabel(entry), filePaneMenuActionSystemFileManager))
 		}
 		root.Items = append(root.Items,
 			fileContextMenuSeparator("sep-edit"),
@@ -371,6 +402,8 @@ func (ui *UI) handleFilePaneContextMenuAction(idx int, pane *filePaneState, row 
 		}
 	case filePaneMenuActionRefresh:
 		ui.refreshFilePane(idx, now)
+	case filePaneMenuActionSystemFileManager:
+		ui.startFileSystemFileManagerAction(idx, row, now)
 	case filePaneMenuActionOpenWithSystem:
 		ui.startFileExternalOpenWithAction(idx, row, "", now)
 	default:

@@ -206,3 +206,81 @@ func TestDoubleClickDirectoryStillNavigates(t *testing.T) {
 		t.Fatalf("loading dir = %q, want %q", got, want)
 	}
 }
+
+func TestStartFileSystemFileManagerActionRevealsFiles(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	pane.model = &filePaneModel{
+		entries: []filesys.Entry{{
+			Path:        `C:\tmp\report.txt`,
+			DisplayName: "report.txt",
+			Kind:        filesys.EntryFile,
+		}},
+		cfg: ui.fmCfg,
+	}
+	pane.table.Selected = 0
+
+	var revealedPath string
+	prevOpenDir := openDirectoryInSystemFileManagerFunc
+	prevReveal := revealPathInSystemFileManagerFunc
+	openDirectoryInSystemFileManagerFunc = func(dirPath string) error {
+		t.Fatalf("directory open should not be used for file reveal, got %q", dirPath)
+		return nil
+	}
+	revealPathInSystemFileManagerFunc = func(path string) error {
+		revealedPath = path
+		return nil
+	}
+	defer func() {
+		openDirectoryInSystemFileManagerFunc = prevOpenDir
+		revealPathInSystemFileManagerFunc = prevReveal
+	}()
+
+	ui.startFileSystemFileManagerAction(0, 0, time.Now())
+
+	if revealedPath != `C:\tmp\report.txt` {
+		t.Fatalf("revealed path = %q, want report.txt path", revealedPath)
+	}
+	if pane.noticeText != "" {
+		t.Fatalf("file manager reveal should stay quiet, got notice %q", pane.noticeText)
+	}
+}
+
+func TestStartFileSystemFileManagerActionOpensDirectories(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	pane.model = &filePaneModel{
+		entries: []filesys.Entry{{
+			Path:        `C:\tmp\docs`,
+			DisplayName: "docs",
+			Kind:        filesys.EntryDir,
+		}},
+		cfg: ui.fmCfg,
+	}
+	pane.table.Selected = 0
+
+	var openedDir string
+	prevOpenDir := openDirectoryInSystemFileManagerFunc
+	prevReveal := revealPathInSystemFileManagerFunc
+	openDirectoryInSystemFileManagerFunc = func(dirPath string) error {
+		openedDir = dirPath
+		return nil
+	}
+	revealPathInSystemFileManagerFunc = func(path string) error {
+		t.Fatalf("reveal should not be used for directory open, got %q", path)
+		return nil
+	}
+	defer func() {
+		openDirectoryInSystemFileManagerFunc = prevOpenDir
+		revealPathInSystemFileManagerFunc = prevReveal
+	}()
+
+	ui.startFileSystemFileManagerAction(0, 0, time.Now())
+
+	if openedDir != `C:\tmp\docs` {
+		t.Fatalf("opened dir = %q, want docs path", openedDir)
+	}
+	if pane.noticeText != "" {
+		t.Fatalf("file manager open should stay quiet, got notice %q", pane.noticeText)
+	}
+}

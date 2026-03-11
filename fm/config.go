@@ -171,6 +171,7 @@ type ViewerConfig struct {
 	Typeface                string              `yaml:"typeface"`
 	Background              string              `yaml:"background,omitempty"`
 	Text                    string              `yaml:"text,omitempty"`
+	Selection               string              `yaml:"selection,omitempty"`
 	Shell                   string              `yaml:"shell"`
 	Command                 string              `yaml:"command"`
 	Associations            []ViewerAssociation `yaml:"associations,omitempty"`
@@ -300,6 +301,7 @@ func DefaultConfig() *Config {
 			Typeface:                resources.BundledFontFamilyFiraCode,
 			Background:              DefaultFilePaneBackgroundHex,
 			Text:                    DefaultFilePaneTextHex,
+			Selection:               DefaultFilePaneSelectionHex,
 			Shell:                   "auto",
 			Command:                 "cat {path}",
 			Associations:            nil,
@@ -407,6 +409,7 @@ func (c *Config) normalize() {
 	}
 	c.Viewer.Background = NormalizeHexColor(c.Viewer.Background, c.Colors.FilePaneBackground)
 	c.Viewer.Text = NormalizeHexColor(c.Viewer.Text, c.Colors.FilePaneText)
+	c.Viewer.Selection = NormalizeHexColor(c.Viewer.Selection, c.Colors.Selection)
 	c.Colors.FilePaneBackground = NormalizeHexColor(c.Colors.FilePaneBackground, DefaultFilePaneBackgroundHex)
 	c.Colors.FilePaneText = NormalizeHexColor(c.Colors.FilePaneText, DefaultFilePaneTextHex)
 	c.Colors.Hover = NormalizeHexColor(c.Colors.Hover, DefaultFilePaneHoverHex)

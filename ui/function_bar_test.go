@@ -26,7 +26,7 @@ func TestFunctionBarToolSpecsFollowActiveWorkspace(t *testing.T) {
 		}
 	}
 
-	assertActive("files")
+	assertActive("")
 
 	ui.Tabs.Value = "tab1"
 	assertActive("hex")
@@ -36,6 +36,38 @@ func TestFunctionBarToolSpecsFollowActiveWorkspace(t *testing.T) {
 
 	ui.settingsModal = &settingsModalState{}
 	assertActive("settings")
+}
+
+func TestFunctionBarToolsExposeCompactShortcutHint(t *testing.T) {
+	ui := &UI{}
+
+	items := ui.functionBarToolSpecs()
+	if len(items) != 3 {
+		t.Fatalf("tool count=%d want 3", len(items))
+	}
+	if items[0].key == "files" {
+		t.Fatal("redundant file-manager entry should not be present")
+	}
+	if items[2].key != "settings" {
+		t.Fatalf("last tool=%q want settings", items[2].key)
+	}
+	if got := items[2].shortcut; got != "Ctrl+S" {
+		t.Fatalf("settings shortcut=%q want %q", got, "Ctrl+S")
+	}
+}
+
+func TestFunctionBarToolSpecsOmitFileManagerEntryInFilesTab(t *testing.T) {
+	ui := &UI{}
+
+	items := ui.functionBarToolSpecs()
+	if len(items) == 0 {
+		t.Fatal("function bar tool specs should not be empty")
+	}
+	for _, item := range items {
+		if item.key == "files" {
+			t.Fatal("file manager should not be listed in tools popup")
+		}
+	}
 }
 
 func TestFunctionBarExitRequestsWindowClose(t *testing.T) {
@@ -108,5 +140,48 @@ func TestViewerFunctionBarAutoHideCanBeTemporarilyShown(t *testing.T) {
 	}
 	if ui.functionBarVisible() {
 		t.Fatal("manual hidden state should resume after viewer closes")
+	}
+}
+
+func TestFunctionBarToolsOpenSeedsKeyboardSelectionFromActiveTool(t *testing.T) {
+	now := time.Date(2026, time.March, 11, 10, 0, 0, 0, time.UTC)
+	ui := &UI{
+		Tabs: widget.Enum{Value: "tab2"},
+	}
+
+	if !ui.performFunctionBarAction(functionBarActionTools, now) {
+		t.Fatal("tools action should open the popup")
+	}
+	if !ui.functionBarToolsOpen {
+		t.Fatal("tools popup should be open")
+	}
+	if got := ui.functionBarToolsSelected; got != 1 {
+		t.Fatalf("selected tool=%d want 1 for protocol analyzer", got)
+	}
+}
+
+func TestFunctionBarToolKeyboardSelectionWrapsAndActivates(t *testing.T) {
+	now := time.Date(2026, time.March, 11, 10, 5, 0, 0, time.UTC)
+	ui := &UI{
+		Tabs: widget.Enum{Value: "tab0"},
+	}
+
+	if !ui.performFunctionBarAction(functionBarActionTools, now) {
+		t.Fatal("tools action should open the popup")
+	}
+	if !ui.moveFunctionBarToolSelection(-1) {
+		t.Fatal("up should wrap selection to the last tool")
+	}
+	if got := ui.functionBarToolsSelected; got != 2 {
+		t.Fatalf("selected tool=%d want 2", got)
+	}
+	if !ui.activateSelectedFunctionBarTool(now) {
+		t.Fatal("enter should activate the selected tool")
+	}
+	if ui.functionBarToolsOpen {
+		t.Fatal("tools popup should close after activation")
+	}
+	if ui.settingsModal == nil {
+		t.Fatal("activating the Settings tool should open the settings modal")
 	}
 }

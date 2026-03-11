@@ -449,6 +449,7 @@ func TestDraftViewerThemeAppliesExplicitOverrides(t *testing.T) {
 		colorScope:            "viewer",
 		colorViewerBackground: "#112233",
 		colorViewerText:       "#F1E2D3",
+		colorViewerSelection:  "#3355CC",
 	}
 
 	theme, errText := st.draftViewerTheme(fm.DefaultConfig())
@@ -460,6 +461,9 @@ func TestDraftViewerThemeAppliesExplicitOverrides(t *testing.T) {
 	}
 	if got := fm.FormatHexColor(theme.Text); got != "#F1E2D3" {
 		t.Fatalf("Text=%q want %q", got, "#F1E2D3")
+	}
+	if contrastScore(theme.PanelBg, theme.Selection) <= 1.45 {
+		t.Fatalf("selection contrast=%0.2f want > 1.45", contrastScore(theme.PanelBg, theme.Selection))
 	}
 }
 
@@ -473,5 +477,24 @@ func TestDraftViewerThemeRejectsInvalidViewerColor(t *testing.T) {
 	_, errText := st.draftViewerTheme(fm.DefaultConfig())
 	if !strings.Contains(errText, "Viewer background") {
 		t.Fatalf("errText=%q, want viewer background validation", errText)
+	}
+}
+
+func TestSettingsViewerColorCategoryUsesSelectionValue(t *testing.T) {
+	st := &settingsModalState{
+		colorScope:            "viewer",
+		colorViewerBackground: "#112233",
+		colorViewerText:       "#F1E2D3",
+		colorViewerSelection:  "#3355CC",
+	}
+
+	if got := settingsColorLabel("viewer", "selection"); got != "Selection" {
+		t.Fatalf("viewer selection label=%q want %q", got, "Selection")
+	}
+	if got := st.colorValue("selection"); got != "#3355CC" {
+		t.Fatalf("viewer selection value=%q want %q", got, "#3355CC")
+	}
+	if settingsViewerCategoryHasText("selection") {
+		t.Fatal("viewer selection category should not expose a separate text field")
 	}
 }

@@ -4,6 +4,9 @@ import (
 	"image"
 	"testing"
 	"time"
+
+	"gioui.org/layout"
+	"hexone/fm"
 )
 
 func TestNormalizeViewerModeSupportsHex(t *testing.T) {
@@ -43,6 +46,32 @@ func TestFormatHexLineWithGrouping(t *testing.T) {
 	data := []byte{0x01, 0x02, 0x03, 0x04}
 	if got, want := formatHexLine(data, 4, 2), "01 02  03 04"; got != want {
 		t.Fatalf("formatHexLine = %q, want %q", got, want)
+	}
+}
+
+func TestFormatHexSelectionCopyUsesContinuousHex(t *testing.T) {
+	data := []byte{0x48, 0x65, 0x78, 0x6F}
+	if got, want := formatHexSelectionCopy(data), "4865786F"; got != want {
+		t.Fatalf("formatHexSelectionCopy = %q, want %q", got, want)
+	}
+}
+
+func TestCopyFileViewerTextRejectsHexSelectionOverLimit(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{
+		mode: "hex",
+		hex:  newHexViewerState(),
+	}
+	st.hex.fileSize = viewerHexCopyMaxBytes + 1
+	st.hex.buffer = make([]byte, viewerHexCopyMaxBytes+1)
+	st.hex.setSelectionRange(0, viewerHexCopyMaxBytes+1)
+	ui.fileViewer = st
+
+	if ui.copyFileViewerText(layout.Context{}, false) {
+		t.Fatal("copyFileViewerText should reject oversize hex selection")
+	}
+	if got, want := st.status, "hex copy is limited to 1 MiB"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
 	}
 }
 

@@ -1,8 +1,8 @@
 /hexone
 /hexone.exe
 /dist/
-/fm.yaml
-/fm.session.yaml
+/hexone.yaml
+/hexone.session.yaml
 .DS_Store
 **/.DS_Store
 /.qodo/

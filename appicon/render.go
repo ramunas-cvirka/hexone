@@ -20,11 +20,14 @@ const (
 	AppID    = "hexone"
 	AppTitle = "hexone"
 
-	iconVisibleAlphaThreshold  = 24
-	iconVisibleMarginPct       = 0
-	macBundleTinyOverscanPct   = 10
-	macBundleSmallOverscanPct  = 6
-	macBundleBackdropRadiusPct = 23
+	iconVisibleAlphaThreshold   = 24
+	iconVisibleMarginPct        = 0
+	windowsICOTinyOverscanPct   = 0
+	windowsICOSmallOverscanPct  = 0
+	windowsICOMediumOverscanPct = 0
+	macBundleTinyOverscanPct    = 10
+	macBundleSmallOverscanPct   = 6
+	macBundleBackdropRadiusPct  = 23
 )
 
 var macBundleBackdropColor = color.NRGBA{R: 22, G: 26, B: 36, A: 255}
@@ -150,6 +153,19 @@ func macBundleIconOverscanPct(size int) int {
 	}
 }
 
+func windowsICOOverscanPct(size int) int {
+	switch {
+	case size <= 20:
+		return windowsICOTinyOverscanPct
+	case size <= 32:
+		return windowsICOSmallOverscanPct
+	case size <= 64:
+		return windowsICOMediumOverscanPct
+	default:
+		return 0
+	}
+}
+
 func renderMacBundleAppIcon(size int) *image.RGBA {
 	if size < 16 {
 		size = 16
@@ -166,6 +182,10 @@ func renderMacBundleAppIcon(size int) *image.RGBA {
 	return dst
 }
 
+func renderWindowsICOAppIcon(size int) *image.RGBA {
+	return renderOverscannedAppIcon(size, windowsICOOverscanPct(size))
+}
+
 func defaultAppIconICO() ([]byte, error) {
 	iconICOMu.Lock()
 	defer iconICOMu.Unlock()
@@ -173,13 +193,14 @@ func defaultAppIconICO() ([]byte, error) {
 		return append([]byte(nil), iconICOData...), nil
 	}
 
-	sizes := []int{16, 32, 48, 256}
+	sizes := []int{16, 20, 24, 32, 40, 48, 64, 256}
 	pngParts := make([][]byte, 0, len(sizes))
 	for _, size := range sizes {
-		data, err := defaultAppIconPNG(size)
-		if err != nil {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, renderWindowsICOAppIcon(size)); err != nil {
 			return nil, err
 		}
+		data := append([]byte(nil), buf.Bytes()...)
 		pngParts = append(pngParts, data)
 	}
 

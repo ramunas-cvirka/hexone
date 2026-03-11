@@ -74,6 +74,13 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 		}
 	}
 	baseText.A = 0xFF
+	selectionBase := palette.SelectedBg
+	if cfg != nil {
+		if c, ok := fm.ParseHexColor(strings.TrimSpace(cfg.Viewer.Selection)); ok {
+			selectionBase = c
+		}
+	}
+	selectionBase.A = 0xFF
 
 	backdrop := mixNRGBA(baseBg, color.NRGBA{A: 0xFF}, 0.46)
 	backdrop.A = 252
@@ -106,10 +113,13 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 	divider := mixNRGBA(headerText, headerBg, 0.78)
 	divider.A = 28
 
-	selection := mixNRGBA(baseBg, popup.ActiveBg, 0.74)
-	selection.A = 118
-	strongSelection := mixNRGBA(baseBg, popup.ActiveBg, 0.82)
-	strongSelection.A = 138
+	selectionText := bestContrastColor(selectionBase, popup.ActiveText, popup.HoverText, baseText)
+	selection := mixNRGBA(baseBg, selectionBase, 0.88)
+	selection = mixNRGBA(selection, selectionText, 0.08)
+	selection.A = 168
+	strongSelection := mixNRGBA(baseBg, selectionBase, 0.95)
+	strongSelection = mixNRGBA(strongSelection, selectionText, 0.14)
+	strongSelection.A = 214
 
 	scrollAccentText := bestContrastColor(baseBg, popup.ActiveText, popup.HoverText, headerText, baseText)
 	scrollAccent := mixNRGBA(popup.ActiveBg, scrollAccentText, 0.18)

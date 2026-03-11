@@ -150,7 +150,7 @@ Remote panes support `command` mode too, so the same log-following patterns work
 ## Customization
 
 Most everyday customization is available from Settings.
-The full configuration also lives in `fm.yaml`.
+The full configuration also lives in `hexone.yaml`.
 
 Useful things to adjust:
 

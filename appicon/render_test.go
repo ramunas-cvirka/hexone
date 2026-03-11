@@ -66,6 +66,21 @@ func TestMacBundleIconOverscanPct(t *testing.T) {
 	}
 }
 
+func TestWindowsICOOverscanPct(t *testing.T) {
+	if got := windowsICOOverscanPct(16); got != windowsICOTinyOverscanPct {
+		t.Fatalf("16px overscan = %d, want %d", got, windowsICOTinyOverscanPct)
+	}
+	if got := windowsICOOverscanPct(24); got != windowsICOSmallOverscanPct {
+		t.Fatalf("24px overscan = %d, want %d", got, windowsICOSmallOverscanPct)
+	}
+	if got := windowsICOOverscanPct(64); got != windowsICOMediumOverscanPct {
+		t.Fatalf("64px overscan = %d, want %d", got, windowsICOMediumOverscanPct)
+	}
+	if got := windowsICOOverscanPct(128); got != 0 {
+		t.Fatalf("128px overscan = %d, want 0", got)
+	}
+}
+
 func TestTinyOverscannedAppIconGrowsVisibleBounds(t *testing.T) {
 	size := 32
 	base := visibleAlphaBounds(renderDefaultAppIcon(size), 8)
@@ -81,6 +96,25 @@ func TestLargeMacBundleIconKeepsFullArtworkVisible(t *testing.T) {
 	bundle := visibleAlphaBounds(renderOverscannedAppIcon(size, macBundleIconOverscanPct(size)), 8)
 	if bundle != base {
 		t.Fatalf("large bundle icon should match default bounds: base=%v bundle=%v", base, bundle)
+	}
+}
+
+func TestRenderWindowsICOAppIconGeometry(t *testing.T) {
+	size := 32
+	img := renderWindowsICOAppIcon(size)
+	if img.Bounds().Dx() != size || img.Bounds().Dy() != size {
+		t.Fatalf("windows ico icon bounds=%v want %dx%d", img.Bounds(), size, size)
+	}
+	if alpha := img.RGBAAt(0, 0).A; alpha != 0 {
+		t.Fatalf("windows ico icon corner alpha=%d want 0", alpha)
+	}
+	if alpha := img.RGBAAt(size/2, size/2).A; alpha == 0 {
+		t.Fatal("windows ico icon center should remain visible")
+	}
+	base := visibleAlphaBounds(renderDefaultAppIcon(size), 8)
+	overscanned := visibleAlphaBounds(img, 8)
+	if overscanned.Dx() < base.Dx() || overscanned.Dy() < base.Dy() {
+		t.Fatalf("windows ico icon should not shrink visible bounds: base=%v overscanned=%v", base, overscanned)
 	}
 }
 
@@ -153,7 +187,7 @@ func TestDefaultAppIconICOHeader(t *testing.T) {
 	if data[0] != 0 || data[1] != 0 || data[2] != 1 || data[3] != 0 {
 		t.Fatalf("invalid ico header: %v", data[:4])
 	}
-	if data[4] != 4 || data[5] != 0 {
-		t.Fatalf("expected 4 icon entries, got %d", int(data[4])|int(data[5])<<8)
+	if data[4] != 8 || data[5] != 0 {
+		t.Fatalf("expected 8 icon entries, got %d", int(data[4])|int(data[5])<<8)
 	}
 }

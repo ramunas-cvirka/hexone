@@ -476,15 +476,22 @@ func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context
 }
 
 func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Context, st *fileViewerState, alpha float32) layout.Dimensions {
+	theme := ui.filePanePopupTheme()
+	item := fileContextMenuItem{ID: "viewer-copy", Label: "Copy"}
 	width := gtx.Dp(unit.Dp(96))
+	lbl := material.Body2(th, item.Label)
+	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.TextSize = ui.functionBarTextSize()
+	lbl.Font.Weight = font.Medium
+	if measured := measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(28)); measured > width {
+		width = measured
+	}
 	if width > gtx.Constraints.Max.X {
 		width = gtx.Constraints.Max.X
 	}
 	if width < 1 {
 		width = 1
 	}
-	theme := ui.filePanePopupTheme()
-	item := fileContextMenuItem{ID: "viewer-copy", Label: "Copy"}
 	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
 		return fillRoundedClipBox(
 			gtx,

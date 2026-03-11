@@ -738,9 +738,14 @@ func (ui *UI) fileContextMenuTitleHeight(gtx layout.Context) int {
 }
 
 func (ui *UI) fileContextMenuRowHeight(gtx layout.Context, item fileContextMenuItem) int {
-	h := gtx.Dp(unit.Dp(22))
+	h := gtx.Sp(ui.functionBarTextSize()) + gtx.Dp(unit.Dp(11))
 	if item.Detail != "" {
-		h = gtx.Dp(unit.Dp(34))
+		h = gtx.Sp(ui.functionBarTextSize()) + gtx.Sp(scaleConfigFontSize(ui.fmCfg, unit.Sp(filePaneContextMenuItemDetailTextSp))) + gtx.Dp(unit.Dp(13))
+		if minH := gtx.Dp(unit.Dp(34)); h < minH {
+			h = minH
+		}
+	} else if minH := gtx.Dp(unit.Dp(22)); h < minH {
+		h = minH
 	}
 	if h < 1 {
 		h = 1

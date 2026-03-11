@@ -11,6 +11,9 @@ import (
 
 var openFileWithConfiguredAppFunc = platform.OpenFileWithConfiguredApp
 var openFileWithSystemAssociationFunc = platform.OpenFileWithSystemAssociation
+var systemFileManagerNameFunc = platform.SystemFileManagerName
+var openDirectoryInSystemFileManagerFunc = platform.OpenDirectoryInSystemFileManager
+var revealPathInSystemFileManagerFunc = platform.RevealPathInSystemFileManager
 
 func (ui *UI) startFileExternalOpenAction(idx int, now time.Time) {
 	pane, entry, ok := ui.filePaneEntryForExternalOpen(idx, -1, now)
@@ -51,6 +54,24 @@ func (ui *UI) startFileExternalOpenWithAction(idx, row int, appPath string, now 
 	ui.finishFileExternalOpen(idx, pane, err, now)
 }
 
+func (ui *UI) startFileSystemFileManagerAction(idx, row int, now time.Time) {
+	pane, targetPath, reveal, ok := ui.filePaneTargetForSystemFileManager(idx, row, now)
+	if !ok {
+		return
+	}
+	var err error
+	if reveal {
+		err = revealPathInSystemFileManagerFunc(targetPath)
+	} else {
+		err = openDirectoryInSystemFileManagerFunc(targetPath)
+	}
+	if err != nil {
+		pane.setNotice("file manager open failed: "+err.Error(), now)
+		return
+	}
+	ui.finishFileExternalOpen(idx, pane, nil, now)
+}
+
 func (ui *UI) filePaneEntryForExternalOpen(idx, row int, now time.Time) (*filePaneState, *filesys.Entry, bool) {
 	if ui == nil || idx < 0 || idx >= len(ui.filePanes) {
 		return nil, nil, false
@@ -80,6 +101,48 @@ func (ui *UI) filePaneEntryForExternalOpen(idx, row int, now time.Time) (*filePa
 		return pane, nil, false
 	}
 	return pane, entry, true
+}
+
+func (ui *UI) filePaneTargetForSystemFileManager(idx, row int, now time.Time) (*filePaneState, string, bool, bool) {
+	if ui == nil || idx < 0 || idx >= len(ui.filePanes) {
+		return nil, "", false, false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return nil, "", false, false
+	}
+	if pane.remoteConnected() {
+		pane.setNotice("file manager open supports local paths only", now)
+		return pane, "", false, false
+	}
+
+	var entry *filesys.Entry
+	if row >= 0 && pane.model != nil {
+		entry = pane.model.Entry(row)
+	}
+	if entry == nil {
+		entry = pane.contextMenuEntry()
+	}
+	if entry == nil {
+		targetPath := strings.TrimSpace(pane.displayDir())
+		if targetPath == "" {
+			pane.setNotice("path is empty", now)
+			return pane, "", false, false
+		}
+		return pane, targetPath, false, true
+	}
+
+	targetPath := strings.TrimSpace(entry.Path)
+	if targetPath == "" {
+		pane.setNotice("path is empty", now)
+		return pane, "", false, false
+	}
+	switch entry.Kind {
+	case filesys.EntryDir, filesys.EntryParent:
+		return pane, targetPath, false, true
+	default:
+		return pane, targetPath, true, true
+	}
 }
 
 func (ui *UI) finishFileExternalOpen(idx int, pane *filePaneState, err error, now time.Time) {

@@ -55,3 +55,18 @@ func TestGlobalEscapeClosesFunctionBarToolsInTab0(t *testing.T) {
 		t.Fatal("escape should close function bar tools popup in tab0")
 	}
 }
+
+func TestGlobalShortcutOpensSettings(t *testing.T) {
+	ui := &UI{
+		Tabs: widget.Enum{Value: "tab0"},
+	}
+
+	gtx, router := testKeyContext()
+	router.Event(key.Filter{Name: "S", Required: key.ModCtrl})
+	router.Queue(key.Event{Name: "S", Modifiers: key.ModCtrl, State: key.Press})
+
+	ui.handleGlobalFunctionKeys(gtx)
+	if ui.settingsModal == nil {
+		t.Fatal("ctrl+s should open settings")
+	}
+}
