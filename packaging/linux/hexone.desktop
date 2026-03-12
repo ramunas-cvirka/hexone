@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
-Version=@HEXONE_SEMVER@
+Version=1.0
 Name=hexone
 Comment=Hex-oriented file manager and protocol analyzer
 Exec=hexone %U
 Icon=hexone
 Terminal=false
-Categories=Utility;Development;
+Categories=Utility;FileManager;
 StartupNotify=true
 StartupWMClass=hexone
 X-Hexone-Version=@HEXONE_VERSION@
