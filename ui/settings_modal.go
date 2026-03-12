@@ -4012,17 +4012,6 @@ func (ui *UI) layoutSettingsColorScopeTabs(th *material.Theme, gtx layout.Contex
 	)
 }
 
-func settingsViewerPreviewCommandText(st *settingsModalState) string {
-	if st == nil {
-		return "cat {path}"
-	}
-	cmd := strings.TrimSpace(st.viewCommandEdit.Text())
-	if cmd == "" {
-		cmd = "cat {path}"
-	}
-	return cmd
-}
-
 func (st *settingsModalState) previewViewerConfig(cfg *fm.Config) *fm.Config {
 	draft := fm.DefaultConfig()
 	if cfg != nil {
@@ -4033,7 +4022,6 @@ func (st *settingsModalState) previewViewerConfig(cfg *fm.Config) *fm.Config {
 
 	palette, _ := st.draftFilePanePalette(cfg)
 	draft.Colors = filePanePaletteToConfigColors(palette)
-	draft.Viewer.Command = settingsViewerPreviewCommandText(st)
 
 	mode := strings.ToLower(strings.TrimSpace(st.viewMode))
 	switch mode {
@@ -4104,35 +4092,57 @@ func (st *settingsModalState) previewViewerLineHeight(ui *UI, th *material.Theme
 	return lineH
 }
 
+func settingsViewerPreviewSelectionFill(theme fileViewerTheme, strong bool) color.NRGBA {
+	fill := theme.Selection
+	if strong {
+		fill = theme.StrongSelection
+	}
+	fill.A = 0xFF
+	return fill
+}
+
+func settingsViewerPreviewSelectionRect(width, rowH int) image.Rectangle {
+	if width <= 0 || rowH <= 0 {
+		return image.Rectangle{}
+	}
+	return image.Rect(0, 0, width, rowH)
+}
+
+func (ui *UI) settingsViewerPreviewLabelStyle(th *material.Theme, face font.Typeface, size unit.Sp, txt string, fg color.NRGBA) material.LabelStyle {
+	lbl := material.Body2(th, txt)
+	lbl.Font.Typeface = face
+	lbl.Font.Weight = font.Normal
+	lbl.TextSize = size
+	lbl.Color = fg
+	lbl.MaxLines = 1
+	lbl.Truncator = "..."
+	return lbl
+}
+
 func (ui *UI) layoutSettingsViewerPreviewTextRow(th *material.Theme, gtx layout.Context, st *settingsModalState, theme fileViewerTheme, txt string, fg color.NRGBA, selected bool) layout.Dimensions {
 	rowH := st.previewViewerLineHeight(ui, th, gtx, false)
 	return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return fillBgExact(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					if selected {
-						return fillBgExact(gtx, theme.Selection, func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body2(th, txt)
-								lbl.Font.Typeface = st.previewViewerTypeface(ui)
-								lbl.TextSize = st.previewViewerTextSize(ui)
-								lbl.Color = bestContrastColor(theme.Selection, theme.Text, theme.HeaderText, theme.TooltipText)
-								lbl.MaxLines = 1
-								lbl.Truncator = "..."
-								return layoutVCenteredLabel(gtx, lbl)
-							})
-						})
+		defer clip.Rect(image.Rect(0, 0, gtx.Constraints.Max.X, rowH)).Push(gtx.Ops).Pop()
+		return layout.Stack{}.Layout(gtx,
+			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+				if selected {
+					bg := settingsViewerPreviewSelectionFill(theme, false)
+					if rect := settingsViewerPreviewSelectionRect(gtx.Constraints.Max.X, rowH); !rect.Empty() {
+						paint.FillShape(gtx.Ops, bg, clip.Rect(rect).Op())
 					}
-					lbl := material.Body2(th, txt)
-					lbl.Font.Typeface = st.previewViewerTypeface(ui)
-					lbl.TextSize = st.previewViewerTextSize(ui)
-					lbl.Color = fg
-					lbl.MaxLines = 1
-					lbl.Truncator = "..."
-					return layoutVCenteredLabel(gtx, lbl)
+				}
+				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, rowH)}
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lineGtx := gtx
+					lineGtx.Constraints.Min.Y = rowH
+					lineGtx.Constraints.Max.Y = rowH
+					lbl := ui.settingsViewerPreviewLabelStyle(th, st.previewViewerTypeface(ui), st.previewViewerTextSize(ui), txt, fg)
+					return layoutVCenteredLabel(lineGtx, lbl)
 				})
-			})
-		})
+			}),
+		)
 	})
 }
 
@@ -4168,136 +4178,115 @@ func (ui *UI) layoutSettingsViewerPreviewHexRow(th *material.Theme, gtx layout.C
 	hexColor := theme.Text
 	asciiColor := theme.ASCIIText
 	return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, leftPad, func(gtx layout.Context) layout.Dimensions {
-						return layout.Dimensions{Size: image.Pt(leftPad, rowH)}
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, offsetW, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, offset)
-						lbl.Font.Typeface = ui.viewerMonospaceTypeface()
-						lbl.TextSize = st.previewViewerTextSize(ui)
-						lbl.Color = offsetColor
-						lbl.MaxLines = 1
-						return layoutVCenteredLabel(gtx, lbl)
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, columnGap, func(gtx layout.Context) layout.Dimensions {
-						return layout.Dimensions{Size: image.Pt(columnGap, rowH)}
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, hexW, func(gtx layout.Context) layout.Dimensions {
-						if !selected {
-							lbl := material.Body2(th, hexText)
-							lbl.Font.Typeface = ui.viewerMonospaceTypeface()
-							lbl.TextSize = st.previewViewerTextSize(ui)
-							lbl.Color = hexColor
-							lbl.MaxLines = 1
-							return layoutVCenteredLabel(gtx, lbl)
-						}
-						return fillBgExact(gtx, theme.Selection, func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body2(th, hexText)
-								lbl.Font.Typeface = ui.viewerMonospaceTypeface()
-								lbl.TextSize = st.previewViewerTextSize(ui)
-								lbl.Color = bestContrastColor(theme.Selection, hexColor, theme.HeaderText, theme.Text)
-								lbl.MaxLines = 1
-								return layoutVCenteredLabel(gtx, lbl)
-							})
-						})
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, columnGap, func(gtx layout.Context) layout.Dimensions {
-						return layout.Dimensions{Size: image.Pt(columnGap, rowH)}
-					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, asciiW, func(gtx layout.Context) layout.Dimensions {
-						bg := color.NRGBA{}
-						fg := asciiColor
-						if selected {
-							bg = theme.StrongSelection
-							fg = bestContrastColor(bg, asciiColor, theme.HeaderText, theme.Text)
-						}
-						return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body2(th, ascii)
-							lbl.Font.Typeface = ui.viewerMonospaceTypeface()
-							lbl.TextSize = st.previewViewerTextSize(ui)
-							lbl.Color = fg
-							lbl.MaxLines = 1
-							return layoutVCenteredLabel(gtx, lbl)
-						})
-					})
-				}),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, rowH)}
-				}),
-			)
-		})
+		defer clip.Rect(image.Rect(0, 0, gtx.Constraints.Max.X, rowH)).Push(gtx.Ops).Pop()
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fixedWidth(gtx, leftPad, func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{Size: image.Pt(leftPad, rowH)}
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fixedWidth(gtx, offsetW, func(gtx layout.Context) layout.Dimensions {
+					lineGtx := gtx
+					lineGtx.Constraints.Min.Y = rowH
+					lineGtx.Constraints.Max.Y = rowH
+					lbl := ui.settingsViewerPreviewLabelStyle(th, ui.viewerMonospaceTypeface(), st.previewViewerTextSize(ui), offset, offsetColor)
+					return layoutVCenteredLabel(lineGtx, lbl)
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fixedWidth(gtx, columnGap, func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{Size: image.Pt(columnGap, rowH)}
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fixedWidth(gtx, hexW, func(gtx layout.Context) layout.Dimensions {
+					return layout.Stack{}.Layout(gtx,
+						layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+							if selected {
+								bg := settingsViewerPreviewSelectionFill(theme, false)
+								if rect := settingsViewerPreviewSelectionRect(gtx.Constraints.Max.X, rowH); !rect.Empty() {
+									paint.FillShape(gtx.Ops, bg, clip.Rect(rect).Op())
+								}
+							}
+							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, rowH)}
+						}),
+						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+							lineGtx := gtx
+							lineGtx.Constraints.Min.Y = rowH
+							lineGtx.Constraints.Max.Y = rowH
+							lbl := ui.settingsViewerPreviewLabelStyle(th, ui.viewerMonospaceTypeface(), st.previewViewerTextSize(ui), hexText, hexColor)
+							return layoutVCenteredLabel(lineGtx, lbl)
+						}),
+					)
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fixedWidth(gtx, columnGap, func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{Size: image.Pt(columnGap, rowH)}
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fixedWidth(gtx, asciiW, func(gtx layout.Context) layout.Dimensions {
+					return layout.Stack{}.Layout(gtx,
+						layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+							if selected {
+								bg := settingsViewerPreviewSelectionFill(theme, true)
+								if rect := settingsViewerPreviewSelectionRect(gtx.Constraints.Max.X, rowH); !rect.Empty() {
+									paint.FillShape(gtx.Ops, bg, clip.Rect(rect).Op())
+								}
+							}
+							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, rowH)}
+						}),
+						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+							lineGtx := gtx
+							lineGtx.Constraints.Min.Y = rowH
+							lineGtx.Constraints.Max.Y = rowH
+							lbl := ui.settingsViewerPreviewLabelStyle(th, ui.viewerMonospaceTypeface(), st.previewViewerTextSize(ui), ascii, asciiColor)
+							return layoutVCenteredLabel(lineGtx, lbl)
+						}),
+					)
+				})
+			}),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, rowH)}
+			}),
+		)
 	})
 }
 
+func (st *settingsModalState) previewViewerContentHeight(ui *UI, th *material.Theme, gtx layout.Context) int {
+	lineH := st.previewViewerLineHeight(ui, th, gtx, false)
+	return lineH * 4
+}
+
+func settingsColorsPreviewHostHeight(gtx layout.Context) int {
+	height := gtx.Dp(unit.Dp(168))
+	if minHeight := gtx.Dp(unit.Dp(148)); height < minHeight {
+		height = minHeight
+	}
+	if height < 1 {
+		height = 1
+	}
+	return height
+}
+
 func (ui *UI) layoutSettingsViewerPreviewContent(th *material.Theme, gtx layout.Context, st *settingsModalState, theme fileViewerTheme, previewUI *UI) layout.Dimensions {
-	rowGap := unit.Dp(6)
 	return fixedWidth(gtx, gtx.Constraints.Max.X, func(gtx layout.Context) layout.Dimensions {
-		switch strings.ToLower(strings.TrimSpace(st.viewMode)) {
-		case "hex":
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewHexRow(th, gtx, st, theme, "00000000", "48 65 78 6F 6E 65 20 76", "Hexone v", false)
-				}),
-				layout.Rigid(layout.Spacer{Height: rowGap}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewHexRow(th, gtx, st, theme, "00000008", "69 65 77 65 72 20 6D 6F", "iewer mo", true)
-				}),
-				layout.Rigid(layout.Spacer{Height: rowGap}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewHexRow(th, gtx, st, theme, "00000010", "64 65 0A 63 61 74 20 7B", "de.cat {", false)
-				}),
-			)
-		case "command":
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "$ "+settingsViewerPreviewCommandText(st), theme.CommandStaticText, false)
-				}),
-				layout.Rigid(layout.Spacer{Height: rowGap}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "watching src/hexone/ui", theme.Text, false)
-				}),
-				layout.Rigid(layout.Spacer{Height: rowGap}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "render preview updated", theme.Text, true)
-				}),
-				layout.Rigid(layout.Spacer{Height: rowGap}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "exit status: running", theme.Hint, false)
-				}),
-			)
-		default:
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "# README", theme.Text, false)
-				}),
-				layout.Rigid(layout.Spacer{Height: rowGap}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "keyboard-first workflow", theme.Text, true)
-				}),
-				layout.Rigid(layout.Spacer{Height: rowGap}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "protocols.yaml loaded successfully", theme.Muted, false)
-				}),
-				layout.Rigid(layout.Spacer{Height: rowGap}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "session restored at 10:42", theme.Hint, false)
-				}),
-			)
-		}
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "hexone viewer preview", theme.Text, false)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "keyboard-first workflow", theme.Text, true)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "open files with Enter", theme.Text, false)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return previewUI.layoutSettingsViewerPreviewTextRow(th, gtx, st, theme, "Tab cycles viewer modes", theme.Text, false)
+			}),
+		)
 	})
 }
 
@@ -4307,21 +4296,13 @@ func (ui *UI) layoutSettingsViewerPreview(th *material.Theme, gtx layout.Context
 	previewUI.fmCfg = previewCfg
 	previewUI.typeface = font.Typeface(previewCfg.General.Typeface)
 	previewState := &fileViewerState{
-		mode:        previewCfg.Viewer.Mode,
-		name:        "README.md",
-		command:     settingsViewerPreviewCommandText(st),
-		autoRefresh: previewCfg.Viewer.CommandAutoRefresh,
-	}
-	if previewState.mode == "command" {
-		previewState.status = "streaming"
+		mode: "file",
+		name: "README.md",
 	}
 
-	height := gtx.Dp(unit.Dp(168))
-	if height < gtx.Dp(unit.Dp(148)) {
-		height = gtx.Dp(unit.Dp(148))
-	}
+	height := settingsColorsPreviewHostHeight(gtx)
 	return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
-		return fillRoundedBox(
+		return fillRoundedClipBox(
 			gtx,
 			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 			theme.PanelBg,
@@ -4330,7 +4311,7 @@ func (ui *UI) layoutSettingsViewerPreview(th *material.Theme, gtx layout.Context
 				return layout.Inset{Left: unit.Dp(0), Right: unit.Dp(0), Top: unit.Dp(0), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return previewUI.layoutFileViewerHeader(th, gtx, previewState)
+							return previewUI.layoutSettingsViewerPreviewHeader(th, gtx, previewState, theme)
 						}),
 						layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -4353,38 +4334,27 @@ func (ui *UI) layoutSettingsViewerPreview(th *material.Theme, gtx layout.Context
 	})
 }
 
-func (ui *UI) layoutSettingsViewerPreviewCommandChip(th *material.Theme, gtx layout.Context, label string, theme fileViewerTheme) layout.Dimensions {
-	lbl := material.Body2(th, label)
-	lbl.Font.Typeface = ui.mainTypeface()
-	lbl.TextSize = scaleModalThemeFontSize(th, 9)
-	lbl.Font.Weight = font.Medium
-	lbl.MaxLines = 1
-	lbl.Truncator = "..."
-	width := measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(20))
-	maxW := gtx.Dp(unit.Dp(210))
-	if width > maxW {
-		width = maxW
-	}
-	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
-		return fillRoundedBox(
-			gtx,
-			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-			theme.CommandBg,
-			theme.CommandBorder,
-			func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, label)
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 9)
-					lbl.Font.Weight = font.Medium
-					lbl.Color = theme.CommandStaticText
-					lbl.MaxLines = 1
-					lbl.Truncator = "..."
-					return layoutVCenteredLabel(gtx, lbl)
-				})
-			},
-		)
-	})
+func (ui *UI) layoutSettingsViewerPreviewHeader(th *material.Theme, gtx layout.Context, previewState *fileViewerState, theme fileViewerTheme) layout.Dimensions {
+	stripH := ui.viewerHeaderStripHeight(gtx)
+	return fillRoundedBox(
+		gtx,
+		0,
+		theme.HeaderBg,
+		color.NRGBA{},
+		func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerModeTabs(th, gtx, previewState, stripH)
+					}),
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH)}
+					}),
+				)
+			})
+		},
+	)
 }
 
 func (ui *UI) layoutSettingsViewerPreviewScrollbar(gtx layout.Context, theme fileViewerTheme) layout.Dimensions {
@@ -4582,10 +4552,27 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		layout.Rigid(rowLabel("Preview", true)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			hostH := settingsColorsPreviewHostHeight(gtx)
+			hostBg := previewPalette.PaneBg
 			if st.colorScope == "viewer" {
-				return ui.layoutSettingsViewerPreview(th, gtx, st, previewTheme)
+				hostBg = previewTheme.PanelBg
 			}
-			return ui.layoutSettingsColorPreview(th, gtx, previewPalette)
+			return fixedHeight(gtx, hostH, func(gtx layout.Context) layout.Dimensions {
+				return layout.Stack{}.Layout(gtx,
+					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+						if gtx.Constraints.Max.X > 0 && hostH > 0 {
+							paint.FillShape(gtx.Ops, hostBg, clip.Rect(image.Rect(0, 0, gtx.Constraints.Max.X, hostH)).Op())
+						}
+						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, hostH)}
+					}),
+					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+						if st.colorScope == "viewer" {
+							return ui.layoutSettingsViewerPreview(th, gtx, st, previewTheme)
+						}
+						return ui.layoutSettingsColorPreview(th, gtx, previewPalette)
+					}),
+				)
+			})
 		}),
 	)
 }

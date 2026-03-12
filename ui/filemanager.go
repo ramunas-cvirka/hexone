@@ -29,6 +29,8 @@ type filePaneModel struct {
 	entries       []filesys.Entry
 	cfg           *fm.Config
 	baseTextColor color.NRGBA
+	measureTextPx func(string) int
+	measureCache  map[string]int
 }
 
 type fileSortKey uint8
@@ -171,7 +173,7 @@ func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
 	case filesys.EntryParent:
 		return table.LeadingIcon{
 			Kind:  table.IconParent,
-			Color: color.NRGBA{R: 170, G: 200, B: 255, A: 255},
+			Color: color.NRGBA{R: 214, G: 186, B: 96, A: 255},
 		}, true
 	case filesys.EntryDir:
 		return table.LeadingIcon{
@@ -1558,6 +1560,36 @@ func (m *filePaneModel) approxCharPx() int {
 	return scaleFilePanePx(m.cfg, filePaneApproxCharPx)
 }
 
+func (m *filePaneModel) setTextMeasurer(measure func(string) int) {
+	if m == nil {
+		return
+	}
+	m.measureTextPx = measure
+	if measure == nil {
+		m.measureCache = nil
+		return
+	}
+	if m.measureCache == nil {
+		m.measureCache = make(map[string]int)
+		return
+	}
+	for key := range m.measureCache {
+		delete(m.measureCache, key)
+	}
+}
+
+func (m *filePaneModel) measuredTextWidth(text string) (int, bool) {
+	if m == nil || m.measureTextPx == nil {
+		return 0, false
+	}
+	if width, ok := m.measureCache[text]; ok {
+		return width, true
+	}
+	width := m.measureTextPx(text)
+	m.measureCache[text] = width
+	return width, true
+}
+
 func (m *filePaneModel) approxChars(widthPx, reservePx int) int {
 	if widthPx <= reservePx {
 		return 0
@@ -1683,6 +1715,12 @@ func (m *filePaneModel) fullOrEmpty(text string, widthPx int) string {
 	if m == nil {
 		return text
 	}
+	if measured, ok := m.measuredTextWidth(text); ok {
+		if measured <= widthPx {
+			return text
+		}
+		return ""
+	}
 	capacity := m.approxChars(widthPx, 4)
 	if capacity < utf8.RuneCountInString(text) {
 		return ""
@@ -1776,6 +1814,12 @@ func (m *filePaneModel) formatDate(entry filesys.Entry, widthPx int) string {
 
 	for _, format := range m.cfg.DateFormats {
 		txt := entry.ModTime.Format(format)
+		if measured, ok := m.measuredTextWidth(txt); ok {
+			if measured <= widthPx {
+				return txt
+			}
+			continue
+		}
 		if utf8.RuneCountInString(txt) <= capacity {
 			return txt
 		}

@@ -395,20 +395,33 @@ func layoutCellLabel(gtx layout.Context, th *material.Theme, face font.Typeface,
 	return out
 }
 
-func leadingIconMetrics(cellH int) (size, gap int) {
+func leadingIconMetrics(kind IconKind, cellH int) (size, gap int) {
+	if cellH <= 0 {
+		return 0, 0
+	}
 	size = cellH - 6
-	if size < 7 {
-		size = 7
+	minSize := 7
+	gap = maxInt(2, cellH/6)
+	if kind == IconParent {
+		size = cellH - 4
+		minSize = 10
+		gap = maxInt(2, cellH/7)
 	}
-	if size > 10 {
-		size = 10
+	if size < minSize {
+		size = minSize
 	}
-	gap = 4
+	maxSize := cellH - 2
+	if maxSize < minSize {
+		maxSize = minSize
+	}
+	if size > maxSize {
+		size = maxSize
+	}
 	return size, gap
 }
 
-func canShowLeadingIcon(contentW, cellH int) bool {
-	iconW, gapW := leadingIconMetrics(cellH)
+func canShowLeadingIcon(kind IconKind, contentW, cellH int) bool {
+	iconW, gapW := leadingIconMetrics(kind, cellH)
 	const minTextPx = 8
 	return contentW >= iconW+gapW+minTextPx
 }
@@ -428,15 +441,25 @@ func adaptiveCellPadX(gtx layout.Context, requested unit.Dp, cellW int) unit.Dp 
 	return pad
 }
 
-func adaptiveBriefCellPadX(gtx layout.Context, requested unit.Dp, cellW int) unit.Dp {
-	if requested <= 0 {
-		return 0
+func adaptiveBriefCellInsets(gtx layout.Context, requested unit.Dp, cellW int) (left, right unit.Dp) {
+	if requested <= 0 || cellW <= 0 {
+		return 0, 0
 	}
-	pad := requested / 2
-	if pad < 1 {
-		pad = 1
+
+	left = adaptiveCellPadX(gtx, requested, cellW)
+	right = requested / 2
+	if right < 1 {
+		right = 1
 	}
-	return adaptiveCellPadX(gtx, pad, cellW)
+
+	const minContentPx = 8
+	for right > 0 && cellW-gtx.Dp(left)-gtx.Dp(right) < minContentPx {
+		right--
+	}
+	for left > 0 && cellW-gtx.Dp(left)-gtx.Dp(right) < minContentPx {
+		left--
+	}
+	return left, right
 }
 
 func mustIcon(ic *widget.Icon, err error) *widget.Icon {
@@ -449,7 +472,7 @@ func mustIcon(ic *widget.Icon, err error) *widget.Icon {
 func loadLeadingIcons() {
 	leadingIconSet.file = mustIcon(widget.NewIcon(mdicons.EditorInsertDriveFile))
 	leadingIconSet.folder = mustIcon(widget.NewIcon(mdicons.FileFolder))
-	leadingIconSet.parent = mustIcon(widget.NewIcon(mdicons.NavigationArrowBack))
+	leadingIconSet.parent = mustIcon(widget.NewIcon(mdicons.NavigationSubdirectoryArrowLeft))
 	leadingIconSet.broken = mustIcon(widget.NewIcon(mdicons.AlertErrorOutline))
 }
 
@@ -474,7 +497,7 @@ func layoutCellLabelWithIcon(gtx layout.Context, th *material.Theme, face font.T
 		return layoutCellLabel(gtx, th, face, size, txt, st, align, hideIfTruncated)
 	}
 
-	iconPx, gapPx := leadingIconMetrics(gtx.Constraints.Max.Y)
+	iconPx, gapPx := leadingIconMetrics(icon.Kind, gtx.Constraints.Max.Y)
 	if iconPx > gtx.Constraints.Max.X {
 		iconPx = gtx.Constraints.Max.X
 	}
@@ -1126,12 +1149,12 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 					if col == 0 && iconOK {
 						icon, hasIcon = iconModel.LeadingIcon(row, col)
 						if hasIcon && icon.Kind != IconNone {
-							if !canShowLeadingIcon(contentW, cellH) {
+							if !canShowLeadingIcon(icon.Kind, contentW, cellH) {
 								hasIcon = false
 							}
 						}
 						if hasIcon && icon.Kind != IconNone {
-							iconW, gapW := leadingIconMetrics(cellH)
+							iconW, gapW := leadingIconMetrics(icon.Kind, cellH)
 							reserve := iconW + gapW
 							if reserve > contentW {
 								contentW = 0
@@ -1359,12 +1382,12 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 				cellH = 1
 			}
 
-			padX := unit.Dp(0)
+			leftPad := unit.Dp(0)
+			rightPad := unit.Dp(0)
 			if len(t.Columns) > 0 {
-				padX = t.Columns[0].PadX
+				leftPad, rightPad = adaptiveBriefCellInsets(gtx, t.Columns[0].PadX, maxW)
 			}
-			padX = adaptiveBriefCellPadX(gtx, padX, maxW)
-			contentW := maxW - 2*gtx.Dp(padX)
+			contentW := maxW - gtx.Dp(leftPad) - gtx.Dp(rightPad)
 			if contentW < 0 {
 				contentW = 0
 			}
@@ -1373,12 +1396,12 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 			if withIcon, ok := m.(LeadingIconModel); ok {
 				icon, hasIcon = withIcon.LeadingIcon(row, 0)
 				if hasIcon && icon.Kind != IconNone {
-					if !canShowLeadingIcon(contentW, cellH) {
+					if !canShowLeadingIcon(icon.Kind, contentW, cellH) {
 						hasIcon = false
 					}
 				}
 				if hasIcon && icon.Kind != IconNone {
-					iconW, gapW := leadingIconMetrics(cellH)
+					iconW, gapW := leadingIconMetrics(icon.Kind, cellH)
 					reserve := iconW + gapW
 					if reserve > contentW {
 						contentW = 0
@@ -1397,7 +1420,7 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 
 			cellGtx := gtx
 			cellGtx.Constraints = layout.Exact(image.Pt(maxW, cellH))
-			_ = layout.Inset{Left: padX, Right: padX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
+			_ = layout.Inset{Left: leftPad, Right: rightPad}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
 				if hasIcon && icon.Kind != IconNone {
 					return layoutCellLabelWithIcon(gtx, th, face, t.TextSize, txt, st, text.Start, false, icon)
 				}

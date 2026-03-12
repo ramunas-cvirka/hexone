@@ -2,6 +2,8 @@ package ui
 
 import (
 	"image"
+	"image/color"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -889,4 +891,124 @@ func TestSettingsViewerColorCategoryUsesSelectionValue(t *testing.T) {
 	if settingsViewerCategoryHasText("selection") {
 		t.Fatal("viewer selection category should not expose a separate text field")
 	}
+}
+
+func TestSettingsViewerPreviewSelectionFillIsOpaque(t *testing.T) {
+	fill := settingsViewerPreviewSelectionFill(fileViewerTheme{
+		Selection:       colorNRGBA(0x11, 0x22, 0x33, 0x80),
+		StrongSelection: colorNRGBA(0x44, 0x55, 0x66, 0x99),
+	}, false)
+	if fill.A != 0xFF {
+		t.Fatalf("selection alpha=%d want 255", fill.A)
+	}
+
+	strong := settingsViewerPreviewSelectionFill(fileViewerTheme{
+		Selection:       colorNRGBA(0x11, 0x22, 0x33, 0x80),
+		StrongSelection: colorNRGBA(0x44, 0x55, 0x66, 0x99),
+	}, true)
+	if strong.A != 0xFF {
+		t.Fatalf("strong selection alpha=%d want 255", strong.A)
+	}
+}
+
+func TestSettingsViewerPreviewSelectionRectUsesFullRow(t *testing.T) {
+	rect := settingsViewerPreviewSelectionRect(180, 24)
+	if rect != image.Rect(0, 0, 180, 24) {
+		t.Fatalf("selection rect=%v want %v", rect, image.Rect(0, 0, 180, 24))
+	}
+
+	if rect := settingsViewerPreviewSelectionRect(0, 24); !rect.Empty() {
+		t.Fatalf("zero-width selection rect=%v want empty", rect)
+	}
+}
+
+func TestSettingsViewerPreviewContentUsesContiguousRows(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &settingsModalState{viewMode: "file"}
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(420, 240),
+		},
+	}
+
+	theme := ui.fileViewerTheme()
+	wantH := st.previewViewerContentHeight(ui, th, gtx)
+	got := ui.layoutSettingsViewerPreviewContent(th, gtx, st, theme, ui)
+
+	if got.Size.Y != wantH {
+		t.Fatalf("preview content height=%d want %d", got.Size.Y, wantH)
+	}
+}
+
+func TestSettingsColorsPreviewHostHeightUsesSharedValue(t *testing.T) {
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(420, 240),
+		},
+	}
+
+	if got, want := settingsColorsPreviewHostHeight(gtx), 168; got != want {
+		t.Fatalf("preview host height=%d want %d", got, want)
+	}
+}
+
+func TestMeasureTypefaceLineHeightDoesNotPaintSampleGlyphs(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+
+	var ops op.Ops
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    &ops,
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(420, 240),
+		},
+	}
+
+	before := reflect.ValueOf(&ops.Internal).Elem().FieldByName("data").Len()
+	if got := measureTypefaceLineHeight(ui, th, gtx, ui.viewerTypeface()); got < 12 {
+		t.Fatalf("line height=%d want >= 12", got)
+	}
+	after := reflect.ValueOf(&ops.Internal).Elem().FieldByName("data").Len()
+	if after != before {
+		t.Fatalf("measureTypefaceLineHeight wrote ops: before=%d after=%d", before, after)
+	}
+}
+
+func TestSettingsViewerPreviewIgnoresSelectedMode(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &settingsModalState{viewMode: "hex"}
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(420, 240),
+		},
+	}
+
+	wantH := st.previewViewerLineHeight(ui, th, gtx, false) * 4
+	gotH := st.previewViewerContentHeight(ui, th, gtx)
+	if gotH != wantH {
+		t.Fatalf("preview content height=%d want %d", gotH, wantH)
+	}
+}
+
+func colorNRGBA(r, g, b, a uint8) color.NRGBA {
+	return color.NRGBA{R: r, G: g, B: b, A: a}
 }

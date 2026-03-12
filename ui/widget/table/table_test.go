@@ -61,6 +61,48 @@ func TestLayoutCellLabelCentersBaselineInTallCell(t *testing.T) {
 	}
 }
 
+func TestAdaptiveBriefCellInsetsKeepsFullLeftPadding(t *testing.T) {
+	gtx := testTableLayoutContext(image.Pt(160, 24))
+
+	left, right := adaptiveBriefCellInsets(gtx, unit.Dp(4), 160)
+
+	if got, want := gtx.Dp(left), 4; got != want {
+		t.Fatalf("left inset = %d, want %d", got, want)
+	}
+	if got, want := gtx.Dp(right), 2; got != want {
+		t.Fatalf("right inset = %d, want %d", got, want)
+	}
+}
+
+func TestLeadingIconMetricsGivesParentMoreRoom(t *testing.T) {
+	fileSize, fileGap := leadingIconMetrics(IconFile, 18)
+	parentSize, parentGap := leadingIconMetrics(IconParent, 18)
+
+	if parentSize <= fileSize {
+		t.Fatalf("parent icon size = %d, want > file size %d", parentSize, fileSize)
+	}
+	if parentSize < 14 {
+		t.Fatalf("parent icon size = %d, want at least 14", parentSize)
+	}
+	if parentGap >= fileGap {
+		t.Fatalf("parent icon gap = %d, want < file gap %d", parentGap, fileGap)
+	}
+}
+
+func TestLeadingIconMetricsScaleWithCellHeight(t *testing.T) {
+	fileSmall, _ := leadingIconMetrics(IconFile, 18)
+	fileLarge, _ := leadingIconMetrics(IconFile, 36)
+	parentSmall, _ := leadingIconMetrics(IconParent, 18)
+	parentLarge, _ := leadingIconMetrics(IconParent, 36)
+
+	if fileLarge <= fileSmall {
+		t.Fatalf("file icon should scale with cell height, got small=%d large=%d", fileSmall, fileLarge)
+	}
+	if parentLarge <= parentSmall {
+		t.Fatalf("parent icon should scale with cell height, got small=%d large=%d", parentSmall, parentLarge)
+	}
+}
+
 func testTableLayoutContext(size image.Point) layout.Context {
 	var router input.Router
 	return layout.Context{

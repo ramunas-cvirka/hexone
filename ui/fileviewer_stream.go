@@ -934,19 +934,16 @@ func measureTypefaceLineHeight(ui *UI, th *material.Theme, gtx layout.Context, f
 	if fallback < 12 {
 		fallback = 12
 	}
-	if th == nil {
+	if th == nil || th.Shaper == nil {
 		return fallback
 	}
-	measureGTX := gtx
-	measureGTX.Constraints.Min = image.Point{}
-	measureGTX.Constraints.Max = image.Pt(1<<20, 1<<20)
 	lbl := material.Body2(th, "Mg")
 	lbl.Font.Typeface = face
 	lbl.Font.Weight = font.Normal
 	lbl.TextSize = ui.viewerTextSize()
 	lbl.MaxLines = 1
 	lbl.Truncator = ""
-	h := lbl.Layout(measureGTX).Size.Y + gtx.Dp(unit.Dp(2))
+	h := measureLabelUnconstrained(gtx, lbl).Size.Y + gtx.Dp(unit.Dp(2))
 	if h < 12 {
 		return 12
 	}

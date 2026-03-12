@@ -995,6 +995,18 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 	if pane == nil || pane.table == nil || pane.model == nil {
 		return layout.Dimensions{}
 	}
+	if th != nil && th.Shaper != nil {
+		pane.model.setTextMeasurer(func(text string) int {
+			lbl := material.Body2(th, text)
+			lbl.Font.Typeface = pane.table.Typeface
+			lbl.Font.Weight = font.Medium
+			lbl.TextSize = pane.table.TextSize
+			lbl.MaxLines = 1
+			lbl.Truncator = ""
+			return measureLabelUnconstrained(gtx, lbl).Size.X
+		})
+		defer pane.model.setTextMeasurer(nil)
+	}
 
 	total := pane.model.Len()
 	selectedBefore := pane.table.Selected
@@ -1862,9 +1874,7 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 							}
 							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									iconGtx := gtx
-									iconGtx.Constraints = layout.Exact(image.Pt(gtx.Dp(unit.Dp(16)), gtx.Dp(unit.Dp(12))))
-									return layoutModeGlyph(iconGtx, pane.table.Mode, iconColor)
+									return ui.layoutFilePaneModeIcon(gtx, pane.table.Mode, iconColor)
 								})
 							})
 						})
@@ -1982,14 +1992,9 @@ func (ui *UI) layoutFileModeBadge(th *material.Theme, gtx layout.Context, idx in
 			iconColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
 		}
 
-		width := unit.Dp(30)
-		height := unit.Dp(22)
 		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, border, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				iconGtx := gtx
-				iconGtx.Constraints.Min = image.Pt(gtx.Dp(width)-gtx.Dp(unit.Dp(12)), gtx.Dp(height)-gtx.Dp(unit.Dp(8)))
-				iconGtx.Constraints.Max = iconGtx.Constraints.Min
-				return layoutModeGlyph(iconGtx, pane.table.Mode, iconColor)
+				return ui.layoutFilePaneModeIcon(gtx, pane.table.Mode, iconColor)
 			})
 		})
 	})
@@ -2002,7 +2007,28 @@ func (ui *UI) layoutFileModeBadge(th *material.Theme, gtx layout.Context, idx in
 	return dims
 }
 
-func layoutModeGlyph(gtx layout.Context, mode table.Mode, barColor color.NRGBA) layout.Dimensions {
+func (ui *UI) layoutFilePaneModeIcon(gtx layout.Context, mode table.Mode, iconColor color.NRGBA) layout.Dimensions {
+	size := image.Pt(gtx.Dp(unit.Dp(16)), gtx.Dp(unit.Dp(11)))
+	if max := gtx.Constraints.Max; max.X > 0 && size.X > max.X {
+		size.X = max.X
+	}
+	if max := gtx.Constraints.Max; max.Y > 0 && size.Y > max.Y {
+		size.Y = max.Y
+	}
+	if size.X < 10 {
+		size.X = 10
+	}
+	if size.Y < 8 {
+		size.Y = 8
+	}
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		iconGtx := gtx
+		iconGtx.Constraints = layout.Exact(size)
+		return layoutFilePaneModeGlyph(iconGtx, mode, iconColor)
+	})
+}
+
+func layoutFilePaneModeGlyph(gtx layout.Context, mode table.Mode, barColor color.NRGBA) layout.Dimensions {
 	size := gtx.Constraints.Min
 	if size.X <= 0 {
 		size.X = gtx.Constraints.Max.X
@@ -2013,41 +2039,71 @@ func layoutModeGlyph(gtx layout.Context, mode table.Mode, barColor color.NRGBA) 
 	if size.X < 10 {
 		size.X = 10
 	}
-	if size.Y < 10 {
-		size.Y = 10
+	if size.Y < 8 {
+		size.Y = 8
 	}
 
-	barH := 2
-	gapY := 2
-	if size.Y >= 14 {
-		gapY = 3
+	barH := size.Y / 5
+	if barH < 2 {
+		barH = 2
 	}
-	top := 1
+	if barH > 3 {
+		barH = 3
+	}
+	gapY := (size.Y - 3*barH) / 2
+	if gapY < 1 {
+		gapY = 1
+	}
+	usedH := 3*barH + 2*gapY
+	top := (size.Y - usedH) / 2
+	if top < 0 {
+		top = 0
+	}
 
-	drawColumn := func(x, w int) {
-		if w < 2 {
-			w = 2
+	padX := size.X / 10
+	if padX < 1 {
+		padX = 1
+	}
+	left := padX
+	totalW := size.X - 2*padX
+	if totalW < 6 {
+		totalW = size.X
+		left = 0
+	}
+	splitGap := totalW / 5
+	if splitGap < 2 {
+		splitGap = 2
+	}
+	if splitGap > 4 {
+		splitGap = 4
+	}
+	splitW := (totalW - splitGap) / 2
+	if splitW < 2 {
+		splitW = 2
+	}
+
+	drawBar := func(x, y, w int) {
+		if w < 1 {
+			return
 		}
-		for i := 0; i < 3; i++ {
-			y := top + i*(barH+gapY)
-			if y+barH > size.Y {
-				break
-			}
-			paint.FillShape(gtx.Ops, barColor, clip.Rect(image.Rect(x, y, x+w, y+barH)).Op())
+		rect := image.Rect(x, y, x+w, y+barH)
+		radius := barH / 2
+		if radius < 1 {
+			radius = 1
 		}
+		paint.FillShape(gtx.Ops, barColor, clip.UniformRRect(rect, radius).Op(gtx.Ops))
 	}
 
-	if mode == table.ModeBrief {
-		colW := (size.X - 3) / 2
-		if colW < 3 {
-			colW = 3
+	for row := 0; row < 3; row++ {
+		y := top + row*(barH+gapY)
+		if mode == table.ModeBrief {
+			drawBar(left, y, splitW)
+			drawBar(left+totalW-splitW, y, splitW)
+			continue
 		}
-		drawColumn(0, colW)
-		drawColumn(size.X-colW, colW)
-		return layout.Dimensions{Size: size}
+		drawBar(left, y, totalW)
 	}
 
-	drawColumn(0, size.X)
 	return layout.Dimensions{Size: size}
 }
 
