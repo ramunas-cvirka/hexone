@@ -158,6 +158,50 @@ func TestPumpFileViewerScrollRepeatUsesPaneTiming(t *testing.T) {
 	}
 }
 
+func TestViewerStepModeWrapsAcrossViewerModes(t *testing.T) {
+	tests := []struct {
+		mode string
+		step int
+		want string
+	}{
+		{mode: "file", step: 1, want: "hex"},
+		{mode: "hex", step: 1, want: "command"},
+		{mode: "command", step: 1, want: "file"},
+		{mode: "file", step: -1, want: "command"},
+		{mode: "command", step: -1, want: "hex"},
+		{mode: "weird", step: 1, want: "hex"},
+	}
+
+	for _, tc := range tests {
+		if got := viewerStepMode(tc.mode, tc.step); got != tc.want {
+			t.Fatalf("viewerStepMode(%q, %d)=%q want %q", tc.mode, tc.step, got, tc.want)
+		}
+	}
+}
+
+func TestViewerModeTabStepAcceptsOnlyPlainTabAndShiftTab(t *testing.T) {
+	tests := []struct {
+		mods key.Modifiers
+		want int
+		ok   bool
+	}{
+		{mods: 0, want: 1, ok: true},
+		{mods: key.ModShift, want: -1, ok: true},
+		{mods: key.ModCtrl, want: 0, ok: false},
+		{mods: key.ModShift | key.ModCtrl, want: 0, ok: false},
+	}
+
+	for _, tc := range tests {
+		got, ok := viewerModeTabStep(tc.mods)
+		if ok != tc.ok {
+			t.Fatalf("viewerModeTabStep(%v) ok=%v want %v", tc.mods, ok, tc.ok)
+		}
+		if got != tc.want {
+			t.Fatalf("viewerModeTabStep(%v) step=%d want %d", tc.mods, got, tc.want)
+		}
+	}
+}
+
 func TestPumpFileViewerScrollRepeatSupportsPageDown(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	st := &fileViewerState{mode: "file"}

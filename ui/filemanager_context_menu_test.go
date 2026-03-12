@@ -5,6 +5,9 @@ import (
 	"hexone/fm"
 	"image"
 	"testing"
+	"time"
+
+	"gioui.org/widget"
 )
 
 func TestFilePaneContextMenuSpecForFileUsesNestedSupportedActions(t *testing.T) {
@@ -139,6 +142,35 @@ func TestFileContextMenuParentRectReturnsMappedRect(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("parent rect=%v want %v", got, want)
+	}
+}
+
+func TestOpenContextMenuResetsItemClickables(t *testing.T) {
+	pane := &filePaneState{
+		ctxMenuClicks: map[string]*widget.Clickable{
+			"system-file-manager": {},
+		},
+	}
+
+	pane.openContextMenu(3, image.Pt(40, 60), time.Date(2026, time.March, 12, 10, 0, 0, 0, time.UTC))
+
+	if pane.ctxMenuClicks != nil {
+		t.Fatal("openContextMenu should reset item clickables")
+	}
+}
+
+func TestCloseContextMenuResetsItemClickables(t *testing.T) {
+	pane := &filePaneState{
+		ctxMenuOpen: true,
+		ctxMenuClicks: map[string]*widget.Clickable{
+			"system-file-manager": {},
+		},
+	}
+
+	pane.closeContextMenu()
+
+	if pane.ctxMenuClicks != nil {
+		t.Fatal("closeContextMenu should reset item clickables")
 	}
 }
 

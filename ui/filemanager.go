@@ -702,6 +702,7 @@ func (p *filePaneState) closeContextMenu() {
 	if p.ctxMenuItemRects != nil {
 		clear(p.ctxMenuItemRects)
 	}
+	p.ctxMenuClicks = nil
 }
 
 func (p *filePaneState) closeFavoriteMenu() {
@@ -780,6 +781,7 @@ func (p *filePaneState) openContextMenu(row int, pos image.Point, now time.Time)
 	if p.ctxMenuItemRects != nil {
 		clear(p.ctxMenuItemRects)
 	}
+	p.ctxMenuClicks = nil
 }
 
 func (p *filePaneState) openDriveMenu(pos image.Point, now time.Time) {

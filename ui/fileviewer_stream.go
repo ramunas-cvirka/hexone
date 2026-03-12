@@ -89,13 +89,18 @@ type streamOutputView struct {
 }
 
 const (
-	streamAutoScrollTick   = 50 * time.Millisecond
-	streamAutoScrollStopIn = 180 * time.Millisecond
-	streamCancelGrace      = 320 * time.Millisecond
-	streamAutoScrollNearPx = 20
-	streamAutoScrollMidPx  = 64
-	streamDoubleClickDur   = 420 * time.Millisecond
-	streamDoubleClickDist  = 6
+	streamAutoScrollTick     = 50 * time.Millisecond
+	streamAutoScrollStopIn   = 180 * time.Millisecond
+	streamCancelGrace        = 320 * time.Millisecond
+	streamAutoScrollNearPx   = 20
+	streamAutoScrollMidPx    = 64
+	streamDoubleClickDur     = 420 * time.Millisecond
+	streamDoubleClickDist    = 6
+	streamTooltipGapDp       = 6
+	streamTooltipInsetXDp    = 6
+	streamTooltipInsetYDp    = 3
+	streamTooltipMinWidthDp  = 72
+	streamTooltipMinHeightDp = 18
 )
 
 func (v *streamOutputView) SetContent(raw string) {
@@ -1753,26 +1758,31 @@ func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st
 		percent = float64(v.dragTopLine) * 100 / float64(maxTop)
 	}
 	msg := fmt.Sprintf("~ line %d/%d (%.1f%%)", line, total, percent)
-
-	boxW := gtx.Dp(unit.Dp(162))
-	boxH := gtx.Dp(unit.Dp(24))
-	if boxW < 80 {
-		boxW = 80
+	gap := gtx.Dp(unit.Dp(streamTooltipGapDp))
+	if gap < 1 {
+		gap = 1
 	}
-	if boxH < 16 {
-		boxH = 16
+	edgeInset := gtx.Dp(unit.Dp(fileViewerTooltipEdgeInsetDp))
+	if edgeInset < 2 {
+		edgeInset = 2
 	}
-	x := v.trackRect.Min.X - boxW - gtx.Dp(unit.Dp(6))
-	if x < 2 {
-		x = 2
+	maxBoxW := v.trackRect.Min.X - gap - edgeInset
+	if maxBoxW < 1 {
+		return
+	}
+	box := ui.measureStreamOutputTooltipBox(th, gtx, msg, maxBoxW)
+	boxW, boxH := box.X, box.Y
+	x := v.trackRect.Min.X - gap - boxW
+	if x < edgeInset {
+		x = edgeInset
 	}
 	y := v.thumbRect.Min.Y + v.thumbRect.Dy()/2 - boxH/2
-	if y < 2 {
-		y = 2
+	if y < edgeInset {
+		y = edgeInset
 	}
-	maxY := gtx.Constraints.Max.Y - boxH - 2
-	if maxY < 2 {
-		maxY = 2
+	maxY := gtx.Constraints.Max.Y - boxH - edgeInset
+	if maxY < edgeInset {
+		maxY = edgeInset
 	}
 	if y > maxY {
 		y = maxY
@@ -1787,18 +1797,45 @@ func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st
 		theme.TooltipBg,
 		theme.TooltipBorder,
 		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(th, msg)
-				lbl.Font.Typeface = ui.viewerTypeface()
-				lbl.TextSize = scaleThemeFontSize(th, 9)
+			return layout.Inset{
+				Left:   unit.Dp(streamTooltipInsetXDp),
+				Right:  unit.Dp(streamTooltipInsetXDp),
+				Top:    unit.Dp(streamTooltipInsetYDp),
+				Bottom: unit.Dp(streamTooltipInsetYDp),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := ui.streamOutputTooltipLabel(th, msg)
 				lbl.Color = theme.TooltipText
-				lbl.MaxLines = 1
-				lbl.Truncator = ""
 				return layoutVCenteredLabel(gtx, lbl)
 			})
 		},
 	)
 	offset.Pop()
+}
+
+func (ui *UI) measureStreamOutputTooltipBox(th *material.Theme, gtx layout.Context, msg string, maxBoxW int) image.Point {
+	lbl := ui.streamOutputTooltipLabel(th, msg)
+	textDims := measureLabelUnconstrained(gtx, lbl).Size
+	boxW := textDims.X + gtx.Dp(unit.Dp(streamTooltipInsetXDp*2))
+	boxH := textDims.Y + gtx.Dp(unit.Dp(streamTooltipInsetYDp*2))
+	if minW := gtx.Dp(unit.Dp(streamTooltipMinWidthDp)); boxW < minW {
+		boxW = minW
+	}
+	if minH := gtx.Dp(unit.Dp(streamTooltipMinHeightDp)); boxH < minH {
+		boxH = minH
+	}
+	if maxBoxW > 0 && boxW > maxBoxW {
+		boxW = maxBoxW
+	}
+	return image.Pt(boxW, boxH)
+}
+
+func (ui *UI) streamOutputTooltipLabel(th *material.Theme, msg string) material.LabelStyle {
+	lbl := material.Caption(th, msg)
+	lbl.Font.Typeface = ui.viewerTypeface()
+	lbl.TextSize = scaleThemeFontSize(th, 9)
+	lbl.MaxLines = 1
+	lbl.Truncator = ""
+	return lbl
 }
 
 func (ui *UI) applyStreamOutputCursor(gtx layout.Context, st *fileViewerState) {

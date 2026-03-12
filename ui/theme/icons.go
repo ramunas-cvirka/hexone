@@ -8,11 +8,13 @@ import (
 )
 
 var (
-	iconsOnce      sync.Once
-	closeIconRef   *widget.Icon
-	refreshIcon    *widget.Icon
-	copyIcon       *widget.Icon
-	disconnectIcon *widget.Icon
+	iconsOnce          sync.Once
+	closeIconRef       *widget.Icon
+	refreshIcon        *widget.Icon
+	copyIcon           *widget.Icon
+	favoriteIcon       *widget.Icon
+	favoriteBorderIcon *widget.Icon
+	disconnectIcon     *widget.Icon
 )
 
 func CloseIcon() *widget.Icon {
@@ -30,6 +32,14 @@ func CopyIcon() *widget.Icon {
 	return copyIcon
 }
 
+func FavoriteIcon(active bool) *widget.Icon {
+	initIcons()
+	if active {
+		return favoriteIcon
+	}
+	return favoriteBorderIcon
+}
+
 func DisconnectIcon() *widget.Icon {
 	initIcons()
 	return disconnectIcon
@@ -40,7 +50,9 @@ func initIcons() {
 		closeIconRef = mustIcon(widget.NewIcon(mdicons.NavigationClose))
 		refreshIcon = mustIcon(widget.NewIcon(mdicons.NavigationRefresh))
 		copyIcon = mustIcon(widget.NewIcon(mdicons.ContentContentCopy))
-		disconnectIcon = mustIcon(widget.NewIcon(mdicons.ActionExitToApp))
+		favoriteIcon = mustIcon(widget.NewIcon(mdicons.ToggleStar))
+		favoriteBorderIcon = mustIcon(widget.NewIcon(mdicons.ToggleStarBorder))
+		disconnectIcon = mustIcon(widget.NewIcon(mdicons.ActionPowerSettingsNew))
 	})
 }
 

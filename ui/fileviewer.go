@@ -209,6 +209,7 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 		ev, ok := gtx.Event(
 			key.Filter{Name: key.NameEscape},
 			key.Filter{Name: key.NameF3},
+			key.Filter{Name: key.NameTab, Optional: anyMods},
 			key.Filter{Name: key.NameUpArrow},
 			key.Filter{Name: key.NameDownArrow},
 			key.Filter{Name: key.NamePageUp},
@@ -279,6 +280,17 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			ui.closeFileViewer()
 		case key.NameF3:
 			ui.startFileViewerLoad(gtx.Now)
+		case key.NameTab:
+			st := ui.fileViewer
+			if st == nil || st.commandEditOn {
+				continue
+			}
+			step, ok := viewerModeTabStep(ke.Modifiers)
+			if !ok {
+				continue
+			}
+			ui.setFileViewerMode(viewerStepMode(st.mode, step), gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
 		case "c", "C":
 			st := ui.fileViewer
 			if st == nil || st.commandEditOn {
@@ -405,14 +417,12 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.autoRefresh = viewerDefaultAutoRefresh
 	if ui != nil && ui.fmCfg != nil {
 		cfg := ui.fmCfg.Viewer
-		st.mode = normalizeViewerMode(cfg.Mode)
 		st.autoRefresh = cfg.CommandAutoRefresh
 		st.fileEncoding = fm.NormalizeViewerFileEncoding(cfg.FileEncoding)
-		if cmd := strings.TrimSpace(cfg.Command); cmd != "" {
-			st.command = cmd
-		}
+		st.mode, st.command = ui.viewerConfiguredModeAndCommand(st.path, st.remote, cfg.Mode, cfg.Command)
+	} else {
+		st.mode, st.command = ui.viewerConfiguredModeAndCommand(st.path, st.remote, st.mode, st.command)
 	}
-	st.command = ui.viewerCommandForTarget(st.path, st.remote, st.command)
 	st.commandInfinite = st.mode == "command" && viewerCommandLooksInfinite(st.command)
 	if st.name == "" {
 		if st.remote != nil {
@@ -1269,15 +1279,9 @@ func (ui *UI) refreshFileViewerNow(now time.Time) {
 		return
 	}
 	if ui != nil && ui.fmCfg != nil {
-		st.mode = normalizeViewerMode(ui.fmCfg.Viewer.Mode)
+		st.mode, st.command = ui.viewerConfiguredModeAndCommand(st.path, st.remote, ui.fmCfg.Viewer.Mode, ui.fmCfg.Viewer.Command)
 		st.autoRefresh = ui.fmCfg.Viewer.CommandAutoRefresh
 		st.fileEncoding = fm.NormalizeViewerFileEncoding(ui.fmCfg.Viewer.FileEncoding)
-		if st.mode == "command" {
-			st.command = ui.viewerCommandForTarget(st.path, st.remote, ui.fmCfg.Viewer.Command)
-			if st.command == "" {
-				st.command = "cat {path}"
-			}
-		}
 	}
 	st.commandEditOn = false
 	st.commandFocus = false
@@ -1309,6 +1313,38 @@ func viewerTabIndex(key string) int {
 		return 3
 	default:
 		return 0
+	}
+}
+
+func viewerStepMode(mode string, step int) string {
+	order := [...]string{"file", "hex", "command"}
+	current := normalizeViewerMode(mode)
+	idx := 0
+	for i, candidate := range order {
+		if candidate == current {
+			idx = i
+			break
+		}
+	}
+	if step == 0 {
+		return order[idx]
+	}
+	n := len(order)
+	next := (idx + step) % n
+	if next < 0 {
+		next += n
+	}
+	return order[next]
+}
+
+func viewerModeTabStep(mods key.Modifiers) (int, bool) {
+	switch mods {
+	case 0:
+		return 1, true
+	case key.ModShift:
+		return -1, true
+	default:
+		return 0, false
 	}
 }
 
@@ -1565,6 +1601,49 @@ func (ui *UI) rememberViewerCommand(st *fileViewerState, cmd string) error {
 	return ui.saveFMConfig()
 }
 
+func (ui *UI) viewerConfiguredModeAndCommand(path string, remote *paneSSHSession, fallbackMode, fallbackCommand string) (string, string) {
+	mode := normalizeViewerMode(fallbackMode)
+	cmd, matchedRule := ui.viewerDefaultCommand(path, remote, fallbackCommand)
+	if matchedRule {
+		mode = "command"
+	}
+	return mode, cmd
+}
+
+func (ui *UI) viewerDefaultCommand(path string, remote *paneSSHSession, fallback string) (string, bool) {
+	cmd := strings.TrimSpace(fallback)
+	if cmd == "" {
+		cmd = "cat {path}"
+	}
+	matchedRule := false
+	if ui != nil && ui.fmCfg != nil {
+		if byRule, ok := ui.viewerRuleCommand(path, remote); ok {
+			cmd = byRule
+			matchedRule = true
+		}
+	}
+	return ui.viewerCommandForTarget(path, remote, cmd), matchedRule
+}
+
+func (ui *UI) viewerRuleCommand(path string, remote *paneSSHSession) (string, bool) {
+	if ui == nil || ui.fmCfg == nil || len(ui.fmCfg.Viewer.CommandRules) == 0 {
+		return "", false
+	}
+	name := viewerCommandMatchName(path, remote)
+	if name == "" {
+		return "", false
+	}
+	cmd, ok := fm.MatchViewerCommandRules(ui.fmCfg.Viewer.CommandRules, name)
+	if !ok {
+		return "", false
+	}
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return "", false
+	}
+	return cmd, true
+}
+
 func (ui *UI) viewerCommandForTarget(path string, remote *paneSSHSession, fallback string) string {
 	cmd := strings.TrimSpace(fallback)
 	if cmd == "" {
@@ -1581,6 +1660,17 @@ func (ui *UI) viewerCommandForTarget(path string, remote *paneSSHSession, fallba
 		return byTarget
 	}
 	return cmd
+}
+
+func viewerCommandMatchName(path string, remote *paneSSHSession) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if remote != nil {
+		return pathpkg.Base(path)
+	}
+	return filepath.Base(path)
 }
 
 func (ui *UI) viewerHistoryCommands(current string) []string {

@@ -174,6 +174,14 @@ type SubmitEvent struct {
 	Text string
 }
 
+// EditorScrollMetrics describes the current vertical scroll position of an editor.
+type EditorScrollMetrics struct {
+	Offset    int
+	Viewport  int
+	Content   int
+	MaxOffset int
+}
+
 // A SelectEvent is generated when the user selects some text, or changes the
 // selection (e.g. with a shift-click), including if they remove the
 // selection. The selected text is not part of the event, on the theory that
@@ -655,6 +663,38 @@ func (e *Editor) Layout(gtx layout.Context, lt *text.Shaper, font font.Font, siz
 
 	e.text.Layout(gtx, lt, font, size)
 	return e.layout(gtx, textMaterial, selectMaterial)
+}
+
+// VerticalScrollMetrics reports the current vertical viewport position.
+func (e *Editor) VerticalScrollMetrics() (EditorScrollMetrics, bool) {
+	if e == nil || e.SingleLine {
+		return EditorScrollMetrics{}, false
+	}
+	visibleDims := e.text.Dimensions()
+	fullDims := e.text.FullDimensions()
+	viewport := visibleDims.Size.Y
+	content := fullDims.Size.Y
+	if viewport <= 0 || content <= 0 {
+		return EditorScrollMetrics{}, false
+	}
+	maxOffset := e.text.ScrollBounds().Max.Y
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	return EditorScrollMetrics{
+		Offset:    e.text.ScrollOff().Y,
+		Viewport:  viewport,
+		Content:   content,
+		MaxOffset: maxOffset,
+	}, content > viewport && maxOffset > 0
+}
+
+// ScrollToVerticalOffset scrolls the editor vertically to the given pixel offset.
+func (e *Editor) ScrollToVerticalOffset(offset int) {
+	if e == nil || e.SingleLine {
+		return
+	}
+	e.text.scrollAbs(e.text.ScrollOff().X, offset)
 }
 
 // updateSnippet queues a key.SnippetCmd if the snippet content or position

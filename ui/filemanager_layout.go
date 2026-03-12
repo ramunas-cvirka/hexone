@@ -1914,13 +1914,18 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 							}
 							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body2(th, "*")
-									lbl.Font.Typeface = ui.mainTypeface()
-									lbl.Font.Weight = font.Medium
-									lbl.TextSize = scaleThemeFontSize(th, 10)
-									lbl.Color = fg
-									lbl.MaxLines = 1
-									return layoutVCenteredLabel(gtx, lbl)
+									size := gtx.Dp(unit.Dp(14))
+									if size < 1 {
+										size = 1
+									}
+									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										if ic := uitheme.FavoriteIcon(pane.favoriteMenuOpen); ic != nil {
+											iconGtx := gtx
+											iconGtx.Constraints = layout.Exact(image.Pt(size, size))
+											ic.Layout(iconGtx, fg)
+										}
+										return layout.Dimensions{Size: image.Pt(size, size)}
+									})
 								})
 							})
 						})
@@ -1940,12 +1945,16 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 								}
 								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 									return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										size := gtx.Dp(unit.Dp(13))
+										if size < 1 {
+											size = 1
+										}
 										if ic := uitheme.DisconnectIcon(); ic != nil {
 											iconGtx := gtx
-											iconGtx.Constraints = layout.Exact(image.Pt(gtx.Dp(unit.Dp(12)), gtx.Dp(unit.Dp(12))))
+											iconGtx.Constraints = layout.Exact(image.Pt(size, size))
 											ic.Layout(iconGtx, iconColor)
 										}
-										return layout.Dimensions{Size: image.Pt(gtx.Dp(unit.Dp(12)), gtx.Dp(unit.Dp(12)))}
+										return layout.Dimensions{Size: image.Pt(size, size)}
 									})
 								})
 							})
@@ -2061,7 +2070,7 @@ func (ui *UI) layoutFilePaneFavoriteBadge(th *material.Theme, gtx layout.Context
 	}
 	ui.processFilePaneFavoriteBadgeInput(gtx, idx, pane)
 
-	dims := layoutTinyModeButton(th, gtx, ui.mainTypeface(), &pane.favoriteClick, "*", pane.favoriteMenuOpen)
+	dims := layoutTinyIconModeButton(th, gtx, &pane.favoriteClick, uitheme.FavoriteIcon(pane.favoriteMenuOpen), pane.favoriteMenuOpen)
 	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
 		return dims
 	}

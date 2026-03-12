@@ -354,6 +354,358 @@ func TestViewerAssociationNoticeTextUsesCurrentEditorState(t *testing.T) {
 	}
 }
 
+func TestViewerCommandTargetPickerEntriesFiltersAndFallsBackToAll(t *testing.T) {
+	st := &settingsModalState{
+		viewTargetEntries: []viewerCommandTargetEntry{
+			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
+			{Key: "local:/tmp/docker-compose.yml", Command: `docker compose -f {path} config`},
+			{Key: "ssh:root@example.com:22:/var/log/app.log", Command: `journalctl -f --file {path}`},
+		},
+	}
+
+	st.viewTargetKeyEdit.SetText("docker")
+	entries, matches := st.viewerCommandTargetPickerEntries()
+	if matches != 1 {
+		t.Fatalf("matches=%d want 1", matches)
+	}
+	if len(entries) != 1 || entries[0].Key != "local:/tmp/docker-compose.yml" {
+		t.Fatalf("unexpected filtered entries: %#v", entries)
+	}
+
+	st.viewTargetKeyEdit.SetText("nomatch")
+	entries, matches = st.viewerCommandTargetPickerEntries()
+	if matches != 0 {
+		t.Fatalf("matches=%d want 0", matches)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("len(entries)=%d want 3", len(entries))
+	}
+}
+
+func TestSettingsViewerCommandTargetPickerRowClickLoadsTargetAndCommand(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &settingsModalState{
+		viewTargetEntries: []viewerCommandTargetEntry{
+			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
+			{Key: "local:/tmp/docker-compose.yml", Command: `docker compose -f {path} config`},
+		},
+	}
+	st.openViewerCommandTargetPicker()
+	st.viewTargetPickList.Axis = layout.Vertical
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(520, 240),
+		},
+	}
+
+	frame := func() layout.Dimensions {
+		gtx.Ops.Reset()
+		entries, matches := st.viewerCommandTargetPickerEntries()
+		dims := ui.layoutSettingsViewerCommandTargetPicker(th, gtx, st, entries, matches)
+		r.Frame(gtx.Ops)
+		return dims
+	}
+
+	dims := frame()
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		t.Fatalf("picker has invalid size: %v", dims.Size)
+	}
+
+	st.viewerCommandTargetRowClick("local:/tmp/error.log").Click()
+	frame()
+
+	if got := st.viewTargetKeyEdit.Text(); got != "local:/tmp/error.log" {
+		t.Fatalf("target key not loaded from picker row: got %q", got)
+	}
+	if got := st.viewTargetCommandEdit.Text(); got != `tail -f {path}` {
+		t.Fatalf("command not loaded from picker row: got %q", got)
+	}
+	if st.viewTargetPickOpen {
+		t.Fatal("picker should close after row selection")
+	}
+}
+
+func TestSettingsViewerCommandTargetPickerRemoveClickDeletesDraftEntry(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &settingsModalState{
+		viewTargetEntries: []viewerCommandTargetEntry{
+			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
+			{Key: "local:/tmp/docker-compose.yml", Command: `docker compose -f {path} config`},
+		},
+	}
+	st.openViewerCommandTargetPicker()
+	st.viewTargetPickList.Axis = layout.Vertical
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(520, 240),
+		},
+	}
+
+	frame := func() {
+		gtx.Ops.Reset()
+		entries, matches := st.viewerCommandTargetPickerEntries()
+		_ = ui.layoutSettingsViewerCommandTargetPicker(th, gtx, st, entries, matches)
+		r.Frame(gtx.Ops)
+	}
+
+	frame()
+	st.viewerCommandTargetRowRemoveClick("local:/tmp/error.log").Click()
+	frame()
+
+	if _, ok := st.viewerCommandTarget("local:/tmp/error.log"); ok {
+		t.Fatal("exact override should be removed from draft list")
+	}
+	if !strings.Contains(st.targetInfoText, "Pending removal") {
+		t.Fatalf("targetInfoText=%q want pending removal notice", st.targetInfoText)
+	}
+	if !st.viewTargetPickOpen {
+		t.Fatal("picker should stay open after removing a row")
+	}
+}
+
+func TestRefreshViewerCommandTargetDraftInfoPromptsUpdateForExistingOverride(t *testing.T) {
+	st := &settingsModalState{
+		viewTargetEntries: []viewerCommandTargetEntry{
+			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
+		},
+		viewTargetSavedEntries: []viewerCommandTargetEntry{
+			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
+		},
+	}
+	st.viewTargetKeyEdit.SetText("/tmp/error.log")
+	st.viewTargetCommandEdit.SetText(`less +F {path}`)
+
+	st.refreshViewerCommandTargetDraftInfo(false)
+
+	entry, ok := st.viewerCommandTarget("local:/tmp/error.log")
+	if !ok {
+		t.Fatal("existing exact override should still exist")
+	}
+	if entry.Command != `tail -f {path}` {
+		t.Fatalf("existing exact override should not change before Update: got %q", entry.Command)
+	}
+	if !strings.Contains(st.targetInfoText, "Click Update") {
+		t.Fatalf("missing override update hint, got %q", st.targetInfoText)
+	}
+}
+
+func TestViewerCommandTargetNoticeTextUsesCurrentEditorState(t *testing.T) {
+	st := &settingsModalState{
+		viewTargetEntries: []viewerCommandTargetEntry{
+			{Key: "local:/tmp/error.log", Command: `less +F {path}`},
+		},
+		viewTargetSavedEntries: []viewerCommandTargetEntry{
+			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
+		},
+	}
+	st.viewTargetKeyEdit.SetText("/tmp/error.log")
+	st.viewTargetCommandEdit.SetText(`less +F {path}`)
+
+	got := st.viewerCommandTargetNoticeText()
+	if !strings.Contains(got, "Pending change") {
+		t.Fatalf("viewerCommandTargetNoticeText=%q, want pending change notice", got)
+	}
+}
+
+func TestViewerCommandTargetNoticeTextPromptsAddForNewEntry(t *testing.T) {
+	st := &settingsModalState{}
+	st.viewTargetKeyEdit.SetText("/tmp/error.log")
+	st.viewTargetCommandEdit.SetText(`tail -f {path}`)
+
+	got := st.viewerCommandTargetNoticeText()
+	if !strings.Contains(got, "Click Add") {
+		t.Fatalf("viewerCommandTargetNoticeText=%q, want add prompt", got)
+	}
+}
+
+func TestViewerCommandRulePickerRulesFiltersAndFallsBackToAll(t *testing.T) {
+	st := &settingsModalState{
+		viewRuleEntries: []fm.ViewerCommandRule{
+			{Pattern: `(?i)\.log$`, Command: `tail -f {path}`},
+			{Pattern: `^docker.*\.ya?ml$`, Command: `docker compose -f {path} config`},
+			{Pattern: `^README`, Command: `bat {path}`},
+		},
+	}
+
+	st.viewRulePatternEdit.SetText("docker")
+	rules, matches := st.viewerCommandRulePickerRules()
+	if matches != 1 {
+		t.Fatalf("matches=%d want 1", matches)
+	}
+	if len(rules) != 1 || rules[0].Pattern != `^docker.*\.ya?ml$` {
+		t.Fatalf("unexpected filtered rules: %#v", rules)
+	}
+
+	st.viewRulePatternEdit.SetText("nomatch")
+	rules, matches = st.viewerCommandRulePickerRules()
+	if matches != 0 {
+		t.Fatalf("matches=%d want 0", matches)
+	}
+	if len(rules) != 3 {
+		t.Fatalf("len(rules)=%d want 3", len(rules))
+	}
+}
+
+func TestSettingsViewerCommandRulePickerRowClickLoadsPatternAndCommand(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &settingsModalState{
+		viewRuleEntries: []fm.ViewerCommandRule{
+			{Pattern: `(?i)\.log$`, Command: `tail -f {path}`},
+			{Pattern: `^docker.*\.ya?ml$`, Command: `docker compose -f {path} config`},
+		},
+	}
+	st.openViewerCommandRulePicker()
+	st.viewRulePickList.Axis = layout.Vertical
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(520, 240),
+		},
+	}
+
+	frame := func() layout.Dimensions {
+		gtx.Ops.Reset()
+		rules, matches := st.viewerCommandRulePickerRules()
+		dims := ui.layoutSettingsViewerCommandRulePicker(th, gtx, st, rules, matches)
+		r.Frame(gtx.Ops)
+		return dims
+	}
+
+	dims := frame()
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		t.Fatalf("picker has invalid size: %v", dims.Size)
+	}
+
+	st.viewerCommandRuleRowClick(`(?i)\.log$`).Click()
+	frame()
+
+	if got := st.viewRulePatternEdit.Text(); got != `(?i)\.log$` {
+		t.Fatalf("pattern not loaded from picker row: got %q", got)
+	}
+	if got := st.viewRuleCommandEdit.Text(); got != `tail -f {path}` {
+		t.Fatalf("command not loaded from picker row: got %q", got)
+	}
+	if st.viewRulePickOpen {
+		t.Fatal("picker should close after row selection")
+	}
+}
+
+func TestSettingsViewerCommandRulePickerRemoveClickDeletesDraftRule(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &settingsModalState{
+		viewRuleEntries: []fm.ViewerCommandRule{
+			{Pattern: `(?i)\.log$`, Command: `tail -f {path}`},
+			{Pattern: `^docker.*\.ya?ml$`, Command: `docker compose -f {path} config`},
+		},
+	}
+	st.openViewerCommandRulePicker()
+	st.viewRulePickList.Axis = layout.Vertical
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(520, 240),
+		},
+	}
+
+	frame := func() {
+		gtx.Ops.Reset()
+		rules, matches := st.viewerCommandRulePickerRules()
+		_ = ui.layoutSettingsViewerCommandRulePicker(th, gtx, st, rules, matches)
+		r.Frame(gtx.Ops)
+	}
+
+	frame()
+	st.viewerCommandRuleRowRemoveClick(`(?i)\.log$`).Click()
+	frame()
+
+	if _, ok := st.viewerCommandRule(`(?i)\.log$`); ok {
+		t.Fatal("regex rule should be removed from draft list")
+	}
+	if !strings.Contains(st.ruleInfoText, "Pending removal") {
+		t.Fatalf("ruleInfoText=%q want pending removal notice", st.ruleInfoText)
+	}
+	if !st.viewRulePickOpen {
+		t.Fatal("picker should stay open after removing a row")
+	}
+}
+
+func TestRefreshViewerCommandRuleDraftInfoPromptsUpdateForExistingRule(t *testing.T) {
+	st := &settingsModalState{
+		viewRuleEntries: []fm.ViewerCommandRule{
+			{Pattern: `(?i)\.log$`, Command: `tail -f {path}`},
+		},
+		viewRuleSavedEntries: []fm.ViewerCommandRule{
+			{Pattern: `(?i)\.log$`, Command: `tail -f {path}`},
+		},
+	}
+	st.viewRulePatternEdit.SetText(`(?i)\.log$`)
+	st.viewRuleCommandEdit.SetText(`tail -n 200 {path}`)
+
+	st.refreshViewerCommandRuleDraftInfo(false)
+
+	rule, ok := st.viewerCommandRule(`(?i)\.log$`)
+	if !ok {
+		t.Fatal("existing rule should still exist")
+	}
+	if rule.Command != `tail -f {path}` {
+		t.Fatalf("existing rule should not change before Update: got %q", rule.Command)
+	}
+	if !strings.Contains(st.ruleInfoText, "Click Update") {
+		t.Fatalf("missing rule update hint, got %q", st.ruleInfoText)
+	}
+}
+
+func TestViewerCommandRuleNoticeTextUsesCurrentEditorState(t *testing.T) {
+	st := &settingsModalState{
+		viewRuleEntries: []fm.ViewerCommandRule{
+			{Pattern: `(?i)\.log$`, Command: `tail -n 200 {path}`},
+		},
+		viewRuleSavedEntries: []fm.ViewerCommandRule{
+			{Pattern: `(?i)\.log$`, Command: `tail -f {path}`},
+		},
+	}
+	st.viewRulePatternEdit.SetText(`(?i)\.log$`)
+	st.viewRuleCommandEdit.SetText(`tail -n 200 {path}`)
+
+	got := st.viewerCommandRuleNoticeText()
+	if !strings.Contains(got, "Pending change") {
+		t.Fatalf("viewerCommandRuleNoticeText=%q, want pending change notice", got)
+	}
+}
+
+func TestViewerCommandRuleNoticeTextPromptsAddForNewRule(t *testing.T) {
+	st := &settingsModalState{}
+	st.viewRulePatternEdit.SetText(`(?i)\.log$`)
+	st.viewRuleCommandEdit.SetText(`tail -f {path}`)
+
+	got := st.viewerCommandRuleNoticeText()
+	if !strings.Contains(got, "Click Add") {
+		t.Fatalf("viewerCommandRuleNoticeText=%q, want add prompt", got)
+	}
+}
+
 func TestSettingsColorSwatchGroupsIncludeNearbyCurrentColor(t *testing.T) {
 	groups := settingsColorSwatchGroups("#2D9AA5")
 	if len(groups) == 0 {

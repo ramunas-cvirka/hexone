@@ -228,6 +228,59 @@ func TestFileViewerHeaderDetailsKeepStreamingStatus(t *testing.T) {
 	}
 }
 
+func TestFileViewerHeaderStatusTextShowsRefreshingForFiniteCommandReload(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	got, _ := ui.fileViewerHeaderStatusText(&fileViewerState{
+		mode:            "command",
+		status:          "streaming",
+		commandInfinite: false,
+		autoRefresh:     true,
+		loading:         true,
+		content:         "existing output",
+	})
+	if got != "refreshing" {
+		t.Fatalf("status=%q want %q", got, "refreshing")
+	}
+}
+
+func TestFileViewerHeaderStatusTextShowsNoRefreshForFiniteCommandWhenDisabled(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	got, _ := ui.fileViewerHeaderStatusText(&fileViewerState{
+		mode:            "command",
+		status:          "streaming",
+		commandInfinite: false,
+		autoRefresh:     false,
+	})
+	if got != "no-refresh" {
+		t.Fatalf("status=%q want %q", got, "no-refresh")
+	}
+}
+
+func TestFileViewerHeaderStatusTextStaysRefreshingForFiniteCommandWhenIdle(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	got, _ := ui.fileViewerHeaderStatusText(&fileViewerState{
+		mode:            "command",
+		status:          "streaming",
+		commandInfinite: false,
+		autoRefresh:     true,
+	})
+	if got != "refreshing" {
+		t.Fatalf("status=%q want %q", got, "refreshing")
+	}
+}
+
+func TestFileViewerHeaderStatusTextKeepsStreamingForInfiniteCommand(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	got, _ := ui.fileViewerHeaderStatusText(&fileViewerState{
+		mode:            "command",
+		commandInfinite: true,
+		autoRefresh:     false,
+	})
+	if got != "streaming" {
+		t.Fatalf("status=%q want %q", got, "streaming")
+	}
+}
+
 func TestViewerShowsAutoRefreshButtonOnlyForNonStreamingCommand(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 
@@ -268,6 +321,34 @@ func TestFileViewerInlineCommandDisplayWidthLeavesFullTextPadding(t *testing.T) 
 	wantPadding := gtx.Dp(unit.Dp(viewerInlineCommandDisplayInsetDp * 2))
 	if got := dims.Size.X - labelW; got < wantPadding {
 		t.Fatalf("inline command padding=%dpx want at least %dpx", got, wantPadding)
+	}
+}
+
+func TestFileViewerOverlayTextUsesWidthAsMaximum(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(400, 40),
+		},
+	}
+
+	unconstrained := ui.layoutFileViewerOverlayText(th, gtx, "protocols.yaml", ui.fileViewerTheme().TooltipText, 0)
+	constrained := ui.layoutFileViewerOverlayText(th, gtx, "protocols.yaml", ui.fileViewerTheme().TooltipText, 200)
+
+	if constrained.Size.X != unconstrained.Size.X {
+		t.Fatalf("overlay text width=%d want intrinsic width %d", constrained.Size.X, unconstrained.Size.X)
+	}
+}
+
+func TestFileViewerOverlayStatusDropsPlainFileSizeStatus(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	got, _ := ui.fileViewerOverlayStatusText(&fileViewerState{status: "file: 2545 bytes"})
+	if got != "" {
+		t.Fatalf("overlay status=%q want empty", got)
 	}
 }
 

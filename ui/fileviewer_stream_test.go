@@ -3,6 +3,13 @@ package ui
 import (
 	"image"
 	"testing"
+
+	"gioui.org/io/input"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
+	"gioui.org/widget/material"
+	"hexone/fm"
 )
 
 func TestStreamLinePaintSpecUsesOffsetInsteadOfSlicing(t *testing.T) {
@@ -127,6 +134,51 @@ func TestStopTextSelectionDragPreservesExistingSelectionRange(t *testing.T) {
 	if v.selectingText || v.selectID != 0 || v.selectDirty || v.cancelPending || v.autoScrollActive {
 		t.Fatalf("selection drag not fully stopped: selecting=%v id=%d dirty=%v cancel=%v auto=%v",
 			v.selectingText, v.selectID, v.selectDirty, v.cancelPending, v.autoScrollActive)
+	}
+}
+
+func TestMeasureStreamOutputTooltipBoxTracksContentWidth(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(640, 120),
+		},
+	}
+
+	short := ui.measureStreamOutputTooltipBox(th, gtx, "~ line 1/9 (0.0%)", 400)
+	long := ui.measureStreamOutputTooltipBox(th, gtx, "~ line 12345/67890 (100.0%)", 400)
+
+	if short.X >= 160 {
+		t.Fatalf("short tooltip width=%d want content-sized width below previous fixed width", short.X)
+	}
+	if long.X <= short.X {
+		t.Fatalf("long tooltip width=%d want > short width %d", long.X, short.X)
+	}
+}
+
+func TestMeasureStreamOutputTooltipBoxRespectsAvailableWidth(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(640, 120),
+		},
+	}
+
+	box := ui.measureStreamOutputTooltipBox(th, gtx, "~ line 12345/67890 (100.0%)", 90)
+
+	if box.X != 90 {
+		t.Fatalf("tooltip width=%d want capped width 90", box.X)
+	}
+	if box.Y < 18 {
+		t.Fatalf("tooltip height=%d want at least 18", box.Y)
 	}
 }
 

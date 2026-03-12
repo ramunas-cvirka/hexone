@@ -169,6 +169,11 @@ viewer:
   mode: command
   shell: auto
   command: tail -n 200 -f {path} | grep --line-buffered ERROR
+  command_rules:
+    - pattern: (?i)\.log(?:\.\d+)?$
+      command: tail -n 200 -f {path}
+    - pattern: ^docker-compose.*\.ya?ml$
+      command: docker compose -f {path} config
   command_auto_refresh: true
   command_refresh_ms: 1500
   word_wrap: false
@@ -177,6 +182,9 @@ viewer:
 Notes:
 
 - `shell: auto` picks a sensible shell automatically
+- `command_by_target` has the highest priority, then `command_rules`, then the generic `command`
+- `command_rules` match the filename and open the viewer in command mode automatically
+- later `command_rules` override earlier ones when more than one regex matches
 - `command_auto_refresh` matters most for non-streaming command mode
 - `word_wrap` affects how text and command output are wrapped on screen
 

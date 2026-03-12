@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -144,6 +145,11 @@ type ViewerAssociation struct {
 	AppPath   string `yaml:"app_path"`
 }
 
+type ViewerCommandRule struct {
+	Pattern string `yaml:"pattern"`
+	Command string `yaml:"command"`
+}
+
 type AssociationProgram struct {
 	AppPath    string   `yaml:"app_path"`
 	Extensions []string `yaml:"extensions"`
@@ -185,6 +191,7 @@ type ViewerConfig struct {
 	Command                 string              `yaml:"command"`
 	Associations            []ViewerAssociation `yaml:"associations,omitempty"`
 	AssociatedExtensions    []string            `yaml:"associated_extensions,omitempty"`
+	CommandRules            []ViewerCommandRule `yaml:"command_rules,omitempty"`
 	CommandByTarget         map[string]string   `yaml:"command_by_target"`
 	CommandHistory          []string            `yaml:"command_history"`
 	WordSelectRegex         string              `yaml:"word_select_regex"`
@@ -315,6 +322,7 @@ func DefaultConfig() *Config {
 			Shell:                   "auto",
 			Command:                 "cat {path}",
 			Associations:            nil,
+			CommandRules:            nil,
 			CommandByTarget:         map[string]string{},
 			CommandHistory:          []string{},
 			WordSelectRegex:         "[a-zA-Z0-9]+",
@@ -462,6 +470,7 @@ func (c *Config) normalize() {
 	}
 	c.Viewer.Associations = nil
 	c.Viewer.AssociatedExtensions = nil
+	c.Viewer.CommandRules = NormalizeViewerCommandRules(c.Viewer.CommandRules)
 	if len(c.Viewer.CommandByTarget) > 0 {
 		normalized := make(map[string]string, len(c.Viewer.CommandByTarget))
 		for rawKey, rawCmd := range c.Viewer.CommandByTarget {
@@ -727,6 +736,72 @@ func NormalizeViewerAssociations(raw []ViewerAssociation) []ViewerAssociation {
 		out = append(out, byExt[ext])
 	}
 	return out
+}
+
+func NormalizeViewerCommandRule(raw ViewerCommandRule) (ViewerCommandRule, bool) {
+	pattern := strings.TrimSpace(raw.Pattern)
+	command := strings.TrimSpace(raw.Command)
+	if pattern == "" || command == "" {
+		return ViewerCommandRule{}, false
+	}
+	if _, err := regexp.Compile(pattern); err != nil {
+		return ViewerCommandRule{}, false
+	}
+	return ViewerCommandRule{
+		Pattern: pattern,
+		Command: command,
+	}, true
+}
+
+func NormalizeViewerCommandRules(raw []ViewerCommandRule) []ViewerCommandRule {
+	if len(raw) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(raw))
+	reversed := make([]ViewerCommandRule, 0, len(raw))
+	for i := len(raw) - 1; i >= 0; i-- {
+		rule, ok := NormalizeViewerCommandRule(raw[i])
+		if !ok {
+			continue
+		}
+		if _, exists := seen[rule.Pattern]; exists {
+			continue
+		}
+		seen[rule.Pattern] = struct{}{}
+		reversed = append(reversed, rule)
+	}
+	if len(reversed) == 0 {
+		return nil
+	}
+	out := make([]ViewerCommandRule, 0, len(reversed))
+	for i := len(reversed) - 1; i >= 0; i-- {
+		out = append(out, reversed[i])
+	}
+	return out
+}
+
+func MatchViewerCommandRules(raw []ViewerCommandRule, filename string) (string, bool) {
+	filename = strings.TrimSpace(filename)
+	if filename == "" || len(raw) == 0 {
+		return "", false
+	}
+	rules := NormalizeViewerCommandRules(raw)
+	if len(rules) == 0 {
+		return "", false
+	}
+	command := ""
+	matched := false
+	for _, rule := range rules {
+		re, err := regexp.Compile(rule.Pattern)
+		if err != nil {
+			continue
+		}
+		if re.MatchString(filename) {
+			command = rule.Command
+			matched = true
+		}
+	}
+	return command, matched
 }
 
 func parseAssociationProgramExtensions(raw any) []string {

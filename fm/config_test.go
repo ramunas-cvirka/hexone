@@ -303,6 +303,55 @@ viewer:
 	}
 }
 
+func TestNormalizeViewerCommandRules(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.CommandRules = []ViewerCommandRule{
+		{Pattern: ` (?i)\.log$ `, Command: ` tail -f {path} `},
+		{Pattern: `[`, Command: `broken`},
+		{Pattern: `^access\.log$`, Command: `grep ERROR {path}`},
+		{Pattern: `(?i)\.log$`, Command: `tail -n 200 {path}`},
+		{Pattern: `^debug\.log$`, Command: ``},
+	}
+
+	cfg.normalize()
+
+	got := make([]string, 0, len(cfg.Viewer.CommandRules))
+	for _, rule := range cfg.Viewer.CommandRules {
+		got = append(got, rule.Pattern+"="+rule.Command)
+	}
+	want := `^access\.log$=grep ERROR {path},(?i)\.log$=tail -n 200 {path}`
+	if strings.Join(got, ",") != want {
+		t.Fatalf("Viewer.CommandRules=%q, want %q", strings.Join(got, ","), want)
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "command_rules:") {
+		t.Fatalf("serialized config missing viewer command_rules:\n%s", out)
+	}
+	if strings.Contains(out, "pattern: [") {
+		t.Fatalf("serialized config should drop invalid command rule patterns:\n%s", out)
+	}
+}
+
+func TestMatchViewerCommandRulesUsesLastMatch(t *testing.T) {
+	rules := []ViewerCommandRule{
+		{Pattern: `\.log$`, Command: `tail -f {path}`},
+		{Pattern: `^error\.log$`, Command: `grep ERROR {path}`},
+	}
+
+	got, ok := MatchViewerCommandRules(rules, "error.log")
+	if !ok {
+		t.Fatal("MatchViewerCommandRules should match error.log")
+	}
+	if got != `grep ERROR {path}` {
+		t.Fatalf("MatchViewerCommandRules=%q, want %q", got, `grep ERROR {path}`)
+	}
+
+	if got, ok := MatchViewerCommandRules(rules, "notes.txt"); ok || got != "" {
+		t.Fatalf("MatchViewerCommandRules(notes.txt) = (%q, %v), want no match", got, ok)
+	}
+}
+
 func TestNormalizeViewerModeAcceptsHex(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Viewer.Mode = "hex"

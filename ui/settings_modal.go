@@ -10,6 +10,8 @@ import (
 	"image/color"
 	"path"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,76 +52,103 @@ type settingsModalState struct {
 	navPulseKey     string
 	navPulseAt      time.Time
 
-	viewModeFileClick        widget.Clickable
-	viewModeHexClick         widget.Clickable
-	viewModeCommandClick     widget.Clickable
-	viewMode                 string
-	viewModePrev             string
-	viewModeAnimAt           time.Time
-	viewModeHoverKey         string
-	viewModeHoverPrev        string
-	viewModeHoverAt          time.Time
-	viewModePulseKey         string
-	viewModePulseAt          time.Time
-	colorScopePaneClick      widget.Clickable
-	colorScopeViewerClick    widget.Clickable
-	colorScope               string
-	colorScopeAnim           settingsChoiceAnim
-	colorCategoryClick       widget.Clickable
-	colorBgPickerClick       widget.Clickable
-	colorTextPickerClick     widget.Clickable
-	colorValueEdit           widget.Editor
-	colorTextValueEdit       widget.Editor
-	colorCategoryOpen        bool
-	colorCategoryOpenedAt    time.Time
-	colorCategoryHoverID     string
-	colorCategoryHoverAnim   segmentedAnimState
-	colorPickerOpen          bool
-	colorPickerTarget        string
-	popupGlobalPointerTag    uiEventTag
-	colorCategoryPopupTag    uiEventTag
-	colorPickerPopupTag      uiEventTag
-	viewAssocPickerPopupTag  uiEventTag
-	colorCategory            string
-	colorOptionClicks        []widget.Clickable
-	colorSwatchClicks        []widget.Clickable
-	colorPaneBackground      string
-	colorPaneText            string
-	colorHover               string
-	colorHoverText           string
-	colorSelection           string
-	colorSelectionText       string
-	colorSelectedFiles       string
-	colorSelectedFilesText   string
-	colorFocusedSelected     string
-	colorFocusedSelectedText string
-	colorCurrentDir          string
-	colorCurrentDirText      string
-	colorViewerBackground    string
-	colorViewerText          string
-	colorViewerSelection     string
-	viewCommandEdit          widget.Editor
-	viewShellEdit            widget.Editor
-	paneFontSizeEdit         widget.Editor
-	viewFontSizeEdit         widget.Editor
-	paneFontFamily           string
-	viewFontFamily           string
-	paneFontFamilyClicks     []widget.Clickable
-	viewFontFamilyClicks     []widget.Clickable
-	paneFontPickerAnim       settingsChoiceAnim
-	viewFontPickerAnim       settingsChoiceAnim
-	generalDimInactiveBool   widget.Bool
-	viewHideFunctionBarBool  widget.Bool
-	viewAssocExtEdit         widget.Editor
-	viewAssocAppEdit         widget.Editor
-	viewAssocPickClick       widget.Clickable
-	viewAssocRemoveClick     widget.Clickable
-	viewAssocPickOpen        bool
-	viewAssocPickList        layout.List
-	viewAssocRowClicks       map[string]*widget.Clickable
-	viewAssocEntries         []fm.ViewerAssociation
-	viewAssocSavedEntries    []fm.ViewerAssociation
-	viewAssocLookupExt       string
+	viewModeFileClick         widget.Clickable
+	viewModeHexClick          widget.Clickable
+	viewModeCommandClick      widget.Clickable
+	viewMode                  string
+	viewModePrev              string
+	viewModeAnimAt            time.Time
+	viewModeHoverKey          string
+	viewModeHoverPrev         string
+	viewModeHoverAt           time.Time
+	viewModePulseKey          string
+	viewModePulseAt           time.Time
+	colorScopePaneClick       widget.Clickable
+	colorScopeViewerClick     widget.Clickable
+	colorScope                string
+	colorScopeAnim            settingsChoiceAnim
+	colorCategoryClick        widget.Clickable
+	colorBgPickerClick        widget.Clickable
+	colorTextPickerClick      widget.Clickable
+	colorValueEdit            widget.Editor
+	colorTextValueEdit        widget.Editor
+	colorCategoryOpen         bool
+	colorCategoryOpenedAt     time.Time
+	colorCategoryHoverID      string
+	colorCategoryHoverAnim    segmentedAnimState
+	colorPickerOpen           bool
+	colorPickerTarget         string
+	popupGlobalPointerTag     uiEventTag
+	colorCategoryPopupTag     uiEventTag
+	colorPickerPopupTag       uiEventTag
+	viewTargetPickerPopupTag  uiEventTag
+	viewAssocPickerPopupTag   uiEventTag
+	viewRulePickerPopupTag    uiEventTag
+	colorCategory             string
+	colorOptionClicks         []widget.Clickable
+	colorSwatchClicks         []widget.Clickable
+	colorPaneBackground       string
+	colorPaneText             string
+	colorHover                string
+	colorHoverText            string
+	colorSelection            string
+	colorSelectionText        string
+	colorSelectedFiles        string
+	colorSelectedFilesText    string
+	colorFocusedSelected      string
+	colorFocusedSelectedText  string
+	colorCurrentDir           string
+	colorCurrentDirText       string
+	colorViewerBackground     string
+	colorViewerText           string
+	colorViewerSelection      string
+	viewCommandEdit           widget.Editor
+	viewShellEdit             widget.Editor
+	paneFontSizeEdit          widget.Editor
+	viewFontSizeEdit          widget.Editor
+	paneFontFamily            string
+	viewFontFamily            string
+	paneFontFamilyClicks      []widget.Clickable
+	viewFontFamilyClicks      []widget.Clickable
+	paneFontPickerAnim        settingsChoiceAnim
+	viewFontPickerAnim        settingsChoiceAnim
+	generalDimInactiveBool    widget.Bool
+	viewHideFunctionBarBool   widget.Bool
+	viewerTabList             widget.List
+	viewTargetKeyEdit         widget.Editor
+	viewTargetCommandEdit     widget.Editor
+	viewTargetApplyClick      widget.Clickable
+	viewTargetPickClick       widget.Clickable
+	viewTargetRemoveClick     widget.Clickable
+	viewTargetPickOpen        bool
+	viewTargetPickList        widget.List
+	viewTargetRowClicks       map[string]*widget.Clickable
+	viewTargetRowRemoveClicks map[string]*widget.Clickable
+	viewTargetEntries         []viewerCommandTargetEntry
+	viewTargetSavedEntries    []viewerCommandTargetEntry
+	viewTargetLookupKey       string
+	viewRulePatternEdit       widget.Editor
+	viewRuleCommandEdit       widget.Editor
+	viewRuleApplyClick        widget.Clickable
+	viewRulePickClick         widget.Clickable
+	viewRuleRemoveClick       widget.Clickable
+	viewRulePickOpen          bool
+	viewRulePickList          widget.List
+	viewRuleRowClicks         map[string]*widget.Clickable
+	viewRuleRowRemoveClicks   map[string]*widget.Clickable
+	viewRuleEntries           []fm.ViewerCommandRule
+	viewRuleSavedEntries      []fm.ViewerCommandRule
+	viewRuleLookupPattern     string
+	viewAssocExtEdit          widget.Editor
+	viewAssocAppEdit          widget.Editor
+	viewAssocPickClick        widget.Clickable
+	viewAssocRemoveClick      widget.Clickable
+	viewAssocPickOpen         bool
+	viewAssocPickList         layout.List
+	viewAssocRowClicks        map[string]*widget.Clickable
+	viewAssocEntries          []fm.ViewerAssociation
+	viewAssocSavedEntries     []fm.ViewerAssociation
+	viewAssocLookupExt        string
 
 	footerHoverKey  string
 	footerHoverPrev string
@@ -127,10 +156,13 @@ type settingsModalState struct {
 	footerPulseKey  string
 	footerPulseAt   time.Time
 
-	configEdit widget.Editor
+	configEdit      widget.Editor
+	configScrollbar widget.Scrollbar
 
-	errText       string
-	assocInfoText string
+	errText        string
+	targetInfoText string
+	ruleInfoText   string
+	assocInfoText  string
 }
 
 type settingsChoiceAnim struct {
@@ -143,6 +175,19 @@ type viewerAssociationProgram struct {
 	AppPath    string
 	Extensions []string
 	MatchRank  int
+}
+
+type viewerCommandTargetEntry struct {
+	Key     string
+	Command string
+}
+
+type viewerSettingsSectionStyle struct {
+	Fill        color.NRGBA
+	Border      color.NRGBA
+	BadgeFill   color.NRGBA
+	BadgeBorder color.NRGBA
+	BadgeText   color.NRGBA
 }
 
 type settingsColorOption struct {
@@ -249,6 +294,17 @@ func (ui *UI) openSettingsModal() {
 		st.paneFontSizeEdit.Submit = false
 		st.viewFontSizeEdit.SingleLine = true
 		st.viewFontSizeEdit.Submit = false
+		st.viewerTabList.Axis = layout.Vertical
+		st.viewTargetKeyEdit.SingleLine = true
+		st.viewTargetKeyEdit.Submit = false
+		st.viewTargetCommandEdit.SingleLine = true
+		st.viewTargetCommandEdit.Submit = false
+		st.viewTargetPickList.Axis = layout.Vertical
+		st.viewRulePatternEdit.SingleLine = true
+		st.viewRulePatternEdit.Submit = false
+		st.viewRuleCommandEdit.SingleLine = true
+		st.viewRuleCommandEdit.Submit = false
+		st.viewRulePickList.Axis = layout.Vertical
 		st.viewAssocExtEdit.SingleLine = true
 		st.viewAssocExtEdit.Submit = false
 		st.viewAssocAppEdit.SingleLine = true
@@ -319,6 +375,20 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.viewFontPickerAnim = settingsChoiceAnim{}
 	st.generalDimInactiveBool.Value = cfg.General.DimInactivePanes
 	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
+	st.viewerTabList.Position.First = 0
+	st.viewerTabList.Position.Offset = 0
+	st.viewTargetEntries = viewerCommandTargetEntries(cfg.Viewer.CommandByTarget)
+	st.viewTargetSavedEntries = append([]viewerCommandTargetEntry(nil), st.viewTargetEntries...)
+	st.viewTargetPickOpen = false
+	st.viewTargetPickList.Position.First = 0
+	st.viewTargetPickList.Position.Offset = 0
+	st.loadViewerCommandTargetFields("", "")
+	st.viewRuleEntries = append([]fm.ViewerCommandRule(nil), cfg.Viewer.CommandRules...)
+	st.viewRuleSavedEntries = append([]fm.ViewerCommandRule(nil), st.viewRuleEntries...)
+	st.viewRulePickOpen = false
+	st.viewRulePickList.Position.First = 0
+	st.viewRulePickList.Position.Offset = 0
+	st.loadViewerCommandRuleFields("", "")
 	st.viewAssocEntries = append([]fm.ViewerAssociation(nil), fm.FlattenAssociationPrograms(cfg.Associations)...)
 	st.viewAssocSavedEntries = append([]fm.ViewerAssociation(nil), st.viewAssocEntries...)
 	st.viewAssocPickOpen = false
@@ -329,6 +399,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 		st.configEdit.SetText(string(raw))
 	}
 	st.errText = ""
+	st.targetInfoText = ""
+	st.ruleInfoText = ""
 	st.assocInfoText = ""
 }
 
@@ -546,7 +618,7 @@ func (st *settingsModalState) toggleColorPicker(target string) {
 }
 
 func (st *settingsModalState) anyPopupOpen() bool {
-	return st != nil && (st.colorCategoryOpen || st.colorPickerOpen || st.viewAssocPickOpen)
+	return st != nil && (st.colorCategoryOpen || st.colorPickerOpen || st.viewTargetPickOpen || st.viewRulePickOpen || st.viewAssocPickOpen)
 }
 
 func registerSettingsPopupArea(gtx layout.Context, tag event.Tag, size image.Point) {
@@ -584,6 +656,8 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 	}
 	pressedColorCategoryPopup := settingsPopupPressed(gtx, &st.colorCategoryPopupTag)
 	pressedColorPickerPopup := settingsPopupPressed(gtx, &st.colorPickerPopupTag)
+	pressedTargetPickerPopup := settingsPopupPressed(gtx, &st.viewTargetPickerPopupTag)
+	pressedRulePickerPopup := settingsPopupPressed(gtx, &st.viewRulePickerPopupTag)
 	pressedAssocPickerPopup := settingsPopupPressed(gtx, &st.viewAssocPickerPopupTag)
 	closed := false
 	for {
@@ -614,6 +688,24 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 			}
 			st.colorPickerOpen = false
 			st.colorPickerTarget = ""
+			closed = true
+			continue
+		}
+
+		if st.viewTargetPickOpen {
+			if st.viewTargetPickClick.Hovered() || pressedTargetPickerPopup {
+				continue
+			}
+			st.viewTargetPickOpen = false
+			closed = true
+			continue
+		}
+
+		if st.viewRulePickOpen {
+			if st.viewRulePickClick.Hovered() || pressedRulePickerPopup {
+				continue
+			}
+			st.viewRulePickOpen = false
 			closed = true
 			continue
 		}
@@ -801,6 +893,553 @@ func (st *settingsModalState) draftViewerTheme(cfg *fm.Config) (fileViewerTheme,
 	draft.Viewer.Text = fm.NormalizeHexColor(viewText, viewTextFallback)
 	draft.Viewer.Selection = fm.NormalizeHexColor(viewSelection, viewSelectionFallback)
 	return fileViewerThemeFromConfig(draft), errText
+}
+
+func viewerCommandTargetEntries(raw map[string]string) []viewerCommandTargetEntry {
+	if len(raw) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(raw))
+	for rawKey, rawCommand := range raw {
+		key := strings.TrimSpace(rawKey)
+		command := strings.TrimSpace(rawCommand)
+		if key == "" || command == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	out := make([]viewerCommandTargetEntry, 0, len(keys))
+	for _, key := range keys {
+		command := strings.TrimSpace(raw[key])
+		if command == "" {
+			continue
+		}
+		out = append(out, viewerCommandTargetEntry{Key: key, Command: command})
+	}
+	return out
+}
+
+func viewerCommandTargetMap(raw []viewerCommandTargetEntry) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for _, item := range raw {
+		key := normalizeViewerCommandTargetInput(item.Key)
+		command := strings.TrimSpace(item.Command)
+		if key == "" || command == "" {
+			continue
+		}
+		out[key] = command
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeViewerCommandTargetInput(raw string) string {
+	target := strings.TrimSpace(raw)
+	if target == "" {
+		return ""
+	}
+	lower := strings.ToLower(target)
+	switch {
+	case strings.HasPrefix(lower, "local:"):
+		localPath := strings.TrimSpace(target[len("local:"):])
+		if localPath == "" {
+			return ""
+		}
+		localPath = filepath.Clean(localPath)
+		if runtime.GOOS == "windows" {
+			localPath = strings.ToLower(localPath)
+		}
+		return "local:" + localPath
+	case strings.HasPrefix(lower, "ssh:"):
+		return target
+	case filepath.IsAbs(target):
+		return viewerCommandTargetKey(target, nil)
+	default:
+		return target
+	}
+}
+
+func viewerCommandTargetDisplayKey(raw string) string {
+	key := strings.TrimSpace(raw)
+	switch {
+	case strings.HasPrefix(strings.ToLower(key), "local:"):
+		return strings.TrimSpace(key[len("local:"):])
+	default:
+		return key
+	}
+}
+
+func viewerCommandTargetRowTitle(raw string) string {
+	key := strings.TrimSpace(raw)
+	if key == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(key), "local:") {
+		label := strings.TrimSpace(key[len("local:"):])
+		if base := filepath.Base(label); base != "" && base != "." && base != string(filepath.Separator) {
+			return base
+		}
+		return label
+	}
+	if strings.HasPrefix(strings.ToLower(key), "ssh:") {
+		trimmed := strings.TrimSpace(key[len("ssh:"):])
+		if idx := strings.LastIndex(trimmed, ":"); idx >= 0 && idx+1 < len(trimmed) {
+			remotePath := trimmed[idx+1:]
+			if base := path.Base(remotePath); base != "" && base != "." && base != "/" {
+				return base
+			}
+		}
+		return trimmed
+	}
+	return key
+}
+
+func (st *settingsModalState) viewerCommandTargetRowClick(key string) *widget.Clickable {
+	if st == nil || key == "" {
+		return nil
+	}
+	if st.viewTargetRowClicks == nil {
+		st.viewTargetRowClicks = make(map[string]*widget.Clickable)
+	}
+	if click := st.viewTargetRowClicks[key]; click != nil {
+		return click
+	}
+	click := new(widget.Clickable)
+	st.viewTargetRowClicks[key] = click
+	return click
+}
+
+func (st *settingsModalState) viewerCommandTargetRowRemoveClick(key string) *widget.Clickable {
+	if st == nil || key == "" {
+		return nil
+	}
+	if st.viewTargetRowRemoveClicks == nil {
+		st.viewTargetRowRemoveClicks = make(map[string]*widget.Clickable)
+	}
+	if click := st.viewTargetRowRemoveClicks[key]; click != nil {
+		return click
+	}
+	click := new(widget.Clickable)
+	st.viewTargetRowRemoveClicks[key] = click
+	return click
+}
+
+func (st *settingsModalState) viewerCommandTargetIndex(key string) int {
+	if st == nil || key == "" {
+		return -1
+	}
+	for i, entry := range st.viewTargetEntries {
+		if entry.Key == key {
+			return i
+		}
+	}
+	return -1
+}
+
+func (st *settingsModalState) viewerCommandTarget(key string) (viewerCommandTargetEntry, bool) {
+	if idx := st.viewerCommandTargetIndex(key); idx >= 0 {
+		return st.viewTargetEntries[idx], true
+	}
+	return viewerCommandTargetEntry{}, false
+}
+
+func (st *settingsModalState) viewerSavedCommandTarget(key string) (viewerCommandTargetEntry, bool) {
+	if st == nil || key == "" {
+		return viewerCommandTargetEntry{}, false
+	}
+	for _, entry := range st.viewTargetSavedEntries {
+		if entry.Key == key {
+			return entry, true
+		}
+	}
+	return viewerCommandTargetEntry{}, false
+}
+
+func (st *settingsModalState) loadViewerCommandTargetFields(key, command string) {
+	if st == nil {
+		return
+	}
+	key = normalizeViewerCommandTargetInput(key)
+	st.viewTargetKeyEdit.SetText(key)
+	st.viewTargetCommandEdit.SetText(strings.TrimSpace(command))
+	st.viewTargetLookupKey = key
+}
+
+func (st *settingsModalState) applyPickedViewerCommandTarget(entry viewerCommandTargetEntry) {
+	if st == nil {
+		return
+	}
+	st.loadViewerCommandTargetFields(entry.Key, entry.Command)
+	st.viewTargetPickOpen = false
+	st.errText = ""
+	st.targetInfoText = ""
+}
+
+func (st *settingsModalState) refreshViewerCommandTargetDraftInfo(autoApplyExisting bool) {
+	if st == nil {
+		return
+	}
+	_ = autoApplyExisting
+	key := normalizeViewerCommandTargetInput(st.viewTargetKeyEdit.Text())
+	command := strings.TrimSpace(st.viewTargetCommandEdit.Text())
+	st.targetInfoText = ""
+	if key == "" || command == "" {
+		return
+	}
+	existing, ok := st.viewerCommandTarget(key)
+	if !ok {
+		st.targetInfoText = "Click Add"
+		return
+	}
+	if existing.Command == command {
+		return
+	}
+	st.targetInfoText = "Click Update"
+}
+
+func (st *settingsModalState) viewerCommandTargetNoticeText() string {
+	if st == nil {
+		return ""
+	}
+	key := normalizeViewerCommandTargetInput(st.viewTargetKeyEdit.Text())
+	if key == "" {
+		return ""
+	}
+	command := strings.TrimSpace(st.viewTargetCommandEdit.Text())
+	savedEntry, savedExists := st.viewerSavedCommandTarget(key)
+	currentEntry, currentExists := st.viewerCommandTarget(key)
+	switch {
+	case savedExists && !currentExists:
+		return "Pending removal; Save to persist"
+	case !currentExists && command != "":
+		return "Click Add"
+	case currentExists && command != "" && command != currentEntry.Command:
+		return "Click Update"
+	case savedExists && currentExists && currentEntry.Command != savedEntry.Command:
+		return "Pending change; Save to persist"
+	case !savedExists && currentExists:
+		return "Pending add; Save to persist"
+	}
+	return ""
+}
+
+func (st *settingsModalState) syncViewerCommandTargetEditors() {
+	if st == nil {
+		return
+	}
+	key := normalizeViewerCommandTargetInput(st.viewTargetKeyEdit.Text())
+	if key == st.viewTargetLookupKey {
+		return
+	}
+	st.viewTargetLookupKey = key
+	if entry, ok := st.viewerCommandTarget(key); ok {
+		st.viewTargetCommandEdit.SetText(entry.Command)
+		return
+	}
+	if strings.TrimSpace(st.viewTargetCommandEdit.Text()) == "" {
+		st.viewTargetCommandEdit.SetText("")
+	}
+}
+
+func (st *settingsModalState) upsertCurrentViewerCommandTarget() (string, error) {
+	if st == nil {
+		return "Add", nil
+	}
+	entry, err := parseViewerCommandTargetFields(st.viewTargetKeyEdit.Text(), st.viewTargetCommandEdit.Text())
+	if err != nil {
+		return "Add", err
+	}
+	action := "Add"
+	if idx := st.viewerCommandTargetIndex(entry.Key); idx >= 0 {
+		st.viewTargetEntries[idx] = entry
+		action = "Update"
+	} else {
+		st.viewTargetEntries = append(st.viewTargetEntries, entry)
+	}
+	st.viewTargetEntries = viewerCommandTargetEntries(viewerCommandTargetMap(st.viewTargetEntries))
+	st.loadViewerCommandTargetFields(entry.Key, entry.Command)
+	return action, nil
+}
+
+func (st *settingsModalState) removeCurrentViewerCommandTarget() bool {
+	if st == nil {
+		return false
+	}
+	key := normalizeViewerCommandTargetInput(st.viewTargetKeyEdit.Text())
+	return st.removeViewerCommandTarget(key)
+}
+
+func (st *settingsModalState) removeViewerCommandTarget(key string) bool {
+	if st == nil || key == "" {
+		return false
+	}
+	idx := st.viewerCommandTargetIndex(key)
+	if idx < 0 {
+		return false
+	}
+	st.viewTargetEntries = append(st.viewTargetEntries[:idx], st.viewTargetEntries[idx+1:]...)
+	return true
+}
+
+func (st *settingsModalState) viewerCommandTargetPickerEntries() ([]viewerCommandTargetEntry, int) {
+	if st == nil || len(st.viewTargetEntries) == 0 {
+		return nil, 0
+	}
+	filter := strings.ToLower(strings.TrimSpace(st.viewTargetKeyEdit.Text()))
+	if filter == "" {
+		return append([]viewerCommandTargetEntry(nil), st.viewTargetEntries...), 0
+	}
+	matches := make([]viewerCommandTargetEntry, 0, len(st.viewTargetEntries))
+	for _, entry := range st.viewTargetEntries {
+		lowerKey := strings.ToLower(entry.Key)
+		lowerCommand := strings.ToLower(entry.Command)
+		if strings.Contains(lowerKey, filter) || strings.Contains(lowerCommand, filter) {
+			matches = append(matches, entry)
+		}
+	}
+	if len(matches) == 0 {
+		return append([]viewerCommandTargetEntry(nil), st.viewTargetEntries...), 0
+	}
+	return matches, len(matches)
+}
+
+func (st *settingsModalState) openViewerCommandTargetPicker() {
+	if st == nil {
+		return
+	}
+	st.viewTargetPickOpen = true
+	st.viewTargetPickList.Position.First = 0
+	st.viewTargetPickList.Position.Offset = 0
+	st.viewTargetRowClicks = nil
+	st.viewTargetRowRemoveClicks = nil
+}
+
+func (st *settingsModalState) viewerCommandRuleRowClick(key string) *widget.Clickable {
+	if st == nil || key == "" {
+		return nil
+	}
+	if st.viewRuleRowClicks == nil {
+		st.viewRuleRowClicks = make(map[string]*widget.Clickable)
+	}
+	if click := st.viewRuleRowClicks[key]; click != nil {
+		return click
+	}
+	click := new(widget.Clickable)
+	st.viewRuleRowClicks[key] = click
+	return click
+}
+
+func (st *settingsModalState) viewerCommandRuleRowRemoveClick(key string) *widget.Clickable {
+	if st == nil || key == "" {
+		return nil
+	}
+	if st.viewRuleRowRemoveClicks == nil {
+		st.viewRuleRowRemoveClicks = make(map[string]*widget.Clickable)
+	}
+	if click := st.viewRuleRowRemoveClicks[key]; click != nil {
+		return click
+	}
+	click := new(widget.Clickable)
+	st.viewRuleRowRemoveClicks[key] = click
+	return click
+}
+
+func (st *settingsModalState) viewerCommandRuleIndex(pattern string) int {
+	if st == nil || pattern == "" {
+		return -1
+	}
+	for i, rule := range st.viewRuleEntries {
+		if rule.Pattern == pattern {
+			return i
+		}
+	}
+	return -1
+}
+
+func (st *settingsModalState) viewerCommandRule(pattern string) (fm.ViewerCommandRule, bool) {
+	if idx := st.viewerCommandRuleIndex(pattern); idx >= 0 {
+		return st.viewRuleEntries[idx], true
+	}
+	return fm.ViewerCommandRule{}, false
+}
+
+func (st *settingsModalState) viewerSavedCommandRule(pattern string) (fm.ViewerCommandRule, bool) {
+	if st == nil || pattern == "" {
+		return fm.ViewerCommandRule{}, false
+	}
+	for _, rule := range st.viewRuleSavedEntries {
+		if rule.Pattern == pattern {
+			return rule, true
+		}
+	}
+	return fm.ViewerCommandRule{}, false
+}
+
+func (st *settingsModalState) loadViewerCommandRuleFields(pattern, command string) {
+	if st == nil {
+		return
+	}
+	st.viewRulePatternEdit.SetText(strings.TrimSpace(pattern))
+	st.viewRuleCommandEdit.SetText(strings.TrimSpace(command))
+	st.viewRuleLookupPattern = strings.TrimSpace(pattern)
+}
+
+func (st *settingsModalState) applyPickedViewerCommandRule(rule fm.ViewerCommandRule) {
+	if st == nil {
+		return
+	}
+	st.loadViewerCommandRuleFields(rule.Pattern, rule.Command)
+	st.viewRulePickOpen = false
+	st.errText = ""
+	st.ruleInfoText = ""
+}
+
+func (st *settingsModalState) refreshViewerCommandRuleDraftInfo(autoApplyExisting bool) {
+	if st == nil {
+		return
+	}
+	_ = autoApplyExisting
+	pattern := strings.TrimSpace(st.viewRulePatternEdit.Text())
+	command := strings.TrimSpace(st.viewRuleCommandEdit.Text())
+	st.ruleInfoText = ""
+	if pattern == "" || command == "" {
+		return
+	}
+	existing, ok := st.viewerCommandRule(pattern)
+	if !ok {
+		st.ruleInfoText = "Click Add"
+		return
+	}
+	if existing.Command == command {
+		return
+	}
+	st.ruleInfoText = "Click Update"
+}
+
+func (st *settingsModalState) viewerCommandRuleNoticeText() string {
+	if st == nil {
+		return ""
+	}
+	pattern := strings.TrimSpace(st.viewRulePatternEdit.Text())
+	if pattern == "" {
+		return ""
+	}
+	command := strings.TrimSpace(st.viewRuleCommandEdit.Text())
+	savedRule, savedExists := st.viewerSavedCommandRule(pattern)
+	currentRule, currentExists := st.viewerCommandRule(pattern)
+	switch {
+	case savedExists && !currentExists:
+		return "Pending removal; Save to persist"
+	case !currentExists && command != "":
+		return "Click Add"
+	case currentExists && command != "" && command != currentRule.Command:
+		return "Click Update"
+	case savedExists && currentExists && currentRule.Command != savedRule.Command:
+		return "Pending change; Save to persist"
+	case !savedExists && currentExists:
+		return "Pending add; Save to persist"
+	}
+	return ""
+}
+
+func (st *settingsModalState) syncViewerCommandRuleEditors() {
+	if st == nil {
+		return
+	}
+	pattern := strings.TrimSpace(st.viewRulePatternEdit.Text())
+	if pattern == st.viewRuleLookupPattern {
+		return
+	}
+	st.viewRuleLookupPattern = pattern
+	if rule, ok := st.viewerCommandRule(pattern); ok {
+		st.viewRuleCommandEdit.SetText(rule.Command)
+		return
+	}
+	if strings.TrimSpace(st.viewRuleCommandEdit.Text()) == "" {
+		st.viewRuleCommandEdit.SetText("")
+	}
+}
+
+func (st *settingsModalState) upsertCurrentViewerCommandRule() (string, error) {
+	if st == nil {
+		return "Add", nil
+	}
+	rule, err := parseViewerCommandRuleFields(st.viewRulePatternEdit.Text(), st.viewRuleCommandEdit.Text())
+	if err != nil {
+		return "Add", err
+	}
+	action := "Add"
+	if idx := st.viewerCommandRuleIndex(rule.Pattern); idx >= 0 {
+		st.viewRuleEntries[idx] = rule
+		action = "Update"
+	} else {
+		st.viewRuleEntries = append(st.viewRuleEntries, rule)
+	}
+	st.viewRuleEntries = fm.NormalizeViewerCommandRules(st.viewRuleEntries)
+	st.loadViewerCommandRuleFields(rule.Pattern, rule.Command)
+	return action, nil
+}
+
+func (st *settingsModalState) removeCurrentViewerCommandRule() bool {
+	if st == nil {
+		return false
+	}
+	pattern := strings.TrimSpace(st.viewRulePatternEdit.Text())
+	return st.removeViewerCommandRule(pattern)
+}
+
+func (st *settingsModalState) removeViewerCommandRule(pattern string) bool {
+	if st == nil || pattern == "" {
+		return false
+	}
+	idx := st.viewerCommandRuleIndex(pattern)
+	if idx < 0 {
+		return false
+	}
+	st.viewRuleEntries = append(st.viewRuleEntries[:idx], st.viewRuleEntries[idx+1:]...)
+	return true
+}
+
+func (st *settingsModalState) viewerCommandRulePickerRules() ([]fm.ViewerCommandRule, int) {
+	if st == nil || len(st.viewRuleEntries) == 0 {
+		return nil, 0
+	}
+	filter := strings.ToLower(strings.TrimSpace(st.viewRulePatternEdit.Text()))
+	if filter == "" {
+		return append([]fm.ViewerCommandRule(nil), st.viewRuleEntries...), 0
+	}
+	matches := make([]fm.ViewerCommandRule, 0, len(st.viewRuleEntries))
+	for _, rule := range st.viewRuleEntries {
+		lowerPattern := strings.ToLower(rule.Pattern)
+		lowerCommand := strings.ToLower(rule.Command)
+		if strings.Contains(lowerPattern, filter) || strings.Contains(lowerCommand, filter) {
+			matches = append(matches, rule)
+		}
+	}
+	if len(matches) == 0 {
+		return append([]fm.ViewerCommandRule(nil), st.viewRuleEntries...), 0
+	}
+	return matches, len(matches)
+}
+
+func (st *settingsModalState) openViewerCommandRulePicker() {
+	if st == nil {
+		return
+	}
+	st.viewRulePickOpen = true
+	st.viewRulePickList.Position.First = 0
+	st.viewRulePickList.Position.Offset = 0
+	st.viewRuleRowClicks = nil
+	st.viewRuleRowRemoveClicks = nil
 }
 
 func (st *settingsModalState) viewerAssocRowClick(key string) *widget.Clickable {
@@ -1088,6 +1727,8 @@ func (st *settingsModalState) setActiveTab(next string, now time.Time) {
 	st.closeColorCategoryPopup()
 	st.colorPickerOpen = false
 	st.colorPickerTarget = ""
+	st.viewTargetPickOpen = false
+	st.viewRulePickOpen = false
 	st.viewAssocPickOpen = false
 }
 
@@ -1157,6 +1798,10 @@ func (st *settingsModalState) hasFocusedEditor(gtx layout.Context) bool {
 		gtx.Focused(&st.viewShellEdit) ||
 		gtx.Focused(&st.paneFontSizeEdit) ||
 		gtx.Focused(&st.viewFontSizeEdit) ||
+		gtx.Focused(&st.viewTargetKeyEdit) ||
+		gtx.Focused(&st.viewTargetCommandEdit) ||
+		gtx.Focused(&st.viewRulePatternEdit) ||
+		gtx.Focused(&st.viewRuleCommandEdit) ||
 		gtx.Focused(&st.viewAssocExtEdit) ||
 		gtx.Focused(&st.viewAssocAppEdit) ||
 		gtx.Focused(&st.configEdit)
@@ -1173,6 +1818,166 @@ func settingsViewerRowLabel(ui *UI, th *material.Theme, txt string, enabled bool
 		}
 		return lbl.Layout(gtx)
 	}
+}
+
+func settingsScrollableListStyle(th *material.Theme, list *widget.List) material.ListStyle {
+	style := material.List(th, list)
+	style.AnchorStrategy = material.Occupy
+	style.ScrollbarStyle = settingsScrollbarStyle(th, &list.Scrollbar)
+	return style
+}
+
+func settingsScrollbarStyle(th *material.Theme, state *widget.Scrollbar) material.ScrollbarStyle {
+	style := material.Scrollbar(th, state)
+	style.Track.MajorPadding = unit.Dp(1)
+	style.Track.MinorPadding = unit.Dp(1)
+	style.Track.Color = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
+	style.Indicator.MinorWidth = unit.Dp(7)
+	style.Indicator.CornerRadius = unit.Dp(4)
+	style.Indicator.Color = color.NRGBA{R: 136, G: 149, B: 170, A: 168}
+	style.Indicator.HoverColor = color.NRGBA{R: 182, G: 198, B: 225, A: 232}
+	return style
+}
+
+func viewerSettingsSectionStyleFor(kind string) viewerSettingsSectionStyle {
+	switch kind {
+	case "p1":
+		return viewerSettingsSectionStyle{
+			Fill:        color.NRGBA{R: 32, G: 26, B: 18, A: 255},
+			Border:      color.NRGBA{R: 214, G: 164, B: 88, A: 74},
+			BadgeFill:   color.NRGBA{R: 82, G: 58, B: 24, A: 255},
+			BadgeBorder: color.NRGBA{R: 233, G: 188, B: 114, A: 112},
+			BadgeText:   color.NRGBA{R: 248, G: 220, B: 170, A: 255},
+		}
+	case "p2":
+		return viewerSettingsSectionStyle{
+			Fill:        color.NRGBA{R: 18, G: 24, B: 34, A: 255},
+			Border:      color.NRGBA{R: 102, G: 146, B: 224, A: 74},
+			BadgeFill:   color.NRGBA{R: 30, G: 50, B: 86, A: 255},
+			BadgeBorder: color.NRGBA{R: 130, G: 175, B: 240, A: 112},
+			BadgeText:   color.NRGBA{R: 196, G: 221, B: 255, A: 255},
+		}
+	case "p3":
+		return viewerSettingsSectionStyle{
+			Fill:        color.NRGBA{R: 22, G: 25, B: 30, A: 255},
+			Border:      color.NRGBA{R: 140, G: 156, B: 180, A: 62},
+			BadgeFill:   color.NRGBA{R: 46, G: 52, B: 62, A: 255},
+			BadgeBorder: color.NRGBA{R: 174, G: 190, B: 214, A: 104},
+			BadgeText:   color.NRGBA{R: 220, G: 228, B: 239, A: 255},
+		}
+	default:
+		return viewerSettingsSectionStyle{
+			Fill:        color.NRGBA{R: 22, G: 22, B: 24, A: 255},
+			Border:      color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+			BadgeFill:   color.NRGBA{R: 42, G: 44, B: 50, A: 255},
+			BadgeBorder: color.NRGBA{R: 255, G: 255, B: 255, A: 34},
+			BadgeText:   color.NRGBA{R: 216, G: 220, B: 227, A: 255},
+		}
+	}
+}
+
+func viewerSettingsBadgeSurface(accent color.NRGBA) (fill, border, text color.NRGBA) {
+	if accent.A == 0 {
+		accent = color.NRGBA{R: 176, G: 188, B: 204, A: 255}
+	}
+	fill = mixNRGBA(color.NRGBA{R: 30, G: 34, B: 40, A: 255}, accent, 0.22)
+	fill.A = 255
+	border = accent
+	border.A = 112
+	text = mixNRGBA(color.NRGBA{R: 222, G: 228, B: 236, A: 255}, accent, 0.48)
+	text.A = 255
+	return fill, border, text
+}
+
+func (ui *UI) layoutSettingsViewerBadge(th *material.Theme, gtx layout.Context, label string, fill, border, fg color.NRGBA) layout.Dimensions {
+	if label == "" {
+		return layout.Dimensions{}
+	}
+	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(8)), fill, border, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, label)
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.Font.Weight = font.Medium
+			lbl.TextSize = scaleModalThemeFontSize(th, 8)
+			lbl.Color = fg
+			lbl.MaxLines = 1
+			lbl.Truncator = "..."
+			return layoutVCenteredLabel(gtx, lbl)
+		})
+	})
+}
+
+func (ui *UI) layoutSettingsViewerCard(th *material.Theme, gtx layout.Context, style viewerSettingsSectionStyle, badge, title, note, status string, statusColor color.NRGBA, body layout.Widget) layout.Dimensions {
+	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneOverlayCornerDp)), style.Fill, style.Border, func(gtx layout.Context) layout.Dimensions {
+		return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			children := []layout.FlexChild{
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsViewerBadge(th, gtx, badge, style.BadgeFill, style.BadgeBorder, style.BadgeText)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(th, title)
+							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Weight = font.Medium
+							lbl.TextSize = scaleModalThemeFontSize(th, 10)
+							lbl.Color = txtColor
+							lbl.MaxLines = 1
+							lbl.Truncator = "..."
+							return layoutVCenteredLabel(gtx, lbl)
+						}),
+					)
+				}),
+			}
+			if status != "" {
+				statusFill, statusBorder, statusText := viewerSettingsBadgeSurface(statusColor)
+				children[0] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsViewerBadge(th, gtx, badge, style.BadgeFill, style.BadgeBorder, style.BadgeText)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(th, title)
+							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Weight = font.Medium
+							lbl.TextSize = scaleModalThemeFontSize(th, 10)
+							lbl.Color = txtColor
+							lbl.MaxLines = 1
+							lbl.Truncator = "..."
+							return layoutVCenteredLabel(gtx, lbl)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsViewerBadge(th, gtx, status, statusFill, statusBorder, statusText)
+						}),
+					)
+				})
+			}
+			if note != "" {
+				children = append(children,
+					layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, note)
+						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Color = mixNRGBA(hintColor, style.BadgeText, 0.18)
+						lbl.MaxLines = 1
+						lbl.Truncator = "..."
+						return lbl.Layout(gtx)
+					}),
+				)
+			}
+			if body != nil {
+				children = append(children,
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(body),
+				)
+			}
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+		})
+	})
 }
 
 func (st *settingsModalState) tabFill(now time.Time, key string) (float32, bool) {
@@ -1675,6 +2480,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
 	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value
+	ui.fmCfg.Viewer.CommandByTarget = viewerCommandTargetMap(st.viewTargetEntries)
+	ui.fmCfg.Viewer.CommandRules = fm.NormalizeViewerCommandRules(st.viewRuleEntries)
 	ui.fmCfg.Associations = fm.GroupViewerAssociations(st.viewAssocEntries)
 	ui.fmCfg.Viewer.Associations = nil
 	if err := ui.saveFMConfig(); err != nil {
@@ -1702,6 +2509,16 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 				st.colorPickerOpen = false
 				st.closeColorCategoryPopup()
 				st.colorPickerTarget = ""
+				gtx.Execute(op.InvalidateCmd{})
+				break
+			}
+			if st.viewTargetPickOpen {
+				st.viewTargetPickOpen = false
+				gtx.Execute(op.InvalidateCmd{})
+				break
+			}
+			if st.viewRulePickOpen {
+				st.viewRulePickOpen = false
 				gtx.Execute(op.InvalidateCmd{})
 				break
 			}
@@ -2367,6 +3184,98 @@ func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st
 }
 
 func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	for {
+		ev, ok := st.viewTargetKeyEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			st.errText = ""
+			st.refreshViewerCommandTargetDraftInfo(false)
+		}
+	}
+	for {
+		ev, ok := st.viewTargetCommandEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			st.errText = ""
+			st.refreshViewerCommandTargetDraftInfo(false)
+		}
+	}
+	st.syncViewerCommandTargetEditors()
+	for st.viewTargetApplyClick.Clicked(gtx) {
+		action, err := st.upsertCurrentViewerCommandTarget()
+		if err != nil {
+			st.errText = err.Error()
+			continue
+		}
+		st.errText = ""
+		st.viewTargetPickOpen = false
+		if action == "Update" {
+			st.targetInfoText = "Pending change; Save to persist"
+		} else {
+			st.targetInfoText = "Pending add; Save to persist"
+		}
+	}
+	for st.viewTargetPickClick.Clicked(gtx) {
+		st.viewTargetPickOpen = !st.viewTargetPickOpen
+		if st.viewTargetPickOpen {
+			st.openViewerCommandTargetPicker()
+		}
+	}
+
+	for {
+		ev, ok := st.viewRulePatternEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			st.errText = ""
+			st.refreshViewerCommandRuleDraftInfo(false)
+		}
+	}
+	for {
+		ev, ok := st.viewRuleCommandEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			st.errText = ""
+			st.refreshViewerCommandRuleDraftInfo(false)
+		}
+	}
+	st.syncViewerCommandRuleEditors()
+	for st.viewRuleApplyClick.Clicked(gtx) {
+		action, err := st.upsertCurrentViewerCommandRule()
+		if err != nil {
+			st.errText = err.Error()
+			continue
+		}
+		st.errText = ""
+		st.viewRulePickOpen = false
+		if action == "Update" {
+			st.ruleInfoText = "Pending change; Save to persist"
+		} else {
+			st.ruleInfoText = "Pending add; Save to persist"
+		}
+	}
+	for st.viewRulePickClick.Clicked(gtx) {
+		st.viewRulePickOpen = !st.viewRulePickOpen
+		if st.viewRulePickOpen {
+			st.openViewerCommandRulePicker()
+		}
+	}
+
+	currentTargetKey := normalizeViewerCommandTargetInput(st.viewTargetKeyEdit.Text())
+	_, currentTargetExists := st.viewerCommandTarget(currentTargetKey)
+	pickerTargets, pickerTargetMatchCount := st.viewerCommandTargetPickerEntries()
+
+	currentRulePattern := strings.TrimSpace(st.viewRulePatternEdit.Text())
+	_, currentRuleExists := st.viewerCommandRule(currentRulePattern)
+	pickerRules, pickerMatchCount := st.viewerCommandRulePickerRules()
+
 	fillFile, animFile := st.viewModeFill(gtx.Now, "file")
 	fillHex, animHex := st.viewModeFill(gtx.Now, "hex")
 	fillCommand, animCommand := st.viewModeFill(gtx.Now, "command")
@@ -2392,87 +3301,608 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
-	commandEnabled := st.viewMode == "command"
 	rowLabel := func(txt string, enabled bool) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, enabled)
 	}
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(rowLabel("Mode", true)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = 0
-			stripH := gtx.Dp(unit.Dp(22))
-			if stripH < 1 {
-				stripH = 1
-			}
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+	savedTargetCount := 0
+	pendingTargetCount := 0
+	targetEntriesByKey := make(map[string]viewerCommandTargetEntry, len(st.viewTargetEntries))
+	targetSavedByKey := make(map[string]viewerCommandTargetEntry, len(st.viewTargetSavedEntries))
+	for _, entry := range st.viewTargetEntries {
+		targetEntriesByKey[entry.Key] = entry
+	}
+	for _, entry := range st.viewTargetSavedEntries {
+		targetSavedByKey[entry.Key] = entry
+	}
+	for _, entry := range st.viewTargetEntries {
+		if saved, ok := targetSavedByKey[entry.Key]; ok && saved.Command == entry.Command {
+			savedTargetCount++
+			continue
+		}
+		pendingTargetCount++
+	}
+	for _, entry := range st.viewTargetSavedEntries {
+		if _, ok := targetEntriesByKey[entry.Key]; !ok {
+			pendingTargetCount++
+		}
+	}
+
+	targetStatusText := ""
+	targetStatusColor := color.NRGBA{R: 152, G: 205, B: 152, A: 255}
+	switch {
+	case currentTargetKey == "":
+		switch {
+		case savedTargetCount > 0 && pendingTargetCount > 0:
+			targetStatusText = fmt.Sprintf("%d Saved / %d Pending", savedTargetCount, pendingTargetCount)
+			targetStatusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+		case pendingTargetCount > 0:
+			targetStatusText = fmt.Sprintf("%d Pending", pendingTargetCount)
+			targetStatusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+		case savedTargetCount > 0:
+			targetStatusText = fmt.Sprintf("%d Saved", savedTargetCount)
+			targetStatusColor = color.NRGBA{R: 174, G: 190, B: 214, A: 255}
+		}
+	case currentTargetExists:
+		if saved, ok := targetSavedByKey[currentTargetKey]; ok && saved.Command == st.viewTargetCommandEdit.Text() {
+			targetStatusText = "Saved"
+		} else {
+			targetStatusText = "Pending"
+			targetStatusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+		}
+	case currentTargetKey != "":
+		targetStatusText = "New"
+		targetStatusColor = viewerSettingsSectionStyleFor("p1").BadgeText
+	}
+
+	savedRuleCount := 0
+	pendingRuleCount := 0
+	ruleEntriesByPattern := make(map[string]fm.ViewerCommandRule, len(st.viewRuleEntries))
+	ruleSavedByPattern := make(map[string]fm.ViewerCommandRule, len(st.viewRuleSavedEntries))
+	for _, rule := range st.viewRuleEntries {
+		ruleEntriesByPattern[rule.Pattern] = rule
+	}
+	for _, rule := range st.viewRuleSavedEntries {
+		ruleSavedByPattern[rule.Pattern] = rule
+	}
+	for _, rule := range st.viewRuleEntries {
+		if saved, ok := ruleSavedByPattern[rule.Pattern]; ok && saved.Command == rule.Command {
+			savedRuleCount++
+			continue
+		}
+		pendingRuleCount++
+	}
+	for _, rule := range st.viewRuleSavedEntries {
+		if _, ok := ruleEntriesByPattern[rule.Pattern]; !ok {
+			pendingRuleCount++
+		}
+	}
+
+	ruleStatusText := ""
+	ruleStatusColor := color.NRGBA{R: 152, G: 205, B: 152, A: 255}
+	switch {
+	case currentRulePattern == "":
+		switch {
+		case savedRuleCount > 0 && pendingRuleCount > 0:
+			ruleStatusText = fmt.Sprintf("%d Saved / %d Pending", savedRuleCount, pendingRuleCount)
+			ruleStatusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+		case pendingRuleCount > 0:
+			ruleStatusText = fmt.Sprintf("%d Pending", pendingRuleCount)
+			ruleStatusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+		case savedRuleCount > 0:
+			ruleStatusText = fmt.Sprintf("%d Saved", savedRuleCount)
+			ruleStatusColor = color.NRGBA{R: 174, G: 190, B: 214, A: 255}
+		}
+	case currentRuleExists:
+		if saved, ok := ruleSavedByPattern[currentRulePattern]; ok && saved.Command == st.viewRuleCommandEdit.Text() {
+			ruleStatusText = "Saved"
+		} else {
+			ruleStatusText = "Pending"
+			ruleStatusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+		}
+	case currentRulePattern != "":
+		ruleStatusText = "New"
+		ruleStatusColor = viewerSettingsSectionStyleFor("p2").BadgeText
+	}
+
+	targetApplyLabel := "Add"
+	if currentTargetExists {
+		targetApplyLabel = "Update"
+	}
+	ruleApplyLabel := "Add"
+	if currentRuleExists {
+		ruleApplyLabel = "Update"
+	}
+
+	layoutModeStrip := func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = 0
+		stripH := gtx.Dp(unit.Dp(22))
+		if stripH < 1 {
+			stripH = 1
+		}
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, 10), []slidingTabSpec{
+					{
+						Label:      "File",
+						Click:      &st.viewModeFileClick,
+						ActiveFill: fillFile,
+						HoverFill:  hoverFile,
+						PulseFill:  pulseFile,
+					},
+					{
+						Label:      "Hex",
+						Click:      &st.viewModeHexClick,
+						ActiveFill: fillHex,
+						HoverFill:  hoverHex,
+						PulseFill:  pulseHex,
+					},
+					{
+						Label:      "Command",
+						Click:      &st.viewModeCommandClick,
+						ActiveFill: fillCommand,
+						HoverFill:  hoverCommand,
+						PulseFill:  pulseCommand,
+					},
+				})
+			}),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH+gtx.Dp(unit.Dp(2)))}
+			}),
+		)
+	}
+
+	noticeLabel := func(text string) layout.Widget {
+		return func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, text)
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Color = color.NRGBA{R: 152, G: 205, B: 152, A: 255}
+			lbl.MaxLines = 2
+			lbl.Truncator = "..."
+			return lbl.Layout(gtx)
+		}
+	}
+
+	sections := []layout.Widget{
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(rowLabel("Default viewer mode", true)),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+				layout.Rigid(layoutModeStrip),
+			)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(rowLabel("Shell (all viewer commands)", true)),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, 10), []slidingTabSpec{
-						{
-							Label:      "File",
-							Click:      &st.viewModeFileClick,
-							ActiveFill: fillFile,
-							HoverFill:  hoverFile,
-							PulseFill:  pulseFile,
-						},
-						{
-							Label:      "Hex",
-							Click:      &st.viewModeHexClick,
-							ActiveFill: fillHex,
-							HoverFill:  hoverHex,
-							PulseFill:  pulseHex,
-						},
-						{
-							Label:      "Command",
-							Click:      &st.viewModeCommandClick,
-							ActiveFill: fillCommand,
-							HoverFill:  hoverCommand,
-							PulseFill:  pulseCommand,
-						},
+					ed := material.Editor(th, &st.viewShellEdit, "auto")
+					ed.Font.Typeface = ui.mainTypeface()
+					ed.TextSize = scaleModalThemeFontSize(th, 10)
+					ed.Color = txtColor
+					ed.HintColor = hintColor
+					return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-shell", &st.viewShellEdit, true, func(gtx layout.Context) layout.Dimensions {
+						return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewShellEdit), true, ed.Layout)
+					})
+				}),
+			)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutThemeCheckbox(th, gtx, &st.viewHideFunctionBarBool, "Auto-hide function bar while viewer is open (F11 toggles it)", scaleModalThemeFontSize(th, 10))
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsViewerCard(th, gtx, viewerSettingsSectionStyleFor("p1"), "Priority 1", "Exact target override", "", targetStatusText, targetStatusColor, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(rowLabel("Target (exact full path)", true)),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								ed := material.Editor(th, &st.viewTargetKeyEdit, "/Users/me/logs/app.log")
+								ed.Font.Typeface = ui.mainTypeface()
+								ed.TextSize = scaleModalThemeFontSize(th, 10)
+								ed.Color = txtColor
+								ed.HintColor = hintColor
+								return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-target-key", &st.viewTargetKeyEdit, true, func(gtx layout.Context) layout.Dimensions {
+									return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewTargetKeyEdit), true, ed.Layout)
+								})
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.viewTargetPickClick, "Browse", st.viewTargetPickOpen)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.viewTargetApplyClick, targetApplyLabel, currentTargetExists)
+							}),
+						)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if !st.viewTargetPickOpen {
+							return layout.Dimensions{}
+						}
+						return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsViewerCommandTargetPicker(th, gtx, st, pickerTargets, pickerTargetMatchCount)
+						})
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(rowLabel("Command ({filename} {fullpath} {path})", true)),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								ed := material.Editor(th, &st.viewTargetCommandEdit, "tail -n 200 -f {path}")
+								ed.Font.Typeface = ui.mainTypeface()
+								ed.TextSize = scaleModalThemeFontSize(th, 10)
+								ed.Color = txtColor
+								ed.HintColor = hintColor
+								return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-target-command", &st.viewTargetCommandEdit, true, func(gtx layout.Context) layout.Dimensions {
+									return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewTargetCommandEdit), true, ed.Layout)
+								})
+							}),
+						)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						infoText := st.targetInfoText
+						if infoText == "" {
+							infoText = st.viewerCommandTargetNoticeText()
+						}
+						if infoText == "" {
+							return layout.Dimensions{}
+						}
+						return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, noticeLabel(infoText))
+					}),
+				)
+			})
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsViewerCard(th, gtx, viewerSettingsSectionStyleFor("p2"), "Priority 2", "Filename regex rule", "", ruleStatusText, ruleStatusColor, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(rowLabel("Regex (filename only, last match wins)", true)),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								ed := material.Editor(th, &st.viewRulePatternEdit, `(?i)\.log(?:\.\d+)?$`)
+								ed.Font.Typeface = ui.mainTypeface()
+								ed.TextSize = scaleModalThemeFontSize(th, 10)
+								ed.Color = txtColor
+								ed.HintColor = hintColor
+								return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-rule-pattern", &st.viewRulePatternEdit, true, func(gtx layout.Context) layout.Dimensions {
+									return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewRulePatternEdit), true, ed.Layout)
+								})
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.viewRulePickClick, "Browse", st.viewRulePickOpen)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.viewRuleApplyClick, ruleApplyLabel, currentRuleExists)
+							}),
+						)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if !st.viewRulePickOpen {
+							return layout.Dimensions{}
+						}
+						return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsViewerCommandRulePicker(th, gtx, st, pickerRules, pickerMatchCount)
+						})
+					}),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+					layout.Rigid(rowLabel("Command ({filename} {fullpath} {path})", true)),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								ed := material.Editor(th, &st.viewRuleCommandEdit, "tail -n 200 -f {path}")
+								ed.Font.Typeface = ui.mainTypeface()
+								ed.TextSize = scaleModalThemeFontSize(th, 10)
+								ed.Color = txtColor
+								ed.HintColor = hintColor
+								return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-rule-command", &st.viewRuleCommandEdit, true, func(gtx layout.Context) layout.Dimensions {
+									return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewRuleCommandEdit), true, ed.Layout)
+								})
+							}),
+						)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						infoText := st.ruleInfoText
+						if infoText == "" {
+							infoText = st.viewerCommandRuleNoticeText()
+						}
+						if infoText == "" {
+							return layout.Dimensions{}
+						}
+						return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, noticeLabel(infoText))
+					}),
+				)
+			})
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsViewerCard(th, gtx, viewerSettingsSectionStyleFor("p3"), "Priority 3", "Fallback command", "", "", color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(rowLabel("Command ({filename} {fullpath} {path})", true)),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						ed := material.Editor(th, &st.viewCommandEdit, "cat {path}")
+						ed.Font.Typeface = ui.mainTypeface()
+						ed.TextSize = scaleModalThemeFontSize(th, 10)
+						ed.Color = txtColor
+						ed.HintColor = hintColor
+						return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-command", &st.viewCommandEdit, true, func(gtx layout.Context) layout.Dimensions {
+							return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewCommandEdit), true, ed.Layout)
+						})
+					}),
+				)
+			})
+		},
+	}
+
+	list := settingsScrollableListStyle(th, &st.viewerTabList)
+	return list.Layout(gtx, len(sections), func(gtx layout.Context, i int) layout.Dimensions {
+		bottom := unit.Dp(10)
+		if i == len(sections)-1 {
+			bottom = 0
+		}
+		return layout.Inset{Right: unit.Dp(2), Bottom: bottom}.Layout(gtx, sections[i])
+	})
+}
+
+func (ui *UI) layoutSettingsViewerCommandTargetPicker(th *material.Theme, gtx layout.Context, st *settingsModalState, entries []viewerCommandTargetEntry, matchCount int) layout.Dimensions {
+	gtx2 := gtx
+	maxH := gtx.Dp(unit.Dp(156))
+	if gtx2.Constraints.Max.Y > maxH {
+		gtx2.Constraints.Max.Y = maxH
+	}
+	dims := fillRoundedBox(
+		gtx2,
+		gtx2.Dp(unit.Dp(filePaneControlCornerDp)),
+		color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+		color.NRGBA{R: 255, G: 255, B: 255, A: 18},
+		func(gtx layout.Context) layout.Dimensions {
+			if len(entries) == 0 {
+				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(th, "No exact overrides")
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Color = hintColor
+					return lbl.Layout(gtx)
+				})
+			}
+			var picked *viewerCommandTargetEntry
+			removedKey := ""
+			currentKey := normalizeViewerCommandTargetInput(st.viewTargetKeyEdit.Text())
+			dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if matchCount <= 0 || matchCount >= len(entries) {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, fmt.Sprintf("%d matching overrides", matchCount))
+						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Color = hintColor
+						lbl.MaxLines = 1
+						lbl.Truncator = "..."
+						return lbl.Layout(gtx)
 					})
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH+gtx.Dp(unit.Dp(2)))}
+					list := settingsScrollableListStyle(th, &st.viewTargetPickList)
+					return list.Layout(gtx, len(entries), func(gtx layout.Context, i int) layout.Dimensions {
+						entry := entries[i]
+						click := st.viewerCommandTargetRowClick(entry.Key)
+						removeClick := st.viewerCommandTargetRowRemoveClick(entry.Key)
+						for click.Clicked(gtx) {
+							if picked == nil {
+								entryCopy := entry
+								picked = &entryCopy
+							}
+						}
+						for removeClick.Clicked(gtx) {
+							if removedKey == "" {
+								removedKey = entry.Key
+							}
+						}
+						selected := entry.Key == currentKey
+						hovered := click.Hovered() || removeClick.Hovered()
+						return fillBgExact(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
+							bg := color.NRGBA{A: 0}
+							if selected {
+								bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
+							} else if hovered {
+								bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
+							}
+							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									displayKey := viewerCommandTargetDisplayKey(entry.Key)
+									title := viewerCommandTargetRowTitle(entry.Key)
+									headline := displayKey
+									if title != "" && title != displayKey {
+										headline = title
+									}
+									detail := entry.Command
+									if headline != displayKey {
+										detail = displayKey + " | " + entry.Command
+									}
+									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+											return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+												pointer.CursorPointer.Add(gtx.Ops)
+												return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														lbl := material.Body2(th, headline)
+														lbl.Font.Typeface = ui.mainTypeface()
+														lbl.Font.Weight = font.Medium
+														lbl.TextSize = scaleModalThemeFontSize(th, 10)
+														lbl.Color = txtColor
+														lbl.MaxLines = 1
+														lbl.Truncator = "..."
+														return layoutVCenteredLabel(gtx, lbl)
+													}),
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														lbl := material.Caption(th, detail)
+														lbl.Font.Typeface = ui.mainTypeface()
+														lbl.TextSize = scaleModalThemeFontSize(th, 8)
+														lbl.Color = hintColor
+														lbl.MaxLines = 1
+														lbl.Truncator = "..."
+														return layoutVCenteredLabel(gtx, lbl)
+													}),
+												)
+											})
+										}),
+										layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return layoutTinyIconModeButton(th, gtx, removeClick, uitheme.CloseIcon(), false)
+										}),
+									)
+								})
+							})
+						})
+					})
 				}),
 			)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(rowLabel("Command template ({filename} {fullpath} {path})", commandEnabled)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			st.viewCommandEdit.ReadOnly = !commandEnabled
-			ed := material.Editor(th, &st.viewCommandEdit, "cat {path}")
-			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleModalThemeFontSize(th, 10)
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			if !commandEnabled {
-				ed.Color = color.NRGBA{R: 128, G: 136, B: 152, A: 255}
-				ed.HintColor = color.NRGBA{R: 95, G: 101, B: 114, A: 255}
+			if removedKey != "" {
+				if st.removeViewerCommandTarget(removedKey) {
+					st.errText = ""
+					st.targetInfoText = "Pending removal; Save to persist"
+				}
+				picked = nil
 			}
-			return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-command", &st.viewCommandEdit, commandEnabled, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewCommandEdit), commandEnabled, ed.Layout)
-			})
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(rowLabel("Shell (auto | sh | powershell)", true)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, &st.viewShellEdit, "auto")
-			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleModalThemeFontSize(th, 10)
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			return ui.layoutEditorWithContextMenu(th, gtx, "settings-view-shell", &st.viewShellEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewShellEdit), true, ed.Layout)
-			})
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutThemeCheckbox(th, gtx, &st.viewHideFunctionBarBool, "Hide F1-F10 bar while viewer is open", scaleModalThemeFontSize(th, 10))
-		}),
+			if picked != nil {
+				st.applyPickedViewerCommandTarget(*picked)
+			}
+			return dims
+		},
 	)
+	registerSettingsPopupArea(gtx2, &st.viewTargetPickerPopupTag, dims.Size)
+	return dims
+}
+
+func (ui *UI) layoutSettingsViewerCommandRulePicker(th *material.Theme, gtx layout.Context, st *settingsModalState, rules []fm.ViewerCommandRule, matchCount int) layout.Dimensions {
+	gtx2 := gtx
+	maxH := gtx.Dp(unit.Dp(156))
+	if gtx2.Constraints.Max.Y > maxH {
+		gtx2.Constraints.Max.Y = maxH
+	}
+	dims := fillRoundedBox(
+		gtx2,
+		gtx2.Dp(unit.Dp(filePaneControlCornerDp)),
+		color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+		color.NRGBA{R: 255, G: 255, B: 255, A: 18},
+		func(gtx layout.Context) layout.Dimensions {
+			if len(rules) == 0 {
+				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(th, "No regex rules")
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Color = hintColor
+					return lbl.Layout(gtx)
+				})
+			}
+			var picked *fm.ViewerCommandRule
+			removedPattern := ""
+			currentPattern := strings.TrimSpace(st.viewRulePatternEdit.Text())
+			dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if matchCount <= 0 || matchCount >= len(rules) {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, fmt.Sprintf("%d matching rules", matchCount))
+						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Color = hintColor
+						lbl.MaxLines = 1
+						lbl.Truncator = "..."
+						return lbl.Layout(gtx)
+					})
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					list := settingsScrollableListStyle(th, &st.viewRulePickList)
+					return list.Layout(gtx, len(rules), func(gtx layout.Context, i int) layout.Dimensions {
+						rule := rules[i]
+						click := st.viewerCommandRuleRowClick(rule.Pattern)
+						removeClick := st.viewerCommandRuleRowRemoveClick(rule.Pattern)
+						for click.Clicked(gtx) {
+							if picked == nil {
+								ruleCopy := rule
+								picked = &ruleCopy
+							}
+						}
+						for removeClick.Clicked(gtx) {
+							if removedPattern == "" {
+								removedPattern = rule.Pattern
+							}
+						}
+						selected := rule.Pattern == currentPattern
+						hovered := click.Hovered() || removeClick.Hovered()
+						return fillBgExact(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
+							bg := color.NRGBA{A: 0}
+							if selected {
+								bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
+							} else if hovered {
+								bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
+							}
+							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+											return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+												pointer.CursorPointer.Add(gtx.Ops)
+												return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														lbl := material.Body2(th, rule.Pattern)
+														lbl.Font.Typeface = ui.mainTypeface()
+														lbl.Font.Weight = font.Medium
+														lbl.TextSize = scaleModalThemeFontSize(th, 10)
+														lbl.Color = txtColor
+														lbl.MaxLines = 1
+														lbl.Truncator = "..."
+														return layoutVCenteredLabel(gtx, lbl)
+													}),
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														lbl := material.Caption(th, rule.Command)
+														lbl.Font.Typeface = ui.mainTypeface()
+														lbl.TextSize = scaleModalThemeFontSize(th, 8)
+														lbl.Color = hintColor
+														lbl.MaxLines = 1
+														lbl.Truncator = "..."
+														return layoutVCenteredLabel(gtx, lbl)
+													}),
+												)
+											})
+										}),
+										layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+											return layoutTinyIconModeButton(th, gtx, removeClick, uitheme.CloseIcon(), false)
+										}),
+									)
+								})
+							})
+						})
+					})
+				}),
+			)
+			if removedPattern != "" {
+				if st.removeViewerCommandRule(removedPattern) {
+					st.errText = ""
+					st.ruleInfoText = "Pending removal; Save to persist"
+				}
+				picked = nil
+			}
+			if picked != nil {
+				st.applyPickedViewerCommandRule(*picked)
+			}
+			return dims
+		},
+	)
+	registerSettingsPopupArea(gtx2, &st.viewRulePickerPopupTag, dims.Size)
+	return dims
 }
 
 func (ui *UI) layoutSettingsColorScopeTabs(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
@@ -4088,14 +5518,53 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, &st.configEdit, "")
-			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleModalThemeFontSize(th, 10)
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			return ui.layoutEditorWithContextMenu(th, gtx, "settings-config", &st.configEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.configEdit), true, ed.Layout)
-			})
+			scrollbarStyle := settingsScrollbarStyle(th, &st.configScrollbar)
+			editorDims := layout.Dimensions{}
+			metrics := widget.EditorScrollMetrics{}
+			scrollable := false
+			dims := layout.Stack{Alignment: layout.E}.Layout(gtx,
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					ed := material.Editor(th, &st.configEdit, "")
+					ed.Font.Typeface = ui.mainTypeface()
+					ed.TextSize = scaleModalThemeFontSize(th, 10)
+					ed.Color = txtColor
+					ed.HintColor = hintColor
+					editorDims = ui.layoutEditorWithContextMenu(th, gtx, "settings-config", &st.configEdit, true, func(gtx layout.Context) layout.Dimensions {
+						return layoutNeutralEditorBox(gtx, gtx.Focused(&st.configEdit), true, ed.Layout)
+					})
+					metrics, scrollable = st.configEdit.VerticalScrollMetrics()
+					return editorDims
+				}),
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					if !scrollable || editorDims.Size.Y <= 0 {
+						return layout.Dimensions{}
+					}
+					height := editorDims.Size.Y
+					if height < 1 {
+						height = 1
+					}
+					start := clamp01(float32(metrics.Offset) / float32(metrics.Content))
+					end := clamp01(float32(metrics.Offset+metrics.Viewport) / float32(metrics.Content))
+					trackH := height - gtx.Dp(unit.Dp(4))
+					if trackH < 1 {
+						trackH = 1
+					}
+					return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return fixedWidth(gtx, gtx.Dp(scrollbarStyle.Width()), func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
+								return scrollbarStyle.Layout(gtx, layout.Vertical, start, end)
+							})
+						})
+					})
+				}),
+			)
+			if scrollable {
+				if delta := st.configScrollbar.ScrollDistance(); delta != 0 {
+					st.configEdit.ScrollToVerticalOffset(metrics.Offset + int(delta*float32(metrics.Content)))
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
+			return dims
 		}),
 	)
 }
@@ -4131,6 +5600,39 @@ func viewerAssociationDisplayExtension(ext string) string {
 	ext = strings.TrimSpace(ext)
 	ext = strings.TrimPrefix(ext, ".")
 	return ext
+}
+
+func parseViewerCommandTargetFields(keyRaw, commandRaw string) (viewerCommandTargetEntry, error) {
+	key := normalizeViewerCommandTargetInput(keyRaw)
+	if key == "" {
+		return viewerCommandTargetEntry{}, fmt.Errorf("target key is required")
+	}
+	command := strings.TrimSpace(commandRaw)
+	if command == "" {
+		return viewerCommandTargetEntry{}, fmt.Errorf("exact override command is required")
+	}
+	return viewerCommandTargetEntry{
+		Key:     key,
+		Command: command,
+	}, nil
+}
+
+func parseViewerCommandRuleFields(patternRaw, commandRaw string) (fm.ViewerCommandRule, error) {
+	pattern := strings.TrimSpace(patternRaw)
+	if pattern == "" {
+		return fm.ViewerCommandRule{}, fmt.Errorf("regex pattern is required")
+	}
+	if _, err := regexp.Compile(pattern); err != nil {
+		return fm.ViewerCommandRule{}, fmt.Errorf("regex pattern is invalid: %w", err)
+	}
+	command := strings.TrimSpace(commandRaw)
+	if command == "" {
+		return fm.ViewerCommandRule{}, fmt.Errorf("rule command is required")
+	}
+	return fm.ViewerCommandRule{
+		Pattern: pattern,
+		Command: command,
+	}, nil
 }
 
 func parseViewerAssociationFields(extRaw, appRaw string) (fm.ViewerAssociation, error) {

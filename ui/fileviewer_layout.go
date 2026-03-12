@@ -30,6 +30,9 @@ const (
 	viewerInlineCommandMinWidthDp       = 96
 	viewerInlineCommandDisplayInsetDp   = 10
 	viewerInlineCommandMeasurePaddingDp = viewerInlineCommandDisplayInsetDp * 2
+	fileViewerOverlayEdgeInsetXDp       = 4
+	fileViewerOverlayEdgeInsetYDp       = 2
+	fileViewerTooltipEdgeInsetDp        = 4
 )
 
 func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Dimensions {
@@ -632,8 +635,8 @@ func (ui *UI) layoutFileViewerOverlay(th *material.Theme, gtx layout.Context, st
 		st.encodingMenuRect = image.Rectangle{}
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
-	marginX := gtx.Dp(unit.Dp(10))
-	marginY := gtx.Dp(unit.Dp(10))
+	marginX := gtx.Dp(unit.Dp(fileViewerOverlayEdgeInsetXDp))
+	marginY := gtx.Dp(unit.Dp(fileViewerOverlayEdgeInsetYDp))
 	barPos := image.Pt(gtx.Constraints.Max.X-barDims.Size.X-marginX, gtx.Constraints.Max.Y-barDims.Size.Y-marginY)
 	if barPos.X < 0 {
 		barPos.X = 0
@@ -689,46 +692,54 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 		scaleColorAlpha(theme.TooltipBg, 0.9),
 		scaleColorAlpha(theme.TooltipBorder, 0.9),
 		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				children := make([]layout.FlexChild, 0, 10)
-				addSpacer := func() {
+				addGap := func(width unit.Dp) {
 					if len(children) > 0 {
-						children = append(children, layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout))
+						children = append(children, layout.Rigid(layout.Spacer{Width: width}.Layout))
+					}
+				}
+				addSeparator := func() {
+					if len(children) > 0 {
+						children = append(children,
+							layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutFileViewerOverlayDivider(gtx)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+						)
 					}
 				}
 				if title != "" {
-					addSpacer()
+					addSeparator()
 					maxTitleW := gtx.Dp(unit.Dp(220))
 					if alt := gtx.Constraints.Max.X / 3; alt > 0 && alt < maxTitleW {
 						maxTitleW = alt
-					}
-					if maxTitleW < gtx.Dp(unit.Dp(96)) {
-						maxTitleW = gtx.Dp(unit.Dp(96))
 					}
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutFileViewerOverlayText(th, gtx, title, theme.TooltipText, maxTitleW)
 					}))
 				}
 				if statusText != "" {
-					addSpacer()
+					addSeparator()
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutFileViewerOverlayText(th, gtx, statusText, statusColor, 0)
 					}))
 				}
 				if updatedText != "" {
-					addSpacer()
+					addSeparator()
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutFileViewerOverlayText(th, gtx, updatedText, theme.Muted, 0)
 					}))
 				}
 				if lineEnding != "" {
-					addSpacer()
+					addGap(unit.Dp(5))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutFileViewerOverlayChip(th, gtx, lineEnding, theme.CommandStaticText, false, nil)
 					}))
 				}
 				if encodingLabel != "" {
-					addSpacer()
+					addGap(unit.Dp(4))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						click := &st.encodingMenuClick
 						if st.mode != "file" {
@@ -757,7 +768,7 @@ func (ui *UI) layoutFileViewerOverlayText(th *material.Theme, gtx layout.Context
 		return layoutVCenteredLabel(gtx, lbl)
 	}
 	if width > 0 {
-		return fixedWidth(gtx, width, host)
+		return maxWidth(gtx, width, host)
 	}
 	return host(gtx)
 }
@@ -801,6 +812,24 @@ func (ui *UI) layoutFileViewerOverlayChip(th *material.Theme, gtx layout.Context
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
 		return layoutChip(gtx)
+	})
+}
+
+func (ui *UI) layoutFileViewerOverlayDivider(gtx layout.Context) layout.Dimensions {
+	theme := ui.fileViewerTheme()
+	fill := mixNRGBA(theme.TooltipText, theme.TooltipBorder, 0.45)
+	fill.A = 112
+	h := gtx.Dp(unit.Dp(12))
+	if h < gtx.Dp(unit.Dp(8)) {
+		h = gtx.Dp(unit.Dp(8))
+	}
+	w := gtx.Dp(unit.Dp(1))
+	if w < 1 {
+		w = 1
+	}
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		paint.FillShape(gtx.Ops, fill, clip.Rect(image.Rect(0, 0, w, h)).Op())
+		return layout.Dimensions{Size: image.Pt(w, h)}
 	})
 }
 
@@ -987,7 +1016,7 @@ func isViewerHeaderSizeStatus(status string) bool {
 	return strings.HasPrefix(status, "file: ") || strings.HasPrefix(status, "remote file: ")
 }
 
-func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRGBA) {
+func (ui *UI) fileViewerBaseStatusText(st *fileViewerState) (string, color.NRGBA) {
 	if st == nil {
 		return "", ui.fileViewerTheme().Hint
 	}
@@ -1020,11 +1049,28 @@ func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRG
 			statusColor = theme.StatusAccent
 		}
 	}
+	return statusText, statusColor
+}
+
+func isViewerStreamingStatus(status string) bool {
+	status = strings.ToLower(strings.TrimSpace(status))
+	return status == "streaming" || status == "streaming, truncated"
+}
+
+func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRGBA) {
+	if st == nil {
+		return "", ui.fileViewerTheme().Hint
+	}
+	theme := ui.fileViewerTheme()
+	statusText, statusColor := ui.fileViewerBaseStatusText(st)
 	if st.mode == "command" && st.commandInfinite {
-		if statusText == "" {
-			statusText = "streaming"
-			statusColor = theme.StatusAccent
+		return "streaming", theme.StatusAccent
+	}
+	if st.mode == "command" {
+		if !st.autoRefresh {
+			return "no-refresh", theme.Muted
 		}
+		return "refreshing", theme.StatusAccent
 	}
 	return statusText, statusColor
 }
@@ -1032,9 +1078,6 @@ func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRG
 func (ui *UI) fileViewerOverlayStatusText(st *fileViewerState) (string, color.NRGBA) {
 	if st == nil {
 		return "", ui.fileViewerTheme().Hint
-	}
-	if isViewerHeaderSizeStatus(st.status) {
-		return st.status, ui.fileViewerTheme().Muted
 	}
 	return ui.fileViewerHeaderStatusText(st)
 }
@@ -1067,6 +1110,20 @@ func measureWidgetUnconstrained(gtx layout.Context, w layout.Widget) layout.Dime
 	gtx2.Ops = &measureOps
 	gtx2.Constraints = layout.Constraints{Min: image.Point{}, Max: image.Point{X: 1 << 30, Y: 1 << 30}}
 	return w(gtx2)
+}
+
+func maxWidth(gtx layout.Context, w int, wid layout.Widget) layout.Dimensions {
+	if w <= 0 {
+		return wid(gtx)
+	}
+	gtx2 := gtx
+	if gtx2.Constraints.Max.X > w {
+		gtx2.Constraints.Max.X = w
+	}
+	if gtx2.Constraints.Min.X > gtx2.Constraints.Max.X {
+		gtx2.Constraints.Min.X = gtx2.Constraints.Max.X
+	}
+	return wid(gtx2)
 }
 
 func (ui *UI) layoutFileViewerInfoStrip(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
