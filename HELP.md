@@ -99,7 +99,8 @@ Useful viewer keys:
 
 ### Command Mode
 
-`command` mode runs a shell command against the selected file.
+`command` mode runs a shell command against the selected file and captures its output.
+It is not a terminal: there is no PTY, no interactive stdin, and no full-screen pager UI.
 These placeholders are available:
 
 - `{path}` or `{fullpath}` for the full selected path
@@ -124,7 +125,6 @@ Some commands keep producing output and behave like a live stream. Common exampl
 - `tail --follow`
 - `tailf`
 - `journalctl -f`
-- `watch`
 
 Useful live examples:
 
@@ -142,6 +142,15 @@ Practical rule:
 - use `tail -f` or `journalctl -f` for a live stream
 - if you pipe a live stream through `grep`, prefer `grep --line-buffered`
 
+Avoid commands that expect a real terminal, such as:
+
+- `less`
+- `more`
+- `watch`
+- `top`
+- `htop`
+- editors like `vim`
+
 Why `--line-buffered` matters:
 without it, `grep` may buffer output and make a live command look stuck.
 
@@ -155,7 +164,9 @@ The full configuration also lives in `hexone.yaml`.
 Useful things to adjust:
 
 - default viewer mode
-- command template
+- fallback command
+- exact target overrides
+- filename regex rules
 - shell selection
 - auto-refresh interval for non-streaming command mode
 - viewer font size
@@ -168,7 +179,9 @@ Example:
 viewer:
   mode: command
   shell: auto
-  command: tail -n 200 -f {path} | grep --line-buffered ERROR
+  command: cat {path}
+  command_by_target:
+    local:/Users/me/logs/app.log: tail -n 200 -f {path}
   command_rules:
     - pattern: (?i)\.log(?:\.\d+)?$
       command: tail -n 200 -f {path}
@@ -182,11 +195,14 @@ viewer:
 Notes:
 
 - `shell: auto` picks a sensible shell automatically
-- `command_by_target` has the highest priority, then `command_rules`, then the generic `command`
-- `command_rules` match the filename and open the viewer in command mode automatically
-- later `command_rules` override earlier ones when more than one regex matches
+- Priority 1: `command_by_target` matches one exact full path and overrides any regex-selected command
+- Priority 2: `command_rules` match the filename only; later matches override earlier ones
+- Priority 3: `command` is the generic fallback
+- `command_rules` switch the viewer into command mode automatically when a filename matches
+- `command_by_target` overrides the chosen command, but by itself it does not force command mode
 - `command_auto_refresh` matters most for non-streaming command mode
 - `word_wrap` affects how text and command output are wrapped on screen
+- Settings -> Viewer exposes the same priority order directly in the UI
 
 ## Protocol Analyzer
 

@@ -141,6 +141,7 @@ type settingsModalState struct {
 	viewRuleLookupPattern     string
 	viewAssocExtEdit          widget.Editor
 	viewAssocAppEdit          widget.Editor
+	viewAssocApplyClick       widget.Clickable
 	viewAssocPickClick        widget.Clickable
 	viewAssocRemoveClick      widget.Clickable
 	viewAssocPickOpen         bool
@@ -156,8 +157,9 @@ type settingsModalState struct {
 	footerPulseKey  string
 	footerPulseAt   time.Time
 
-	configEdit      widget.Editor
-	configScrollbar widget.Scrollbar
+	configEdit       widget.Editor
+	configPathSelect widget.Selectable
+	configScrollbar  widget.Scrollbar
 
 	errText        string
 	targetInfoText string
@@ -565,9 +567,7 @@ func (st *settingsModalState) setColorCategory(key string) {
 		return
 	}
 	st.colorCategory = normalizeSettingsColorCategory(st.colorScope, key)
-	st.closeColorCategoryPopup()
-	st.colorPickerOpen = false
-	st.colorPickerTarget = ""
+	st.closeSettingsPopupsExcept("")
 	st.syncColorEditors()
 }
 
@@ -577,9 +577,7 @@ func (st *settingsModalState) setColorScope(next string, now time.Time) {
 	}
 	st.colorScopeAnim.setValue(&st.colorScope, next, now)
 	st.colorCategory = normalizeSettingsColorCategory(st.colorScope, st.colorCategory)
-	st.closeColorCategoryPopup()
-	st.colorPickerOpen = false
-	st.colorPickerTarget = ""
+	st.closeSettingsPopupsExcept("")
 	st.syncColorEditors()
 }
 
@@ -587,6 +585,7 @@ func (st *settingsModalState) openColorCategoryPopup(now time.Time) {
 	if st == nil {
 		return
 	}
+	st.closeSettingsPopupsExcept("color-category")
 	st.colorCategoryOpen = true
 	st.colorCategoryOpenedAt = now
 	st.colorCategoryHoverID = ""
@@ -608,17 +607,50 @@ func (st *settingsModalState) toggleColorPicker(target string) {
 		return
 	}
 	if st.colorPickerOpen && st.colorPickerTarget == target {
-		st.colorPickerOpen = false
-		st.colorPickerTarget = ""
+		st.closeSettingsPopupsExcept("")
 		return
 	}
+	st.closeSettingsPopupsExcept("color-picker")
 	st.colorPickerOpen = true
 	st.colorPickerTarget = target
-	st.closeColorCategoryPopup()
 }
 
 func (st *settingsModalState) anyPopupOpen() bool {
 	return st != nil && (st.colorCategoryOpen || st.colorPickerOpen || st.viewTargetPickOpen || st.viewRulePickOpen || st.viewAssocPickOpen)
+}
+
+func (st *settingsModalState) popupToggleHovered() bool {
+	if st == nil {
+		return false
+	}
+	return st.colorCategoryClick.Hovered() ||
+		st.colorBgPickerClick.Hovered() ||
+		st.colorTextPickerClick.Hovered() ||
+		st.viewTargetPickClick.Hovered() ||
+		st.viewRulePickClick.Hovered() ||
+		st.viewAssocPickClick.Hovered()
+}
+
+func (st *settingsModalState) closeSettingsPopupsExcept(except string) {
+	if st == nil {
+		return
+	}
+	if except != "color-category" {
+		st.closeColorCategoryPopup()
+	}
+	if except != "color-picker" {
+		st.colorPickerOpen = false
+		st.colorPickerTarget = ""
+	}
+	if except != "target-picker" {
+		st.viewTargetPickOpen = false
+	}
+	if except != "rule-picker" {
+		st.viewRulePickOpen = false
+	}
+	if except != "assoc-picker" {
+		st.viewAssocPickOpen = false
+	}
 }
 
 func registerSettingsPopupArea(gtx layout.Context, tag event.Tag, size image.Point) {
@@ -654,6 +686,7 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 	if ui == nil || st == nil || !st.anyPopupOpen() {
 		return
 	}
+	pressedPopupToggle := st.popupToggleHovered()
 	pressedColorCategoryPopup := settingsPopupPressed(gtx, &st.colorCategoryPopupTag)
 	pressedColorPickerPopup := settingsPopupPressed(gtx, &st.colorPickerPopupTag)
 	pressedTargetPickerPopup := settingsPopupPressed(gtx, &st.viewTargetPickerPopupTag)
@@ -674,7 +707,7 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 		}
 
 		if st.colorCategoryOpen {
-			if st.colorCategoryClick.Hovered() || pressedColorCategoryPopup {
+			if pressedPopupToggle || pressedColorCategoryPopup {
 				continue
 			}
 			st.closeColorCategoryPopup()
@@ -683,7 +716,7 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 		}
 
 		if st.colorPickerOpen {
-			if st.colorBgPickerClick.Hovered() || st.colorTextPickerClick.Hovered() || pressedColorPickerPopup {
+			if pressedPopupToggle || pressedColorPickerPopup {
 				continue
 			}
 			st.colorPickerOpen = false
@@ -693,7 +726,7 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 		}
 
 		if st.viewTargetPickOpen {
-			if st.viewTargetPickClick.Hovered() || pressedTargetPickerPopup {
+			if pressedPopupToggle || pressedTargetPickerPopup {
 				continue
 			}
 			st.viewTargetPickOpen = false
@@ -702,7 +735,7 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 		}
 
 		if st.viewRulePickOpen {
-			if st.viewRulePickClick.Hovered() || pressedRulePickerPopup {
+			if pressedPopupToggle || pressedRulePickerPopup {
 				continue
 			}
 			st.viewRulePickOpen = false
@@ -711,7 +744,7 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 		}
 
 		if st.viewAssocPickOpen {
-			if st.viewAssocPickClick.Hovered() || pressedAssocPickerPopup {
+			if pressedPopupToggle || pressedAssocPickerPopup {
 				continue
 			}
 			st.viewAssocPickOpen = false
@@ -1223,6 +1256,18 @@ func (st *settingsModalState) openViewerCommandTargetPicker() {
 	st.viewTargetRowRemoveClicks = nil
 }
 
+func (st *settingsModalState) toggleViewerCommandTargetPicker() {
+	if st == nil {
+		return
+	}
+	if st.viewTargetPickOpen {
+		st.closeSettingsPopupsExcept("")
+		return
+	}
+	st.closeSettingsPopupsExcept("target-picker")
+	st.openViewerCommandTargetPicker()
+}
+
 func (st *settingsModalState) viewerCommandRuleRowClick(key string) *widget.Clickable {
 	if st == nil || key == "" {
 		return nil
@@ -1442,6 +1487,18 @@ func (st *settingsModalState) openViewerCommandRulePicker() {
 	st.viewRuleRowRemoveClicks = nil
 }
 
+func (st *settingsModalState) toggleViewerCommandRulePicker() {
+	if st == nil {
+		return
+	}
+	if st.viewRulePickOpen {
+		st.closeSettingsPopupsExcept("")
+		return
+	}
+	st.closeSettingsPopupsExcept("rule-picker")
+	st.openViewerCommandRulePicker()
+}
+
 func (st *settingsModalState) viewerAssocRowClick(key string) *widget.Clickable {
 	if st == nil || key == "" {
 		return nil
@@ -1510,33 +1567,19 @@ func (st *settingsModalState) applyPickedViewerAssociation(appPath string) {
 		st.assocInfoText = ""
 		return
 	}
-	prevAssoc, hadAssoc := st.viewerAssociation(targetExt)
 	st.viewAssocExtEdit.SetText(viewerAssociationDisplayExtension(targetExt))
 	st.viewAssocAppEdit.SetText(appPath)
 	st.viewAssocLookupExt = targetExt
-	if _, err := st.upsertCurrentViewerAssociation(); err != nil {
-		st.errText = err.Error()
-		st.assocInfoText = ""
-		st.viewAssocPickOpen = false
-		return
-	}
 	st.viewAssocPickOpen = false
 	st.errText = ""
-	if hadAssoc && prevAssoc.AppPath == appPath {
-		st.assocInfoText = ""
-		return
-	}
-	action := "added"
-	if hadAssoc {
-		action = "changed"
-	}
-	st.assocInfoText = fmt.Sprintf("%s association %s; Save to persist", viewerAssociationDisplayExtension(targetExt), action)
+	st.assocInfoText = ""
 }
 
 func (st *settingsModalState) refreshViewerAssociationDraftInfo(autoApplyExisting bool) {
 	if st == nil {
 		return
 	}
+	_ = autoApplyExisting
 	ext := fm.NormalizeViewerAssociationExtension(st.viewAssocExtEdit.Text())
 	app := fm.NormalizeViewerAssociationAppPath(st.viewAssocAppEdit.Text())
 	st.assocInfoText = ""
@@ -1545,20 +1588,13 @@ func (st *settingsModalState) refreshViewerAssociationDraftInfo(autoApplyExistin
 	}
 	existing, ok := st.viewerAssociation(ext)
 	if !ok {
-		st.assocInfoText = fmt.Sprintf("%s will be added on Save", viewerAssociationDisplayExtension(ext))
+		st.assocInfoText = "Click Add"
 		return
 	}
 	if existing.AppPath == app {
 		return
 	}
-	if autoApplyExisting {
-		if _, err := st.upsertCurrentViewerAssociation(); err != nil {
-			st.errText = err.Error()
-			return
-		}
-		st.errText = ""
-	}
-	st.assocInfoText = fmt.Sprintf("%s association changed; Save to persist", viewerAssociationDisplayExtension(ext))
+	st.assocInfoText = "Click Update"
 }
 
 func (st *settingsModalState) viewerAssociationNoticeText() string {
@@ -1571,18 +1607,18 @@ func (st *settingsModalState) viewerAssociationNoticeText() string {
 	}
 	app := fm.NormalizeViewerAssociationAppPath(st.viewAssocAppEdit.Text())
 	savedAssoc, savedExists := st.viewerSavedAssociation(ext)
-	_, currentExists := st.viewerAssociation(ext)
+	currentAssoc, currentExists := st.viewerAssociation(ext)
 	switch {
-	case savedExists && app == "":
-		if !currentExists {
-			return fmt.Sprintf("%s association removed; Save to persist", viewerAssociationDisplayExtension(ext))
-		}
-	case savedExists && app != "" && app != savedAssoc.AppPath:
-		return fmt.Sprintf("%s association changed; Save to persist", viewerAssociationDisplayExtension(ext))
-	case !savedExists && app != "":
-		return fmt.Sprintf("%s will be added on Save", viewerAssociationDisplayExtension(ext))
 	case savedExists && !currentExists:
-		return fmt.Sprintf("%s association removed; Save to persist", viewerAssociationDisplayExtension(ext))
+		return "Pending removal; Save to persist"
+	case !currentExists && app != "":
+		return "Click Add"
+	case currentExists && app != "" && app != currentAssoc.AppPath:
+		return "Click Update"
+	case savedExists && currentExists && currentAssoc.AppPath != savedAssoc.AppPath:
+		return "Pending change; Save to persist"
+	case !savedExists && currentExists:
+		return "Pending add; Save to persist"
 	}
 	return ""
 }
@@ -1717,6 +1753,18 @@ func (st *settingsModalState) openViewerAssociationPicker() {
 	st.viewAssocRowClicks = nil
 }
 
+func (st *settingsModalState) toggleViewerAssociationPicker() {
+	if st == nil {
+		return
+	}
+	if st.viewAssocPickOpen {
+		st.closeSettingsPopupsExcept("")
+		return
+	}
+	st.closeSettingsPopupsExcept("assoc-picker")
+	st.openViewerAssociationPicker()
+}
+
 func (st *settingsModalState) setActiveTab(next string, now time.Time) {
 	if st == nil || next == "" || st.activeTab == next {
 		return
@@ -1724,12 +1772,7 @@ func (st *settingsModalState) setActiveTab(next string, now time.Time) {
 	st.navPrevTab = st.activeTab
 	st.navAnimAt = now
 	st.activeTab = next
-	st.closeColorCategoryPopup()
-	st.colorPickerOpen = false
-	st.colorPickerTarget = ""
-	st.viewTargetPickOpen = false
-	st.viewRulePickOpen = false
-	st.viewAssocPickOpen = false
+	st.closeSettingsPopupsExcept("")
 }
 
 func settingsTabIndex(key string) int {
@@ -1804,6 +1847,7 @@ func (st *settingsModalState) hasFocusedEditor(gtx layout.Context) bool {
 		gtx.Focused(&st.viewRuleCommandEdit) ||
 		gtx.Focused(&st.viewAssocExtEdit) ||
 		gtx.Focused(&st.viewAssocAppEdit) ||
+		gtx.Focused(&st.configPathSelect) ||
 		gtx.Focused(&st.configEdit)
 }
 
@@ -1823,6 +1867,13 @@ func settingsViewerRowLabel(ui *UI, th *material.Theme, txt string, enabled bool
 func settingsScrollableListStyle(th *material.Theme, list *widget.List) material.ListStyle {
 	style := material.List(th, list)
 	style.AnchorStrategy = material.Occupy
+	style.ScrollbarStyle = settingsScrollbarStyle(th, &list.Scrollbar)
+	return style
+}
+
+func settingsPopupListStyle(th *material.Theme, list *widget.List) material.ListStyle {
+	style := material.List(th, list)
+	style.AnchorStrategy = material.Overlay
 	style.ScrollbarStyle = settingsScrollbarStyle(th, &list.Scrollbar)
 	return style
 }
@@ -2462,12 +2513,6 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if !resources.IsBundledFontFamily(st.viewFontFamily) && st.viewFontFamily != ui.fmCfg.Viewer.Typeface {
 		return fmt.Errorf("viewer font family is invalid")
 	}
-	if strings.TrimSpace(st.viewAssocExtEdit.Text()) != "" || strings.TrimSpace(st.viewAssocAppEdit.Text()) != "" {
-		if _, err := st.upsertCurrentViewerAssociation(); err != nil {
-			return err
-		}
-	}
-
 	ui.fmCfg.General.Typeface = st.paneFontFamily
 	ui.fmCfg.General.FontSizeSp = float32(paneFontSize)
 	ui.fmCfg.Viewer.Mode = mode
@@ -3220,10 +3265,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		}
 	}
 	for st.viewTargetPickClick.Clicked(gtx) {
-		st.viewTargetPickOpen = !st.viewTargetPickOpen
-		if st.viewTargetPickOpen {
-			st.openViewerCommandTargetPicker()
-		}
+		st.toggleViewerCommandTargetPicker()
 	}
 
 	for {
@@ -3262,10 +3304,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		}
 	}
 	for st.viewRulePickClick.Clicked(gtx) {
-		st.viewRulePickOpen = !st.viewRulePickOpen
-		if st.viewRulePickOpen {
-			st.openViewerCommandRulePicker()
-		}
+		st.toggleViewerCommandRulePicker()
 	}
 
 	currentTargetKey := normalizeViewerCommandTargetInput(st.viewTargetKeyEdit.Text())
@@ -3651,6 +3690,19 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	})
 }
 
+func layoutSettingsPickerRowBackground(gtx layout.Context, bg color.NRGBA, row layout.Widget) layout.Dimensions {
+	width := gtx.Constraints.Max.X
+	if width < gtx.Constraints.Min.X {
+		width = gtx.Constraints.Min.X
+	}
+	if width <= 0 {
+		return fillBgExact(gtx, bg, row)
+	}
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		return fillBgExact(gtx, bg, row)
+	})
+}
+
 func (ui *UI) layoutSettingsViewerCommandTargetPicker(th *material.Theme, gtx layout.Context, st *settingsModalState, entries []viewerCommandTargetEntry, matchCount int) layout.Dimensions {
 	gtx2 := gtx
 	maxH := gtx.Dp(unit.Dp(156))
@@ -3691,7 +3743,7 @@ func (ui *UI) layoutSettingsViewerCommandTargetPicker(th *material.Theme, gtx la
 					})
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					list := settingsScrollableListStyle(th, &st.viewTargetPickList)
+					list := settingsPopupListStyle(th, &st.viewTargetPickList)
 					return list.Layout(gtx, len(entries), func(gtx layout.Context, i int) layout.Dimensions {
 						entry := entries[i]
 						click := st.viewerCommandTargetRowClick(entry.Key)
@@ -3709,58 +3761,56 @@ func (ui *UI) layoutSettingsViewerCommandTargetPicker(th *material.Theme, gtx la
 						}
 						selected := entry.Key == currentKey
 						hovered := click.Hovered() || removeClick.Hovered()
-						return fillBgExact(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
-							bg := color.NRGBA{A: 0}
-							if selected {
-								bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
-							} else if hovered {
-								bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
-							}
-							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									displayKey := viewerCommandTargetDisplayKey(entry.Key)
-									title := viewerCommandTargetRowTitle(entry.Key)
-									headline := displayKey
-									if title != "" && title != displayKey {
-										headline = title
-									}
-									detail := entry.Command
-									if headline != displayKey {
-										detail = displayKey + " | " + entry.Command
-									}
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-											return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-												pointer.CursorPointer.Add(gtx.Ops)
-												return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-														lbl := material.Body2(th, headline)
-														lbl.Font.Typeface = ui.mainTypeface()
-														lbl.Font.Weight = font.Medium
-														lbl.TextSize = scaleModalThemeFontSize(th, 10)
-														lbl.Color = txtColor
-														lbl.MaxLines = 1
-														lbl.Truncator = "..."
-														return layoutVCenteredLabel(gtx, lbl)
-													}),
-													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-														lbl := material.Caption(th, detail)
-														lbl.Font.Typeface = ui.mainTypeface()
-														lbl.TextSize = scaleModalThemeFontSize(th, 8)
-														lbl.Color = hintColor
-														lbl.MaxLines = 1
-														lbl.Truncator = "..."
-														return layoutVCenteredLabel(gtx, lbl)
-													}),
-												)
-											})
-										}),
-										layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											return layoutTinyIconModeButton(th, gtx, removeClick, uitheme.CloseIcon(), false)
-										}),
-									)
-								})
+						bg := color.NRGBA{A: 0}
+						if selected {
+							bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
+						} else if hovered {
+							bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
+						}
+						return layoutSettingsPickerRowBackground(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								displayKey := viewerCommandTargetDisplayKey(entry.Key)
+								title := viewerCommandTargetRowTitle(entry.Key)
+								headline := displayKey
+								if title != "" && title != displayKey {
+									headline = title
+								}
+								detail := entry.Command
+								if headline != displayKey {
+									detail = displayKey + " | " + entry.Command
+								}
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											pointer.CursorPointer.Add(gtx.Ops)
+											return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Body2(th, headline)
+													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.Font.Weight = font.Medium
+													lbl.TextSize = scaleModalThemeFontSize(th, 10)
+													lbl.Color = txtColor
+													lbl.MaxLines = 1
+													lbl.Truncator = "..."
+													return layoutVCenteredLabel(gtx, lbl)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Caption(th, detail)
+													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.TextSize = scaleModalThemeFontSize(th, 8)
+													lbl.Color = hintColor
+													lbl.MaxLines = 1
+													lbl.Truncator = "..."
+													return layoutVCenteredLabel(gtx, lbl)
+												}),
+											)
+										})
+									}),
+									layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layoutTinyIconModeButton(th, gtx, removeClick, uitheme.CloseIcon(), false)
+									}),
+								)
 							})
 						})
 					})
@@ -3823,7 +3873,7 @@ func (ui *UI) layoutSettingsViewerCommandRulePicker(th *material.Theme, gtx layo
 					})
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					list := settingsScrollableListStyle(th, &st.viewRulePickList)
+					list := settingsPopupListStyle(th, &st.viewRulePickList)
 					return list.Layout(gtx, len(rules), func(gtx layout.Context, i int) layout.Dimensions {
 						rule := rules[i]
 						click := st.viewerCommandRuleRowClick(rule.Pattern)
@@ -3841,48 +3891,46 @@ func (ui *UI) layoutSettingsViewerCommandRulePicker(th *material.Theme, gtx layo
 						}
 						selected := rule.Pattern == currentPattern
 						hovered := click.Hovered() || removeClick.Hovered()
-						return fillBgExact(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
-							bg := color.NRGBA{A: 0}
-							if selected {
-								bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
-							} else if hovered {
-								bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
-							}
-							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-											return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-												pointer.CursorPointer.Add(gtx.Ops)
-												return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-														lbl := material.Body2(th, rule.Pattern)
-														lbl.Font.Typeface = ui.mainTypeface()
-														lbl.Font.Weight = font.Medium
-														lbl.TextSize = scaleModalThemeFontSize(th, 10)
-														lbl.Color = txtColor
-														lbl.MaxLines = 1
-														lbl.Truncator = "..."
-														return layoutVCenteredLabel(gtx, lbl)
-													}),
-													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-														lbl := material.Caption(th, rule.Command)
-														lbl.Font.Typeface = ui.mainTypeface()
-														lbl.TextSize = scaleModalThemeFontSize(th, 8)
-														lbl.Color = hintColor
-														lbl.MaxLines = 1
-														lbl.Truncator = "..."
-														return layoutVCenteredLabel(gtx, lbl)
-													}),
-												)
-											})
-										}),
-										layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											return layoutTinyIconModeButton(th, gtx, removeClick, uitheme.CloseIcon(), false)
-										}),
-									)
-								})
+						bg := color.NRGBA{A: 0}
+						if selected {
+							bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
+						} else if hovered {
+							bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
+						}
+						return layoutSettingsPickerRowBackground(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											pointer.CursorPointer.Add(gtx.Ops)
+											return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Body2(th, rule.Pattern)
+													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.Font.Weight = font.Medium
+													lbl.TextSize = scaleModalThemeFontSize(th, 10)
+													lbl.Color = txtColor
+													lbl.MaxLines = 1
+													lbl.Truncator = "..."
+													return layoutVCenteredLabel(gtx, lbl)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Caption(th, rule.Command)
+													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.TextSize = scaleModalThemeFontSize(th, 8)
+													lbl.Color = hintColor
+													lbl.MaxLines = 1
+													lbl.Truncator = "..."
+													return layoutVCenteredLabel(gtx, lbl)
+												}),
+											)
+										})
+									}),
+									layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layoutTinyIconModeButton(th, gtx, removeClick, uitheme.CloseIcon(), false)
+									}),
+								)
 							})
 						})
 					})
@@ -4431,11 +4479,9 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 	}
 	if st.colorCategoryClick.Clicked(gtx) {
 		if st.colorCategoryOpen {
-			st.closeColorCategoryPopup()
+			st.closeSettingsPopupsExcept("")
 		} else {
 			st.openColorCategoryPopup(gtx.Now)
-			st.colorPickerOpen = false
-			st.colorPickerTarget = ""
 		}
 	}
 	if st.colorBgPickerClick.Clicked(gtx) {
@@ -5194,51 +5240,106 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 		}
 		if _, ok := ev.(widget.ChangeEvent); ok {
 			st.errText = ""
-			st.refreshViewerAssociationDraftInfo(true)
+			st.refreshViewerAssociationDraftInfo(false)
 		}
 	}
 	st.syncViewerAssociationEditors()
+	for st.viewAssocApplyClick.Clicked(gtx) {
+		action, err := st.upsertCurrentViewerAssociation()
+		if err != nil {
+			st.errText = err.Error()
+			continue
+		}
+		st.errText = ""
+		st.viewAssocPickOpen = false
+		if action == "Update" {
+			st.assocInfoText = "Pending change; Save to persist"
+		} else {
+			st.assocInfoText = "Pending add; Save to persist"
+		}
+	}
 	for st.viewAssocRemoveClick.Clicked(gtx) {
 		ext := fm.NormalizeViewerAssociationExtension(st.viewAssocExtEdit.Text())
 		if ext == "" {
 			st.errText = "association extension is required"
 			continue
 		}
+		_, savedExists := st.viewerSavedAssociation(ext)
 		if !st.removeCurrentViewerAssociation() {
 			st.errText = "no association set for " + viewerAssociationDisplayExtension(ext)
 			continue
 		}
 		st.errText = ""
-		st.assocInfoText = ""
+		if savedExists {
+			st.assocInfoText = "Pending removal; Save to persist"
+		} else {
+			st.assocInfoText = ""
+		}
 		st.viewAssocPickOpen = false
 	}
 	for st.viewAssocPickClick.Clicked(gtx) {
-		st.viewAssocPickOpen = !st.viewAssocPickOpen
-		if st.viewAssocPickOpen {
-			st.openViewerAssociationPicker()
-		}
+		st.toggleViewerAssociationPicker()
 	}
 
 	currentAssocExt := fm.NormalizeViewerAssociationExtension(st.viewAssocExtEdit.Text())
-	_, currentAssocExists := st.viewerAssociation(currentAssocExt)
+	currentAssoc, currentAssocExists := st.viewerAssociation(currentAssocExt)
+	_, currentAssocSaved := st.viewerSavedAssociation(currentAssocExt)
 	pickerPrograms, pickerMatchCount := st.viewerAssociationPickerPrograms()
-	totalAssocCount := len(st.viewAssocEntries)
-	statusText := "No association"
-	statusColor := hintColor
+	savedAssocCount := 0
+	pendingAssocCount := 0
+	assocEntriesByExt := make(map[string]fm.ViewerAssociation, len(st.viewAssocEntries))
+	assocSavedByExt := make(map[string]fm.ViewerAssociation, len(st.viewAssocSavedEntries))
+	for _, assoc := range st.viewAssocEntries {
+		assocEntriesByExt[assoc.Extension] = assoc
+	}
+	for _, assoc := range st.viewAssocSavedEntries {
+		assocSavedByExt[assoc.Extension] = assoc
+	}
+	for _, assoc := range st.viewAssocEntries {
+		if saved, ok := assocSavedByExt[assoc.Extension]; ok && saved.AppPath == assoc.AppPath {
+			savedAssocCount++
+			continue
+		}
+		pendingAssocCount++
+	}
+	for _, assoc := range st.viewAssocSavedEntries {
+		if _, ok := assocEntriesByExt[assoc.Extension]; !ok {
+			pendingAssocCount++
+		}
+	}
+
+	statusText := ""
+	statusColor := color.NRGBA{R: 152, G: 205, B: 152, A: 255}
 	switch {
 	case currentAssocExt == "":
-		if totalAssocCount == 0 {
-			statusText = "No associations"
-		} else {
-			statusText = fmt.Sprintf("%d associations saved", totalAssocCount)
+		switch {
+		case savedAssocCount > 0 && pendingAssocCount > 0:
+			statusText = fmt.Sprintf("%d Saved / %d Pending", savedAssocCount, pendingAssocCount)
+			statusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+		case pendingAssocCount > 0:
+			statusText = fmt.Sprintf("%d Pending", pendingAssocCount)
+			statusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+		case savedAssocCount > 0:
+			statusText = fmt.Sprintf("%d Saved", savedAssocCount)
+			statusColor = color.NRGBA{R: 174, G: 190, B: 214, A: 255}
 		}
 	case currentAssocExists:
-		statusText = "Associated"
-		statusColor = color.NRGBA{R: 152, G: 205, B: 152, A: 255}
-	case totalAssocCount > 0:
-		statusText = fmt.Sprintf("New association | %d saved", totalAssocCount)
-	default:
-		statusText = "New association"
+		if saved, ok := assocSavedByExt[currentAssocExt]; ok && saved.AppPath == currentAssoc.AppPath {
+			statusText = "Saved"
+		} else {
+			statusText = "Pending"
+			statusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+		}
+	case currentAssocSaved:
+		statusText = "Pending"
+		statusColor = color.NRGBA{R: 222, G: 190, B: 122, A: 255}
+	case currentAssocExt != "":
+		statusText = "New"
+		statusColor = viewerSettingsSectionStyleFor("p1").BadgeText
+	}
+	assocApplyLabel := "Add"
+	if currentAssocExists {
+		assocApplyLabel = "Update"
 	}
 	rowLabel := func(txt string, enabled bool) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, enabled)
@@ -5248,11 +5349,12 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 		layout.Rigid(rowLabel("F4 app override (local files only)", true)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "F4 uses this app path when set, otherwise it falls back to the OS association. Browse shows one row per app and picking one reuses it for the current extension.")
+			lbl := material.Caption(th, "Browse copies a known app path into the editor; Add or Update queues it until Save.")
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleModalThemeFontSize(th, 9)
 			lbl.Color = hintColor
-			lbl.MaxLines = 2
+			lbl.MaxLines = 1
+			lbl.Truncator = "..."
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
@@ -5278,12 +5380,21 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(th, statusText)
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 9)
-					lbl.Color = statusColor
-					lbl.MaxLines = 1
-					return lbl.Layout(gtx)
+					return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.viewAssocApplyClick, assocApplyLabel, currentAssocExists)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if statusText == "" {
+						return layout.Dimensions{}
+					}
+					return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Caption(th, statusText)
+						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Color = statusColor
+						lbl.MaxLines = 1
+						lbl.Truncator = "..."
+						return lbl.Layout(gtx)
+					})
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 0)}
@@ -5324,9 +5435,9 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 			)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			infoText := st.viewerAssociationNoticeText()
+			infoText := st.assocInfoText
 			if infoText == "" {
-				infoText = st.assocInfoText
+				infoText = st.viewerAssociationNoticeText()
 			}
 			if infoText == "" {
 				return layout.Dimensions{}
@@ -5358,7 +5469,7 @@ func (ui *UI) layoutSettingsViewerAssocPicker(th *material.Theme, gtx layout.Con
 		func(gtx layout.Context) layout.Dimensions {
 			if len(programs) == 0 {
 				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(th, "No saved apps")
+					lbl := material.Caption(th, "No apps yet")
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.TextSize = scaleModalThemeFontSize(th, 9)
 					lbl.Color = hintColor
@@ -5373,7 +5484,7 @@ func (ui *UI) layoutSettingsViewerAssocPicker(th *material.Theme, gtx layout.Con
 						return layout.Dimensions{}
 					}
 					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Caption(th, fmt.Sprintf("%d similar apps, then all saved apps", matchCount))
+						lbl := material.Caption(th, fmt.Sprintf("%d similar apps, then all apps", matchCount))
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.TextSize = scaleModalThemeFontSize(th, 9)
 						lbl.Color = hintColor
@@ -5396,15 +5507,16 @@ func (ui *UI) layoutSettingsViewerAssocPicker(th *material.Theme, gtx layout.Con
 							}
 						}
 						selected := strings.EqualFold(program.AppPath, currentAppPath)
-						dims := click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							bg := color.NRGBA{A: 0}
-							if selected {
-								bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
-							} else if click.Hovered() {
-								bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
-							}
-							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+						bg := color.NRGBA{A: 0}
+						if selected {
+							bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
+						} else if click.Hovered() {
+							bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
+						}
+						dims := layoutSettingsPickerRowBackground(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+							return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									pointer.CursorPointer.Add(gtx.Ops)
 									return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 											usedBy := strings.Join(program.Extensions, ", ")
@@ -5508,56 +5620,93 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 }
 
 func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	cfgPath := ui.configSavePath()
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Full hexone.yaml (all config fields)")
+			lbl := material.Caption(th, "Edit hexone.yaml directly")
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleModalThemeFontSize(th, 9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(th, "Located at:")
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Color = hintColor
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return fillRoundedBox(
+						gtx,
+						gtx.Dp(unit.Dp(filePaneControlCornerDp-1)),
+						color.NRGBA{R: 26, G: 29, B: 34, A: 255},
+						color.NRGBA{R: 128, G: 152, B: 196, A: 74},
+						func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(th, cfgPath)
+								lbl.Font.Typeface = ui.mainTypeface()
+								lbl.TextSize = scaleModalThemeFontSize(th, 8)
+								lbl.Color = color.NRGBA{R: 194, G: 212, B: 255, A: 255}
+								lbl.SelectionColor = color.NRGBA{R: 80, G: 120, B: 220, A: 88}
+								lbl.State = &st.configPathSelect
+								return lbl.Layout(gtx)
+							})
+						},
+					)
+				}),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			scrollbarStyle := settingsScrollbarStyle(th, &st.configScrollbar)
 			editorDims := layout.Dimensions{}
 			metrics := editorScrollMetrics{}
 			scrollable := false
-			dims := layout.Stack{Alignment: layout.E}.Layout(gtx,
-				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-					ed := material.Editor(th, &st.configEdit, "")
-					ed.Font.Typeface = ui.mainTypeface()
-					ed.TextSize = scaleModalThemeFontSize(th, 10)
-					ed.Color = txtColor
-					ed.HintColor = hintColor
-					editorDims = ui.layoutEditorWithContextMenu(th, gtx, "settings-config", &st.configEdit, true, func(gtx layout.Context) layout.Dimensions {
-						return layoutNeutralEditorBox(gtx, gtx.Focused(&st.configEdit), true, ed.Layout)
-					})
-					metrics, scrollable = editorVerticalScrollMetrics(&st.configEdit)
-					return editorDims
-				}),
-				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-					if !scrollable || editorDims.Size.Y <= 0 {
-						return layout.Dimensions{}
-					}
-					height := editorDims.Size.Y
-					if height < 1 {
-						height = 1
-					}
-					start := clamp01(float32(metrics.Offset) / float32(metrics.Content))
-					end := clamp01(float32(metrics.Offset+metrics.Viewport) / float32(metrics.Content))
-					trackH := height - gtx.Dp(unit.Dp(4))
-					if trackH < 1 {
-						trackH = 1
-					}
-					return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return fixedWidth(gtx, gtx.Dp(scrollbarStyle.Width()), func(gtx layout.Context) layout.Dimensions {
-							return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
-								return scrollbarStyle.Layout(gtx, layout.Vertical, start, end)
+			dims := fixedHeight(gtx, gtx.Constraints.Max.Y, func(gtx layout.Context) layout.Dimensions {
+				return layout.Stack{Alignment: layout.NE}.Layout(gtx,
+					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+						ed := material.Editor(th, &st.configEdit, "")
+						ed.Font.Typeface = ui.mainTypeface()
+						ed.TextSize = scaleModalThemeFontSize(th, 10)
+						ed.Color = txtColor
+						ed.HintColor = hintColor
+						editorDims = ui.layoutEditorWithContextMenu(th, gtx, "settings-config", &st.configEdit, true, func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, gtx.Constraints.Max.Y, func(gtx layout.Context) layout.Dimensions {
+								return layoutNeutralEditorBox(gtx, gtx.Focused(&st.configEdit), true, ed.Layout)
 							})
 						})
-					})
-				}),
-			)
+						metrics, scrollable = editorVerticalScrollMetrics(&st.configEdit)
+						return editorDims
+					}),
+					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+						if !scrollable || editorDims.Size.Y <= 0 {
+							return layout.Dimensions{}
+						}
+						height := editorDims.Size.Y
+						if height < 1 {
+							height = 1
+						}
+						start := clamp01(float32(metrics.Offset) / float32(metrics.Content))
+						end := clamp01(float32(metrics.Offset+metrics.Viewport) / float32(metrics.Content))
+						trackH := height - gtx.Dp(unit.Dp(4))
+						if trackH < 1 {
+							trackH = 1
+						}
+						return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return fixedWidth(gtx, gtx.Dp(scrollbarStyle.Width()), func(gtx layout.Context) layout.Dimensions {
+								return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
+									return scrollbarStyle.Layout(gtx, layout.Vertical, start, end)
+								})
+							})
+						})
+					}),
+				)
+			})
 			if scrollable {
 				if delta := st.configScrollbar.ScrollDistance(); delta != 0 {
 					editorScrollToVerticalOffset(&st.configEdit, metrics.Offset+int(delta*float32(metrics.Content)))

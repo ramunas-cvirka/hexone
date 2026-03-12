@@ -111,6 +111,32 @@ func TestSettingsTabPositionSlidesToAssociations(t *testing.T) {
 	}
 }
 
+func TestSettingsToggleViewerCommandRulePickerClosesTargetPicker(t *testing.T) {
+	st := &settingsModalState{viewTargetPickOpen: true}
+
+	st.toggleViewerCommandRulePicker()
+
+	if st.viewTargetPickOpen {
+		t.Fatal("target picker should close when opening rule picker")
+	}
+	if !st.viewRulePickOpen {
+		t.Fatal("rule picker should open")
+	}
+}
+
+func TestSettingsToggleViewerCommandTargetPickerClosesRulePicker(t *testing.T) {
+	st := &settingsModalState{viewRulePickOpen: true}
+
+	st.toggleViewerCommandTargetPicker()
+
+	if st.viewRulePickOpen {
+		t.Fatal("rule picker should close when opening target picker")
+	}
+	if !st.viewTargetPickOpen {
+		t.Fatal("target picker should open")
+	}
+}
+
 func TestViewerAssociationPickerProgramsCollapseByAppAndShowAllWhenNoMatch(t *testing.T) {
 	st := &settingsModalState{
 		viewAssocEntries: []fm.ViewerAssociation{
@@ -257,8 +283,11 @@ func TestSettingsAssociationPickerRowClickKeepsTypedExtensionAndCopiesApp(t *tes
 	if want := fm.NormalizeViewerAssociationExtension("mkv"); st.viewAssocLookupExt != want {
 		t.Fatalf("lookup extension should remain typed target: got %q want %q", st.viewAssocLookupExt, want)
 	}
-	if assoc, ok := st.viewerAssociation(fm.NormalizeViewerAssociationExtension("mkv")); !ok || assoc.AppPath != `C:\Apps\music.exe` {
-		t.Fatalf("picked app should auto-associate current extension, got %#v ok=%v", assoc, ok)
+	if _, ok := st.viewerAssociation(fm.NormalizeViewerAssociationExtension("mkv")); ok {
+		t.Fatal("picker should not auto-associate typed extension before Add")
+	}
+	if got := st.viewerAssociationNoticeText(); got != "Click Add" {
+		t.Fatalf("viewerAssociationNoticeText=%q want %q", got, "Click Add")
 	}
 	if st.viewAssocPickOpen {
 		t.Fatal("picker should close after row selection")
@@ -309,7 +338,7 @@ func TestSettingsAssociationPickerOpenClearsStaleRowClicks(t *testing.T) {
 	}
 }
 
-func TestRefreshViewerAssociationDraftInfoAutoUpdatesExistingAssociation(t *testing.T) {
+func TestRefreshViewerAssociationDraftInfoPromptsUpdateForExistingAssociation(t *testing.T) {
 	st := &settingsModalState{
 		viewAssocEntries: []fm.ViewerAssociation{
 			{Extension: ".mp3", AppPath: `C:\Apps\music.exe`},
@@ -328,11 +357,11 @@ func TestRefreshViewerAssociationDraftInfoAutoUpdatesExistingAssociation(t *test
 	if !ok {
 		t.Fatal("existing association should still exist")
 	}
-	if assoc.AppPath != `C:\Apps\new-music.exe` {
-		t.Fatalf("existing association not updated: got %q", assoc.AppPath)
+	if assoc.AppPath != `C:\Apps\music.exe` {
+		t.Fatalf("existing association should not change before Update: got %q", assoc.AppPath)
 	}
-	if !strings.Contains(st.assocInfoText, "mp3 association changed") {
-		t.Fatalf("missing green association change hint, got %q", st.assocInfoText)
+	if !strings.Contains(st.assocInfoText, "Click Update") {
+		t.Fatalf("missing association update hint, got %q", st.assocInfoText)
 	}
 }
 
@@ -349,8 +378,19 @@ func TestViewerAssociationNoticeTextUsesCurrentEditorState(t *testing.T) {
 	st.viewAssocAppEdit.SetText(`C:\Apps\changed.exe`)
 
 	got := st.viewerAssociationNoticeText()
-	if !strings.Contains(got, "mp3 association changed") {
+	if !strings.Contains(got, "Click Update") {
 		t.Fatalf("viewerAssociationNoticeText=%q, want change notice", got)
+	}
+}
+
+func TestViewerAssociationNoticeTextPromptsAddForNewAssociation(t *testing.T) {
+	st := &settingsModalState{}
+	st.viewAssocExtEdit.SetText("mp3")
+	st.viewAssocAppEdit.SetText(`C:\Apps\music.exe`)
+
+	got := st.viewerAssociationNoticeText()
+	if !strings.Contains(got, "Click Add") {
+		t.Fatalf("viewerAssociationNoticeText=%q, want add prompt", got)
 	}
 }
 
@@ -485,7 +525,7 @@ func TestRefreshViewerCommandTargetDraftInfoPromptsUpdateForExistingOverride(t *
 		},
 	}
 	st.viewTargetKeyEdit.SetText("/tmp/error.log")
-	st.viewTargetCommandEdit.SetText(`less +F {path}`)
+	st.viewTargetCommandEdit.SetText(`tail -n 50 {path}`)
 
 	st.refreshViewerCommandTargetDraftInfo(false)
 
@@ -504,14 +544,14 @@ func TestRefreshViewerCommandTargetDraftInfoPromptsUpdateForExistingOverride(t *
 func TestViewerCommandTargetNoticeTextUsesCurrentEditorState(t *testing.T) {
 	st := &settingsModalState{
 		viewTargetEntries: []viewerCommandTargetEntry{
-			{Key: "local:/tmp/error.log", Command: `less +F {path}`},
+			{Key: "local:/tmp/error.log", Command: `tail -n 50 {path}`},
 		},
 		viewTargetSavedEntries: []viewerCommandTargetEntry{
 			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
 		},
 	}
 	st.viewTargetKeyEdit.SetText("/tmp/error.log")
-	st.viewTargetCommandEdit.SetText(`less +F {path}`)
+	st.viewTargetCommandEdit.SetText(`tail -n 50 {path}`)
 
 	got := st.viewerCommandTargetNoticeText()
 	if !strings.Contains(got, "Pending change") {

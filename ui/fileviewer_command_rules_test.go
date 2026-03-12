@@ -33,7 +33,7 @@ func TestViewerDefaultCommandKeepsTargetOverrideOverRule(t *testing.T) {
 		{Pattern: `\.log$`, Command: `tail -f {path}`},
 	}
 	cfg.Viewer.CommandByTarget = map[string]string{
-		viewerCommandTargetKey("/tmp/error.log", nil): `less +F {path}`,
+		viewerCommandTargetKey("/tmp/error.log", nil): `tail -n 50 {path}`,
 	}
 
 	ui := &UI{fmCfg: cfg}
@@ -42,8 +42,8 @@ func TestViewerDefaultCommandKeepsTargetOverrideOverRule(t *testing.T) {
 	if !matchedRule {
 		t.Fatal("viewerDefaultCommand should report a matching regex rule")
 	}
-	if cmd != `less +F {path}` {
-		t.Fatalf("cmd=%q want %q", cmd, `less +F {path}`)
+	if cmd != `tail -n 50 {path}` {
+		t.Fatalf("cmd=%q want %q", cmd, `tail -n 50 {path}`)
 	}
 }
 

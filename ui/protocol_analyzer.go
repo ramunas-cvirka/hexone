@@ -83,7 +83,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 			delete(st.selectPressHeld, k)
 		}
 
-		b, err := parseHexLine(hexText)
+		b, err := parseHexText(hexText)
 		if err != nil {
 			st.lastErr = err.Error()
 		} else if st.spec == nil {
@@ -1263,7 +1263,7 @@ func (st *tab2State) click(key string) *widget.Clickable {
 	return c
 }
 
-func parseHexLine(s string) ([]byte, error) {
+func parseHexText(s string) ([]byte, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, nil
@@ -1271,6 +1271,10 @@ func parseHexLine(s string) ([]byte, error) {
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); i++ {
+		if n := hexTextIgnoredPrefixLen(s, i); n > 0 {
+			i += n - 1
+			continue
+		}
 		ch := s[i]
 		if ch == '0' && i+1 < len(s) && (s[i+1] == 'x' || s[i+1] == 'X') {
 			i++
@@ -1290,6 +1294,31 @@ func parseHexLine(s string) ([]byte, error) {
 	out := make([]byte, len(clean)/2)
 	_, err := hex.Decode(out, []byte(clean))
 	return out, err
+}
+
+func hexTextIgnoredPrefixLen(s string, i int) int {
+	if i < 0 || i >= len(s) {
+		return 0
+	}
+	rest := s[i:]
+	switch {
+	case strings.HasPrefix(rest, `\r\n`):
+		return 4
+	case strings.HasPrefix(rest, `\n`), strings.HasPrefix(rest, `\r`):
+		return 2
+	}
+	for _, marker := range [...]string{"CRLF", "CR", "LF"} {
+		if len(rest) < len(marker) || !strings.EqualFold(rest[:len(marker)], marker) {
+			continue
+		}
+		beforeOK := i == 0 || !isHexChar(s[i-1])
+		afterIdx := i + len(marker)
+		afterOK := afterIdx >= len(s) || !isHexChar(s[afterIdx])
+		if beforeOK && afterOK {
+			return len(marker)
+		}
+	}
+	return 0
 }
 
 func bytesHexSpaced(bb []byte) string {

@@ -1,26 +1,17 @@
 package ui
 
 import (
-	"encoding/hex"
 	"strconv"
 	"strings"
 )
 
-func decodeHex(hexStr string) string {
-	hexStr = strings.TrimSpace(hexStr)
-	if hexStr == "" {
-		return ""
-	}
-
-	data, err := hex.DecodeString(hexStr)
+func decodeHex(hexStr string) (string, int, error) {
+	data, err := parseHexText(hexStr)
 	if err != nil {
-		// if not valid hex, just return original input
-		return hexStr
+		return "", 0, err
 	}
-
 	var b strings.Builder
 	b.Grow(len(data))
-
 	for _, v := range data {
 		if v >= 0x20 && v <= 0x7E {
 			b.WriteByte(v)
@@ -28,8 +19,7 @@ func decodeHex(hexStr string) string {
 			b.WriteRune('�')
 		}
 	}
-
-	return b.String()
+	return b.String(), len(data), nil
 }
 
 // Call this each frame; if text changed, handle it.
@@ -48,21 +38,18 @@ func (ui *UI) handleEditorChanges() {
 }
 
 func (ui *UI) onLeftTextChanged(text string) {
-
-	if len(text)%2 == 1 {
+	rText, byteCount, err := decodeHex(text)
+	if err != nil {
 		return
 	}
 
 	// Avoid pointless resets + cursor jumps.
-	if text == ui.RightEd.Text() {
+	if rText == ui.RightEd.Text() {
 		return
 	}
 
-	// SetText updates the editor content.
-	rText := decodeHex(text)
-
 	ui.RightEd.SetText(rText)
-	ui.LeftInfo = strconv.Itoa(len(text)/2) + " bytes"
+	ui.LeftInfo = strconv.Itoa(byteCount) + " bytes"
 
 	// Keep your change-detector in sync so it doesn't immediately fire
 	// onRightTextChanged for this programmatic update (optional).
