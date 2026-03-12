@@ -80,17 +80,31 @@ jobs:
             libxfixes-dev \
             libvulkan-dev
 
-      - name: Build Linux release archive
+      - name: Install AppImage tooling
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+            -o "$HOME/.local/bin/appimagetool.AppImage"
+          chmod +x "$HOME/.local/bin/appimagetool.AppImage"
+          cat > "$HOME/.local/bin/appimagetool" <<'EOF'
+          #!/bin/sh
+          exec "$(dirname "$0")/appimagetool.AppImage" --appimage-extract-and-run "$@"
+          EOF
+          chmod +x "$HOME/.local/bin/appimagetool"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build Linux AppImage
         run: make package-linux
 
       - name: Build Windows portable release archive
         run: make package-windows
 
-      - name: Upload Linux release archive
+      - name: Upload Linux AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: hexone-linux-amd64-zip
-          path: dist/hexone_linux_amd64.zip
+          name: hexone-linux-amd64-appimage
+          path: dist/hexone_linux_amd64.AppImage
 
       - name: Upload Windows portable release archive
         uses: actions/upload-artifact@v4
@@ -160,7 +174,7 @@ jobs:
         with:
           body_path: RELEASE_BODY.md
           files: |
-            dist/assets/hexone-linux-amd64-zip/hexone_linux_amd64.zip
+            dist/assets/hexone-linux-amd64-appimage/hexone_linux_amd64.AppImage
             dist/assets/hexone-macos-arm64-dmg/hexone_macos_arm64.dmg
             dist/assets/hexone-windows-amd64-portable-zip/hexone_windows_amd64_portable.zip
         env:
