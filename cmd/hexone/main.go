@@ -35,6 +35,12 @@ func main() {
 		}
 		return
 	}
+	if exportPath := os.Getenv("HEXONE_WRITE_DESKTOP_ICON_PNG"); exportPath != "" {
+		if err := appicon.WriteDesktopPNG(exportPath, 512); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if exportPath := os.Getenv("HEXONE_WRITE_DEFAULT_ICON"); exportPath != "" {
 		if err := appicon.WriteICO(exportPath); err != nil {
 			log.Fatal(err)

@@ -22,6 +22,7 @@ const (
 
 	iconVisibleAlphaThreshold   = 24
 	iconVisibleMarginPct        = 0
+	linuxDesktopIconOverscanPct = 8
 	windowsICOTinyOverscanPct   = 0
 	windowsICOSmallOverscanPct  = 0
 	windowsICOMediumOverscanPct = 0
@@ -127,6 +128,14 @@ func defaultAppIconPNG(size int) ([]byte, error) {
 	data := append([]byte(nil), buf.Bytes()...)
 	iconPNGCache.Store(size, data)
 	return data, nil
+}
+
+func desktopAppIconPNG(size int) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, renderOverscannedAppIcon(size, linuxDesktopIconOverscanPct)); err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), buf.Bytes()...), nil
 }
 
 func macBundleAppIconPNG(size int) ([]byte, error) {
@@ -255,6 +264,17 @@ func WriteICO(path string) error {
 
 func WritePNG(path string, size int) error {
 	data, err := defaultAppIconPNG(size)
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return fmt.Errorf("empty icon path")
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func WriteDesktopPNG(path string, size int) error {
+	data, err := desktopAppIconPNG(size)
 	if err != nil {
 		return err
 	}

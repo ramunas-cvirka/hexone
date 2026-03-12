@@ -109,7 +109,7 @@ build-linux: | $(DIST_DIR)
 	fi
 	chmod +x "$(LINUX_BIN)"
 	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' "$(LINUX_DESKTOP_TEMPLATE)" > "$(LINUX_STAGE)/share/applications/hexone.desktop"
-	cp appicon/hexone_icon_art.png "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/hexone.png"
+	HEXONE_WRITE_DESKTOP_ICON_PNG="$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/hexone.png" "$(LINUX_BIN)"
 	for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do \
 		path=$$(ldconfig -p | awk -v lib="$$lib" '$$1 == lib { print $$NF; exit }'); \
 		if [ -z "$$path" ]; then \
@@ -241,8 +241,8 @@ package-linux: build-linux
 	chmod +x "$(LINUX_APPDIR)/AppRun"
 	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' "$(LINUX_DESKTOP_TEMPLATE)" > "$(LINUX_APPDIR)/usr/share/applications/$(APP).desktop"
 	cp "$(LINUX_APPDIR)/usr/share/applications/$(APP).desktop" "$(LINUX_APPDIR)/$(APP).desktop"
-	cp appicon/hexone_icon_art.png "$(LINUX_APPDIR)/usr/share/icons/hicolor/512x512/apps/$(APP).png"
-	cp appicon/hexone_icon_art.png "$(LINUX_APPDIR)/$(APP).png"
+	cp "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/$(APP).png" "$(LINUX_APPDIR)/usr/share/icons/hicolor/512x512/apps/$(APP).png"
+	cp "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/$(APP).png" "$(LINUX_APPDIR)/$(APP).png"
 	ln -s "$(APP).png" "$(LINUX_APPDIR)/.DirIcon"
 	ARCH="$(LINUX_APPIMAGE_ARCH)" "$(APPIMAGETOOL)" "$(LINUX_APPDIR)" "$(LINUX_APPIMAGE)"
 
