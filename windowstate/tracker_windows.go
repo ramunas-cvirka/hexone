@@ -24,6 +24,8 @@ type Tracker struct {
 
 	titleBarApplied bool
 
+	runWindowFunc func(func())
+
 	startupMode            app.WindowMode
 	startupX               int
 	startupY               int
@@ -31,8 +33,8 @@ type Tracker struct {
 	startupPositionApplied bool
 }
 
-func NewTracker(session *fm.SessionState) *Tracker {
-	t := &Tracker{}
+func NewTracker(session *fm.SessionState, runWindowFunc func(func())) *Tracker {
+	t := &Tracker{runWindowFunc: runWindowFunc}
 	if session != nil {
 		t.startupMode = sessionModeToWindowMode(session.Window.Mode)
 		t.startupX, t.startupY, t.startupHasPosition = sessionWindowRestorePosition(session)
@@ -141,14 +143,20 @@ func (t *Tracker) applyStartupPosition() {
 	}
 
 	var ok bool
-	switch mode {
-	case app.Maximized, app.Minimized:
-		ok = winSetStartupPlacement(t.hwnd, t.startupX, t.startupY)
-	case app.Fullscreen:
-		return
-	default:
-		ok = winSetWindowPosNoSize(t.hwnd, t.startupX, t.startupY)
+	run := t.runWindowFunc
+	if run == nil {
+		run = func(f func()) { f() }
 	}
+	run(func() {
+		switch mode {
+		case app.Maximized, app.Minimized:
+			ok = winApplyStartupPlacement(t.hwnd, t.startupX, t.startupY)
+		case app.Fullscreen:
+			ok = false
+		default:
+			ok = winApplyStartupPosNoSize(t.hwnd, t.startupX, t.startupY)
+		}
+	})
 	if ok {
 		t.startupPositionApplied = true
 	}
@@ -181,6 +189,8 @@ var (
 	user32ProcSetWindowPlacement = windows.NewLazySystemDLL("user32.dll").NewProc("SetWindowPlacement")
 	user32ProcSetWindowPos       = windows.NewLazySystemDLL("user32.dll").NewProc("SetWindowPos")
 	dwmapiProcSetWindowAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
+	winApplyStartupPlacement     = winSetStartupPlacement
+	winApplyStartupPosNoSize     = winSetWindowPosNoSize
 )
 
 const (

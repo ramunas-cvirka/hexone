@@ -5606,8 +5606,59 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 	)
 }
 
+func (ui *UI) layoutSettingsConfigEditor(th *material.Theme, gtx layout.Context, st *settingsModalState, scrollbarStyle material.ScrollbarStyle) (layout.Dimensions, editorScrollMetrics, bool) {
+	if st == nil {
+		return layout.Dimensions{}, editorScrollMetrics{}, false
+	}
+	editorDims := layout.Dimensions{}
+	metrics := editorScrollMetrics{}
+	scrollable := false
+	dims := fixedHeight(gtx, gtx.Constraints.Max.Y, func(gtx layout.Context) layout.Dimensions {
+		return layout.Stack{Alignment: layout.NE}.Layout(gtx,
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				ed := material.Editor(th, &st.configEdit, "")
+				ed.Font.Typeface = ui.mainTypeface()
+				ed.TextSize = scaleModalThemeFontSize(th, 10)
+				ed.Color = txtColor
+				ed.HintColor = hintColor
+				editorDims = ui.layoutEditorWithContextMenu(th, gtx, "settings-config", &st.configEdit, true, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					return fixedHeight(gtx, gtx.Constraints.Max.Y, func(gtx layout.Context) layout.Dimensions {
+						return layoutNeutralEditorBox(gtx, gtx.Focused(&st.configEdit), true, ed.Layout)
+					})
+				})
+				metrics, scrollable = editorVerticalScrollMetrics(&st.configEdit)
+				return editorDims
+			}),
+			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+				if !scrollable || editorDims.Size.Y <= 0 {
+					return layout.Dimensions{}
+				}
+				height := editorDims.Size.Y
+				if height < 1 {
+					height = 1
+				}
+				start := clamp01(float32(metrics.Offset) / float32(metrics.Content))
+				end := clamp01(float32(metrics.Offset+metrics.Viewport) / float32(metrics.Content))
+				trackH := height - gtx.Dp(unit.Dp(4))
+				if trackH < 1 {
+					trackH = 1
+				}
+				return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, gtx.Dp(scrollbarStyle.Width()), func(gtx layout.Context) layout.Dimensions {
+						return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
+							return scrollbarStyle.Layout(gtx, layout.Vertical, start, end)
+						})
+					})
+				})
+			}),
+		)
+	})
+	return dims, metrics, scrollable
+}
+
 func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
-	cfgPath := ui.configSavePath()
+	cfgPath := ui.configDisplayPath()
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, "Edit hexone.yaml directly")
@@ -5651,49 +5702,7 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			scrollbarStyle := settingsScrollbarStyle(th, &st.configScrollbar)
-			editorDims := layout.Dimensions{}
-			metrics := editorScrollMetrics{}
-			scrollable := false
-			dims := fixedHeight(gtx, gtx.Constraints.Max.Y, func(gtx layout.Context) layout.Dimensions {
-				return layout.Stack{Alignment: layout.NE}.Layout(gtx,
-					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						ed := material.Editor(th, &st.configEdit, "")
-						ed.Font.Typeface = ui.mainTypeface()
-						ed.TextSize = scaleModalThemeFontSize(th, 10)
-						ed.Color = txtColor
-						ed.HintColor = hintColor
-						editorDims = ui.layoutEditorWithContextMenu(th, gtx, "settings-config", &st.configEdit, true, func(gtx layout.Context) layout.Dimensions {
-							return fixedHeight(gtx, gtx.Constraints.Max.Y, func(gtx layout.Context) layout.Dimensions {
-								return layoutNeutralEditorBox(gtx, gtx.Focused(&st.configEdit), true, ed.Layout)
-							})
-						})
-						metrics, scrollable = editorVerticalScrollMetrics(&st.configEdit)
-						return editorDims
-					}),
-					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						if !scrollable || editorDims.Size.Y <= 0 {
-							return layout.Dimensions{}
-						}
-						height := editorDims.Size.Y
-						if height < 1 {
-							height = 1
-						}
-						start := clamp01(float32(metrics.Offset) / float32(metrics.Content))
-						end := clamp01(float32(metrics.Offset+metrics.Viewport) / float32(metrics.Content))
-						trackH := height - gtx.Dp(unit.Dp(4))
-						if trackH < 1 {
-							trackH = 1
-						}
-						return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return fixedWidth(gtx, gtx.Dp(scrollbarStyle.Width()), func(gtx layout.Context) layout.Dimensions {
-								return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
-									return scrollbarStyle.Layout(gtx, layout.Vertical, start, end)
-								})
-							})
-						})
-					}),
-				)
-			})
+			dims, metrics, scrollable := ui.layoutSettingsConfigEditor(th, gtx, st, scrollbarStyle)
 			if scrollable {
 				if delta := st.configScrollbar.ScrollDistance(); delta != 0 {
 					editorScrollToVerticalOffset(&st.configEdit, metrics.Offset+int(delta*float32(metrics.Content)))

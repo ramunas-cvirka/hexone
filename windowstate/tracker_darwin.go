@@ -407,7 +407,7 @@ type Tracker struct {
 	fallbackPxPerDp     float32
 }
 
-func NewTracker(session *fm.SessionState) *Tracker {
+func NewTracker(session *fm.SessionState, _ func(func())) *Tracker {
 	t := &Tracker{}
 	if session != nil && session.Window.HasPosition {
 		t.fallbackHasPosition = true

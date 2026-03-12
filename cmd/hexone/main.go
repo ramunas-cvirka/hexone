@@ -90,6 +90,9 @@ func buildFontCollection() []text.FontFace {
 func run(window *app.Window) error {
 	cfgPath := appdata.ConfigPath()
 	sessionPath := appdata.SessionPath()
+	if err := resources.EnsureProtocolSample(); err != nil {
+		log.Printf("write protocol sample: %v", err)
+	}
 
 	cfg, err := fm.LoadConfigEnsuringFile(cfgPath)
 	if err != nil {
@@ -107,7 +110,7 @@ func run(window *app.Window) error {
 
 	var ops op.Ops
 	mainUI := ui.NewUI(cfg)
-	windowTracker := windowstate.NewTracker(session)
+	windowTracker := windowstate.NewTracker(session, window.Run)
 	iconSetter := appicon.NewSetter()
 	sessionApplied := false
 

@@ -17,7 +17,7 @@ type Tracker struct {
 	haveMetric bool
 }
 
-func NewTracker(_ *fm.SessionState) *Tracker {
+func NewTracker(_ *fm.SessionState, _ func(func())) *Tracker {
 	return &Tracker{}
 }
 

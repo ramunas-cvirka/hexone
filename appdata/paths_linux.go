@@ -1,17 +1,22 @@
-//go:build darwin
+//go:build linux
 
 package appdata
 
 import (
-	"hexone/appicon"
 	"os"
 	"path/filepath"
-
-	"gioui.org/app"
 )
 
 func ConfigDir() string {
-	return dataDir()
+	base, err := os.UserConfigDir()
+	if err != nil || base == "" {
+		return ""
+	}
+	base = filepath.Join(base, configDirName)
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return ""
+	}
+	return base
 }
 
 func ConfigPath() string {
@@ -27,27 +32,15 @@ func ProtocolPath() string {
 }
 
 func ProtocolSamplePath() string {
-	base := dataDir()
+	base := ConfigDir()
 	if base == "" {
 		return ""
 	}
 	return filepath.Join(base, protocolsSampleFileName)
 }
 
-func dataDir() string {
-	base, err := app.DataDir()
-	if err != nil || base == "" {
-		return ""
-	}
-	base = filepath.Join(base, appicon.AppID)
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		return ""
-	}
-	return base
-}
-
 func dataFilePath(name string) string {
-	base := dataDir()
+	base := ConfigDir()
 	if base == "" {
 		return name
 	}

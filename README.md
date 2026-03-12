@@ -45,11 +45,15 @@ Optional packaging:
 
 ```sh
 make package-linux
+make package-linux-zip
 make package-macos
 make package-windows
 ```
 
-- `package-linux` needs a Linux host and `patchelf`
+- `package-linux` builds an AppImage and needs a Linux host, `patchelf`, and `appimagetool`
+- `package-linux-zip` keeps the older portable ZIP layout
 - `package-macos` needs macOS
+
+On Linux, Hexone stores `hexone.yaml` and `hexone.session.yaml` under `~/.config/hexone/`. The protocol analyzer looks for `~/.config/hexone/protocols.yaml` first, falls back to the embedded default, and writes a sample to `~/.config/hexone/protocols.sample.yaml` on first run.
 
 More usage details are in [HELP.md](HELP.md).

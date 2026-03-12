@@ -2,13 +2,14 @@
 
 `cmd/hexone/hexone_windows.syso` is the compiled Windows resource object that Go
 links into `hexone.exe`. It carries the executable icon and the metadata shown
-in Explorer under file properties.
+in Explorer under file properties, plus the embedded application manifest.
 
 ## Update metadata
 
-Most fields live in `cmd/hexone/app_icon_windows.rc`. The version fields are not
-hardcoded there; `make windows-resource` injects the numeric Windows version
-from the latest `v*` Git tag:
+Most fields live in `cmd/hexone/app_icon_windows.rc`, while the Windows
+manifest template lives in `cmd/hexone/app_windows.manifest`. `make
+windows-resource` renders both files, injects the numeric Windows version from
+the latest `v*` Git tag, and also injects the current copyright year:
 
 - If `HEAD` is exactly on `v0.1.0`, Explorer gets `0.1.0.0`.
 - If `HEAD` is ahead of `v0.1.0`, Explorer still gets `0.1.0.0`.
@@ -27,8 +28,14 @@ Useful fields in the resource:
 - `FileVersion` and `ProductVersion`: human-readable strings shown in Explorer.
 - `FileDescription`: short description shown in file properties.
 - `CompanyName`: publisher name.
+- `LegalCopyright`: rendered with the current year by default. Override with
+  `HEXONE_COPYRIGHT_YEAR` if needed.
 - `OriginalFilename`: the canonical executable name.
 - `FILETYPE VFT_APP`: marks the binary as an application.
+
+The Windows manifest is embedded through `cmd/hexone/app_icon_windows.rc`. It
+currently enables Common Controls v6, `asInvoker`, and Per-Monitor V2 DPI
+awareness.
 
 After regenerating the `.syso`, rebuild the app:
 

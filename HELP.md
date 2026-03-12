@@ -161,6 +161,8 @@ Remote panes support `command` mode too, so the same log-following patterns work
 Most everyday customization is available from Settings.
 The full configuration also lives in `hexone.yaml`.
 
+On Linux, the writable config files live under `~/.config/hexone/`.
+
 Useful things to adjust:
 
 - default viewer mode
@@ -207,6 +209,8 @@ Notes:
 ## Protocol Analyzer
 
 The Protocol Analyzer decodes pasted hex using `protocols.yaml`.
+
+On Linux, Hexone first checks `~/.config/hexone/protocols.yaml`. If that file is missing, it uses the embedded default and writes a reference sample to `~/.config/hexone/protocols.sample.yaml`.
 
 Input tips:
 

@@ -1,11 +1,10 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package appdata
 
-const (
-	configFileName  = "hexone.yaml"
-	sessionFileName = "hexone.session.yaml"
-)
+func ConfigDir() string {
+	return ""
+}
 
 func ConfigPath() string {
 	return configFileName
@@ -13,4 +12,12 @@ func ConfigPath() string {
 
 func SessionPath() string {
 	return sessionFileName
+}
+
+func ProtocolPath() string {
+	return protocolsFileName
+}
+
+func ProtocolSamplePath() string {
+	return ""
 }

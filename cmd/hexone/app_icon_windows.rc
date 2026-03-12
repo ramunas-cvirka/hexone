@@ -4,6 +4,7 @@
 // windres is available, generates a temporary .syso for the Windows build.
 
 1 ICON "..\\..\\assets\\icons\\hexone.ico"
+1 24 "@HEXONE_MANIFEST_PATH@"
 
 1 VERSIONINFO
 FILEVERSION @HEXONE_FILE_VERSION_COMMAS@
@@ -18,11 +19,11 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName", "Ramunas Cvirka\0"
-            VALUE "FileDescription", "Hex-oriented file manager and protocol analyzer\0"
+            VALUE "CompanyName", "github.com/ramunas-cvirka/hexone\0"
+            VALUE "FileDescription", "Hex-oriented file manager\0"
             VALUE "FileVersion", "@HEXONE_FILE_VERSION@\0"
             VALUE "InternalName", "hexone\0"
-            VALUE "LegalCopyright", "Copyright (c) 2026 Ramunas Cvirka\0"
+            VALUE "LegalCopyright", "Copyright © @HEXONE_COPYRIGHT_YEAR@ Ramunas Cvirka\0"
             VALUE "OriginalFilename", "hexone.exe\0"
             VALUE "ProductName", "hexone\0"
             VALUE "ProductVersion", "@HEXONE_FILE_VERSION@\0"

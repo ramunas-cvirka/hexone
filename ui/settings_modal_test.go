@@ -946,6 +946,33 @@ func TestSettingsViewerPreviewContentUsesContiguousRows(t *testing.T) {
 	}
 }
 
+func TestSettingsConfigEditorUsesFullWidth(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &settingsModalState{}
+	st.configEdit.SingleLine = false
+	st.configEdit.Submit = false
+	st.configEdit.SetText("general:\n  font_size_sp: 14\n")
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(420, 240),
+		},
+	}
+
+	dims, _, _ := ui.layoutSettingsConfigEditor(th, gtx, st, settingsScrollbarStyle(th, &st.configScrollbar))
+	if dims.Size.X != gtx.Constraints.Max.X {
+		t.Fatalf("config editor width=%d want %d", dims.Size.X, gtx.Constraints.Max.X)
+	}
+	if dims.Size.Y != gtx.Constraints.Max.Y {
+		t.Fatalf("config editor height=%d want %d", dims.Size.Y, gtx.Constraints.Max.Y)
+	}
+}
+
 func TestSettingsColorsPreviewHostHeightUsesSharedValue(t *testing.T) {
 	var r input.Router
 	gtx := layout.Context{

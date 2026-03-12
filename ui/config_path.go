@@ -3,6 +3,7 @@ package ui
 import (
 	"hexone/appdata"
 	"hexone/fm"
+	"path/filepath"
 )
 
 func resolveUIConfigPath() string {
@@ -14,6 +15,18 @@ func (ui *UI) configSavePath() string {
 		return appdata.ConfigPath()
 	}
 	return ui.configPath
+}
+
+func (ui *UI) configDisplayPath() string {
+	path := ui.configSavePath()
+	if path == "" {
+		return ""
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return absPath
 }
 
 func (ui *UI) saveFMConfig() error {

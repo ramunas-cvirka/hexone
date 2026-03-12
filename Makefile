@@ -1,4 +1,4 @@
-.PHONY: build run test clean build-linux build-macos build-windows build-all package-linux package-macos package-windows package-all windows-resource
+.PHONY: build run test clean build-linux build-macos build-windows build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource
 
 APP := hexone
 CMD := ./cmd/hexone
@@ -10,12 +10,16 @@ ifeq ($(OS),Windows_NT)
 APP_VERSION := $(strip $(shell powershell -NoProfile -Command "$$raw = $$env:HEXONE_VERSION; if ([string]::IsNullOrWhiteSpace($$raw)) { $$raw = git describe --tags --dirty --always --match 'v*' 2>$$null; if ($$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($$raw)) { $$raw = 'dev' } }; $$raw.Trim()"))
 APP_TAG_VERSION := $(strip $(shell powershell -NoProfile -Command "$$tag = $$env:HEXONE_TAG_VERSION; if ([string]::IsNullOrWhiteSpace($$tag)) { $$tag = git describe --tags --abbrev=0 --match 'v*' 2>$$null; if ($$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($$tag)) { $$tag = 'v0.0.0' } }; $$tag.Trim()"))
 APP_COMMIT := $(strip $(shell powershell -NoProfile -Command "$$commit = $$env:HEXONE_COMMIT; if ([string]::IsNullOrWhiteSpace($$commit)) { $$commit = git rev-parse --short HEAD 2>$$null; if ($$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($$commit)) { $$commit = 'unknown' } }; $$commit.Trim()"))
+APP_COPYRIGHT_YEAR := $(strip $(shell powershell -NoProfile -Command "$$year = $$env:HEXONE_COPYRIGHT_YEAR; if ([string]::IsNullOrWhiteSpace($$year)) { $$year = Get-Date -Format yyyy }; $$year.Trim()"))
 WINDRES ?= $(strip $(shell powershell -NoProfile -Command "$$cmd = Get-Command windres.exe,x86_64-w64-mingw32-windres,windres -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source; if ($$cmd) { $$cmd }"))
+APPIMAGETOOL ?= $(strip $(shell powershell -NoProfile -Command "$$cmd = Get-Command appimagetool -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source; if ($$cmd) { $$cmd }"))
 else
 APP_VERSION := $(shell sh $(VERSION_TOOL) display)
 APP_TAG_VERSION := $(shell sh $(VERSION_TOOL) tag)
 APP_COMMIT := $(shell sh $(VERSION_TOOL) commit)
+APP_COPYRIGHT_YEAR := $(strip $(if $(HEXONE_COPYRIGHT_YEAR),$(HEXONE_COPYRIGHT_YEAR),$(shell date +%Y)))
 WINDRES ?= $(strip $(or $(shell command -v windres.exe 2>/dev/null),$(shell command -v x86_64-w64-mingw32-windres 2>/dev/null),$(shell command -v windres 2>/dev/null)))
+APPIMAGETOOL ?= $(strip $(shell command -v appimagetool 2>/dev/null))
 endif
 
 APP_SEMVER := $(if $(strip $(HEXONE_SEMVER)),$(strip $(HEXONE_SEMVER)),$(if $(APP_TAG_VERSION),$(patsubst v%,%,$(APP_TAG_VERSION)),0.0.0))
@@ -29,7 +33,11 @@ LINUX_STAGE := $(DIST_DIR)/$(APP)-linux-$(LINUX_ARCH)
 LINUX_BIN := $(LINUX_STAGE)/$(APP)
 LINUX_LIB_DIR := $(LINUX_STAGE)/lib
 LINUX_ZIP := $(DIST_DIR)/$(APP)_linux_$(LINUX_ARCH).zip
+LINUX_APPDIR := $(DIST_DIR)/$(APP).AppDir
+LINUX_APPIMAGE := $(DIST_DIR)/$(APP)_linux_$(LINUX_ARCH).AppImage
+LINUX_APPIMAGE_ARCH := x86_64
 LINUX_DESKTOP_TEMPLATE := packaging/linux/hexone.desktop
+LINUX_APPRUN_TEMPLATE := packaging/linux/AppRun
 
 MACOS_ARCH := arm64
 MACOS_STAGE := $(DIST_DIR)/$(APP)-macos-$(MACOS_ARCH)
@@ -61,6 +69,8 @@ WINDOWS_STAGE := $(DIST_DIR)/$(APP)-windows-$(WINDOWS_ARCH)-portable
 WINDOWS_BIN := $(WINDOWS_STAGE)/$(APP).exe
 WINDOWS_ZIP := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_portable.zip
 WINDOWS_RC_TEMPLATE := cmd/hexone/app_icon_windows.rc
+WINDOWS_MANIFEST_TEMPLATE := cmd/hexone/app_windows.manifest
+WINDOWS_MANIFEST_RENDERED := cmd/hexone/hexone_windows.generated.manifest
 WINDOWS_RC_RENDERED := cmd/hexone/hexone_windows.generated.rc
 WINDOWS_SYSO_RENDERED := cmd/hexone/hexone_windows.generated.syso
 WINDOWS_SYSO := cmd/hexone/hexone_windows.syso
@@ -109,7 +119,6 @@ build-linux: | $(DIST_DIR)
 		cp -L "$$path" "$(LINUX_LIB_DIR)/$$lib"; \
 		patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/$$lib"; \
 	done
-	cp protocols.yaml "$(LINUX_STAGE)/protocols.yaml"
 
 build-macos: | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "darwin" ]; then \
@@ -149,16 +158,20 @@ build-windows: | $(DIST_DIR)
 		cp "$(WINDOWS_SYSO)" "$$backup"; \
 	fi; \
 	cleanup() { \
-		rm -f "$(WINDOWS_RC_RENDERED)" "$(WINDOWS_SYSO_RENDERED)"; \
+		rm -f "$(WINDOWS_MANIFEST_RENDERED)" "$(WINDOWS_RC_RENDERED)" "$(WINDOWS_SYSO_RENDERED)"; \
 		if [ -n "$$backup" ] && [ -f "$$backup" ]; then \
 			mv "$$backup" "$(WINDOWS_SYSO)"; \
 		fi; \
 	}; \
 	trap cleanup EXIT INT TERM; \
 	if [ -n "$$rc_compiler" ]; then \
+		sed -e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
+			"$(WINDOWS_MANIFEST_TEMPLATE)" > "$(WINDOWS_MANIFEST_RENDERED)"; \
 		sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' \
 			-e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
 			-e 's/@HEXONE_FILE_VERSION_COMMAS@/$(APP_FILE_VERSION_COMMAS)/g' \
+			-e 's/@HEXONE_COPYRIGHT_YEAR@/$(APP_COPYRIGHT_YEAR)/g' \
+			-e 's#@HEXONE_MANIFEST_PATH@#hexone_windows.generated.manifest#g' \
 			"$(WINDOWS_RC_TEMPLATE)" > "$(WINDOWS_RC_RENDERED)"; \
 		if "$$rc_compiler" -i "$(WINDOWS_RC_RENDERED)" -o "$(WINDOWS_SYSO_RENDERED)" -O coff; then \
 			cp "$(WINDOWS_SYSO_RENDERED)" "$(WINDOWS_SYSO)"; \
@@ -178,8 +191,9 @@ ifeq ($(OS),Windows_NT)
 windows-resource: | $(DIST_DIR)
 	@if "$(WINDRES)"=="" (echo windows-resource requires windres.exe, x86_64-w64-mingw32-windres, or windres. & exit /b 1)
 	@echo "Embedding Windows version $(APP_FILE_VERSION)"
-	@powershell -NoProfile -Command "$$content = Get-Content '$(WINDOWS_RC_TEMPLATE)' -Raw; $$content = $$content.Replace('@HEXONE_VERSION@', '$(APP_VERSION)').Replace('@HEXONE_FILE_VERSION@', '$(APP_FILE_VERSION)').Replace('@HEXONE_FILE_VERSION_COMMAS@', '$(APP_FILE_VERSION_COMMAS)'); [System.IO.File]::WriteAllText('$(WINDOWS_RC_RENDERED)', $$content)"
+	@powershell -NoProfile -Command "$$manifest = Get-Content '$(WINDOWS_MANIFEST_TEMPLATE)' -Raw; $$manifest = $$manifest.Replace('@HEXONE_FILE_VERSION@', '$(APP_FILE_VERSION)'); [System.IO.File]::WriteAllText('$(WINDOWS_MANIFEST_RENDERED)', $$manifest); $$content = Get-Content '$(WINDOWS_RC_TEMPLATE)' -Raw; $$content = $$content.Replace('@HEXONE_VERSION@', '$(APP_VERSION)').Replace('@HEXONE_FILE_VERSION@', '$(APP_FILE_VERSION)').Replace('@HEXONE_FILE_VERSION_COMMAS@', '$(APP_FILE_VERSION_COMMAS)').Replace('@HEXONE_COPYRIGHT_YEAR@', '$(APP_COPYRIGHT_YEAR)').Replace('@HEXONE_MANIFEST_PATH@', 'hexone_windows.generated.manifest'); [System.IO.File]::WriteAllText('$(WINDOWS_RC_RENDERED)', $$content)"
 	"$(WINDRES)" -i "$(WINDOWS_RC_RENDERED)" -o "$(WINDOWS_SYSO)" -O coff
+	@if exist "$(subst /,\,$(WINDOWS_MANIFEST_RENDERED))" del /q "$(subst /,\,$(WINDOWS_MANIFEST_RENDERED))"
 	@if exist "$(subst /,\,$(WINDOWS_RC_RENDERED))" del /q "$(subst /,\,$(WINDOWS_RC_RENDERED))"
 else
 windows-resource: | $(DIST_DIR)
@@ -188,17 +202,51 @@ windows-resource: | $(DIST_DIR)
 		exit 1; \
 	fi
 	@echo "Embedding Windows version $(APP_FILE_VERSION)"
+	sed -e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
+		"$(WINDOWS_MANIFEST_TEMPLATE)" > "$(WINDOWS_MANIFEST_RENDERED)"
 	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' \
 		-e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
 		-e 's/@HEXONE_FILE_VERSION_COMMAS@/$(APP_FILE_VERSION_COMMAS)/g' \
+		-e 's/@HEXONE_COPYRIGHT_YEAR@/$(APP_COPYRIGHT_YEAR)/g' \
+		-e 's#@HEXONE_MANIFEST_PATH@#hexone_windows.generated.manifest#g' \
 		"$(WINDOWS_RC_TEMPLATE)" > "$(WINDOWS_RC_RENDERED)"
 	"$(WINDRES)" -i "$(WINDOWS_RC_RENDERED)" -o "$(WINDOWS_SYSO)" -O coff
+	rm -f "$(WINDOWS_MANIFEST_RENDERED)"
 	rm -f "$(WINDOWS_RC_RENDERED)"
 endif
 
 build-all: build-linux build-macos build-windows
 
 package-linux: build-linux
+	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \
+		echo "package-linux requires a Linux host."; \
+		exit 1; \
+	fi
+	@if ! command -v patchelf >/dev/null 2>&1; then \
+		echo "package-linux requires patchelf to set the AppImage rpath."; \
+		exit 1; \
+	fi
+	@if [ -z "$(APPIMAGETOOL)" ]; then \
+		echo "package-linux requires appimagetool."; \
+		exit 1; \
+	fi
+	rm -f "$(LINUX_APPIMAGE)"
+	rm -rf "$(LINUX_APPDIR)"
+	mkdir -p "$(LINUX_APPDIR)/usr/bin" "$(LINUX_APPDIR)/usr/lib" "$(LINUX_APPDIR)/usr/share/applications" "$(LINUX_APPDIR)/usr/share/icons/hicolor/512x512/apps"
+	cp "$(LINUX_BIN)" "$(LINUX_APPDIR)/usr/bin/$(APP)"
+	chmod +x "$(LINUX_APPDIR)/usr/bin/$(APP)"
+	patchelf --force-rpath --set-rpath '$$ORIGIN/../lib' "$(LINUX_APPDIR)/usr/bin/$(APP)"
+	cp "$(LINUX_LIB_DIR)"/* "$(LINUX_APPDIR)/usr/lib/"
+	sed -e 's/@HEXONE_APP@/$(APP)/g' "$(LINUX_APPRUN_TEMPLATE)" > "$(LINUX_APPDIR)/AppRun"
+	chmod +x "$(LINUX_APPDIR)/AppRun"
+	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' "$(LINUX_DESKTOP_TEMPLATE)" > "$(LINUX_APPDIR)/usr/share/applications/$(APP).desktop"
+	cp "$(LINUX_APPDIR)/usr/share/applications/$(APP).desktop" "$(LINUX_APPDIR)/$(APP).desktop"
+	cp appicon/hexone_icon_art.png "$(LINUX_APPDIR)/usr/share/icons/hicolor/512x512/apps/$(APP).png"
+	cp appicon/hexone_icon_art.png "$(LINUX_APPDIR)/$(APP).png"
+	ln -s "$(APP).png" "$(LINUX_APPDIR)/.DirIcon"
+	ARCH="$(LINUX_APPIMAGE_ARCH)" "$(APPIMAGETOOL)" "$(LINUX_APPDIR)" "$(LINUX_APPIMAGE)"
+
+package-linux-zip: build-linux
 	rm -f "$(LINUX_ZIP)"
 	cd "$(LINUX_STAGE)" && zip -rq "../$(notdir $(LINUX_ZIP))" .
 

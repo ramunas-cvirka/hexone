@@ -1,6 +1,8 @@
 package resources
 
 import (
+	"errors"
+	"hexone/appdata"
 	"os"
 	"path/filepath"
 )
@@ -18,7 +20,7 @@ func ProtocolsYAML() []byte {
 }
 
 func protocolCandidatePaths() []string {
-	paths := make([]string, 0, 4)
+	paths := make([]string, 0, 5)
 	seen := map[string]struct{}{}
 	add := func(path string) {
 		if path == "" {
@@ -32,7 +34,7 @@ func protocolCandidatePaths() []string {
 		paths = append(paths, clean)
 	}
 
-	add(protocolsFileName)
+	add(appdata.ProtocolPath())
 
 	exePath, err := os.Executable()
 	if err == nil && exePath != "" {
@@ -41,5 +43,32 @@ func protocolCandidatePaths() []string {
 		add(filepath.Join(exeDir, "..", "Resources", protocolsFileName))
 	}
 
+	add(protocolsFileName)
+
 	return paths
+}
+
+func EnsureProtocolSample() error {
+	samplePath := appdata.ProtocolSamplePath()
+	if samplePath == "" {
+		return nil
+	}
+	if _, err := os.Stat(samplePath); err == nil {
+		return nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(samplePath), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(samplePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(embeddedProtocolsYAML)
+	return err
 }
