@@ -111,6 +111,56 @@ func TestFileViewerRootSecondaryPressUpdatesMenuAnchor(t *testing.T) {
 	}
 }
 
+func TestFileViewerContentPressClosesEncodingMenuOutsidePopup(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{
+		mode:             "file",
+		encodingMenuOpen: true,
+		encodingMenuRect: image.Rect(20, 20, 80, 60),
+	}
+	ui.fileViewer = st
+
+	gtx, router := testPointerContext()
+	primePointerFilter(router, &st.contentPointerTag)
+	registerPointerTag(router, gtx.Ops, &st.contentPointerTag)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonPrimary,
+		Position: f32.Pt(100, 100),
+	})
+
+	ui.handleFileViewerPointerEvents(gtx, st, image.Pt(200, 200))
+
+	if st.encodingMenuOpen {
+		t.Fatal("outside press should close encoding menu")
+	}
+}
+
+func TestFileViewerContentPressKeepsEncodingMenuInsidePopup(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{
+		mode:             "file",
+		encodingMenuOpen: true,
+		encodingMenuRect: image.Rect(20, 20, 80, 60),
+	}
+	ui.fileViewer = st
+
+	gtx, router := testPointerContext()
+	primePointerFilter(router, &st.contentPointerTag)
+	registerPointerTag(router, gtx.Ops, &st.contentPointerTag)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonPrimary,
+		Position: f32.Pt(30, 30),
+	})
+
+	ui.handleFileViewerPointerEvents(gtx, st, image.Pt(200, 200))
+
+	if !st.encodingMenuOpen {
+		t.Fatal("inside popup press should keep encoding menu open")
+	}
+}
+
 func TestFileViewerTabAnimationFollowsHistoryToggle(t *testing.T) {
 	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
 	st := &fileViewerState{mode: "hex"}

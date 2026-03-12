@@ -314,6 +314,41 @@ func TestNormalizeViewerModeAcceptsHex(t *testing.T) {
 	}
 }
 
+func TestNormalizeViewerFileEncodingAcceptsUTF16Variants(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.FileEncoding = "utf16-be"
+
+	cfg.normalize()
+
+	if cfg.Viewer.FileEncoding != ViewerFileEncodingUTF16BE {
+		t.Fatalf("Viewer.FileEncoding=%q, want %q", cfg.Viewer.FileEncoding, ViewerFileEncodingUTF16BE)
+	}
+}
+
+func TestNormalizeViewerFileEncodingAcceptsCP437(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.FileEncoding = "ibm437"
+
+	cfg.normalize()
+
+	if cfg.Viewer.FileEncoding != ViewerFileEncodingCP437 {
+		t.Fatalf("Viewer.FileEncoding=%q, want %q", cfg.Viewer.FileEncoding, ViewerFileEncodingCP437)
+	}
+}
+
+func TestDefaultConfigUsesAutoViewerFileEncoding(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.Viewer.FileEncoding != ViewerFileEncodingAuto {
+		t.Fatalf("Viewer.FileEncoding=%q, want %q", cfg.Viewer.FileEncoding, ViewerFileEncodingAuto)
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "file_encoding: auto") {
+		t.Fatalf("serialized config missing viewer file_encoding:\n%s", out)
+	}
+}
+
 func TestDefaultConfigHidesFunctionBarWhenViewerOpen(t *testing.T) {
 	cfg := DefaultConfig()
 

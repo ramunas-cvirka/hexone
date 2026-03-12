@@ -31,6 +31,14 @@ const (
 	defaultNameTextReserveDp = defaultApproxCharPx/2 + 2
 )
 
+const (
+	ViewerFileEncodingAuto    = "auto"
+	ViewerFileEncodingUTF8    = "utf-8"
+	ViewerFileEncodingUTF16LE = "utf-16le"
+	ViewerFileEncodingUTF16BE = "utf-16be"
+	ViewerFileEncodingCP437   = "cp437"
+)
+
 type NameCompact struct {
 	KeepStartChars int    `yaml:"keep_start_chars"`
 	Marker         string `yaml:"marker"`
@@ -168,6 +176,7 @@ func (a AssociationProgram) MarshalYAML() (any, error) {
 
 type ViewerConfig struct {
 	Mode                    string              `yaml:"mode"`
+	FileEncoding            string              `yaml:"file_encoding"`
 	Typeface                string              `yaml:"typeface"`
 	Background              string              `yaml:"background,omitempty"`
 	Text                    string              `yaml:"text,omitempty"`
@@ -298,6 +307,7 @@ func DefaultConfig() *Config {
 		Associations: nil,
 		Viewer: ViewerConfig{
 			Mode:                    "file",
+			FileEncoding:            ViewerFileEncodingAuto,
 			Typeface:                resources.BundledFontFamilyFiraCode,
 			Background:              DefaultFilePaneBackgroundHex,
 			Text:                    DefaultFilePaneTextHex,
@@ -428,6 +438,7 @@ func (c *Config) normalize() {
 	default:
 		c.Viewer.Mode = "file"
 	}
+	c.Viewer.FileEncoding = NormalizeViewerFileEncoding(c.Viewer.FileEncoding)
 	switch strings.ToLower(strings.TrimSpace(c.Viewer.Shell)) {
 	case "", "auto":
 		c.Viewer.Shell = "auto"
@@ -627,6 +638,23 @@ func normalizeFullDropPriority(raw []string) []string {
 		out = append(out, key)
 	}
 	return out
+}
+
+func NormalizeViewerFileEncoding(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", ViewerFileEncodingAuto, "detect", "auto-detect", "autodetect":
+		return ViewerFileEncodingAuto
+	case ViewerFileEncodingUTF8, "utf8":
+		return ViewerFileEncodingUTF8
+	case ViewerFileEncodingUTF16LE, "utf-16-le", "utf16le", "utf16-le":
+		return ViewerFileEncodingUTF16LE
+	case ViewerFileEncodingUTF16BE, "utf-16-be", "utf16be", "utf16-be":
+		return ViewerFileEncodingUTF16BE
+	case ViewerFileEncodingCP437, "437", "ibm437", "codepage437", "oem437":
+		return ViewerFileEncodingCP437
+	default:
+		return ViewerFileEncodingAuto
+	}
 }
 
 // NormalizeViewerAssociationExtension accepts forms like ".pdf", "pdf", or

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"hexone/fm"
 	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
@@ -73,6 +74,37 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		ui.setFileViewerMode("command", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
+	if st.mode == "file" {
+		if st.encodingMenuClick.Clicked(gtx) {
+			if st.encodingMenuOpen {
+				st.closeEncodingMenu()
+			} else {
+				st.encodingMenuOpen = true
+				st.encodingMenuAt = gtx.Now
+			}
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		if st.encodingAutoClick.Clicked(gtx) {
+			ui.setFileViewerEncoding(fm.ViewerFileEncodingAuto, gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		if st.encodingUTF8Click.Clicked(gtx) {
+			ui.setFileViewerEncoding(fm.ViewerFileEncodingUTF8, gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		if st.encodingUTF16LEClick.Clicked(gtx) {
+			ui.setFileViewerEncoding(fm.ViewerFileEncodingUTF16LE, gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		if st.encodingUTF16BEClick.Clicked(gtx) {
+			ui.setFileViewerEncoding(fm.ViewerFileEncodingUTF16BE, gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		if st.encodingCP437Click.Clicked(gtx) {
+			ui.setFileViewerEncoding(fm.ViewerFileEncodingCP437, gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
 	if ui.viewerShowsAutoRefreshButton(st) && st.autoRefreshClick.Clicked(gtx) {
 		ui.toggleFileViewerAutoRefresh(gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
@@ -143,21 +175,28 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 							return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								gtx.Constraints.Min.X = gtx.Constraints.Max.X
 								gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-								if st.loading && st.content == "" {
-									if st.mode == "hex" && st.hex != nil && len(st.hex.buffer) > 0 {
-										return ui.layoutHexOutputView(th, gtx, st)
-									}
-									wait := material.Body2(th, "Loading...")
-									wait.Font.Typeface = ui.viewerTypeface()
-									wait.TextSize = ui.viewerTextSize()
-									wait.Color = theme.Hint
-									return wait.Layout(gtx)
-								}
-								gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-								if st.mode == "hex" {
-									return ui.layoutHexOutputView(th, gtx, st)
-								}
-								return ui.layoutStreamOutputView(th, gtx, st)
+								return layout.Stack{}.Layout(gtx,
+									layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+										if st.loading && st.content == "" {
+											if st.mode == "hex" && st.hex != nil && len(st.hex.buffer) > 0 {
+												return ui.layoutHexOutputView(th, gtx, st)
+											}
+											wait := material.Body2(th, "Loading...")
+											wait.Font.Typeface = ui.viewerTypeface()
+											wait.TextSize = ui.viewerTextSize()
+											wait.Color = theme.Hint
+											return wait.Layout(gtx)
+										}
+										gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+										if st.mode == "hex" {
+											return ui.layoutHexOutputView(th, gtx, st)
+										}
+										return ui.layoutStreamOutputView(th, gtx, st)
+									}),
+									layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+										return ui.layoutFileViewerOverlay(th, gtx, st)
+									}),
+								)
 							})
 						},
 					)
@@ -246,6 +285,12 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 				ui.closeEditorContextMenu()
 				gtx.Execute(op.InvalidateCmd{})
 				continue
+			}
+			if st.encodingMenuOpen &&
+				!viewerPointInRect(pos, st.encodingMenuRect) &&
+				!viewerPointInRect(pos, st.encodingBarRect) {
+				st.closeEncodingMenu()
+				gtx.Execute(op.InvalidateCmd{})
 			}
 			if st.commandEditOn {
 				ui.cancelViewerCommandEdit()
@@ -551,9 +596,10 @@ func (ui *UI) layoutFileViewerHeader(th *material.Theme, gtx layout.Context, st 
 					}
 					children = append(children,
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutFileViewerInfoStrip(th, gtx, st, stripH)
-							})
+							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH)}
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutFileViewerInfoButtons(th, gtx, st, stripH)
 						}),
 					)
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
@@ -572,6 +618,344 @@ func (ui *UI) layoutFileViewerHeader(th *material.Theme, gtx layout.Context, st 
 			})
 		},
 	)
+}
+
+func (ui *UI) layoutFileViewerOverlay(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
+	if st == nil {
+		return layout.Dimensions{Size: gtx.Constraints.Max}
+	}
+	bar := op.Record(gtx.Ops)
+	barDims := ui.layoutFileViewerOverlayBar(th, gtx, st)
+	barCall := bar.Stop()
+	if barDims.Size.X <= 0 || barDims.Size.Y <= 0 {
+		st.encodingBarRect = image.Rectangle{}
+		st.encodingMenuRect = image.Rectangle{}
+		return layout.Dimensions{Size: gtx.Constraints.Max}
+	}
+	marginX := gtx.Dp(unit.Dp(10))
+	marginY := gtx.Dp(unit.Dp(10))
+	barPos := image.Pt(gtx.Constraints.Max.X-barDims.Size.X-marginX, gtx.Constraints.Max.Y-barDims.Size.Y-marginY)
+	if barPos.X < 0 {
+		barPos.X = 0
+	}
+	if barPos.Y < 0 {
+		barPos.Y = 0
+	}
+	st.encodingBarRect = image.Rectangle{Min: barPos, Max: barPos.Add(barDims.Size)}
+	offset := op.Offset(barPos).Push(gtx.Ops)
+	barCall.Add(gtx.Ops)
+	offset.Pop()
+
+	if st.encodingMenuOpen && st.mode == "file" {
+		alpha, slideY, animating := popupOpenProgress(gtx.Now, st.encodingMenuAt)
+		if animating {
+			gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+		}
+		menu := op.Record(gtx.Ops)
+		menuDims := ui.layoutFileViewerEncodingMenu(th, gtx, st, alpha)
+		menuCall := menu.Stop()
+		menuPos := image.Pt(barPos.X+barDims.Size.X-menuDims.Size.X, barPos.Y-gtx.Dp(unit.Dp(6))-menuDims.Size.Y+slideY)
+		menuPos = clampFilePaneMenuPoint(menuPos, menuDims.Size, gtx.Constraints.Max)
+		st.encodingMenuRect = image.Rectangle{Min: menuPos, Max: menuPos.Add(menuDims.Size)}
+		offset = op.Offset(menuPos).Push(gtx.Ops)
+		menuCall.Add(gtx.Ops)
+		offset.Pop()
+	} else {
+		st.encodingMenuRect = image.Rectangle{}
+	}
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
+	theme := ui.fileViewerTheme()
+	title := ui.fileViewerHeaderTitle(st)
+	statusText, statusColor := ui.fileViewerOverlayStatusText(st)
+	updatedText := ""
+	if !st.updatedAt.IsZero() {
+		updatedText = st.updatedAt.Format("15:04:05")
+	}
+	lineEnding := ""
+	encodingLabel := ""
+	if st.mode == "file" {
+		lineEnding = viewerLineEndingLabel(st.detectedLineEnding)
+		encodingLabel = viewerEncodingStatusLabel(st)
+	}
+	if title == "" && statusText == "" && updatedText == "" && lineEnding == "" && encodingLabel == "" {
+		return layout.Dimensions{}
+	}
+	return fillRoundedClipBox(
+		gtx,
+		gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+		scaleColorAlpha(theme.TooltipBg, 0.9),
+		scaleColorAlpha(theme.TooltipBorder, 0.9),
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				children := make([]layout.FlexChild, 0, 10)
+				addSpacer := func() {
+					if len(children) > 0 {
+						children = append(children, layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout))
+					}
+				}
+				if title != "" {
+					addSpacer()
+					maxTitleW := gtx.Dp(unit.Dp(220))
+					if alt := gtx.Constraints.Max.X / 3; alt > 0 && alt < maxTitleW {
+						maxTitleW = alt
+					}
+					if maxTitleW < gtx.Dp(unit.Dp(96)) {
+						maxTitleW = gtx.Dp(unit.Dp(96))
+					}
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerOverlayText(th, gtx, title, theme.TooltipText, maxTitleW)
+					}))
+				}
+				if statusText != "" {
+					addSpacer()
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerOverlayText(th, gtx, statusText, statusColor, 0)
+					}))
+				}
+				if updatedText != "" {
+					addSpacer()
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerOverlayText(th, gtx, updatedText, theme.Muted, 0)
+					}))
+				}
+				if lineEnding != "" {
+					addSpacer()
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerOverlayChip(th, gtx, lineEnding, theme.CommandStaticText, false, nil)
+					}))
+				}
+				if encodingLabel != "" {
+					addSpacer()
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						click := &st.encodingMenuClick
+						if st.mode != "file" {
+							click = nil
+						}
+						return ui.layoutFileViewerOverlayChip(th, gtx, encodingLabel, theme.CommandText, st.encodingMenuOpen, click)
+					}))
+				}
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+			})
+		},
+	)
+}
+
+func (ui *UI) layoutFileViewerOverlayText(th *material.Theme, gtx layout.Context, text string, fg color.NRGBA, width int) layout.Dimensions {
+	if strings.TrimSpace(text) == "" {
+		return layout.Dimensions{}
+	}
+	host := func(gtx layout.Context) layout.Dimensions {
+		lbl := material.Body2(th, text)
+		lbl.Font.Typeface = ui.viewerTypeface()
+		lbl.TextSize = scaleThemeFontSize(th, 10)
+		lbl.Color = fg
+		lbl.MaxLines = 1
+		lbl.Truncator = "..."
+		return layoutVCenteredLabel(gtx, lbl)
+	}
+	if width > 0 {
+		return fixedWidth(gtx, width, host)
+	}
+	return host(gtx)
+}
+
+func (ui *UI) layoutFileViewerOverlayChip(th *material.Theme, gtx layout.Context, label string, fg color.NRGBA, active bool, click *widget.Clickable) layout.Dimensions {
+	if strings.TrimSpace(label) == "" {
+		return layout.Dimensions{}
+	}
+	theme := ui.fileViewerTheme()
+	bg := mixNRGBA(theme.CommandBg, theme.TooltipBg, 0.2)
+	border := theme.CommandBorder
+	if active {
+		bg = mixNRGBA(theme.CommandBgHover, theme.TooltipBg, 0.16)
+		border = theme.CommandBorderHover
+	} else if click != nil && click.Hovered() {
+		bg = mixNRGBA(theme.CommandBgHover, theme.TooltipBg, 0.22)
+		border = theme.CommandBorderHover
+	}
+	layoutChip := func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+			scaleColorAlpha(bg, 0.95),
+			scaleColorAlpha(border, 0.92),
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, label)
+					lbl.Font.Typeface = ui.viewerTypeface()
+					lbl.Font.Weight = font.Medium
+					lbl.TextSize = scaleThemeFontSize(th, 10)
+					lbl.Color = fg
+					lbl.MaxLines = 1
+					return layoutVCenteredLabel(gtx, lbl)
+				})
+			},
+		)
+	}
+	if click == nil {
+		return layoutChip(gtx)
+	}
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return layoutChip(gtx)
+	})
+}
+
+func (ui *UI) layoutFileViewerEncodingMenu(th *material.Theme, gtx layout.Context, st *fileViewerState, alpha float32) layout.Dimensions {
+	theme := ui.filePanePopupTheme()
+	type menuRow struct {
+		click  *widget.Clickable
+		item   fileContextMenuItem
+		active bool
+	}
+	rows := []menuRow{
+		{
+			click: &st.encodingAutoClick,
+			item: fileContextMenuItem{
+				ID:     "viewer-encoding-auto",
+				Label:  "Auto Detect",
+				Detail: viewerEncodingAutoDetail(st),
+			},
+			active: st.fileEncoding == fm.ViewerFileEncodingAuto,
+		},
+		{
+			click: &st.encodingUTF8Click,
+			item: fileContextMenuItem{
+				ID:    "viewer-encoding-utf8",
+				Label: "UTF-8",
+			},
+			active: st.fileEncoding == fm.ViewerFileEncodingUTF8,
+		},
+		{
+			click: &st.encodingUTF16LEClick,
+			item: fileContextMenuItem{
+				ID:    "viewer-encoding-utf16le",
+				Label: "UTF-16 LE",
+			},
+			active: st.fileEncoding == fm.ViewerFileEncodingUTF16LE,
+		},
+		{
+			click: &st.encodingUTF16BEClick,
+			item: fileContextMenuItem{
+				ID:    "viewer-encoding-utf16be",
+				Label: "UTF-16 BE",
+			},
+			active: st.fileEncoding == fm.ViewerFileEncodingUTF16BE,
+		},
+		{
+			click: &st.encodingCP437Click,
+			item: fileContextMenuItem{
+				ID:     "viewer-encoding-cp437",
+				Label:  "CP437",
+				Detail: "DOS / scene NFO",
+			},
+			active: st.fileEncoding == fm.ViewerFileEncodingCP437,
+		},
+	}
+	width := gtx.Dp(unit.Dp(188))
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedClipBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+			scaleColorAlpha(theme.Bg, alpha),
+			scaleColorAlpha(theme.Border, alpha),
+			func(gtx layout.Context) layout.Dimensions {
+				children := make([]layout.FlexChild, 0, len(rows)*2)
+				for i := range rows {
+					if i > 0 {
+						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fillBgExact(gtx, scaleColorAlpha(theme.Divider, alpha), func(gtx layout.Context) layout.Dimensions {
+								return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 1)}
+							})
+						}))
+					}
+					row := rows[i]
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						hoverFill := float32(0)
+						if row.click.Hovered() {
+							hoverFill = 1
+						}
+						dims, _, _ := ui.layoutFilePaneContextMenuItem(th, gtx, theme, row.click, row.item, row.active, hoverFill, alpha, ui.fileContextMenuRowHeight(gtx, row.item))
+						return dims
+					}))
+				}
+				return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+				})
+			},
+		)
+	})
+}
+
+func viewerEncodingStatusLabel(st *fileViewerState) string {
+	if st == nil {
+		return ""
+	}
+	enc := st.detectedEncoding
+	if enc == "" {
+		enc = fm.NormalizeViewerFileEncoding(st.fileEncoding)
+		if enc == fm.ViewerFileEncodingAuto {
+			return "Auto"
+		}
+	}
+	label := viewerEncodingDisplayName(enc)
+	if label == "" {
+		return ""
+	}
+	if st.detectedEncodingBOM {
+		label += " BOM"
+	}
+	if st.fileEncoding == fm.ViewerFileEncodingAuto {
+		label += " Auto"
+	}
+	return label
+}
+
+func viewerEncodingAutoDetail(st *fileViewerState) string {
+	if st == nil || st.detectedEncoding == "" {
+		return "Detect UTF-8 / UTF-16 / CP437"
+	}
+	label := viewerEncodingDisplayName(st.detectedEncoding)
+	if label == "" {
+		return "Detect UTF-8 / UTF-16 / CP437"
+	}
+	if st.detectedEncodingBOM {
+		label += " BOM"
+	}
+	return "Detected " + label
+}
+
+func viewerEncodingDisplayName(encoding string) string {
+	switch fm.NormalizeViewerFileEncoding(encoding) {
+	case fm.ViewerFileEncodingUTF16LE:
+		return "UTF-16LE"
+	case fm.ViewerFileEncodingUTF16BE:
+		return "UTF-16BE"
+	case fm.ViewerFileEncodingCP437:
+		return "CP437"
+	case fm.ViewerFileEncodingAuto:
+		return "Auto"
+	default:
+		return "UTF-8"
+	}
+}
+
+func viewerLineEndingLabel(kind string) string {
+	switch kind {
+	case viewerLineEndingCRLF:
+		return "CRLF"
+	case viewerLineEndingLF:
+		return "LF"
+	case viewerLineEndingMixed:
+		return "Mixed EOL"
+	case viewerLineEndingNone:
+		return "No EOL"
+	default:
+		return ""
+	}
 }
 
 func (ui *UI) viewerHeaderStripHeight(gtx layout.Context) int {
@@ -643,6 +1027,16 @@ func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRG
 		}
 	}
 	return statusText, statusColor
+}
+
+func (ui *UI) fileViewerOverlayStatusText(st *fileViewerState) (string, color.NRGBA) {
+	if st == nil {
+		return "", ui.fileViewerTheme().Hint
+	}
+	if isViewerHeaderSizeStatus(st.status) {
+		return st.status, ui.fileViewerTheme().Muted
+	}
+	return ui.fileViewerHeaderStatusText(st)
 }
 
 func (ui *UI) fileViewerHeaderDetails(st *fileViewerState) []viewerHeaderDetailPart {

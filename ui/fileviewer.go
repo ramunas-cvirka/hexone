@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"hexone/filesys"
@@ -19,6 +20,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"gioui.org/io/clipboard"
 	"gioui.org/io/key"
@@ -27,6 +30,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
+	"golang.org/x/text/encoding/charmap"
 )
 
 const (
@@ -40,6 +44,13 @@ const (
 	viewerDefaultMaxReadMB    = 1
 	viewerDefaultWordRegex    = `[a-zA-Z0-9]+`
 	viewerCommandHistoryLimit = 80
+)
+
+const (
+	viewerLineEndingLF    = "lf"
+	viewerLineEndingCRLF  = "crlf"
+	viewerLineEndingMixed = "mixed"
+	viewerLineEndingNone  = "none"
 )
 
 // Pointer event tags must be non-zero-sized; zero-sized fields can share the
@@ -56,82 +67,108 @@ type fileViewerState struct {
 	tabPrev string
 	remote  *paneSSHSession
 
-	backdropClick    widget.Clickable
-	closeClick       widget.Clickable
-	autoRefreshClick widget.Clickable
-	modeFileClick    widget.Clickable
-	modeHexClick     widget.Clickable
-	modeCmdClick     widget.Clickable
-	historyClick     widget.Clickable
-	commandClick     widget.Clickable
-	contentEditor    widget.Editor
-	commandEditor    widget.Editor
-	wrapToggle       widget.Clickable
-	copyToggle       widget.Clickable
-	commandEditOn    bool
-	commandFocus     bool
+	backdropClick        widget.Clickable
+	closeClick           widget.Clickable
+	autoRefreshClick     widget.Clickable
+	modeFileClick        widget.Clickable
+	modeHexClick         widget.Clickable
+	modeCmdClick         widget.Clickable
+	encodingMenuClick    widget.Clickable
+	encodingAutoClick    widget.Clickable
+	encodingUTF8Click    widget.Clickable
+	encodingUTF16LEClick widget.Clickable
+	encodingUTF16BEClick widget.Clickable
+	encodingCP437Click   widget.Clickable
+	historyClick         widget.Clickable
+	commandClick         widget.Clickable
+	contentEditor        widget.Editor
+	commandEditor        widget.Editor
+	wrapToggle           widget.Clickable
+	copyToggle           widget.Clickable
+	commandEditOn        bool
+	commandFocus         bool
+	fileEncoding         string
+	encodingMenuOpen     bool
 
-	content         string
-	status          string
-	err             string
-	command         string
-	commandInfinite bool
-	autoRefresh     bool
-	wordSelectRE    *regexp.Regexp
-	wordSelectExpr  string
-	updatedAt       time.Time
-	tabAnimAt       time.Time
-	stream          streamOutputView
-	hex             *hexViewerState
-	historyOpen     bool
+	content             string
+	status              string
+	err                 string
+	command             string
+	detectedEncoding    string
+	detectedEncodingBOM bool
+	detectedLineEnding  string
+	commandInfinite     bool
+	autoRefresh         bool
+	wordSelectRE        *regexp.Regexp
+	wordSelectExpr      string
+	updatedAt           time.Time
+	tabAnimAt           time.Time
+	stream              streamOutputView
+	hex                 *hexViewerState
+	historyOpen         bool
 
 	loading    bool
 	seq        int
 	loadCancel context.CancelFunc
 
-	contentPointerTag fileViewerEventTag
-	rootPointerTag    fileViewerEventTag
-	commandAreaTag    fileViewerEventTag
-	commandAreaPress  map[pointer.ID]struct{}
-	userBrowseUntil   time.Time
-	pendingUpdate     bool
-	pendingContent    string
-	pendingStatus     string
-	pendingErr        string
-	wrapEnabled       bool
-	menuOpen          bool
-	menuPos           image.Point
-	menuRect          image.Rectangle
-	menuOpenedAt      time.Time
-	menuHoverID       string
-	menuPointerTag    fileViewerEventTag
-	scrollCarry       float32
-	scrollbarTrack    image.Rectangle
-	scrollbarThumb    image.Rectangle
-	scrollbarDragging bool
-	scrollbarDragID   pointer.ID
-	scrollbarHover    bool
-	scrollbarVisible  bool
-	scrollbarLines    int
-	scrollbarVisibleN int
+	contentPointerTag  fileViewerEventTag
+	rootPointerTag     fileViewerEventTag
+	commandAreaTag     fileViewerEventTag
+	commandAreaPress   map[pointer.ID]struct{}
+	userBrowseUntil    time.Time
+	pendingUpdate      bool
+	pendingContent     string
+	pendingStatus      string
+	pendingErr         string
+	pendingEncoding    string
+	pendingEncodingBOM bool
+	pendingLineEnding  string
+	wrapEnabled        bool
+	menuOpen           bool
+	menuPos            image.Point
+	menuRect           image.Rectangle
+	menuOpenedAt       time.Time
+	menuHoverID        string
+	menuPointerTag     fileViewerEventTag
+	scrollCarry        float32
+	scrollbarTrack     image.Rectangle
+	scrollbarThumb     image.Rectangle
+	scrollbarDragging  bool
+	scrollbarDragID    pointer.ID
+	scrollbarHover     bool
+	scrollbarVisible   bool
+	scrollbarLines     int
+	scrollbarVisibleN  int
 
-	nextWatchCheck time.Time
-	watchExists    bool
-	watchSize      int64
-	watchModTime   time.Time
-	resultCh       chan fileViewerResult
-	historyClicks  map[string]*widget.Clickable
-	tabAnim        segmentedAnimState
-	menuHoverAnim  segmentedAnimState
+	nextWatchCheck   time.Time
+	watchExists      bool
+	watchSize        int64
+	watchModTime     time.Time
+	resultCh         chan fileViewerResult
+	historyClicks    map[string]*widget.Clickable
+	tabAnim          segmentedAnimState
+	menuHoverAnim    segmentedAnimState
+	encodingBarRect  image.Rectangle
+	encodingMenuRect image.Rectangle
+	encodingMenuAt   time.Time
 }
 
 type fileViewerResult struct {
-	seq     int
-	content string
-	status  string
-	err     string
-	partial bool
-	final   bool
+	seq         int
+	content     string
+	status      string
+	err         string
+	encoding    string
+	encodingBOM bool
+	lineEnding  string
+	partial     bool
+	final       bool
+}
+
+type viewerReadInfo struct {
+	encoding    string
+	encodingBOM bool
+	lineEnding  string
 }
 
 func (st *fileViewerState) openContextMenu(pos image.Point, now time.Time) {
@@ -154,6 +191,16 @@ func (st *fileViewerState) closeContextMenu() {
 	st.menuOpenedAt = time.Time{}
 	st.menuHoverID = ""
 	st.menuHoverAnim = segmentedAnimState{}
+}
+
+func (st *fileViewerState) closeEncodingMenu() {
+	if st == nil {
+		return
+	}
+	st.encodingMenuOpen = false
+	st.encodingBarRect = image.Rectangle{}
+	st.encodingMenuRect = image.Rectangle{}
+	st.encodingMenuAt = time.Time{}
 }
 
 func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
@@ -307,6 +354,7 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 		st.status = "nothing to copy"
 		return false
 	}
+	text = viewerClipboardContent(st, text)
 	gtx.Execute(clipboard.WriteCmd{
 		Type: "application/text",
 		Data: io.NopCloser(strings.NewReader(text)),
@@ -343,13 +391,14 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	}
 
 	st := &fileViewerState{
-		pane:        idx,
-		path:        entry.Path,
-		name:        entry.DisplayName,
-		remote:      remote,
-		status:      "loading...",
-		wrapEnabled: false,
-		resultCh:    make(chan fileViewerResult, 1),
+		pane:         idx,
+		path:         entry.Path,
+		name:         entry.DisplayName,
+		remote:       remote,
+		status:       "loading...",
+		fileEncoding: fm.ViewerFileEncodingAuto,
+		wrapEnabled:  false,
+		resultCh:     make(chan fileViewerResult, 1),
 	}
 	st.mode = "file"
 	st.command = "cat {path}"
@@ -358,6 +407,7 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 		cfg := ui.fmCfg.Viewer
 		st.mode = normalizeViewerMode(cfg.Mode)
 		st.autoRefresh = cfg.CommandAutoRefresh
+		st.fileEncoding = fm.NormalizeViewerFileEncoding(cfg.FileEncoding)
 		if cmd := strings.TrimSpace(cfg.Command); cmd != "" {
 			st.command = cmd
 		}
@@ -404,6 +454,7 @@ func (ui *UI) closeFileViewer() {
 			st.loadCancel()
 			st.loadCancel = nil
 		}
+		st.closeEncodingMenu()
 		if st.remote != nil {
 			st.remote.close()
 			st.remote = nil
@@ -562,12 +613,14 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	}
 	st.mode = normalizeViewerMode(st.mode)
 	st.command = strings.TrimSpace(st.command)
+	st.fileEncoding = fm.NormalizeViewerFileEncoding(st.fileEncoding)
 	if st.command == "" {
 		st.command = "cat {path}"
 	}
 	cfg.Mode = st.mode
 	cfg.Command = st.command
 	cfg.CommandAutoRefresh = st.autoRefresh
+	cfg.FileEncoding = st.fileEncoding
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.commandInfinite = st.mode == "command" && viewerCommandLooksInfinite(st.command)
 	if !st.commandEditOn {
@@ -606,13 +659,16 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 				partial: true,
 			})
 		}
-		content, status, err := readViewerContent(ctx, path, cfg, maxBytes, remote, progress)
+		content, status, err, info := readViewerContent(ctx, path, cfg, maxBytes, remote, progress)
 		res := fileViewerResult{
-			seq:     seq,
-			content: content,
-			status:  status,
-			err:     err,
-			final:   true,
+			seq:         seq,
+			content:     content,
+			status:      status,
+			err:         err,
+			encoding:    info.encoding,
+			encodingBOM: info.encodingBOM,
+			lineEnding:  info.lineEnding,
+			final:       true,
 		}
 		sendViewerResult(ch, res)
 	}()
@@ -658,6 +714,12 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		st.pendingUpdate = false
 		st.err = st.pendingErr
 		st.status = st.pendingStatus
+		st.detectedEncoding = st.pendingEncoding
+		st.detectedEncodingBOM = st.pendingEncodingBOM
+		st.detectedLineEnding = st.pendingLineEnding
+		st.pendingEncoding = ""
+		st.pendingEncodingBOM = false
+		st.pendingLineEnding = ""
 		if st.status == "" {
 			st.status = "ready"
 		}
@@ -704,12 +766,21 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 				st.pendingContent = res.content
 				st.pendingStatus = st.status
 				st.pendingErr = st.err
+				st.pendingEncoding = res.encoding
+				st.pendingEncodingBOM = res.encodingBOM
+				st.pendingLineEnding = res.lineEnding
 				st.status = "update pending"
 				ui.scheduleFileViewerWatch(gtx)
 				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			st.pendingUpdate = false
+			st.pendingEncoding = ""
+			st.pendingEncodingBOM = false
+			st.pendingLineEnding = ""
+			st.detectedEncoding = res.encoding
+			st.detectedEncodingBOM = res.encodingBOM
+			st.detectedLineEnding = res.lineEnding
 			applyFileViewerContentResult(st, res.content)
 			st.markUpdated(gtx.Now)
 			st.captureWatchState()
@@ -1200,6 +1271,7 @@ func (ui *UI) refreshFileViewerNow(now time.Time) {
 	if ui != nil && ui.fmCfg != nil {
 		st.mode = normalizeViewerMode(ui.fmCfg.Viewer.Mode)
 		st.autoRefresh = ui.fmCfg.Viewer.CommandAutoRefresh
+		st.fileEncoding = fm.NormalizeViewerFileEncoding(ui.fmCfg.Viewer.FileEncoding)
 		if st.mode == "command" {
 			st.command = ui.viewerCommandForTarget(st.path, st.remote, ui.fmCfg.Viewer.Command)
 			if st.command == "" {
@@ -1210,6 +1282,7 @@ func (ui *UI) refreshFileViewerNow(now time.Time) {
 	st.commandEditOn = false
 	st.commandFocus = false
 	st.historyOpen = false
+	st.closeEncodingMenu()
 	st.commandInfinite = st.mode == "command" && viewerCommandLooksInfinite(st.command)
 	st.commandEditor.SetText(st.command)
 	st.nextWatchCheck = time.Time{}
@@ -1252,6 +1325,9 @@ func (st *fileViewerState) activeTabKey() string {
 func (st *fileViewerState) setHistoryOpen(open bool, now time.Time) {
 	if st == nil || st.historyOpen == open {
 		return
+	}
+	if open {
+		st.closeEncodingMenu()
 	}
 	prev := st.activeTabKey()
 	st.historyOpen = open
@@ -1324,6 +1400,7 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 	st.commandEditOn = false
 	st.commandFocus = false
 	st.historyOpen = false
+	st.closeEncodingMenu()
 	if nextTab := st.activeTabKey(); nextTab != prevTab {
 		st.tabPrev = prevTab
 		st.tabAnimAt = now
@@ -1376,6 +1453,7 @@ func (ui *UI) startViewerCommandEdit(now time.Time) {
 		return
 	}
 	st.setHistoryOpen(false, now)
+	st.closeEncodingMenu()
 	st.commandEditOn = true
 	st.commandFocus = true
 	st.commandEditor.SetText(st.command)
@@ -1570,18 +1648,42 @@ func (ui *UI) toggleViewerWordWrap() {
 	}
 }
 
-func readViewerContent(ctx context.Context, path string, cfg fm.ViewerConfig, maxBytes int, remote *paneSSHSession, onProgress func(string, string)) (string, string, string) {
+func (ui *UI) setFileViewerEncoding(encoding string, now time.Time) {
+	st := ui.fileViewer
+	if st == nil {
+		return
+	}
+	encoding = fm.NormalizeViewerFileEncoding(encoding)
+	if st.fileEncoding == encoding {
+		st.closeEncodingMenu()
+		return
+	}
+	st.fileEncoding = encoding
+	st.closeEncodingMenu()
+	if ui.fmCfg != nil {
+		ui.fmCfg.Viewer.FileEncoding = encoding
+		if err := ui.saveFMConfig(); err != nil {
+			st.err = err.Error()
+			return
+		}
+	}
+	st.nextWatchCheck = time.Time{}
+	ui.restartFileViewerLoad(now)
+}
+
+func readViewerContent(ctx context.Context, path string, cfg fm.ViewerConfig, maxBytes int, remote *paneSSHSession, onProgress func(string, string)) (string, string, string, viewerReadInfo) {
 	start := time.Now()
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
 	switch mode {
 	case "command":
-		return readViewerCommand(ctx, path, cfg, maxBytes, start, remote, onProgress)
+		content, status, err := readViewerCommand(ctx, path, cfg, maxBytes, start, remote, onProgress)
+		return content, status, err, viewerReadInfo{}
 	default:
-		return readViewerFile(path, maxBytes, start, remote)
+		return readViewerFile(path, cfg.FileEncoding, maxBytes, start, remote)
 	}
 }
 
-func readViewerFile(path string, maxBytes int, started time.Time, remote *paneSSHSession) (string, string, string) {
+func readViewerFile(path, encoding string, maxBytes int, started time.Time, remote *paneSSHSession) (string, string, string, viewerReadInfo) {
 	if maxBytes < 1 {
 		maxBytes = viewerDefaultMaxLoadBytes
 	}
@@ -1595,55 +1697,57 @@ func readViewerFile(path string, maxBytes int, started time.Time, remote *paneSS
 	if remote == nil {
 		info, err := os.Stat(path)
 		if err != nil {
-			return "", "", err.Error()
+			return "", "", err.Error(), viewerReadInfo{}
 		}
 		if info.IsDir() {
-			return "", "", "viewer supports files only"
+			return "", "", "viewer supports files only", viewerReadInfo{}
 		}
 		size = info.Size()
 		if size > int64(maxBytes) {
 			return "", fmt.Sprintf("file: %d bytes", size),
-				fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes)))
+				fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
 		}
 		reader, openErr = os.Open(path)
 	} else {
 		client := remote.sftpClient()
 		if client == nil {
-			return "", "", "sftp session is not connected"
+			return "", "", "sftp session is not connected", viewerReadInfo{}
 		}
 		info, err := client.Stat(path)
 		if err != nil {
-			return "", "", err.Error()
+			return "", "", err.Error(), viewerReadInfo{}
 		}
 		if info.IsDir() {
-			return "", "", "viewer supports files only"
+			return "", "", "viewer supports files only", viewerReadInfo{}
 		}
 		size = info.Size()
 		if size > int64(maxBytes) {
 			return "", fmt.Sprintf("remote file: %d bytes", size),
-				fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes)))
+				fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
 		}
 		reader, openErr = client.Open(path)
 	}
 	if openErr != nil {
-		return "", "", openErr.Error()
+		return "", "", openErr.Error(), viewerReadInfo{}
 	}
 	defer reader.Close()
 
 	data, err := io.ReadAll(io.LimitReader(reader, int64(maxBytes)))
 	if err != nil {
-		return "", "", err.Error()
+		return "", "", err.Error(), viewerReadInfo{}
 	}
-	content := string(bytes.ToValidUTF8(data, []byte("\xef\xbf\xbd")))
+	content, info := decodeViewerText(path, data, encoding)
+	info.lineEnding = detectViewerLineEnding(content)
+	content = normalizeViewerLineEndings(content)
 	content = sanitizeViewerContent(content)
 	prefix := "file"
 	if remote != nil {
 		prefix = "remote file"
 	}
 	if size >= 0 {
-		return content, fmt.Sprintf("%s: %d bytes", prefix, size), ""
+		return content, fmt.Sprintf("%s: %d bytes", prefix, size), "", info
 	}
-	return content, fmt.Sprintf("%s: %d bytes", prefix, len(data)), ""
+	return content, fmt.Sprintf("%s: %d bytes", prefix, len(data)), "", info
 }
 
 func readViewerCommand(ctx context.Context, path string, cfg fm.ViewerConfig, maxBytes int, started time.Time, remote *paneSSHSession, onProgress func(string, string)) (string, string, string) {
@@ -2007,6 +2111,429 @@ func collapseQuotedViewerPlaceholder(cmdline, placeholder string) string {
 	return cmdline
 }
 
+type viewerEncodingDecision struct {
+	encoding string
+	withBOM  bool
+}
+
+func decodeViewerText(path string, data []byte, encoding string) (string, viewerReadInfo) {
+	decision := chooseViewerEncoding(path, data, encoding)
+	info := viewerReadInfo{
+		encoding:    decision.encoding,
+		encodingBOM: decision.withBOM,
+	}
+	switch decision.encoding {
+	case fm.ViewerFileEncodingUTF16LE:
+		return decodeViewerUTF16(data, binary.LittleEndian, []byte{0xFF, 0xFE}, decision.withBOM), info
+	case fm.ViewerFileEncodingUTF16BE:
+		return decodeViewerUTF16(data, binary.BigEndian, []byte{0xFE, 0xFF}, decision.withBOM), info
+	case fm.ViewerFileEncodingCP437:
+		return decodeViewerCP437(data), info
+	default:
+		if decision.withBOM {
+			data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+		}
+		return string(bytes.ToValidUTF8(data, []byte("\xef\xbf\xbd"))), info
+	}
+}
+
+func chooseViewerEncoding(path string, data []byte, requested string) viewerEncodingDecision {
+	requested = fm.NormalizeViewerFileEncoding(requested)
+	bomEncoding, hasBOM := viewerEncodingFromBOM(data)
+	if hasBOM {
+		return viewerEncodingDecision{
+			encoding: bomEncoding,
+			withBOM:  true,
+		}
+	}
+	if requested != fm.ViewerFileEncodingAuto {
+		return viewerEncodingDecision{
+			encoding: requested,
+		}
+	}
+	if heuristic := detectViewerUTF16Encoding(data); heuristic != "" {
+		return viewerEncodingDecision{encoding: heuristic}
+	}
+	if legacy := detectViewerLegacyEncoding(data); legacy != "" {
+		return viewerEncodingDecision{encoding: legacy}
+	}
+	return viewerEncodingDecision{encoding: fm.ViewerFileEncodingUTF8}
+}
+
+func viewerEncodingFromBOM(data []byte) (string, bool) {
+	switch {
+	case bytes.HasPrefix(data, []byte{0xEF, 0xBB, 0xBF}):
+		return fm.ViewerFileEncodingUTF8, true
+	case bytes.HasPrefix(data, []byte{0xFF, 0xFE}):
+		return fm.ViewerFileEncodingUTF16LE, true
+	case bytes.HasPrefix(data, []byte{0xFE, 0xFF}):
+		return fm.ViewerFileEncodingUTF16BE, true
+	default:
+		return "", false
+	}
+}
+
+func detectViewerUTF16Encoding(data []byte) string {
+	if prefix := detectViewerUTF16Prefix(data); prefix != "" {
+		return prefix
+	}
+	sample := len(data)
+	if sample > 1024 {
+		sample = 1024
+	}
+	sample -= sample % 2
+	if sample < 4 {
+		return ""
+	}
+	data = data[:sample]
+	leScore := scoreViewerUTF16Candidate(data, binary.LittleEndian)
+	beScore := scoreViewerUTF16Candidate(data, binary.BigEndian)
+	switch {
+	case leScore >= 20 && leScore >= beScore+4:
+		return fm.ViewerFileEncodingUTF16LE
+	case beScore >= 20 && beScore >= leScore+4:
+		return fm.ViewerFileEncodingUTF16BE
+	default:
+		return ""
+	}
+}
+
+func detectViewerUTF16Prefix(data []byte) string {
+	sample := len(data)
+	if sample > 8 {
+		sample = 8
+	}
+	sample -= sample % 2
+	if sample < 4 {
+		return ""
+	}
+	data = data[:sample]
+	if viewerUTF16PrefixMatches(data, binary.LittleEndian) {
+		return fm.ViewerFileEncodingUTF16LE
+	}
+	if viewerUTF16PrefixMatches(data, binary.BigEndian) {
+		return fm.ViewerFileEncodingUTF16BE
+	}
+	return ""
+}
+
+func viewerUTF16PrefixMatches(data []byte, order binary.ByteOrder) bool {
+	pairs := len(data) / 2
+	expectedZero := 0
+	otherZero := 0
+	textBytes := 0
+	for i := 0; i < len(data); i += 2 {
+		first := data[i]
+		second := data[i+1]
+		text := first
+		zero := second
+		other := first
+		if order == binary.BigEndian {
+			text = second
+			zero = first
+			other = second
+		}
+		if zero == 0 {
+			expectedZero++
+		}
+		if other == 0 {
+			otherZero++
+		}
+		if viewerLikelyUTF16TextByte(text) {
+			textBytes++
+		}
+	}
+	return expectedZero >= max(2, pairs/2) && otherZero == 0 && textBytes >= max(2, pairs/2)
+}
+
+func scoreViewerUTF16Candidate(data []byte, order binary.ByteOrder) int {
+	if len(data) < 8 || len(data)%2 != 0 {
+		return 0
+	}
+	pairs := len(data) / 2
+	expectedZero := 0
+	otherZero := 0
+	textBytes := 0
+	for i := 0; i < len(data); i += 2 {
+		lo := data[i]
+		hi := data[i+1]
+		text := lo
+		zero := hi
+		other := lo
+		if order == binary.BigEndian {
+			text = hi
+			zero = lo
+			other = hi
+		}
+		if zero == 0 {
+			expectedZero++
+		}
+		if other == 0 {
+			otherZero++
+		}
+		if viewerLikelyUTF16TextByte(text) {
+			textBytes++
+		}
+	}
+	textRunes, suspicious, decodeErrors := viewerUTF16DecodeStats(data, order)
+	score := expectedZero*10 + textBytes*3 + textRunes*5 - otherZero*14 - suspicious*10 - decodeErrors*16
+	minExpectedZero := pairs / 4
+	if minExpectedZero < 2 {
+		minExpectedZero = 2
+	}
+	if expectedZero < minExpectedZero {
+		return 0
+	}
+	if expectedZero < otherZero+2 {
+		return 0
+	}
+	maxOtherZero := pairs / 5
+	if maxOtherZero < 1 {
+		maxOtherZero = 1
+	}
+	if otherZero > maxOtherZero {
+		return 0
+	}
+	minTextRunes := pairs / 2
+	if minTextRunes < 2 {
+		minTextRunes = 2
+	}
+	if textRunes < minTextRunes {
+		return 0
+	}
+	minTextBytes := pairs / 4
+	if minTextBytes < 2 {
+		minTextBytes = 2
+	}
+	if textBytes < minTextBytes {
+		return 0
+	}
+	if decodeErrors > max(1, pairs/8) {
+		return 0
+	}
+	if suspicious > pairs/3+1 {
+		return 0
+	}
+	return score
+}
+
+func viewerUTF16DecodeStats(data []byte, order binary.ByteOrder) (int, int, int) {
+	if len(data)%2 != 0 {
+		data = data[:len(data)-1]
+	}
+	units := make([]uint16, 0, len(data)/2)
+	for i := 0; i+1 < len(data); i += 2 {
+		units = append(units, order.Uint16(data[i:i+2]))
+	}
+	textRunes := 0
+	suspicious := 0
+	decodeErrors := 0
+	for i := 0; i < len(units); i++ {
+		unit := units[i]
+		switch {
+		case unit >= 0xD800 && unit <= 0xDBFF:
+			if i+1 >= len(units) {
+				decodeErrors++
+				suspicious++
+				continue
+			}
+			next := units[i+1]
+			if next < 0xDC00 || next > 0xDFFF {
+				decodeErrors++
+				suspicious++
+				continue
+			}
+			r := utf16.DecodeRune(rune(unit), rune(next))
+			if viewerLikelyUTF16TextRune(r) {
+				textRunes++
+			} else {
+				suspicious++
+			}
+			i++
+		case unit >= 0xDC00 && unit <= 0xDFFF:
+			decodeErrors++
+			suspicious++
+		default:
+			r := rune(unit)
+			switch {
+			case viewerLikelyUTF16TextRune(r):
+				textRunes++
+			case r == 0:
+				suspicious += 2
+			default:
+				suspicious++
+			}
+		}
+	}
+	return textRunes, suspicious, decodeErrors
+}
+
+func viewerLikelyUTF16TextByte(b byte) bool {
+	switch b {
+	case 0, 0x7F:
+		return false
+	case '\t', '\n', '\r':
+		return true
+	default:
+		return b >= 0x20
+	}
+}
+
+func viewerLikelyUTF16TextRune(r rune) bool {
+	switch {
+	case r == '\t' || r == '\n' || r == '\r':
+		return true
+	case r == 0 || r == utf8.RuneError:
+		return false
+	case unicode.IsLetter(r), unicode.IsNumber(r), unicode.IsPunct(r), unicode.IsSpace(r), unicode.IsMark(r):
+		return true
+	case unicode.IsSymbol(r):
+		switch r {
+		case '$', '+', '<', '=', '>', '^', '`', '|', '~', '£', '¥', '§', '©', '®', '°', '±', 'µ', '¶', '×', '÷', '€', '™':
+			return true
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func detectViewerLegacyEncoding(data []byte) string {
+	sample := data
+	if len(sample) > 4096 {
+		sample = sample[:4096]
+	}
+	if len(sample) == 0 {
+		return ""
+	}
+	if bytes.IndexByte(sample, 0) >= 0 || utf8.Valid(sample) {
+		return ""
+	}
+	highBytes := 0
+	cp437Hints := 0
+	for _, b := range sample {
+		if b < 0x80 {
+			continue
+		}
+		highBytes++
+		if viewerLikelyCP437Byte(b) {
+			cp437Hints++
+		}
+	}
+	if highBytes < 4 || cp437Hints < 4 {
+		return ""
+	}
+	if cp437Hints*4 < highBytes*3 {
+		return ""
+	}
+	decoded := decodeViewerCP437(sample)
+	artScore := viewerCP437ArtScore(decoded)
+	if artScore < 4 {
+		return ""
+	}
+	if viewerSuspiciousTextRunes(decoded) > max(1, len([]rune(decoded))/12) {
+		return ""
+	}
+	if artScore*2 >= cp437Hints {
+		return fm.ViewerFileEncodingCP437
+	}
+	return ""
+}
+
+func viewerLikelyCP437Byte(b byte) bool {
+	switch {
+	case b >= 0xB0 && b <= 0xDF:
+		return true
+	case b >= 0xF0:
+		return true
+	}
+	switch b {
+	case 0x87, 0x8E, 0x91, 0x92, 0x93, 0x9A, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xAD:
+		return true
+	default:
+		return false
+	}
+}
+
+func viewerCP437ArtScore(text string) int {
+	score := 0
+	for _, r := range text {
+		switch {
+		case r >= 0x2500 && r <= 0x259F:
+			score++
+		case r == '²' || r == '°' || r == 'ç' || r == 'Ç' || r == '¡' || r == '¬':
+			score++
+		}
+	}
+	return score
+}
+
+func viewerSuspiciousTextRunes(text string) int {
+	suspicious := 0
+	for _, r := range text {
+		switch {
+		case r == '\t' || r == '\n' || r == '\r':
+			continue
+		case r == utf8.RuneError || r == 0:
+			suspicious++
+		case unicode.IsControl(r):
+			suspicious++
+		}
+	}
+	return suspicious
+}
+
+func decodeViewerCP437(data []byte) string {
+	out, err := charmap.CodePage437.NewDecoder().Bytes(data)
+	if err != nil {
+		return string(bytes.ToValidUTF8(data, []byte("\xef\xbf\xbd")))
+	}
+	return string(out)
+}
+
+func decodeViewerUTF16(data []byte, order binary.ByteOrder, bom []byte, trimBOM bool) string {
+	if trimBOM {
+		data = bytes.TrimPrefix(data, bom)
+	}
+	if len(data) == 0 {
+		return ""
+	}
+	units := make([]uint16, 0, (len(data)+1)/2)
+	for i := 0; i+1 < len(data); i += 2 {
+		units = append(units, order.Uint16(data[i:i+2]))
+	}
+	runes := utf16.Decode(units)
+	if len(data)%2 != 0 {
+		runes = append(runes, unicode.ReplacementChar)
+	}
+	return string(runes)
+}
+
+func detectViewerLineEnding(raw string) string {
+	if raw == "" {
+		return viewerLineEndingNone
+	}
+	hasCRLF := strings.Contains(raw, "\r\n")
+	raw = strings.ReplaceAll(raw, "\r\n", "")
+	hasLF := strings.Contains(raw, "\n")
+	hasCR := strings.Contains(raw, "\r")
+	switch {
+	case hasCRLF && !hasLF && !hasCR:
+		return viewerLineEndingCRLF
+	case !hasCRLF && hasLF && !hasCR:
+		return viewerLineEndingLF
+	case !hasCRLF && !hasLF && !hasCR:
+		return viewerLineEndingNone
+	default:
+		return viewerLineEndingMixed
+	}
+}
+
+func normalizeViewerLineEndings(raw string) string {
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	return strings.ReplaceAll(raw, "\r", "\n")
+}
+
 func shellQuote(raw string) string {
 	if raw == "" {
 		return "''"
@@ -2046,6 +2573,16 @@ func sanitizeViewerContent(raw string) string {
 		}
 	}
 	return b.String()
+}
+
+func viewerClipboardContent(st *fileViewerState, text string) string {
+	if st == nil || text == "" || st.mode != "file" {
+		return text
+	}
+	if st.detectedLineEnding == viewerLineEndingCRLF {
+		return strings.ReplaceAll(text, "\n", "\r\n")
+	}
+	return text
 }
 
 func appendEscapedRune(b *strings.Builder, r rune) {
