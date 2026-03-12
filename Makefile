@@ -155,8 +155,11 @@ build-windows: | $(DIST_DIR)
 			-e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
 			-e 's/@HEXONE_FILE_VERSION_COMMAS@/$(APP_FILE_VERSION_COMMAS)/g' \
 			"$(WINDOWS_RC_TEMPLATE)" > "$(WINDOWS_RC_RENDERED)"; \
-		"$$rc_compiler" -i "$(WINDOWS_RC_RENDERED)" -o "$(WINDOWS_SYSO_RENDERED)" -O coff; \
-		cp "$(WINDOWS_SYSO_RENDERED)" "$(WINDOWS_SYSO)"; \
+		if "$$rc_compiler" -i "$(WINDOWS_RC_RENDERED)" -o "$(WINDOWS_SYSO_RENDERED)" -O coff; then \
+			cp "$(WINDOWS_SYSO_RENDERED)" "$(WINDOWS_SYSO)"; \
+		else \
+			echo "warning: $$rc_compiler failed; using existing Windows resource without refreshed version metadata."; \
+		fi; \
 	else \
 		echo "warning: no windres found; using existing Windows resource without refreshed version metadata."; \
 	fi; \
