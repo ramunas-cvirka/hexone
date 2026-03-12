@@ -26,6 +26,8 @@ Hexone is a keyboard-first desktop file manager with a built-in text/hex/command
 
 Use the packages from the Releases page.
 
+macOS note: if the first launch gets blocked and macOS suggests moving Hexone to Trash, do not do that. Open `System Settings -> Privacy & Security`, scroll down, and click `Open Anyway` for Hexone. A quicker one-time workaround is usually to Control-click the app in Finder and choose `Open`.
+
 If you want to build it yourself instead:
 
 Requirements:
