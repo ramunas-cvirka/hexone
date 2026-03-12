@@ -40,6 +40,11 @@ MACOS_RESOURCES := $(MACOS_CONTENTS)/Resources
 MACOS_PLIST_TEMPLATE := packaging/macos/Info.plist
 MACOS_DMG_STAGE := $(DIST_DIR)/$(APP)-macos-dmg-$(MACOS_ARCH)
 MACOS_DMG := $(DIST_DIR)/$(APP)_macos_$(MACOS_ARCH).dmg
+MACOS_DMG_RW := $(DIST_DIR)/$(APP)_macos_$(MACOS_ARCH).rw.dmg
+MACOS_DMG_BACKGROUND_DIR := $(MACOS_DMG_STAGE)/.background
+MACOS_DMG_BACKGROUND := $(MACOS_DMG_BACKGROUND_DIR)/dmg-background.png
+MACOS_DMG_BG_SCRIPT := packaging/macos/render_dmg_background.swift
+MACOS_DMG_LAYOUT_SCRIPT := packaging/macos/layout_dmg.scpt
 MACOS_CODESIGN_IDENTITY ?= -
 MACOS_NOTARY_PROFILE ?=
 
@@ -199,11 +204,36 @@ package-linux: build-linux
 
 package-macos: build-macos
 	rm -f "$(MACOS_DMG)"
+	rm -f "$(MACOS_DMG_RW)"
 	rm -rf "$(MACOS_DMG_STAGE)"
-	mkdir -p "$(MACOS_DMG_STAGE)"
+	mkdir -p "$(MACOS_DMG_BACKGROUND_DIR)"
 	ditto "$(MACOS_APP)" "$(MACOS_DMG_STAGE)/$(APP).app"
 	ln -s /Applications "$(MACOS_DMG_STAGE)/Applications"
-	hdiutil create -volname "$(APP)" -srcfolder "$(MACOS_DMG_STAGE)" -ov -format UDZO "$(MACOS_DMG)"
+	swift "$(MACOS_DMG_BG_SCRIPT)" "$(MACOS_DMG_BACKGROUND)" "$(APP)"
+	@set -e; \
+		mount_point=""; \
+		cleanup() { \
+			if [ -n "$$mount_point" ]; then \
+				hdiutil detach "$$mount_point" >/dev/null 2>&1 || true; \
+			fi; \
+		}; \
+		trap cleanup EXIT INT TERM; \
+		if [ -d "/Volumes/$(APP)" ]; then \
+			hdiutil detach "/Volumes/$(APP)" >/dev/null 2>&1 || true; \
+		fi; \
+		hdiutil create -fs HFS+ -volname "$(APP)" -srcfolder "$(MACOS_DMG_STAGE)" -ov -format UDRW "$(MACOS_DMG_RW)"; \
+		attach_out=$$(hdiutil attach -readwrite -noverify -noautoopen "$(MACOS_DMG_RW)"); \
+		mount_point=$$(printf '%s\n' "$$attach_out" | awk -F '\t' '/\/Volumes\// {print $$NF; exit}'); \
+		if [ -z "$$mount_point" ]; then \
+			echo "failed to mount writable macOS dmg"; \
+			exit 1; \
+		fi; \
+		osascript "$(MACOS_DMG_LAYOUT_SCRIPT)" "$(APP)" "$$mount_point" "$(APP)"; \
+		sync; \
+		hdiutil detach "$$mount_point"; \
+		mount_point=""; \
+		hdiutil convert "$(MACOS_DMG_RW)" -format UDZO -imagekey zlib-level=9 -ov -o "$(MACOS_DMG)"
+	rm -f "$(MACOS_DMG_RW)"
 	@if [ "$(MACOS_DMG_SIGN)" = "true" ]; then \
 		codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" "$(MACOS_DMG)"; \
 	fi
