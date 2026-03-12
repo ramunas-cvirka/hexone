@@ -26,7 +26,7 @@ Hexone is a keyboard-first desktop file manager with a built-in text/hex/command
 
 Use the packages from the Releases page.
 
-macOS note: if the first launch gets blocked and macOS suggests moving Hexone to Trash, do not do that. Open `System Settings -> Privacy & Security`, scroll down, and click `Open Anyway` for Hexone. A quicker one-time workaround is usually to Control-click the app in Finder and choose `Open`.
+macOS note: if the first launch gets blocked and macOS suggests moving Hexone to Trash, do not do that. First try opening Hexone once, then open `System Settings -> Privacy & Security`, scroll down to `Security`, and click `Open Anyway` for Hexone. On current macOS versions that button is typically available for about an hour after the blocked launch attempt. The reason this workaround is needed is that avoiding that warning for outside-the-App-Store distribution generally means paying for Apple Developer Program membership, which Apple currently lists at `US$99/year`, and that is not a practical fit for this free project.
 
 If you want to build it yourself instead:
 
