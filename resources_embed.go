@@ -10,9 +10,8 @@ const (
 	EmbeddedConsolasRegularPath = "embedded:consola.ttf"
 	EmbeddedConsolasBoldPath    = "embedded:consolab.ttf"
 
-	BundledFontFamilyFiraCode  = "Fira Code"
-	BundledFontFamilyConsolas  = "Consolas"
-	BundledFontFamilyBlockZone = "BlockZone"
+	BundledFontFamilyFiraCode = "Fira Code"
+	BundledFontFamilyConsolas = "Consolas"
 )
 
 type BundledFontFamily struct {

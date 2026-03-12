@@ -10,4 +10,5 @@
 /.vscode/
 /.vs/
 /.fleet/
+/third_party/gioui/
 *.code-workspace

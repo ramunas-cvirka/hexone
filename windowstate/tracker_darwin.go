@@ -376,10 +376,10 @@ func preparePlatformWindowRestore(session *fm.SessionState) {
 	}
 	enablePos := C.int(0)
 	var x, y float64
-	if session.Window.HasPosition && !sessionWindowPositionLooksHidden(session.Window.X, session.Window.Y) {
+	if restoreX, restoreY, ok := sessionWindowRestorePosition(session); ok {
 		enablePos = C.int(1)
-		x = float64(float32(session.Window.X) / pxPerDp)
-		y = float64(float32(session.Window.Y) / pxPerDp)
+		x = float64(float32(restoreX) / pxPerDp)
+		y = float64(float32(restoreY) / pxPerDp)
 	}
 	enableSize := C.int(0)
 	var width, height float64

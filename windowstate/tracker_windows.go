@@ -23,11 +23,21 @@ type Tracker struct {
 	haveHWND bool
 
 	titleBarApplied bool
+
+	startupMode            app.WindowMode
+	startupX               int
+	startupY               int
+	startupHasPosition     bool
+	startupPositionApplied bool
 }
 
 func NewTracker(session *fm.SessionState) *Tracker {
-	_ = session
-	return &Tracker{}
+	t := &Tracker{}
+	if session != nil {
+		t.startupMode = sessionModeToWindowMode(session.Window.Mode)
+		t.startupX, t.startupY, t.startupHasPosition = sessionWindowRestorePosition(session)
+	}
+	return t
 }
 
 func (t *Tracker) ObserveView(v app.ViewEvent) {
@@ -40,12 +50,14 @@ func (t *Tracker) ObserveView(v app.ViewEvent) {
 	}
 	if t.hwnd != ev.HWND {
 		t.titleBarApplied = false
+		t.startupPositionApplied = false
 	}
 	t.hwnd = ev.HWND
 	t.haveHWND = true
 	if !t.titleBarApplied {
 		t.titleBarApplied = winSetImmersiveDarkMode(t.hwnd, winAppsUseDarkTheme())
 	}
+	t.applyStartupPosition()
 }
 
 func (t *Tracker) ObserveConfig(cfg app.Config) {
@@ -54,6 +66,7 @@ func (t *Tracker) ObserveConfig(cfg app.Config) {
 	}
 	t.cfg = cfg
 	t.haveCfg = true
+	t.applyStartupPosition()
 }
 
 func (t *Tracker) ObserveFrame(metric unit.Metric) {
@@ -72,11 +85,6 @@ func (t *Tracker) ApplyToSession(s *fm.SessionState) {
 		s.Window.Width = t.cfg.Size.X
 		s.Window.Height = t.cfg.Size.Y
 		s.Window.Mode = windowModeToSessionMode(t.cfg.Mode)
-		s.Window.HasPosition = t.cfg.HasPosition
-		if t.cfg.HasPosition {
-			s.Window.X = t.cfg.Position.X
-			s.Window.Y = t.cfg.Position.Y
-		}
 	}
 	if t.haveMetric && t.metric.PxPerDp > 0 {
 		s.Window.PxPerDp = t.metric.PxPerDp
@@ -122,6 +130,30 @@ func (t *Tracker) ApplyToSession(s *fm.SessionState) {
 	}
 }
 
+func (t *Tracker) applyStartupPosition() {
+	if t == nil || t.startupPositionApplied || !t.startupHasPosition || !t.haveHWND || !t.haveCfg {
+		return
+	}
+
+	mode := t.cfg.Mode
+	if mode == app.Windowed && t.startupMode != app.Windowed {
+		mode = t.startupMode
+	}
+
+	var ok bool
+	switch mode {
+	case app.Maximized, app.Minimized:
+		ok = winSetStartupPlacement(t.hwnd, t.startupX, t.startupY)
+	case app.Fullscreen:
+		return
+	default:
+		ok = winSetWindowPosNoSize(t.hwnd, t.startupX, t.startupY)
+	}
+	if ok {
+		t.startupPositionApplied = true
+	}
+}
+
 type winRect struct {
 	Left   int32
 	Top    int32
@@ -146,7 +178,15 @@ type winWindowPlacement struct {
 var (
 	user32ProcGetWindowRect      = windows.NewLazySystemDLL("user32.dll").NewProc("GetWindowRect")
 	user32ProcGetWindowPlacement = windows.NewLazySystemDLL("user32.dll").NewProc("GetWindowPlacement")
+	user32ProcSetWindowPlacement = windows.NewLazySystemDLL("user32.dll").NewProc("SetWindowPlacement")
+	user32ProcSetWindowPos       = windows.NewLazySystemDLL("user32.dll").NewProc("SetWindowPos")
 	dwmapiProcSetWindowAttribute = windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
+)
+
+const (
+	winSWPNoSize     = 0x0001
+	winSWPNoZOrder   = 0x0004
+	winSWPNoActivate = 0x0010
 )
 
 func winGetWindowRect(hwnd uintptr) (winRect, bool) {
@@ -161,6 +201,49 @@ func winGetWindowPlacement(hwnd uintptr) (winWindowPlacement, bool) {
 	}
 	ret, _, _ := user32ProcGetWindowPlacement.Call(hwnd, uintptr(unsafe.Pointer(&wp)))
 	return wp, ret != 0
+}
+
+func winSetWindowPlacement(hwnd uintptr, wp *winWindowPlacement) bool {
+	if hwnd == 0 || wp == nil {
+		return false
+	}
+	wp.Length = uint32(unsafe.Sizeof(winWindowPlacement{}))
+	ret, _, _ := user32ProcSetWindowPlacement.Call(hwnd, uintptr(unsafe.Pointer(wp)))
+	return ret != 0
+}
+
+func winSetWindowPosNoSize(hwnd uintptr, x, y int) bool {
+	if hwnd == 0 {
+		return false
+	}
+	ret, _, _ := user32ProcSetWindowPos.Call(
+		hwnd,
+		0,
+		uintptr(int32(x)),
+		uintptr(int32(y)),
+		0,
+		0,
+		uintptr(winSWPNoSize|winSWPNoZOrder|winSWPNoActivate),
+	)
+	return ret != 0
+}
+
+func winSetStartupPlacement(hwnd uintptr, x, y int) bool {
+	wp, ok := winGetWindowPlacement(hwnd)
+	if !ok {
+		return false
+	}
+	if width, height := wp.RcNormalPosition.Right-wp.RcNormalPosition.Left, wp.RcNormalPosition.Bottom-wp.RcNormalPosition.Top; width <= 0 || height <= 0 {
+		if r, ok := winGetWindowRect(hwnd); ok {
+			wp.RcNormalPosition.Left = r.Left
+			wp.RcNormalPosition.Top = r.Top
+			wp.RcNormalPosition.Right = r.Right
+			wp.RcNormalPosition.Bottom = r.Bottom
+		}
+	}
+	wp.RcNormalPosition.Left, wp.RcNormalPosition.Top, wp.RcNormalPosition.Right, wp.RcNormalPosition.Bottom =
+		moveWindowRectOrigin(wp.RcNormalPosition.Left, wp.RcNormalPosition.Top, wp.RcNormalPosition.Right, wp.RcNormalPosition.Bottom, x, y)
+	return winSetWindowPlacement(hwnd, &wp)
 }
 
 func winSetImmersiveDarkMode(hwnd uintptr, enabled bool) bool {

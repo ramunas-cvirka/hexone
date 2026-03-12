@@ -5520,7 +5520,7 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			scrollbarStyle := settingsScrollbarStyle(th, &st.configScrollbar)
 			editorDims := layout.Dimensions{}
-			metrics := widget.EditorScrollMetrics{}
+			metrics := editorScrollMetrics{}
 			scrollable := false
 			dims := layout.Stack{Alignment: layout.E}.Layout(gtx,
 				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -5532,7 +5532,7 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 					editorDims = ui.layoutEditorWithContextMenu(th, gtx, "settings-config", &st.configEdit, true, func(gtx layout.Context) layout.Dimensions {
 						return layoutNeutralEditorBox(gtx, gtx.Focused(&st.configEdit), true, ed.Layout)
 					})
-					metrics, scrollable = st.configEdit.VerticalScrollMetrics()
+					metrics, scrollable = editorVerticalScrollMetrics(&st.configEdit)
 					return editorDims
 				}),
 				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -5560,7 +5560,7 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 			)
 			if scrollable {
 				if delta := st.configScrollbar.ScrollDistance(); delta != 0 {
-					st.configEdit.ScrollToVerticalOffset(metrics.Offset + int(delta*float32(metrics.Content)))
+					editorScrollToVerticalOffset(&st.configEdit, metrics.Offset+int(delta*float32(metrics.Content)))
 					gtx.Execute(op.InvalidateCmd{})
 				}
 			}

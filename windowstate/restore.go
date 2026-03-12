@@ -34,9 +34,7 @@ func windowOptionsForSession(session *fm.SessionState) []app.Option {
 	if session.Window.Width > 0 && session.Window.Height > 0 {
 		opts = append(opts, app.Size(pxToDp(session.Window.Width), pxToDp(session.Window.Height)))
 	}
-	if session.Window.HasPosition && !sessionWindowPositionLooksHidden(session.Window.X, session.Window.Y) {
-		opts = append(opts, app.Position(pxToDp(session.Window.X), pxToDp(session.Window.Y)))
-	}
+	// Upstream Gio no longer exposes a public window-position option.
 	switch sessionModeToWindowMode(session.Window.Mode) {
 	case app.Maximized:
 		opts = append(opts, app.Maximized.Option())
@@ -48,6 +46,32 @@ func windowOptionsForSession(session *fm.SessionState) []app.Option {
 		// Keep windowed by default.
 	}
 	return opts
+}
+
+func sessionWindowRestorePosition(session *fm.SessionState) (x, y int, ok bool) {
+	if session == nil || !session.Window.HasPosition {
+		return 0, 0, false
+	}
+	if sessionWindowPositionLooksHidden(session.Window.X, session.Window.Y) {
+		return 0, 0, false
+	}
+	return session.Window.X, session.Window.Y, true
+}
+
+func moveWindowRectOrigin(left, top, right, bottom int32, x, y int) (int32, int32, int32, int32) {
+	width := right - left
+	height := bottom - top
+	if width < 0 {
+		width = 0
+	}
+	if height < 0 {
+		height = 0
+	}
+	left = int32(x)
+	top = int32(y)
+	right = left + width
+	bottom = top + height
+	return left, top, right, bottom
 }
 
 // Windows reports minimized/off-screen windows at approximately (-32000, -32000).

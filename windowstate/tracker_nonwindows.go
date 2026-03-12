@@ -47,11 +47,9 @@ func (t *Tracker) ApplyToSession(s *fm.SessionState) {
 	s.Window.Width = t.cfg.Size.X
 	s.Window.Height = t.cfg.Size.Y
 	s.Window.Mode = windowModeToSessionMode(t.cfg.Mode)
-	s.Window.HasPosition = t.cfg.HasPosition
-	if t.cfg.HasPosition {
-		s.Window.X = t.cfg.Position.X
-		s.Window.Y = t.cfg.Position.Y
-	}
+	s.Window.HasPosition = false
+	s.Window.X = 0
+	s.Window.Y = 0
 	if t.haveMetric && t.metric.PxPerDp > 0 {
 		s.Window.PxPerDp = t.metric.PxPerDp
 	}

@@ -410,7 +410,7 @@ func (c *Config) normalize() {
 		c.Sort.DefaultKey = "name"
 	}
 
-	if c.General.Typeface == "" || c.General.Typeface == resources.BundledFontFamilyBlockZone || !resources.IsBundledFontFamily(c.General.Typeface) {
+	if c.General.Typeface == "" || !resources.IsBundledFontFamily(c.General.Typeface) {
 		c.General.Typeface = resources.BundledFontFamilyFiraCode
 	}
 	if c.General.FontSizeSp <= 0 {
@@ -418,9 +418,6 @@ func (c *Config) normalize() {
 	}
 	if c.Viewer.Typeface == "" {
 		c.Viewer.Typeface = c.General.Typeface
-	}
-	if c.Viewer.Typeface == resources.BundledFontFamilyBlockZone {
-		c.Viewer.Typeface = resources.BundledFontFamilyFiraCode
 	}
 	if c.Viewer.Typeface != c.General.Typeface && !resources.IsBundledFontFamily(c.Viewer.Typeface) {
 		c.Viewer.Typeface = c.General.Typeface

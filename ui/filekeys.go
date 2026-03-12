@@ -11,6 +11,8 @@ import (
 type fileAction uint8
 
 const (
+	keyNameInsert key.Name = "Insert"
+
 	fileActionFocusNextPane fileAction = iota
 	fileActionFocusPrevPane
 	fileActionMoveUp
@@ -186,7 +188,7 @@ func fileKeyName(part string) (key.Name, bool) {
 	case "enter", "return":
 		return key.NameEnter, true
 	case "insert", "ins":
-		return key.NameInsert, true
+		return keyNameInsert, true
 	case "tab":
 		return key.NameTab, true
 	case "f1":

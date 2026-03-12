@@ -27,7 +27,7 @@ func TestSessionWindowPositionLooksHidden(t *testing.T) {
 	}
 }
 
-func TestWindowOptionsForSessionIncludesPositionForMaximized(t *testing.T) {
+func TestWindowOptionsForSessionRestoresSizeAndMode(t *testing.T) {
 	session := fm.DefaultSession()
 	session.Window.Width = 1200
 	session.Window.Height = 800
@@ -42,26 +42,23 @@ func TestWindowOptionsForSessionIncludesPositionForMaximized(t *testing.T) {
 		opt(unit.Metric{PxPerDp: 1, PxPerSp: 1}, &cfg)
 	}
 
-	if !cfg.HasPosition {
-		t.Fatal("expected restored options to preserve window position")
+	if got, want := cfg.Size.X, 1200; got != want {
+		t.Fatalf("cfg.Size.X=%d want %d", got, want)
 	}
-	if got, want := cfg.Position.X, -500; got != want {
-		t.Fatalf("cfg.Position.X=%d want %d", got, want)
-	}
-	if got, want := cfg.Position.Y, 120; got != want {
-		t.Fatalf("cfg.Position.Y=%d want %d", got, want)
+	if got, want := cfg.Size.Y, 800; got != want {
+		t.Fatalf("cfg.Size.Y=%d want %d", got, want)
 	}
 	if got, want := cfg.Mode, app.Maximized; got != want {
 		t.Fatalf("cfg.Mode=%v want %v", got, want)
 	}
 }
 
-func TestWindowOptionsForSessionSkipsHiddenPosition(t *testing.T) {
+func TestWindowOptionsForSessionIgnoresSavedPosition(t *testing.T) {
 	session := fm.DefaultSession()
 	session.Window.Width = 1200
 	session.Window.Height = 800
-	session.Window.X = -32000
-	session.Window.Y = -32000
+	session.Window.X = 320
+	session.Window.Y = 240
 	session.Window.HasPosition = true
 	session.Window.Mode = "windowed"
 
@@ -70,7 +67,46 @@ func TestWindowOptionsForSessionSkipsHiddenPosition(t *testing.T) {
 		opt(unit.Metric{PxPerDp: 1, PxPerSp: 1}, &cfg)
 	}
 
-	if cfg.HasPosition {
-		t.Fatal("hidden restore position should be ignored")
+	if got, want := cfg.Size.X, 1200; got != want {
+		t.Fatalf("cfg.Size.X=%d want %d", got, want)
+	}
+	if got, want := cfg.Size.Y, 800; got != want {
+		t.Fatalf("cfg.Size.Y=%d want %d", got, want)
+	}
+}
+
+func TestSessionWindowRestorePosition(t *testing.T) {
+	session := fm.DefaultSession()
+	session.Window.X = 320
+	session.Window.Y = 240
+	session.Window.HasPosition = true
+
+	x, y, ok := sessionWindowRestorePosition(session)
+	if !ok {
+		t.Fatal("expected valid restore position")
+	}
+	if x != 320 || y != 240 {
+		t.Fatalf("restore position = (%d, %d), want (320, 240)", x, y)
+	}
+}
+
+func TestSessionWindowRestorePositionRejectsHiddenWindow(t *testing.T) {
+	session := fm.DefaultSession()
+	session.Window.X = -32000
+	session.Window.Y = 40
+	session.Window.HasPosition = true
+
+	if _, _, ok := sessionWindowRestorePosition(session); ok {
+		t.Fatal("hidden position should not be restored")
+	}
+}
+
+func TestMoveWindowRectOriginPreservesSize(t *testing.T) {
+	left, top, right, bottom := moveWindowRectOrigin(10, 20, 210, 120, -500, 75)
+	if left != -500 || top != 75 {
+		t.Fatalf("origin = (%d, %d), want (-500, 75)", left, top)
+	}
+	if right != -300 || bottom != 175 {
+		t.Fatalf("corner = (%d, %d), want (-300, 175)", right, bottom)
 	}
 }
