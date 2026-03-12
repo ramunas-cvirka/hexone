@@ -1,7 +1,40 @@
 #!/bin/sh
 
 HERE="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
+APP="@HEXONE_APP@"
 
 export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-exec "$HERE/usr/bin/@HEXONE_APP@" "$@"
+integrate_desktop() {
+    [ -n "${APPIMAGE:-}" ] || return 0
+    [ -n "${HOME:-}" ] || return 0
+
+    data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+    apps_dir="$data_home/applications"
+    icons_dir="$data_home/icons/hicolor/512x512/apps"
+    desktop_src="$HERE/$APP.desktop"
+    icon_src="$HERE/$APP.png"
+    desktop_dst="$apps_dir/$APP.desktop"
+    icon_dst="$icons_dir/$APP.png"
+
+    [ -f "$desktop_src" ] || return 0
+    [ -f "$icon_src" ] || return 0
+
+    mkdir -p "$apps_dir" "$icons_dir" || return 0
+    cp "$icon_src" "$icon_dst" || return 0
+
+    appimage_escaped=$(printf '%s' "$APPIMAGE" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    sed \
+        -e "s#^Exec=.*#Exec=\"$appimage_escaped\" %U#" \
+        "$desktop_src" > "$desktop_dst.tmp" || return 0
+    mv "$desktop_dst.tmp" "$desktop_dst" || return 0
+
+    export BAMF_DESKTOP_FILE_HINT="$desktop_dst"
+
+    update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
+    gtk-update-icon-cache "$data_home/icons/hicolor" >/dev/null 2>&1 || true
+}
+
+integrate_desktop
+
+exec "$HERE/usr/bin/$APP" "$@"
