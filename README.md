@@ -26,7 +26,15 @@ Hexone is a keyboard-first desktop file manager with a built-in text/hex/command
 
 Use the packages from the Releases page.
 
-macOS note: if the first launch gets blocked and macOS suggests moving Hexone to Trash, do not do that. First try opening Hexone once, then open `System Settings -> Privacy & Security`, scroll down to `Security`, and click `Open Anyway` for Hexone. On current macOS versions that button is typically available for about an hour after the blocked launch attempt. The reason this workaround is needed is that avoiding that warning for outside-the-App-Store distribution generally means paying for Apple Developer Program membership, which Apple currently lists at `US$99/year`, and that is not a practical fit for this free project.
+> [!CAUTION]
+> **Applies to: macOS**
+>
+> If the first launch gets blocked and macOS suggests moving Hexone to Trash, do not do that. First try opening Hexone once, then open `System Settings -> Privacy & Security`, scroll down to `Security`, and click `Open Anyway` for Hexone. On current macOS versions that button is typically available for about an hour after the blocked launch attempt. Avoiding that warning for outside-the-App-Store distribution generally means paid Apple code-signing/distribution, which is not a practical fit for this free project.
+
+> [!CAUTION]
+> **Applies to: Windows**
+>
+> SmartScreen is reputation-based and is aggressive toward new unsigned `.exe` files. If you see the blue `Windows protected your PC` dialog, use `More info -> Run anyway` if you trust the download. Removing that warning cleanly usually means either EV code signing or shipping through the Microsoft Store / MSIX path. Unsigned builds can build reputation over time, but each new release starts over with a new file hash.
 
 If you want to build it yourself instead:
 
@@ -54,6 +62,13 @@ make package-windows
 - `package-linux-zip` keeps the older portable ZIP layout
 - `package-macos` needs macOS
 
-On Linux, Hexone stores `hexone.yaml` and `hexone.session.yaml` under `~/.config/hexone/`. The protocol analyzer looks for `~/.config/hexone/protocols.yaml` first, falls back to the embedded default, and writes a sample to `~/.config/hexone/protocols.sample.yaml` on first run.
+Hexone stores `hexone.yaml`, `hexone.session.yaml`, `protocols.yaml`, and `protocols.sample.yaml` in these locations:
+
+- Linux: `~/.config/hexone/`
+- macOS: `~/Library/Application Support/hexone/`
+- Windows: currently in the current working directory as `hexone.yaml`, `hexone.session.yaml`, `protocols.yaml`, and `protocols.sample.yaml`
+- Other platforms: the same local-file fallback as Windows
+
+The protocol analyzer checks `protocols.yaml` in that location first, falls back to the embedded default if it is missing, and writes `protocols.sample.yaml` on first run.
 
 More usage details are in [HELP.md](HELP.md).

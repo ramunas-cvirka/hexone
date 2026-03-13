@@ -237,8 +237,11 @@ type filePaneState struct {
 	favoriteMenuHoverID   string
 	favoriteMenuHoverAnim segmentedAnimState
 	favoriteHoverKey      string
-	favoriteHoverLabel    string
 	favoriteHoverAt       time.Time
+	favoriteRevealKey     string
+	favoriteRevealHideAt  time.Time
+	favoritePointerPos    image.Point
+	favoritePointerPosSet bool
 	headerHeight          int
 	ctxPointerTag         uiEventTag
 	ctxMenuClicks         map[string]*widget.Clickable
@@ -717,8 +720,11 @@ func (p *filePaneState) closeFavoriteMenu() {
 	p.favoriteMenuHoverID = ""
 	p.favoriteMenuHoverAnim = segmentedAnimState{}
 	p.favoriteHoverKey = ""
-	p.favoriteHoverLabel = ""
 	p.favoriteHoverAt = time.Time{}
+	p.favoriteRevealKey = ""
+	p.favoriteRevealHideAt = time.Time{}
+	p.favoritePointerPos = image.Point{}
+	p.favoritePointerPosSet = false
 }
 
 func (p *filePaneState) openFavoriteMenu(now time.Time) {
@@ -731,8 +737,11 @@ func (p *filePaneState) openFavoriteMenu(now time.Time) {
 	p.favoriteMenuHoverID = ""
 	p.favoriteMenuHoverAnim = segmentedAnimState{}
 	p.favoriteHoverKey = ""
-	p.favoriteHoverLabel = ""
 	p.favoriteHoverAt = time.Time{}
+	p.favoriteRevealKey = ""
+	p.favoriteRevealHideAt = time.Time{}
+	p.favoritePointerPos = image.Point{}
+	p.favoritePointerPosSet = false
 }
 
 func (p *filePaneState) closeSortMenu() {
