@@ -1,3 +1,6 @@
+// Copyright 2026 Ramunas Cvirka
+// SPDX-License-Identifier: Apache-2.0
+
 package ui
 
 import (
@@ -2509,9 +2512,6 @@ func filePaneFavoriteMenuHoveredID(pane *filePaneState, items []fileFavoriteItem
 			continue
 		}
 		if i < len(pane.favoriteOptionClicks) && pane.favoriteOptionClicks[i].Hovered() {
-			return filePaneFavoriteMenuItemID(item)
-		}
-		if item.removable && i < len(pane.favoriteRemoveClicks) && pane.favoriteRemoveClicks[i].Hovered() {
 			return filePaneFavoriteMenuItemID(item)
 		}
 	}

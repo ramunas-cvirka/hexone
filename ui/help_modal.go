@@ -1,9 +1,13 @@
+// Copyright 2026 Ramunas Cvirka
+// SPDX-License-Identifier: Apache-2.0
+
 package ui
 
 import (
 	"fmt"
 	resources "hexone"
 	"hexone/buildinfo"
+	"hexone/ui/widget/table"
 	"image"
 	"image/color"
 	"strings"
@@ -14,7 +18,6 @@ import (
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -189,7 +192,28 @@ func loadHelpDocument() helpDocument {
 	if strings.TrimSpace(doc.Title) == "" {
 		doc = parseHelpDocument(resources.EmbeddedHelpSource, fallbackHelpMarkdown())
 	}
+	appendHelpPlainTextSection(&doc, "License", resources.LicenseText())
+	appendHelpPlainTextSection(&doc, "Notice", resources.NoticeText())
 	return doc
+}
+
+func appendHelpPlainTextSection(doc *helpDocument, title, raw string) {
+	if doc == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(strings.ReplaceAll(raw, "\r\n", "\n"))
+	if trimmed == "" {
+		return
+	}
+	doc.Sections = append(doc.Sections, helpSection{
+		Title: title,
+		Blocks: []helpBlock{
+			{
+				Kind: helpBlockCode,
+				Text: trimmed,
+			},
+		},
+	})
 }
 
 func parseHelpDocument(path, raw string) helpDocument {
@@ -596,21 +620,21 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 					lbl := material.Body1(th, st.doc.Title)
 					lbl.Font.Typeface = ui.mainTypeface()
 					lbl.Font.Weight = font.Bold
-					lbl.TextSize = scaleModalThemeFontSize(th, 11)
+					lbl.TextSize = scaleModalThemeFontSize(th, 12)
 					lbl.Color = theme.popup.Text
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, buildinfo.HelpVersionText())
 					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 8)
+					lbl.TextSize = scaleModalThemeFontSize(th, 9)
 					lbl.Color = theme.popup.Muted
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, "Up/Down switches topics. F1 or Esc closes help.")
 					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 8)
+					lbl.TextSize = scaleModalThemeFontSize(th, 9)
 					lbl.Color = theme.popup.Muted
 					return lbl.Layout(gtx)
 				}),
@@ -625,11 +649,11 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 func (ui *UI) layoutHelpModalBody(th *material.Theme, gtx layout.Context, st *helpModalState, theme helpModalTheme) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, gtx.Dp(unit.Dp(220)), func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, gtx.Dp(unit.Dp(146)), func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutHelpSectionTabs(th, gtx, st, theme)
 			})
 		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutHelpSectionContent(th, gtx, st, theme)
 		}),
@@ -679,7 +703,7 @@ func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *
 		totalH = stripH
 	}
 
-	return fillBgExact(gtx, theme.navBg, func(gtx layout.Context) layout.Dimensions {
+	return fillBgExact(gtx, color.NRGBA{R: 24, G: 24, B: 24, A: 255}, func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, totalH, func(gtx layout.Context) layout.Dimensions {
 			w := gtx.Constraints.Max.X
 			if w < 1 {
@@ -700,7 +724,7 @@ func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *
 			sliderRect := image.Rect(0, sliderY, w, sliderY+stripH)
 
 			innerClip := clip.Rect(image.Rect(0, 0, w, totalH)).Push(gtx.Ops)
-			paint.FillShape(gtx.Ops, theme.navSliderBg, clip.Rect(sliderRect).Op())
+			paint.FillShape(gtx.Ops, color.NRGBA{R: 54, G: 54, B: 54, A: 255}, clip.Rect(sliderRect).Op())
 
 			children := make([]layout.FlexChild, 0, len(specs)*2)
 			for i, spec := range specs {
@@ -720,52 +744,7 @@ func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *
 }
 
 func (ui *UI) layoutHelpNavSegment(th *material.Theme, gtx layout.Context, theme helpModalTheme, label string, c *widget.Clickable, activeFill, hoverFill, pulseFill float32, stripH int) layout.Dimensions {
-	if c == nil {
-		return layout.Dimensions{}
-	}
-	dims := fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-		return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			activeFill = clamp01(activeFill)
-			hoverFill = clamp01(hoverFill)
-			pulseFill = clamp01(pulseFill)
-			if c.Pressed() && pulseFill < 0.5 {
-				pulseFill = 0.5
-			}
-
-			bg := color.NRGBA{}
-			if activeFill > 0 {
-				bg = mixNRGBA(bg, theme.popup.ActiveBg, activeFill)
-			}
-			if hoverFill > 0 {
-				bg = mixNRGBA(bg, theme.popup.HoverBg, hoverFill*(1-activeFill))
-			}
-			if pulseFill > 0 {
-				bg = mixNRGBA(bg, theme.popup.HoverBg, pulseFill*0.18)
-			}
-
-			fg := mixNRGBA(theme.popup.Text, theme.popup.ActiveText, clamp01(activeFill*0.85))
-			fg = mixNRGBA(fg, theme.popup.HoverText, hoverFill*0.72)
-			fg = mixNRGBA(fg, theme.popup.HoverText, pulseFill*0.2)
-
-			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, label)
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.Font.Weight = font.Medium
-					lbl.TextSize = scaleModalThemeFontSize(th, 10)
-					lbl.Color = fg
-					lbl.MaxLines = 1
-					return layoutVCenteredLabel(gtx, lbl)
-				})
-			})
-		})
-	})
-	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
-		return dims
-	}
-	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
-	pointer.CursorPointer.Add(gtx.Ops)
-	return dims
+	return ui.layoutSettingsNavSliderSegment(th, gtx, c, label, activeFill, hoverFill, pulseFill, stripH)
 }
 
 func (ui *UI) layoutHelpSectionContent(th *material.Theme, gtx layout.Context, st *helpModalState, theme helpModalTheme) layout.Dimensions {
@@ -801,7 +780,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			th,
 			gtx,
 			block.Text,
-			scaleModalThemeFontSize(th, 10),
+			scaleModalThemeFontSize(th, 11),
 			theme.headingText,
 			font.Bold,
 		)
@@ -815,7 +794,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							bullet := material.Body2(th, "•")
 							bullet.Font.Typeface = ui.mainTypeface()
-							bullet.TextSize = scaleModalThemeFontSize(th, 9)
+							bullet.TextSize = scaleModalThemeFontSize(th, 10)
 							bullet.Color = theme.bulletText
 							return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, bullet.Layout)
 						}),
@@ -824,7 +803,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 								th,
 								gtx,
 								item,
-								scaleModalThemeFontSize(th, 9),
+								scaleModalThemeFontSize(th, 10),
 								theme.popup.Text,
 								font.Normal,
 							)
@@ -839,7 +818,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(7), Bottom: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, block.Text)
 				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, 8)
+				lbl.TextSize = scaleModalThemeFontSize(th, 9)
 				lbl.Color = theme.codeText
 				lbl.SelectionColor = theme.codeSelection
 				lbl.State = st.codeSelectable(sectionIndex, blockIndex)
@@ -851,7 +830,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			th,
 			gtx,
 			block.Text,
-			scaleModalThemeFontSize(th, 9),
+			scaleModalThemeFontSize(th, 10),
 			theme.popup.Text,
 			font.Normal,
 		)
@@ -969,21 +948,87 @@ func (ui *UI) measureHelpInlineToken(gtx layout.Context, th *material.Theme, tok
 	return measureLabelUnconstrained(gtx, lbl).Size
 }
 
+func helpInlineCodeChipMode(text string) (table.Mode, bool) {
+	switch strings.TrimSpace(text) {
+	case "mode:full":
+		return table.ModeFull, true
+	case "mode:brief":
+		return table.ModeBrief, true
+	default:
+		return 0, false
+	}
+}
+
+func (ui *UI) helpInlineCodeChipIcon(text string) *widget.Icon {
+	switch strings.TrimSpace(text) {
+	case "☆":
+		return uitheme.FavoriteIcon(false)
+	case "★":
+		return uitheme.FavoriteIcon(true)
+	default:
+		return nil
+	}
+}
+
 func (ui *UI) layoutHelpInlineCodeChip(th *material.Theme, gtx layout.Context, text string, size unit.Sp) layout.Dimensions {
 	theme := ui.helpModalColors()
+	mode, hasMode := helpInlineCodeChipMode(text)
+	icon := ui.helpInlineCodeChipIcon(text)
+	contentH := 0
+	if hasMode || icon != nil {
+		contentH = gtx.Sp(size)
+		if min := gtx.Dp(unit.Dp(12)); contentH < min {
+			contentH = min
+		}
+	} else {
+		lbl := material.Body2(th, text)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Weight = font.Bold
+		lbl.TextSize = size
+		contentH = measureLabelUnconstrained(gtx, lbl).Size.Y
+	}
+	chipH := contentH + gtx.Dp(unit.Dp(4))
+	if min := gtx.Dp(unit.Dp(18)); chipH < min {
+		chipH = min
+	}
 	return fillRoundedBox(
 		gtx,
 		gtx.Dp(unit.Dp(4)),
 		theme.chipBg,
 		theme.chipBorder,
 		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, text)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.Font.Weight = font.Bold
-				lbl.TextSize = size
-				lbl.Color = theme.chipText
-				return lbl.Layout(gtx)
+			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return fixedHeight(gtx, chipH, func(gtx layout.Context) layout.Dimensions {
+					if hasMode {
+						iconSize := image.Pt(int(float32(contentH)*16/11+0.5), contentH)
+						if iconSize.X < gtx.Dp(unit.Dp(16)) {
+							iconSize.X = gtx.Dp(unit.Dp(16))
+						}
+						if iconSize.Y < gtx.Dp(unit.Dp(11)) {
+							iconSize.Y = gtx.Dp(unit.Dp(11))
+						}
+						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							iconGtx := gtx
+							iconGtx.Constraints = layout.Exact(iconSize)
+							return layoutFilePaneModeGlyph(iconGtx, mode, theme.chipText)
+						})
+					}
+					if icon != nil {
+						iconSize := contentH
+						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							iconGtx := gtx
+							iconGtx.Constraints = layout.Exact(image.Pt(iconSize, iconSize))
+							icon.Layout(iconGtx, theme.chipText)
+							return layout.Dimensions{Size: image.Pt(iconSize, iconSize)}
+						})
+					}
+					lbl := material.Body2(th, text)
+					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Weight = font.Bold
+					lbl.TextSize = size
+					lbl.Color = theme.chipText
+					return layoutVCenteredLabel(gtx, lbl)
+				})
 			})
 		},
 	)

@@ -1,3 +1,6 @@
+// Copyright 2026 Ramunas Cvirka
+// SPDX-License-Identifier: Apache-2.0
+
 package ui
 
 import (
@@ -3043,7 +3046,7 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, "Favorites are managed from the '*' menu. Use the Config tab for full hexone.yaml editing.")
+			lbl := material.Body2(th, "Favorites are managed from the '☆' menu. Use the Config tab for full hexone.yaml editing.")
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleModalThemeFontSize(th, 11)
 			lbl.Color = hintColor

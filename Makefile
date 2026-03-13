@@ -1,9 +1,10 @@
-.PHONY: build run test clean build-linux build-macos build-windows build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource
+.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource
 
 APP := hexone
 CMD := ./cmd/hexone
 DIST_DIR := dist
 VERSION_TOOL := ./packaging/derive_version.sh
+HEADER_GOCACHE := $(abspath .cache/go-build)
 comma := ,
 
 ifeq ($(OS),Windows_NT)
@@ -87,10 +88,26 @@ endif
 
 GO_LDFLAGS_WINDOWS := $(GO_LDFLAGS_COMMON) -H windowsgui
 
-build: $(BUILD_DEPS)
+ifeq ($(OS),Windows_NT)
+headers:
+	@powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '$(subst /,\,$(HEADER_GOCACHE))' | Out-Null"
+	@set "GOCACHE=$(subst /,\,$(HEADER_GOCACHE))"&& go run ./tools/updateheaders
+else
+headers:
+	mkdir -p "$(HEADER_GOCACHE)"
+	GOCACHE="$(HEADER_GOCACHE)" go run ./tools/updateheaders
+endif
+
+headers-stage: headers
+	git add -A -- ":(glob)**/*.go"
+
+build: headers $(BUILD_DEPS)
 	go build -ldflags="$(GO_LDFLAGS_HOST)" -o $(BIN) $(CMD)
 
-build-linux: | $(DIST_DIR)
+test: headers
+	go test ./...
+
+build-linux: headers | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \
 		echo "build-linux requires a Linux host (CGO-enabled Gio build)."; \
 		exit 1; \
@@ -109,6 +126,7 @@ build-linux: | $(DIST_DIR)
 	fi
 	chmod +x "$(LINUX_BIN)"
 	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' "$(LINUX_DESKTOP_TEMPLATE)" > "$(LINUX_STAGE)/share/applications/hexone.desktop"
+	cp LICENSE NOTICE "$(LINUX_STAGE)/"
 	HEXONE_WRITE_DESKTOP_ICON_PNG="$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/hexone.png" "$(LINUX_BIN)"
 	for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do \
 		path=$$(ldconfig -p | awk -v lib="$$lib" '$$1 == lib { print $$NF; exit }'); \
@@ -120,7 +138,7 @@ build-linux: | $(DIST_DIR)
 		patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/$$lib"; \
 	done
 
-build-macos: | $(DIST_DIR)
+build-macos: headers | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "darwin" ]; then \
 		echo "build-macos requires a macOS host (CGO-enabled Gio build)."; \
 		exit 1; \
@@ -130,18 +148,20 @@ build-macos: | $(DIST_DIR)
 	GOOS=darwin GOARCH=$(MACOS_ARCH) CGO_ENABLED=1 go build -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(MACOS_BIN)" $(CMD)
 	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' -e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' "$(MACOS_PLIST_TEMPLATE)" > "$(MACOS_CONTENTS)/Info.plist"
 	cp protocols.yaml "$(MACOS_RESOURCES)/protocols.yaml"
+	cp LICENSE NOTICE "$(MACOS_RESOURCES)/"
 	HEXONE_WRITE_DEFAULT_ICON_ICNS="$(MACOS_RESOURCES)/AppIcon.icns" "$(MACOS_BIN)"
 	codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" $(MACOS_APP_CODESIGN_FLAGS) "$(MACOS_APP)"
 	codesign -v --verbose=2 "$(MACOS_APP)"
 
 ifeq ($(OS),Windows_NT)
-build-windows: windows-resource | $(DIST_DIR)
+build-windows: headers windows-resource | $(DIST_DIR)
 	@if exist "$(subst /,\,$(WINDOWS_STAGE))" powershell -NoProfile -Command "Remove-Item -LiteralPath '$(subst /,\,$(WINDOWS_STAGE))' -Recurse -Force"
 	@powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '$(subst /,\,$(WINDOWS_STAGE))' | Out-Null"
 	@set GOOS=windows&& set GOARCH=$(WINDOWS_ARCH)&& set CGO_ENABLED=0&& go build -ldflags="$(GO_LDFLAGS_WINDOWS)" -o "$(WINDOWS_BIN)" $(CMD)
 	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'protocols.yaml' -Destination '$(subst /,\,$(WINDOWS_STAGE))\\protocols.yaml' -Force"
+	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'LICENSE','NOTICE' -Destination '$(subst /,\,$(WINDOWS_STAGE))' -Force"
 else
-build-windows: | $(DIST_DIR)
+build-windows: headers | $(DIST_DIR)
 	rm -rf "$(WINDOWS_STAGE)"
 	mkdir -p "$(WINDOWS_STAGE)"
 	@set -e; \
@@ -183,6 +203,7 @@ build-windows: | $(DIST_DIR)
 	fi; \
 	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 go build -ldflags="$(GO_LDFLAGS_WINDOWS)" -o "$(WINDOWS_BIN)" $(CMD); \
 	cp protocols.yaml "$(WINDOWS_STAGE)/protocols.yaml"; \
+	cp LICENSE NOTICE "$(WINDOWS_STAGE)/"; \
 	cleanup; \
 	trap - EXIT INT TERM
 endif
@@ -241,6 +262,8 @@ package-linux: build-linux
 	chmod +x "$(LINUX_APPDIR)/AppRun"
 	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' "$(LINUX_DESKTOP_TEMPLATE)" > "$(LINUX_APPDIR)/usr/share/applications/$(APP).desktop"
 	cp "$(LINUX_APPDIR)/usr/share/applications/$(APP).desktop" "$(LINUX_APPDIR)/$(APP).desktop"
+	mkdir -p "$(LINUX_APPDIR)/usr/share/doc/$(APP)"
+	cp LICENSE NOTICE "$(LINUX_APPDIR)/usr/share/doc/$(APP)/"
 	cp "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/$(APP).png" "$(LINUX_APPDIR)/usr/share/icons/hicolor/512x512/apps/$(APP).png"
 	cp "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/$(APP).png" "$(LINUX_APPDIR)/$(APP).png"
 	ln -s "$(APP).png" "$(LINUX_APPDIR)/.DirIcon"
@@ -256,6 +279,7 @@ package-macos: build-macos
 	rm -rf "$(MACOS_DMG_STAGE)"
 	mkdir -p "$(MACOS_DMG_BACKGROUND_DIR)"
 	ditto "$(MACOS_APP)" "$(MACOS_DMG_STAGE)/$(APP).app"
+	cp LICENSE NOTICE "$(MACOS_DMG_STAGE)/"
 	ln -s /Applications "$(MACOS_DMG_STAGE)/Applications"
 	swift "$(MACOS_DMG_BG_SCRIPT)" "$(MACOS_DMG_BACKGROUND)" "$(APP)"
 	@set -e; \
@@ -312,9 +336,6 @@ endif
 
 run:
 	go run -ldflags="$(GO_LDFLAGS_HOST)" $(CMD)
-
-test:
-	go test ./...
 
 clean:
 	$(RM) $(BIN)

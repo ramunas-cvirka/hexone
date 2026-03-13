@@ -1,9 +1,14 @@
+// Copyright 2026 Ramunas Cvirka
+// SPDX-License-Identifier: Apache-2.0
+
 package resources
 
 import _ "embed"
 
 const (
 	EmbeddedHelpSource          = "bundled help"
+	EmbeddedLicenseSource       = "bundled LICENSE"
+	EmbeddedNoticeSource        = "bundled NOTICE"
 	EmbeddedRegularFontPath     = "embedded:FiraCode-Regular.ttf"
 	EmbeddedMediumFontPath      = "embedded:FiraCode-Medium.ttf"
 	EmbeddedBoldFontPath        = "embedded:FiraCode-Bold.ttf"
@@ -23,6 +28,12 @@ type BundledFontFamily struct {
 
 //go:embed HELP.md
 var embeddedHelpMarkdown string
+
+//go:embed LICENSE
+var embeddedLicenseText string
+
+//go:embed NOTICE
+var embeddedNoticeText string
 
 //go:embed protocols.yaml
 var embeddedProtocolsYAML []byte
@@ -59,6 +70,14 @@ var bundledFontFamilies = []BundledFontFamily{
 
 func HelpMarkdown() string {
 	return embeddedHelpMarkdown
+}
+
+func LicenseText() string {
+	return embeddedLicenseText
+}
+
+func NoticeText() string {
+	return embeddedNoticeText
 }
 
 func BundledFontFamilies() []BundledFontFamily {

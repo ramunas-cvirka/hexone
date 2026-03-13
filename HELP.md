@@ -16,8 +16,8 @@ Press `F1` to open or close this help window.
 
 Each pane has a mode badge in its header:
 
-- `full` shows a detailed row with columns
-- `brief` shows a denser multi-column layout
+- `full` `mode:full` shows a detailed row with columns
+- `brief` `mode:brief` shows a denser multi-column layout
 
 Click the mode badge to switch between `full` and `brief`.
 
@@ -63,7 +63,7 @@ If the function key bar is auto-hidden in the viewer, `F11` can still bring it b
 
 ## Favorites And SSH
 
-Use the `*` button in a pane header to work with favorites.
+Use the `☆` button in a pane header to work with favorites.
 
 - save the current local folder as a favorite
 - save a remote location as a favorite
@@ -162,6 +162,7 @@ Most everyday customization is available from Settings.
 The full configuration also lives in `hexone.yaml`.
 
 On Linux, the writable config files live under `~/.config/hexone/`.
+On macOS, they live under `~/Library/Application Support/hexone/`.
 
 Useful things to adjust:
 
@@ -172,7 +173,6 @@ Useful things to adjust:
 - shell selection
 - auto-refresh interval for non-streaming command mode
 - viewer font size
-- word wrap
 - function bar auto-hide while the viewer is open
 
 Example:
@@ -191,7 +191,6 @@ viewer:
       command: docker compose -f {path} config
   command_auto_refresh: true
   command_refresh_ms: 1500
-  word_wrap: false
 ```
 
 Notes:
@@ -203,7 +202,6 @@ Notes:
 - `command_rules` switch the viewer into command mode automatically when a filename matches
 - `command_by_target` overrides the chosen command, but by itself it does not force command mode
 - `command_auto_refresh` matters most for non-streaming command mode
-- `word_wrap` affects how text and command output are wrapped on screen
 - Settings -> Viewer exposes the same priority order directly in the UI
 
 ## Protocol Analyzer
@@ -211,6 +209,7 @@ Notes:
 The Protocol Analyzer decodes pasted hex using `protocols.yaml`.
 
 On Linux, Hexone first checks `~/.config/hexone/protocols.yaml`. If that file is missing, it uses the embedded default and writes a reference sample to `~/.config/hexone/protocols.sample.yaml`.
+On macOS, it first checks `~/Library/Application Support/hexone/protocols.yaml` and writes the reference sample to `~/Library/Application Support/hexone/protocols.sample.yaml`.
 
 Input tips:
 

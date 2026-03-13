@@ -1,3 +1,6 @@
+// Copyright 2026 Ramunas Cvirka
+// SPDX-License-Identifier: Apache-2.0
+
 package ui
 
 import (
@@ -6,6 +9,7 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"hexone/ui/widget/table"
 )
 
 func TestParseHelpDocumentBuildsSectionsFromMarkdown(t *testing.T) {
@@ -120,5 +124,48 @@ func TestHelpModalCodeSelectableReusesStatePerBlock(t *testing.T) {
 func TestFallbackHelpMarkdownOmitsBundledHelpCopy(t *testing.T) {
 	if strings.Contains(strings.ToLower(fallbackHelpMarkdown()), "bundled help") {
 		t.Fatal("fallback help should not mention bundled help")
+	}
+}
+
+func TestHelpInlineCodeChipModeMapsSpecialTokens(t *testing.T) {
+	if mode, ok := helpInlineCodeChipMode("mode:full"); !ok || mode != table.ModeFull {
+		t.Fatalf("mode:full = (%v, %v), want (%v, true)", mode, ok, table.ModeFull)
+	}
+	if mode, ok := helpInlineCodeChipMode("mode:brief"); !ok || mode != table.ModeBrief {
+		t.Fatalf("mode:brief = (%v, %v), want (%v, true)", mode, ok, table.ModeBrief)
+	}
+	if _, ok := helpInlineCodeChipMode("mode:other"); ok {
+		t.Fatal("mode:other should not map to a mode glyph")
+	}
+}
+
+func TestAppendHelpPlainTextSectionAddsCodeSection(t *testing.T) {
+	doc := helpDocument{
+		Title: "Help",
+		Sections: []helpSection{
+			{Title: "Overview"},
+		},
+	}
+	appendHelpPlainTextSection(&doc, "License", "line 1\nline 2\n")
+	if len(doc.Sections) != 2 {
+		t.Fatalf("len(Sections)=%d want 2", len(doc.Sections))
+	}
+	got := doc.Sections[1]
+	if got.Title != "License" {
+		t.Fatalf("section title=%q want License", got.Title)
+	}
+	if len(got.Blocks) != 1 {
+		t.Fatalf("len(Blocks)=%d want 1", len(got.Blocks))
+	}
+	if got.Blocks[0].Kind != helpBlockCode || got.Blocks[0].Text != "line 1\nline 2" {
+		t.Fatalf("code block=%+v want trimmed code block", got.Blocks[0])
+	}
+}
+
+func TestAppendHelpPlainTextSectionSkipsEmptyContent(t *testing.T) {
+	doc := helpDocument{Title: "Help"}
+	appendHelpPlainTextSection(&doc, "Notice", " \n\t")
+	if len(doc.Sections) != 0 {
+		t.Fatalf("len(Sections)=%d want 0", len(doc.Sections))
 	}
 }
