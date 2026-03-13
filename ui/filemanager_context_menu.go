@@ -30,6 +30,7 @@ const (
 	filePaneMenuActionPermissions       = "permissions"
 	filePaneMenuActionNewFolder         = "new-folder"
 	filePaneMenuActionNewFile           = "new-file"
+	filePaneMenuActionExtractHere       = "extract-here"
 	filePaneMenuActionRefresh           = "refresh"
 	filePaneMenuActionOpenWithSystem    = "open-with-system"
 	filePaneMenuActionSystemFileManager = "system-file-manager"
@@ -177,6 +178,13 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		return root
 	}
 	if entry == nil {
+		if pane.archiveBrowsing() {
+			root.Items = []fileContextMenuItem{
+				fileContextMenuActionItem("refresh", "Refresh", filePaneMenuActionRefresh),
+				fileContextMenuActionItem("copy-path", "Copy Path", filePaneMenuActionCopyPath),
+			}
+			return root
+		}
 		root.Items = []fileContextMenuItem{
 			fileContextMenuSubmenuItem("new", "New", ui.filePaneNewMenuSpec()),
 			fileContextMenuActionItem("refresh", "Refresh", filePaneMenuActionRefresh),
@@ -203,8 +211,10 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 	root.Title = title
 
 	otherPaneAvailable := ui != nil && ui.contextMenuOtherPaneIndex(idx) >= 0
-	localFileManagerAvailable := !pane.remoteConnected()
-	fileOpsMenu := ui.filePaneFileOpsMenuSpec()
+	localFileManagerAvailable := pane.writableLocalView()
+	readOnlyArchive := pane.archiveBrowsing()
+	fileOpsMenu := ui.filePaneFileOpsMenuSpec(readOnlyArchive)
+	canExtractHere := !readOnlyArchive && entry != nil && entry.Kind == filesys.EntryFile && entry.CanEnter
 
 	switch entry.Kind {
 	case filesys.EntryParent:
@@ -227,6 +237,15 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		if localFileManagerAvailable {
 			root.Items = append(root.Items, fileContextMenuActionItem("system-file-manager", filePaneSystemFileManagerLabel(entry), filePaneMenuActionSystemFileManager))
 		}
+		if readOnlyArchive {
+			root.Items = append(root.Items,
+				fileContextMenuSeparator("sep-edit"),
+				fileContextMenuSubmenuItem("ops", "File Ops", fileOpsMenu),
+				fileContextMenuSeparator("sep-meta"),
+				fileContextMenuActionItem("copy-path", "Copy Path", filePaneMenuActionCopyPath),
+			)
+			return root
+		}
 		root.Items = append(root.Items,
 			fileContextMenuSeparator("sep-edit"),
 			fileContextMenuActionItem("rename", "Rename", filePaneMenuActionRename),
@@ -240,11 +259,23 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		if otherPaneAvailable {
 			root.Items = append(root.Items, fileContextMenuActionItem("open-other", "Open in Other Pane", filePaneMenuActionOpenOtherPane))
 		}
+		if canExtractHere {
+			root.Items = append(root.Items, fileContextMenuActionItem("extract-here", "Extract here", filePaneMenuActionExtractHere))
+		}
 		if menu := ui.filePaneOpenWithMenuSpec(pane, entry); menu != nil {
 			root.Items = append(root.Items, fileContextMenuSubmenuItem("open-with", "Open With", menu))
 		}
 		if localFileManagerAvailable {
 			root.Items = append(root.Items, fileContextMenuActionItem("system-file-manager", filePaneSystemFileManagerLabel(entry), filePaneMenuActionSystemFileManager))
+		}
+		if readOnlyArchive {
+			root.Items = append(root.Items,
+				fileContextMenuSeparator("sep-edit"),
+				fileContextMenuSubmenuItem("ops", "File Ops", fileOpsMenu),
+				fileContextMenuSeparator("sep-meta"),
+				fileContextMenuActionItem("copy-path", "Copy Path", filePaneMenuActionCopyPath),
+			)
+			return root
 		}
 		root.Items = append(root.Items,
 			fileContextMenuSeparator("sep-edit"),
@@ -258,16 +289,21 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 	return root
 }
 
-func (ui *UI) filePaneFileOpsMenuSpec() *fileContextMenuSpec {
+func (ui *UI) filePaneFileOpsMenuSpec(readOnly bool) *fileContextMenuSpec {
+	items := []fileContextMenuItem{
+		fileContextMenuActionItem("copy", "Copy..", filePaneMenuActionCopyDialog),
+	}
+	if !readOnly {
+		items = append(items,
+			fileContextMenuActionItem("move", "Move..", filePaneMenuActionMoveDialog),
+			fileContextMenuActionItem("delete", "Delete..", filePaneMenuActionDeleteDialog),
+		)
+	}
 	return &fileContextMenuSpec{
 		Key:     "ops",
 		Title:   "File Ops",
 		WidthDp: filePaneContextMenuCompactWidthDp,
-		Items: []fileContextMenuItem{
-			fileContextMenuActionItem("copy", "Copy..", filePaneMenuActionCopyDialog),
-			fileContextMenuActionItem("move", "Move..", filePaneMenuActionMoveDialog),
-			fileContextMenuActionItem("delete", "Delete..", filePaneMenuActionDeleteDialog),
-		},
+		Items:   items,
 	}
 }
 
@@ -284,7 +320,7 @@ func (ui *UI) filePaneNewMenuSpec() *fileContextMenuSpec {
 }
 
 func (ui *UI) filePaneOpenWithMenuSpec(pane *filePaneState, entry *filesys.Entry) *fileContextMenuSpec {
-	if pane == nil || entry == nil || entry.Kind != filesys.EntryFile || pane.remoteConnected() {
+	if pane == nil || entry == nil || entry.Kind != filesys.EntryFile || pane.remoteConnected() || pane.archiveBrowsing() || filesys.ArchiveMemberPath(entry.Path) {
 		return nil
 	}
 	items := []fileContextMenuItem{
@@ -389,6 +425,8 @@ func (ui *UI) handleFilePaneContextMenuAction(idx int, pane *filePaneState, row 
 		ui.startFileMoveDialog(idx, now)
 	case filePaneMenuActionDeleteDialog:
 		ui.startFileDeleteDialog(idx, now)
+	case filePaneMenuActionExtractHere:
+		ui.startArchiveExtractHere(idx, row, now)
 	case filePaneMenuActionCopyPath:
 		result.ClipboardText = ui.filePaneContextCopyPath(idx, row)
 		if result.ClipboardText != "" {
@@ -476,11 +514,15 @@ func (ui *UI) openFilePaneContextTarget(idx, row int, now time.Time) {
 	if entry == nil {
 		return
 	}
+	if entry.CanEnter && !pane.remoteConnected() {
+		ui.queueFilePaneOpen(idx, row)
+		return
+	}
 	switch entry.Kind {
 	case filesys.EntryDir, filesys.EntryParent:
 		ui.queueFilePaneOpen(idx, row)
 	case filesys.EntryFile, filesys.EntryBroken:
-		if pane.remoteConnected() {
+		if pane.remoteConnected() || pane.archiveBrowsing() || filesys.ArchiveMemberPath(entry.Path) {
 			ui.startFileViewer(idx, now)
 			return
 		}
@@ -514,6 +556,9 @@ func (ui *UI) openFilePaneContextTargetInOtherPane(idx, row int, now time.Time) 
 	case filesys.EntryDir:
 		// targetDir already points at the directory to open.
 	default:
+		if entry.CanEnter && !pane.remoteConnected() {
+			break
+		}
 		primaryPath = entry.Path
 		if pane.remoteConnected() {
 			targetDir = path.Dir(entry.Path)

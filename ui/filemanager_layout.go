@@ -53,6 +53,7 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 	ui.pumpFilePaneLoads(gtx)
 	ui.pumpFileViewerState(gtx)
 	ui.pumpFileCopyState(gtx)
+	ui.pumpArchiveExtractState(gtx)
 	ui.pumpFileDeleteState(gtx)
 	ui.pumpFileMoveState(gtx)
 	ui.pumpFileCreateState(gtx)
@@ -64,6 +65,9 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFileCopyDialog(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutArchiveExtractConflictDialog(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFileDeleteDialog(th, gtx)
@@ -98,7 +102,7 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 		ui.handleFileViewerKeys(gtx)
 		return
 	}
-	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil {
+	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
 		return
 	}
 	ui.handleFileManagerEscape(gtx)
@@ -469,10 +473,14 @@ func (ui *UI) layoutFilePaneNotice(th *material.Theme, gtx layout.Context, pane 
 	if pane == nil || pane.noticeText == "" {
 		return layout.Dimensions{}
 	}
-	showAt := pane.noticeUntil.Add(-filePaneNoticeVisibleDur)
+	showAt := pane.noticeShownAt
+	if showAt.IsZero() {
+		showAt = pane.noticeUntil.Add(-filePaneNoticeVisibleDur)
+	}
 	hideAt := pane.noticeUntil.Add(filePaneNoticeFadeOutDur)
 	if pane.noticeUntil.IsZero() || !gtx.Now.Before(hideAt) {
 		pane.noticeText = ""
+		pane.noticeShownAt = time.Time{}
 		pane.noticeUntil = time.Time{}
 		return layout.Dimensions{}
 	}

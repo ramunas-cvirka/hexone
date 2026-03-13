@@ -69,12 +69,18 @@ type fileMovePlan struct {
 	dstPath string
 }
 
+const fileMoveSuccessNoticeDur = 1200 * time.Millisecond
+
 func (ui *UI) startFileMoveDialog(idx int, now time.Time) {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return
 	}
 	pane := ui.filePanes[idx]
 	if pane == nil || pane.model == nil || pane.table == nil {
+		return
+	}
+	if pane.archiveBrowsing() {
+		pane.setNotice("cannot rename or move files inside an archive", now)
 		return
 	}
 	row := pane.table.Selected
@@ -424,6 +430,7 @@ func (ui *UI) finishFileMove(now time.Time) {
 		st.remote.close()
 		st.remote = nil
 	}
+	noticeText, noticeDur := fileMoveSuccessNotice(len(sources))
 	ui.fileMove = nil
 	ui.clearFileMoveHotkeyHold()
 
@@ -434,6 +441,7 @@ func (ui *UI) finishFileMove(now time.Time) {
 		return samePath(a, b)
 	}
 
+	noticeShown := false
 	for i, pane := range ui.filePanes {
 		if pane == nil || pane.model == nil || pane.table == nil {
 			continue
@@ -500,9 +508,36 @@ func (ui *UI) finishFileMove(now time.Time) {
 		if i == st.pane {
 			row = st.row
 		}
-		ui.requestPaneLoadWithSelection(i, pane.dir, primaryPath, secondaryPath, row)
+		restorePos := sanitizePaneListPosition(pane.table.List.Position)
+		restoreAnchor := pane.visibleAnchorPath()
+		if _, ok := sourceDirs[paneDir]; ok {
+			restoreAnchor = filePaneRestoreAnchorPathSkipping(pane, sourcePaths, remoteMove)
+		}
+		reloadNoticeText := ""
+		reloadNoticeDur := time.Duration(0)
+		if i == st.pane {
+			reloadNoticeText = noticeText
+			reloadNoticeDur = noticeDur
+		}
+		if ui.requestPaneLoadWithSelectionAndScroll(i, pane.dir, primaryPath, secondaryPath, row, restorePos, true, restoreAnchor, reloadNoticeText, reloadNoticeDur) && i == st.pane {
+			noticeShown = true
+		}
+	}
+	if !noticeShown && noticeText != "" && st.pane >= 0 && st.pane < len(ui.filePanes) && ui.filePanes[st.pane] != nil {
+		ui.filePanes[st.pane].setNoticeFor(noticeText, now, noticeDur)
 	}
 	_ = now
+}
+
+func fileMoveSuccessNotice(count int) (string, time.Duration) {
+	if count <= 0 {
+		return "", 0
+	}
+	label := "items"
+	if count == 1 {
+		label = "item"
+	}
+	return fmt.Sprintf("moved %d %s", count, label), fileMoveSuccessNoticeDur
 }
 
 func (ui *UI) closeFileMoveDialog() {

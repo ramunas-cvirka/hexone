@@ -102,7 +102,7 @@ func (ui *UI) startInlineFileNameEdit(idx, row int, now time.Time) bool {
 	if entry == nil {
 		return false
 	}
-	if entry.Kind == filesys.EntryParent {
+	if entry.Kind == filesys.EntryParent || pane.archiveBrowsing() {
 		return false
 	}
 	if pane.inlineNameEditing && pane.inlineNameRow == row {

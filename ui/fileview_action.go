@@ -98,6 +98,10 @@ func (ui *UI) filePaneEntryForExternalOpen(idx, row int, now time.Time) (*filePa
 		pane.setNotice("external open supports local files only", now)
 		return pane, nil, false
 	}
+	if filesys.ArchiveMemberPath(entry.Path) {
+		pane.setNotice("external open supports real files only", now)
+		return pane, nil, false
+	}
 	switch entry.Kind {
 	case filesys.EntryDir, filesys.EntryParent:
 		pane.setNotice("external open supports files only", now)
@@ -116,6 +120,10 @@ func (ui *UI) filePaneTargetForSystemFileManager(idx, row int, now time.Time) (*
 	}
 	if pane.remoteConnected() {
 		pane.setNotice("file manager open supports local paths only", now)
+		return pane, "", false, false
+	}
+	if pane.archiveBrowsing() {
+		pane.setNotice("file manager open supports real paths only", now)
 		return pane, "", false, false
 	}
 
@@ -138,6 +146,10 @@ func (ui *UI) filePaneTargetForSystemFileManager(idx, row int, now time.Time) (*
 	targetPath := strings.TrimSpace(entry.Path)
 	if targetPath == "" {
 		pane.setNotice("path is empty", now)
+		return pane, "", false, false
+	}
+	if filesys.ArchiveMemberPath(targetPath) {
+		pane.setNotice("file manager open supports real paths only", now)
 		return pane, "", false, false
 	}
 	switch entry.Kind {

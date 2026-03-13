@@ -6,6 +6,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"hexone/filesys"
 	"image"
 	"image/color"
 	"io"
@@ -1046,6 +1047,16 @@ func readHexViewerChunk(path string, remote *paneSSHSession, start, length int64
 		err error
 	)
 	if remote == nil {
+		if filesys.ArchiveMemberPath(path) {
+			chunk, chunkSize, chunkErr := filesys.ReadLocalFileChunk(path, start, length)
+			if chunkErr != nil {
+				res.err = chunkErr.Error()
+				return res
+			}
+			res.size = chunkSize
+			res.data = chunk
+			return res
+		}
 		info, statErr := os.Stat(path)
 		if statErr != nil {
 			res.err = statErr.Error()

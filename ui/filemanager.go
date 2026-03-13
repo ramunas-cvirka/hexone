@@ -278,8 +278,10 @@ type filePaneState struct {
 	loadingStartedAt      time.Time
 	loadSeq               int
 	loadResultCh          chan filePaneLoadResult
+	navScrollByDir        map[string]layout.Position
 	err                   string
 	noticeText            string
+	noticeShownAt         time.Time
 	noticeUntil           time.Time
 	markedRows            map[int]struct{}
 }
@@ -291,6 +293,11 @@ type filePaneLoadResult struct {
 	primaryPath   string
 	secondaryPath string
 	fallbackRow   int
+	restorePos    layout.Position
+	restoreScroll bool
+	restoreAnchor string
+	noticeText    string
+	noticeDur     time.Duration
 }
 
 func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
@@ -460,6 +467,10 @@ func (p *filePaneState) load(dir string) error {
 }
 
 func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int) {
+	p.applyListingWithRestore(listing, primaryPath, secondaryPath, fallbackRow, layout.Position{}, false, "")
+}
+
+func (p *filePaneState) applyListingWithRestore(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor string) {
 	if p == nil {
 		return
 	}
@@ -472,6 +483,7 @@ func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secon
 	p.loadingStartedAt = time.Time{}
 	p.err = ""
 	p.noticeText = ""
+	p.noticeShownAt = time.Time{}
 	p.noticeUntil = time.Time{}
 	p.stopInlineNameEdit()
 	p.clearMarkedRows()
@@ -484,23 +496,58 @@ func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secon
 	p.model.entries = listing.Entries
 	p.applySort("")
 	p.table.Selected = 0
-	p.table.List.Position = layout.Position{}
-	p.applySelection(primaryPath, secondaryPath, fallbackRow)
+	if restoreScroll {
+		p.table.List.Position = restorePaneListPosition(p.model.entries, restorePos, restoreAnchor)
+	} else {
+		p.table.List.Position = layout.Position{}
+	}
+	p.applySelection(primaryPath, secondaryPath, fallbackRow, !restoreScroll)
 }
 
-func (p *filePaneState) applySelection(primaryPath, secondaryPath string, fallbackRow int) {
+func sanitizePaneListPosition(pos layout.Position) layout.Position {
+	if pos.First < 0 {
+		pos.First = 0
+	}
+	pos.Count = 0
+	pos.Length = 0
+	return pos
+}
+
+func restorePaneListPosition(entries []filesys.Entry, pos layout.Position, anchorPath string) layout.Position {
+	pos = sanitizePaneListPosition(pos)
+	if strings.TrimSpace(anchorPath) != "" {
+		for i := range entries {
+			if entries[i].Path == anchorPath {
+				pos.First = i
+				break
+			}
+		}
+	}
+	if len(entries) == 0 {
+		pos.First = 0
+		pos.Offset = 0
+		return pos
+	}
+	if pos.First >= len(entries) {
+		pos.First = len(entries) - 1
+		pos.Offset = 0
+	}
+	return pos
+}
+
+func (p *filePaneState) applySelection(primaryPath, secondaryPath string, fallbackRow int, ensureVisible bool) {
 	if p == nil || p.table == nil || p.model == nil || p.model.Len() == 0 {
 		return
 	}
 	if primaryPath != "" {
 		if idx := p.findEntryPathIndex(primaryPath); idx >= 0 {
-			p.table.SetSelected(idx, p.model.Len(), false)
+			p.table.SetSelected(idx, p.model.Len(), ensureVisible)
 			return
 		}
 	}
 	if secondaryPath != "" {
 		if idx := p.findEntryPathIndex(secondaryPath); idx >= 0 {
-			p.table.SetSelected(idx, p.model.Len(), false)
+			p.table.SetSelected(idx, p.model.Len(), ensureVisible)
 			return
 		}
 	}
@@ -511,16 +558,24 @@ func (p *filePaneState) applySelection(primaryPath, secondaryPath string, fallba
 	if row >= p.model.Len() {
 		row = p.model.Len() - 1
 	}
-	p.table.SetSelected(row, p.model.Len(), false)
+	p.table.SetSelected(row, p.model.Len(), ensureVisible)
 }
 
 func (p *filePaneState) setNotice(msg string, now time.Time) {
+	p.setNoticeFor(msg, now, filePaneNoticeVisibleDur)
+}
+
+func (p *filePaneState) setNoticeFor(msg string, now time.Time, dur time.Duration) {
 	if p == nil || msg == "" {
 		return
 	}
+	if dur <= 0 {
+		dur = filePaneNoticeVisibleDur
+	}
 	p.err = ""
 	p.noticeText = msg
-	p.noticeUntil = now.Add(3 * time.Second)
+	p.noticeShownAt = now
+	p.noticeUntil = now.Add(dur)
 }
 
 func (p *filePaneState) beginPathEdit() {
@@ -1125,6 +1180,63 @@ func (p *filePaneState) selectedEntriesForAction() []filesys.Entry {
 
 func (p *filePaneState) remoteConnected() bool {
 	return p != nil && p.remote != nil
+}
+
+func (p *filePaneState) archiveBrowsing() bool {
+	return p != nil && !p.remoteConnected() && filesys.ArchivePathActive(p.dir)
+}
+
+func (p *filePaneState) writableLocalView() bool {
+	return p != nil && !p.remoteConnected() && !p.archiveBrowsing()
+}
+
+func (p *filePaneState) archiveParentDir() string {
+	if p == nil {
+		return ""
+	}
+	if loc, ok := filesys.ParseArchivePath(p.dir); ok {
+		return filepath.Dir(loc.ArchivePath)
+	}
+	return ""
+}
+
+func (p *filePaneState) rememberDirScroll(dir string) {
+	if p == nil || p.table == nil || strings.TrimSpace(dir) == "" {
+		return
+	}
+	if p.navScrollByDir == nil {
+		p.navScrollByDir = make(map[string]layout.Position)
+	}
+	p.navScrollByDir[dir] = sanitizePaneListPosition(p.table.List.Position)
+}
+
+func (p *filePaneState) restoreDirScroll(dir string) (layout.Position, bool) {
+	if p == nil || strings.TrimSpace(dir) == "" || len(p.navScrollByDir) == 0 {
+		return layout.Position{}, false
+	}
+	pos, ok := p.navScrollByDir[dir]
+	if !ok {
+		return layout.Position{}, false
+	}
+	return sanitizePaneListPosition(pos), true
+}
+
+func (p *filePaneState) visibleAnchorPath() string {
+	if p == nil || p.table == nil || p.model == nil || p.model.Len() == 0 {
+		return ""
+	}
+	row := p.table.List.Position.First
+	if row < 0 {
+		row = 0
+	}
+	if row >= p.model.Len() {
+		row = p.model.Len() - 1
+	}
+	entry := p.model.Entry(row)
+	if entry == nil {
+		return ""
+	}
+	return entry.Path
 }
 
 func (p *filePaneState) displayDir() string {
@@ -2189,6 +2301,10 @@ func sendFilePaneLoadResult(ch chan filePaneLoadResult, res filePaneLoadResult) 
 }
 
 func startLocalPaneLoad(pane *filePaneState, dir, primaryPath, secondaryPath string, fallbackRow int) bool {
+	return startLocalPaneLoadWithRestore(pane, dir, primaryPath, secondaryPath, fallbackRow, layout.Position{}, false, "", "", 0)
+}
+
+func startLocalPaneLoadWithRestore(pane *filePaneState, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
 	if pane == nil {
 		return false
 	}
@@ -2202,7 +2318,7 @@ func startLocalPaneLoad(pane *filePaneState, dir, primaryPath, secondaryPath str
 	pane.clearPendingPathNavigate()
 
 	ch := pane.loadResultCh
-	go func(targetDir, wantPrimary, wantSecondary string, wantRow, currentSeq int) {
+	go func(targetDir, wantPrimary, wantSecondary string, wantRow, currentSeq int, wantRestore layout.Position, wantRestoreScroll bool, wantRestoreAnchor, wantNotice string, wantNoticeDur time.Duration) {
 		listing, err := filesys.ReadDir(targetDir)
 		sendFilePaneLoadResult(ch, filePaneLoadResult{
 			seq:           currentSeq,
@@ -2211,12 +2327,21 @@ func startLocalPaneLoad(pane *filePaneState, dir, primaryPath, secondaryPath str
 			primaryPath:   wantPrimary,
 			secondaryPath: wantSecondary,
 			fallbackRow:   wantRow,
+			restorePos:    wantRestore,
+			restoreScroll: wantRestoreScroll,
+			restoreAnchor: wantRestoreAnchor,
+			noticeText:    wantNotice,
+			noticeDur:     wantNoticeDur,
 		})
-	}(target, primaryPath, secondaryPath, fallbackRow, seq)
+	}(target, primaryPath, secondaryPath, fallbackRow, seq, restorePos, restoreScroll, restoreAnchor, noticeText, noticeDur)
 	return true
 }
 
 func (ui *UI) requestPaneLoadWithSelection(idx int, dir, primaryPath, secondaryPath string, fallbackRow int) bool {
+	return ui.requestPaneLoadWithSelectionAndScroll(idx, dir, primaryPath, secondaryPath, fallbackRow, layout.Position{}, false, "", "", 0)
+}
+
+func (ui *UI) requestPaneLoadWithSelectionAndScroll(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return false
 	}
@@ -2241,10 +2366,16 @@ func (ui *UI) requestPaneLoadWithSelection(idx int, dir, primaryPath, secondaryP
 			pane.setNotice(err.Error(), time.Now())
 			return false
 		}
-		pane.applySelection(primaryPath, secondaryPath, fallbackRow)
+		if restoreScroll {
+			pane.table.List.Position = restorePaneListPosition(pane.model.entries, restorePos, restoreAnchor)
+		}
+		pane.applySelection(primaryPath, secondaryPath, fallbackRow, !restoreScroll)
+		if noticeText != "" {
+			pane.setNoticeFor(noticeText, time.Now(), noticeDur)
+		}
 		return true
 	}
-	return startLocalPaneLoad(pane, dir, primaryPath, secondaryPath, fallbackRow)
+	return startLocalPaneLoadWithRestore(pane, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, restoreAnchor, noticeText, noticeDur)
 }
 
 func (ui *UI) loadPaneDir(idx int, dir string) bool {
@@ -2280,7 +2411,10 @@ func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {
 					gtx.Execute(op.InvalidateCmd{})
 					continue
 				}
-				pane.applyListing(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow)
+				pane.applyListingWithRestore(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreScroll, res.restoreAnchor)
+				if res.noticeText != "" {
+					pane.setNoticeFor(res.noticeText, gtx.Now, res.noticeDur)
+				}
 				gtx.Execute(op.InvalidateCmd{})
 			default:
 				goto nextPane
@@ -2465,6 +2599,13 @@ func (ui *UI) activateFilePaneDoubleClick(idx, row int) bool {
 	case filesys.EntryDir, filesys.EntryParent:
 		return ui.activateFilePaneRow(idx, row)
 	default:
+		if entry.CanEnter {
+			return ui.activateFilePaneRow(idx, row)
+		}
+		if pane.archiveBrowsing() || filesys.ArchiveMemberPath(entry.Path) {
+			ui.startFileViewer(idx, time.Now())
+			return true
+		}
 		ui.startFileSystemOpenAction(idx, row, time.Now())
 		return true
 	}
@@ -2484,11 +2625,15 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 	if entry == nil || !entry.CanEnter {
 		return false
 	}
+	pane.rememberDirScroll(prevDir)
 	primaryPath := ""
+	restorePos := layout.Position{}
+	restoreScroll := false
 	if entry.Kind == filesys.EntryParent {
 		primaryPath = prevDir
+		restorePos, restoreScroll = pane.restoreDirScroll(entry.Path)
 	}
-	if !ui.requestPaneLoadWithSelection(idx, entry.Path, primaryPath, "", 0) {
+	if !ui.requestPaneLoadWithSelectionAndScroll(idx, entry.Path, primaryPath, "", 0, restorePos, restoreScroll, "", "", 0) {
 		return false
 	}
 	return true

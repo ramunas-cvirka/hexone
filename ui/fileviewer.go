@@ -1193,6 +1193,9 @@ func (st *fileViewerState) statPath() (os.FileInfo, error) {
 		return nil, errors.New("viewer state is nil")
 	}
 	if st.remote == nil {
+		if filesys.ArchiveMemberPath(st.path) {
+			return filesys.StatLocalPath(st.path)
+		}
 		return os.Stat(st.path)
 	}
 	client := st.remote.sftpClient()
@@ -1606,7 +1609,13 @@ func (ui *UI) rememberViewerCommand(st *fileViewerState, cmd string) error {
 
 func (ui *UI) viewerConfiguredModeAndCommand(path string, remote *paneSSHSession, fallbackMode, fallbackCommand string) (string, string) {
 	mode := normalizeViewerMode(fallbackMode)
+	if remote == nil && filesys.ArchiveMemberPath(path) && mode == "command" {
+		mode = "file"
+	}
 	cmd, matchedRule := ui.viewerDefaultCommand(path, remote, fallbackCommand)
+	if remote == nil && filesys.ArchiveMemberPath(path) {
+		return mode, cmd
+	}
 	if matchedRule {
 		mode = "command"
 	}
@@ -1785,22 +1794,40 @@ func readViewerFile(path, encoding string, maxBytes int, started time.Time, remo
 		size    int64 = -1
 		reader  io.ReadCloser
 		openErr error
+		prefix  = "file"
 	)
 
 	if remote == nil {
-		info, err := os.Stat(path)
-		if err != nil {
-			return "", "", err.Error(), viewerReadInfo{}
+		if filesys.ArchiveMemberPath(path) {
+			prefix = "archive entry"
+			info, err := filesys.StatLocalPath(path)
+			if err != nil {
+				return "", "", err.Error(), viewerReadInfo{}
+			}
+			if info.IsDir() {
+				return "", "", "viewer supports files only", viewerReadInfo{}
+			}
+			size = info.Size()
+			if size > int64(maxBytes) {
+				return "", fmt.Sprintf("%s: %d bytes", prefix, size),
+					fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
+			}
+			reader, _, openErr = filesys.OpenLocalPath(path)
+		} else {
+			info, err := os.Stat(path)
+			if err != nil {
+				return "", "", err.Error(), viewerReadInfo{}
+			}
+			if info.IsDir() {
+				return "", "", "viewer supports files only", viewerReadInfo{}
+			}
+			size = info.Size()
+			if size > int64(maxBytes) {
+				return "", fmt.Sprintf("file: %d bytes", size),
+					fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
+			}
+			reader, openErr = os.Open(path)
 		}
-		if info.IsDir() {
-			return "", "", "viewer supports files only", viewerReadInfo{}
-		}
-		size = info.Size()
-		if size > int64(maxBytes) {
-			return "", fmt.Sprintf("file: %d bytes", size),
-				fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
-		}
-		reader, openErr = os.Open(path)
 	} else {
 		client := remote.sftpClient()
 		if client == nil {
@@ -1819,6 +1846,7 @@ func readViewerFile(path, encoding string, maxBytes int, started time.Time, remo
 				fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
 		}
 		reader, openErr = client.Open(path)
+		prefix = "remote file"
 	}
 	if openErr != nil {
 		return "", "", openErr.Error(), viewerReadInfo{}
@@ -1833,10 +1861,6 @@ func readViewerFile(path, encoding string, maxBytes int, started time.Time, remo
 	info.lineEnding = detectViewerLineEnding(content)
 	content = normalizeViewerLineEndings(content)
 	content = sanitizeViewerContent(content)
-	prefix := "file"
-	if remote != nil {
-		prefix = "remote file"
-	}
 	if size >= 0 {
 		return content, fmt.Sprintf("%s: %d bytes", prefix, size), "", info
 	}

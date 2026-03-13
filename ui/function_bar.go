@@ -90,7 +90,7 @@ func popupPressed(gtx layout.Context, tag event.Tag) bool {
 }
 
 func (ui *UI) hasBlockingFileDialog() bool {
-	return ui != nil && (ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil)
+	return ui != nil && (ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen())
 }
 
 func (ui *UI) closeFunctionBarToolsMenu() {

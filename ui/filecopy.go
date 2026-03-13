@@ -31,6 +31,7 @@ type fileCopyState struct {
 	pane    int
 	srcPane int
 	dstPane int
+	op      fileCopyOp
 
 	sources []fileCopySource
 	srcPath string
@@ -42,6 +43,7 @@ type fileCopyState struct {
 
 	dstEdit     widget.Editor
 	dstEditWant bool
+	dstLocked   bool
 
 	backdropClick widget.Clickable
 	closeClick    widget.Clickable
@@ -64,6 +66,15 @@ type fileCopySource struct {
 	Path string
 	Name string
 }
+
+type fileCopyOp uint8
+
+const (
+	fileCopyOpCopy fileCopyOp = iota
+	fileCopyOpExtract
+)
+
+const fileCopySuccessNoticeDur = 1200 * time.Millisecond
 
 type fileCopyPlan struct {
 	srcPath      string
@@ -175,25 +186,8 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	ui.closeFavoriteMenusExcept(idx)
 	ui.closeContextMenusExcept(idx)
 
-	dstPaneIdx := idx
-	for i, other := range ui.filePanes {
-		if i == idx || other == nil || other.dir == "" {
-			continue
-		}
-		dstPaneIdx = i
-		break
-	}
-	dstPane := ui.filePanes[dstPaneIdx]
 	srcEndpoint := copyEndpointFromPane(idx, pane)
-	dstEndpoint := copyEndpointFromPane(dstPaneIdx, dstPane)
-	dstDir := strings.TrimSpace(dstEndpoint.dir)
-	if dstDir == "" {
-		if dstEndpoint.isRemote() {
-			dstDir = "/"
-		} else {
-			dstDir = "."
-		}
-	}
+	dstPaneIdx, dstEndpoint, dstDir := ui.defaultFileCopyDestination(idx, pane, srcEndpoint)
 	sources := make([]fileCopySource, 0, len(selected))
 	for _, entry := range selected {
 		sources = append(sources, fileCopySource{
@@ -211,6 +205,7 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 		pane:        idx,
 		srcPane:     idx,
 		dstPane:     dstPaneIdx,
+		op:          fileCopyOpCopy,
 		sources:     sources,
 		srcPath:     first.Path,
 		dstPath:     dstDefault,
@@ -229,6 +224,42 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	ui.rep.active = false
 	ui.rep.pane = -1
 	ui.clearFileCopyHotkeyHold()
+}
+
+func (ui *UI) defaultFileCopyDestination(srcIdx int, srcPane *filePaneState, srcEndpoint copyEndpoint) (int, copyEndpoint, string) {
+	for i, other := range ui.filePanes {
+		if i == srcIdx || other == nil {
+			continue
+		}
+		otherEndpoint := copyEndpointFromPane(i, other)
+		if otherEndpoint.isArchive() {
+			continue
+		}
+		dstDir := strings.TrimSpace(otherEndpoint.dir)
+		if dstDir == "" {
+			continue
+		}
+		return i, otherEndpoint, dstDir
+	}
+
+	if srcEndpoint.isArchive() {
+		dstDir := srcPane.archiveParentDir()
+		if strings.TrimSpace(dstDir) == "" {
+			dstDir = "."
+		}
+		return -1, copyEndpoint{pane: -1, dir: dstDir}, dstDir
+	}
+
+	dstEndpoint := copyEndpointFromPane(srcIdx, srcPane)
+	dstDir := strings.TrimSpace(dstEndpoint.dir)
+	if dstDir == "" {
+		if dstEndpoint.isRemote() {
+			dstDir = "/"
+		} else {
+			dstDir = "."
+		}
+	}
+	return srcIdx, dstEndpoint, dstDir
 }
 
 func (ui *UI) clearFileCopyHotkeyHold() {
@@ -256,11 +287,47 @@ func (st *fileCopyState) sourceCount() int {
 }
 
 func (st *fileCopyState) sourceSummary() string {
+	if st == nil {
+		return ""
+	}
+	if st.op == fileCopyOpExtract {
+		count := st.sourceCount()
+		if count <= 1 {
+			return st.srcPath
+		}
+		return fmt.Sprintf("%s (%d items)", st.srcPath, count)
+	}
 	count := st.sourceCount()
 	if count <= 1 {
 		return st.srcPath
 	}
 	return fmt.Sprintf("%d items selected", count)
+}
+
+func (st *fileCopyState) title() string {
+	if st != nil && st.op == fileCopyOpExtract {
+		return "Extract"
+	}
+	return "Copy"
+}
+
+func (st *fileCopyState) confirmLabel() string {
+	if st == nil {
+		return "Copy"
+	}
+	if st.op == fileCopyOpExtract {
+		if st.running {
+			return "Extracting..."
+		}
+		return "Extract"
+	}
+	if st.running {
+		return "Copying..."
+	}
+	if st.dstInfo.Exists && !st.multiSource() {
+		return "Overwrite"
+	}
+	return "Copy"
 }
 
 func (st *fileCopyState) sourcePreviewLines() []string {
@@ -496,27 +563,61 @@ func (ui *UI) finishFileCopy(now time.Time) {
 
 	srcPaneIdx := st.srcPane
 	dstPaneIdx := st.dstPane
+	noticeText, noticeDur := fileCopySuccessNotice(st)
+	noticePaneIdx := dstPaneIdx
+	if noticePaneIdx < 0 {
+		noticePaneIdx = srcPaneIdx
+	}
 	ui.fileCopy = nil // close dialog first
 	ui.clearFileCopyHotkeyHold()
 
+	noticeShown := false
 	reloadPane := func(paneIdx int) {
 		if paneIdx < 0 || paneIdx >= len(ui.filePanes) {
 			return
 		}
 		pane := ui.filePanes[paneIdx]
-		if pane == nil {
+		if pane == nil || pane.table == nil {
 			return
 		}
 		selectedPath := ""
 		if sel := pane.selectedEntry(); sel != nil {
 			selectedPath = sel.Path
 		}
-		ui.requestPaneLoadWithSelection(paneIdx, pane.dir, selectedPath, "", pane.table.Selected)
+		restorePos := sanitizePaneListPosition(pane.table.List.Position)
+		restoreAnchor := pane.visibleAnchorPath()
+		reloadNoticeText := ""
+		reloadNoticeDur := time.Duration(0)
+		if paneIdx == noticePaneIdx {
+			reloadNoticeText = noticeText
+			reloadNoticeDur = noticeDur
+		}
+		if ui.requestPaneLoadWithSelectionAndScroll(paneIdx, pane.dir, selectedPath, "", pane.table.Selected, restorePos, true, restoreAnchor, reloadNoticeText, reloadNoticeDur) && paneIdx == noticePaneIdx {
+			noticeShown = true
+		}
 	}
 	reloadPane(srcPaneIdx)
 	if dstPaneIdx != srcPaneIdx {
 		reloadPane(dstPaneIdx)
 	}
+	if !noticeShown && noticeText != "" && noticePaneIdx >= 0 && noticePaneIdx < len(ui.filePanes) && ui.filePanes[noticePaneIdx] != nil {
+		ui.filePanes[noticePaneIdx].setNoticeFor(noticeText, now, noticeDur)
+	}
+}
+
+func fileCopySuccessNotice(st *fileCopyState) (string, time.Duration) {
+	if st == nil {
+		return "", 0
+	}
+	count := st.sourceCount()
+	if count <= 0 {
+		return "", 0
+	}
+	label := "items"
+	if count == 1 {
+		label = "item"
+	}
+	return fmt.Sprintf("copied %d %s", count, label), fileCopySuccessNoticeDur
 }
 
 func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layout.Dimensions {
@@ -684,7 +785,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					title := material.Body1(th, "Copy")
+					title := material.Body1(th, st.title())
 					title.Font.Typeface = ui.mainTypeface()
 					title.Font.Weight = font.Bold
 					title.TextSize = scaleDialogThemeFontSize(th, 12)
@@ -698,14 +799,16 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.multiSource() {
+			if st.op == fileCopyOpExtract {
+				srcHdr.Text = "Archive"
+			} else if st.multiSource() {
 				srcHdr.Text = "Sources"
 			}
 			return srcHdr.Layout(gtx)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.multiSource() {
+			if st.op == fileCopyOpExtract || st.multiSource() {
 				srcText.Text = st.sourceSummary()
 			}
 			return srcText.Layout(gtx)
@@ -718,7 +821,9 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.multiSource() {
+			if st.op == fileCopyOpExtract {
+				dstHdr.Text = "Extract To"
+			} else if st.multiSource() {
 				dstHdr.Text = "Destination Directory"
 			}
 			return dstHdr.Layout(gtx)
@@ -726,6 +831,23 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.running {
+				lbl := material.Body2(th, st.dstPath)
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+				lbl.Color = txtColor
+				lbl.MaxLines = 1
+				lbl.Truncator = "…"
+				return fillRoundedBox(
+					gtx,
+					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
+					func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+					},
+				)
+			}
+			if st.dstLocked {
 				lbl := material.Body2(th, st.dstPath)
 				lbl.Font.Typeface = ui.mainTypeface()
 				lbl.TextSize = scaleDialogThemeFontSize(th, 10)
@@ -789,16 +911,10 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				label := "Copy"
-				if st.running {
-					label = "Copying..."
-				} else if st.dstInfo.Exists && !st.multiSource() {
-					label = "Overwrite"
-				}
 				return ui.layoutDialogActionPair(
 					th, gtx,
 					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, st.running,
-					&st.confirmClick, label, hoverConfirm, pulseConfirm, st.running,
+					&st.confirmClick, st.confirmLabel(), hoverConfirm, pulseConfirm, st.running,
 				)
 			})
 		}),
@@ -992,6 +1108,70 @@ func (ui *UI) layoutDialogActionPair(th *material.Theme, gtx layout.Context, lef
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return toolbarSeparator(gtx, stripH)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, false, true, rightDisabled)
+						}),
+					)
+				})
+			})
+		},
+	)
+}
+
+func (ui *UI) layoutDialogActionTriple(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, middleClick *widget.Clickable, middleLabel string, middleHover, middlePulse float32, middleDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool) layout.Dimensions {
+	leftW, leftH := ui.dialogActionSegmentMetricsPx(th, gtx, leftLabel)
+	middleW, middleH := ui.dialogActionSegmentMetricsPx(th, gtx, middleLabel)
+	rightW, rightH := ui.dialogActionSegmentMetricsPx(th, gtx, rightLabel)
+
+	stripH := leftH
+	if middleH > stripH {
+		stripH = middleH
+	}
+	if rightH > stripH {
+		stripH = rightH
+	}
+	if stripH < 1 {
+		stripH = 1
+	}
+
+	sepW := gtx.Dp(unit.Dp(1))
+	if sepW < 1 {
+		sepW = 1
+	}
+	maxW := gtx.Constraints.Max.X
+	totalW := leftW + middleW + rightW + sepW*2
+	if maxW > 0 && totalW > maxW {
+		segW := (maxW - sepW*2) / 3
+		minSegW := gtx.Dp(unit.Dp(64))
+		if segW < minSegW {
+			segW = minSegW
+		}
+		leftW = segW
+		middleW = segW
+		rightW = segW
+	}
+
+	return fillRoundedBox(
+		gtx,
+		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return toolbarSeparator(gtx, stripH)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutDialogActionSegment(th, gtx, middleClick, middleLabel, middleHover, middlePulse, middleW, stripH, false, false, middleDisabled)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return toolbarSeparator(gtx, stripH)

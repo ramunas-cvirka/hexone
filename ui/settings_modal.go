@@ -5892,7 +5892,7 @@ func (ui *UI) reloadFilePanesForConfig(now time.Time) {
 			if err := pane.load(reloadDir); err != nil {
 				pane.setNotice("remote reload failed: "+err.Error(), now)
 			} else {
-				pane.applySelection(selectedPath, "", pane.table.Selected)
+				pane.applySelection(selectedPath, "", pane.table.Selected, true)
 			}
 		} else {
 			startLocalPaneLoad(pane, filepath.Clean(dir), selectedPath, "", pane.table.Selected)

@@ -4,6 +4,7 @@
 package filesys
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,6 +47,14 @@ func ReadDir(dir string) (Listing, error) {
 	}
 	abs = filepath.Clean(abs)
 
+	if loc, ok := ParseArchivePath(abs); ok {
+		return readArchiveDir(abs, loc)
+	}
+
+	return readLocalDir(abs)
+}
+
+func readLocalDir(abs string) (Listing, error) {
 	items, err := os.ReadDir(abs)
 	if err != nil {
 		return Listing{}, err
@@ -56,28 +65,9 @@ func ReadDir(dir string) (Listing, error) {
 		Entries: make([]Entry, 0, len(items)+1),
 	}
 
-	parent := filepath.Dir(abs)
-	if parent != abs {
-		out.Entries = append(out.Entries, Entry{
-			Name:        "..",
-			DisplayName: "..",
-			PermText:    "",
-			PermOctal:   "",
-			SizeText:    "",
-			DateText:    "",
-			Kind:        EntryParent,
-			Path:        parent,
-			CanEnter:    true,
-		})
-	}
+	appendParentEntry(&out, abs)
 
-	type sortable struct {
-		entry Entry
-		key   string
-		group int
-	}
-
-	rows := make([]sortable, 0, len(items))
+	rows := make([]sortableEntry, 0, len(items))
 	for _, item := range items {
 		name := item.Name()
 		full := filepath.Join(abs, name)
@@ -95,7 +85,7 @@ func ReadDir(dir string) (Listing, error) {
 		if err != nil {
 			row.Kind = EntryBroken
 			row.DisplayName = name
-			rows = append(rows, sortable{entry: row, key: strings.ToLower(name), group: 2})
+			rows = append(rows, sortableEntry{entry: row, key: strings.ToLower(name), group: 2})
 			continue
 		}
 
@@ -106,33 +96,128 @@ func ReadDir(dir string) (Listing, error) {
 			} else {
 				row.Kind = EntryBroken
 				row.DisplayName = name
-				rows = append(rows, sortable{entry: row, key: strings.ToLower(name), group: 2})
+				rows = append(rows, sortableEntry{entry: row, key: strings.ToLower(name), group: 2})
 				continue
 			}
 		}
 
-		row.PermText = formatPerms(targetInfo.Mode())
-		row.PermOctal = formatPermOctal(targetInfo.Mode())
-		if targetInfo.IsDir() {
-			row.Kind = EntryDir
-			row.DisplayName = name
-			row.SizeText = ""
+		populateListingEntry(&row, name, targetInfo)
+		if row.Kind == EntryFile && ArchiveNameSupported(name) {
 			row.CanEnter = true
-		} else {
-			row.DisplayName = name
-			row.SizeBytes = targetInfo.Size()
-			row.SizeText = formatSize(targetInfo.Size())
 		}
-		row.DateText = formatDate(targetInfo.ModTime())
-		row.ModTime = targetInfo.ModTime()
-
-		group := 1
-		if row.Kind == EntryDir {
-			group = 0
-		}
-		rows = append(rows, sortable{entry: row, key: strings.ToLower(name), group: group})
+		rows = append(rows, sortableEntry{entry: row, key: strings.ToLower(name), group: listingEntryGroup(row)})
 	}
 
+	appendSortedEntries(&out, rows)
+	return out, nil
+}
+
+func readArchiveDir(abs string, loc ArchivePath) (Listing, error) {
+	fsys, err := openArchiveFSForLocation(loc)
+	if err != nil {
+		return Listing{}, err
+	}
+	innerPath := loc.InnerPath
+	if innerPath == "" {
+		innerPath = "."
+	}
+
+	items, err := fs.ReadDir(fsys, innerPath)
+	if err != nil {
+		return Listing{}, err
+	}
+
+	out := Listing{
+		Dir:     abs,
+		Entries: make([]Entry, 0, len(items)+1),
+	}
+	appendParentEntry(&out, abs)
+
+	rows := make([]sortableEntry, 0, len(items))
+	for _, item := range items {
+		name := item.Name()
+		full := filepath.Join(abs, name)
+		row := Entry{
+			Name:      name,
+			Path:      full,
+			Kind:      EntryFile,
+			PermText:  "—",
+			PermOctal: "—",
+			SizeText:  "",
+			DateText:  "—",
+		}
+
+		info, err := item.Info()
+		if err != nil {
+			row.Kind = EntryBroken
+			row.DisplayName = name
+			rows = append(rows, sortableEntry{entry: row, key: strings.ToLower(name), group: 2})
+			continue
+		}
+
+		populateListingEntry(&row, name, info)
+		rows = append(rows, sortableEntry{entry: row, key: strings.ToLower(name), group: listingEntryGroup(row)})
+	}
+
+	appendSortedEntries(&out, rows)
+	return out, nil
+}
+
+type sortableEntry struct {
+	entry Entry
+	key   string
+	group int
+}
+
+func appendParentEntry(out *Listing, dir string) {
+	if out == nil {
+		return
+	}
+	parent := filepath.Dir(dir)
+	if parent == dir {
+		return
+	}
+	out.Entries = append(out.Entries, Entry{
+		Name:        "..",
+		DisplayName: "..",
+		PermText:    "",
+		PermOctal:   "",
+		SizeText:    "",
+		DateText:    "",
+		Kind:        EntryParent,
+		Path:        parent,
+		CanEnter:    true,
+	})
+}
+
+func populateListingEntry(row *Entry, name string, info os.FileInfo) {
+	if row == nil {
+		return
+	}
+	row.DisplayName = name
+	row.PermText = formatPerms(info.Mode())
+	row.PermOctal = formatPermOctal(info.Mode())
+	if info.IsDir() {
+		row.Kind = EntryDir
+		row.SizeText = ""
+		row.CanEnter = true
+	} else {
+		row.Kind = EntryFile
+		row.SizeBytes = info.Size()
+		row.SizeText = formatSize(info.Size())
+	}
+	row.DateText = formatDate(info.ModTime())
+	row.ModTime = info.ModTime()
+}
+
+func listingEntryGroup(row Entry) int {
+	if row.Kind == EntryDir {
+		return 0
+	}
+	return 1
+}
+
+func appendSortedEntries(out *Listing, rows []sortableEntry) {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].group != rows[j].group {
 			return rows[i].group < rows[j].group
@@ -142,12 +227,9 @@ func ReadDir(dir string) (Listing, error) {
 		}
 		return rows[i].entry.Name < rows[j].entry.Name
 	})
-
 	for _, row := range rows {
 		out.Entries = append(out.Entries, row.entry)
 	}
-
-	return out, nil
 }
 
 func formatSize(size int64) string {

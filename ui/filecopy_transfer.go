@@ -18,9 +18,10 @@ import (
 )
 
 type copyEndpoint struct {
-	pane   int
-	remote *paneSSHSession
-	dir    string
+	pane    int
+	remote  *paneSSHSession
+	dir     string
+	archive bool
 }
 
 func copyEndpointFromPane(idx int, pane *filePaneState) copyEndpoint {
@@ -28,14 +29,19 @@ func copyEndpointFromPane(idx int, pane *filePaneState) copyEndpoint {
 		return copyEndpoint{pane: idx}
 	}
 	return copyEndpoint{
-		pane:   idx,
-		remote: pane.remote,
-		dir:    strings.TrimSpace(pane.dir),
+		pane:    idx,
+		remote:  pane.remote,
+		dir:     strings.TrimSpace(pane.dir),
+		archive: pane.archiveBrowsing(),
 	}
 }
 
 func (ep copyEndpoint) isRemote() bool {
 	return ep.remote != nil
+}
+
+func (ep copyEndpoint) isArchive() bool {
+	return !ep.isRemote() && ep.archive
 }
 
 func (ep copyEndpoint) normalizePath(raw string) (string, error) {
@@ -59,6 +65,9 @@ func (ep copyEndpoint) normalizePath(raw string) (string, error) {
 			txt = "/" + txt
 		}
 		return txt, nil
+	}
+	if ep.isArchive() {
+		return "", errors.New("destination cannot be inside an archive")
 	}
 	if txt == "" {
 		return "", errors.New("path is empty")
@@ -91,6 +100,19 @@ func (ep copyEndpoint) normalizeSourcePath(raw string) (string, error) {
 			txt = "/" + txt
 		}
 		return txt, nil
+	}
+	if ep.isArchive() {
+		if txt == "" {
+			return "", errors.New("source path is empty")
+		}
+		if !filepath.IsAbs(txt) {
+			base := ep.dir
+			if strings.TrimSpace(base) == "" {
+				return "", errors.New("archive source path is empty")
+			}
+			txt = filepath.Join(base, txt)
+		}
+		return filepath.Clean(txt), nil
 	}
 	abs, err := filepath.Abs(txt)
 	if err != nil {
@@ -181,6 +203,9 @@ func endpointLstat(ep copyEndpoint, p string) (os.FileInfo, error) {
 		}
 		return client.Lstat(p)
 	}
+	if ep.isArchive() {
+		return filesys.LstatLocalPath(p)
+	}
 	return os.Lstat(p)
 }
 
@@ -191,6 +216,9 @@ func endpointStat(ep copyEndpoint, p string) (os.FileInfo, error) {
 			return nil, errors.New("sftp session is not connected")
 		}
 		return client.Stat(p)
+	}
+	if ep.isArchive() {
+		return filesys.StatLocalPath(p)
 	}
 	return os.Stat(p)
 }
@@ -256,7 +284,7 @@ type transferEntry struct {
 }
 
 func runCopyBetweenEndpoints(srcEp copyEndpoint, srcPath string, dstEp copyEndpoint, dstPath string, report func(filesys.CopyProgress)) error {
-	if !srcEp.isRemote() && !dstEp.isRemote() {
+	if !srcEp.isRemote() && !dstEp.isRemote() && !srcEp.isArchive() && !dstEp.isArchive() {
 		return filesys.CopyPath(srcPath, dstPath, report)
 	}
 
@@ -316,7 +344,101 @@ func collectTransferEntries(srcEp copyEndpoint, srcRoot string, srcInfo os.FileI
 	if srcEp.isRemote() {
 		return collectRemoteTransferEntries(srcEp.remote.sftpClient(), srcRoot, srcInfo)
 	}
+	if srcEp.isArchive() {
+		return collectArchiveTransferEntries(srcRoot, srcInfo)
+	}
 	return collectLocalTransferEntries(srcRoot, srcInfo)
+}
+
+func collectArchiveTransferEntries(srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
+	loc, ok := filesys.ParseArchivePath(srcRoot)
+	if !ok {
+		return nil, 0, errors.New("source path is not inside an archive")
+	}
+	fsys, _, err := filesys.OpenArchiveFS(srcRoot)
+	if err != nil {
+		return nil, 0, err
+	}
+	rootInner := loc.InnerPath
+	if rootInner == "" {
+		rootInner = "."
+	}
+
+	if !srcInfo.IsDir() {
+		mode := normalizeArchiveEntryMode(srcInfo.Mode(), false)
+		entry := transferEntry{
+			srcPath: srcRoot,
+			rel:     ".",
+			mode:    mode,
+			modTime: srcInfo.ModTime(),
+			size:    srcInfo.Size(),
+			isDir:   false,
+		}
+		bytesTotal := int64(0)
+		if srcInfo.Mode().IsRegular() {
+			bytesTotal = srcInfo.Size()
+		}
+		return []transferEntry{entry}, bytesTotal, nil
+	}
+
+	entries := make([]transferEntry, 0, 64)
+	var bytesTotal int64
+	err = fs.WalkDir(fsys, rootInner, func(curr string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		mode := normalizeArchiveEntryMode(info.Mode(), info.IsDir())
+		rel := "."
+		if curr != rootInner {
+			if rootInner == "." {
+				rel = curr
+			} else {
+				rel = strings.TrimPrefix(curr, rootInner+"/")
+			}
+		}
+		rel = path.Clean(rel)
+		if rel == "" {
+			rel = "."
+		}
+		entry := transferEntry{
+			srcPath: archiveDisplayPath(loc.ArchivePath, curr),
+			rel:     rel,
+			mode:    mode,
+			modTime: info.ModTime(),
+			size:    info.Size(),
+			isDir:   info.IsDir(),
+		}
+		if info.Mode().IsRegular() {
+			bytesTotal += info.Size()
+		}
+		entries = append(entries, entry)
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return entries, bytesTotal, nil
+}
+
+func normalizeArchiveEntryMode(mode os.FileMode, isDir bool) os.FileMode {
+	if mode.Perm() != 0 {
+		return mode
+	}
+	if isDir {
+		return (mode &^ os.ModePerm) | 0o755
+	}
+	return (mode &^ os.ModePerm) | 0o644
+}
+
+func archiveDisplayPath(archivePath, innerPath string) string {
+	if innerPath == "" || innerPath == "." {
+		return filepath.Clean(archivePath)
+	}
+	return filepath.Join(filepath.Clean(archivePath), filepath.FromSlash(innerPath))
 }
 
 func collectLocalTransferEntries(srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
@@ -588,6 +710,10 @@ func openEndpointReader(ep copyEndpoint, p string) (io.ReadCloser, error) {
 		}
 		return client.Open(p)
 	}
+	if ep.isArchive() {
+		reader, _, err := filesys.OpenLocalPath(p)
+		return reader, err
+	}
 	return os.Open(p)
 }
 
@@ -598,6 +724,9 @@ func openEndpointWriter(ep copyEndpoint, p string) (io.WriteCloser, error) {
 			return nil, errors.New("sftp session is not connected")
 		}
 		return client.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	}
+	if ep.isArchive() {
+		return nil, errors.New("cannot write into an archive")
 	}
 	return os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o666)
 }
@@ -612,6 +741,9 @@ func applyEndpointFileAttrs(ep copyEndpoint, p string, mode os.FileMode, modTime
 			return err
 		}
 		return client.Chtimes(p, modTime, modTime)
+	}
+	if ep.isArchive() {
+		return errors.New("cannot modify archive contents")
 	}
 	if err := os.Chmod(p, mode.Perm()); err != nil {
 		return err
@@ -630,6 +762,9 @@ func removeEndpointPathIfExists(ep copyEndpoint, p string) error {
 		}
 		return client.RemoveAll(p)
 	}
+	if ep.isArchive() {
+		return errors.New("cannot modify archive contents")
+	}
 	if _, err := os.Lstat(p); err != nil {
 		return nil
 	}
@@ -643,6 +778,9 @@ func ensureEndpointDir(ep copyEndpoint, p string) error {
 			return errors.New("sftp session is not connected")
 		}
 		return client.MkdirAll(p)
+	}
+	if ep.isArchive() {
+		return errors.New("cannot create directories inside an archive")
 	}
 	return os.MkdirAll(p, 0o755)
 }

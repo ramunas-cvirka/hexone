@@ -33,6 +33,8 @@ const (
 	fileCreateKindFile
 )
 
+const fileCreateSuccessNoticeDur = 1200 * time.Millisecond
+
 type fileCreateState struct {
 	pane int
 
@@ -73,6 +75,10 @@ func (ui *UI) startFileCreateDialog(idx int, now time.Time) {
 	}
 	pane := ui.filePanes[idx]
 	if pane == nil {
+		return
+	}
+	if pane.archiveBrowsing() {
+		pane.setNotice("cannot create files inside an archive", now)
 		return
 	}
 
@@ -310,9 +316,11 @@ func (ui *UI) finishFileCreate(now time.Time) {
 		st.remote.close()
 		st.remote = nil
 	}
+	noticeText, noticeDur := fileCreateSuccessNotice(st.kind)
 	ui.fileCreate = nil
 	ui.clearFileCreateHotkeyHold()
 
+	noticeShown := false
 	for i, pane := range ui.filePanes {
 		if pane == nil || pane.model == nil || pane.table == nil {
 			continue
@@ -340,8 +348,28 @@ func (ui *UI) finishFileCreate(now time.Time) {
 		if sel := pane.selectedEntry(); sel != nil {
 			selectedPath = sel.Path
 		}
-		ui.requestPaneLoadWithSelection(i, pane.dir, createdPath, selectedPath, selectedRow)
+		restorePos := sanitizePaneListPosition(pane.table.List.Position)
+		restoreAnchor := pane.visibleAnchorPath()
+		reloadNoticeText := ""
+		reloadNoticeDur := time.Duration(0)
+		if i == st.pane {
+			reloadNoticeText = noticeText
+			reloadNoticeDur = noticeDur
+		}
+		if ui.requestPaneLoadWithSelectionAndScroll(i, pane.dir, createdPath, selectedPath, selectedRow, restorePos, true, restoreAnchor, reloadNoticeText, reloadNoticeDur) && i == st.pane {
+			noticeShown = true
+		}
 	}
+	if !noticeShown && noticeText != "" && st.pane >= 0 && st.pane < len(ui.filePanes) && ui.filePanes[st.pane] != nil {
+		ui.filePanes[st.pane].setNoticeFor(noticeText, now, noticeDur)
+	}
+}
+
+func fileCreateSuccessNotice(kind fileCreateKind) (string, time.Duration) {
+	if kind == fileCreateKindFile {
+		return "created file", fileCreateSuccessNoticeDur
+	}
+	return "created folder", fileCreateSuccessNoticeDur
 }
 
 func (ui *UI) closeFileCreateDialog() {

@@ -27,6 +27,8 @@ import (
 	"gioui.org/widget/material"
 )
 
+const fileDeleteSuccessNoticeDur = 1200 * time.Millisecond
+
 type fileDeleteState struct {
 	pane int
 	row  int
@@ -37,6 +39,9 @@ type fileDeleteState struct {
 	targetInfo fileCopyPathInfo
 	remote     *paneSSHSession
 
+	deletedNestedCount int
+	deletedCountKnown  bool
+
 	backdropClick widget.Clickable
 	closeClick    widget.Clickable
 	confirmClick  widget.Clickable
@@ -45,7 +50,7 @@ type fileDeleteState struct {
 	running bool
 	lastErr string
 
-	doneCh      chan error
+	doneCh      chan fileDeleteResult
 	actionsAnim segmentedAnimState
 }
 
@@ -54,12 +59,22 @@ type fileDeleteTarget struct {
 	Name string
 }
 
+type fileDeleteResult struct {
+	err               error
+	deletedNested     int
+	deletedCountKnown bool
+}
+
 func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return
 	}
 	pane := ui.filePanes[idx]
 	if pane == nil || pane.model == nil || pane.table == nil {
+		return
+	}
+	if pane.archiveBrowsing() {
+		pane.setNotice("cannot delete files inside an archive", now)
 		return
 	}
 	row := pane.table.Selected
@@ -184,7 +199,7 @@ func (ui *UI) submitFileDeleteDialog(now time.Time) {
 	}
 	st.lastErr = ""
 	st.running = true
-	doneCh := make(chan error, 1)
+	doneCh := make(chan fileDeleteResult, 1)
 	st.doneCh = doneCh
 
 	targets := st.targets
@@ -193,20 +208,27 @@ func (ui *UI) submitFileDeleteDialog(now time.Time) {
 	}
 	remote := st.remote
 	go func() {
+		res := fileDeleteResult{}
+		if nestedCount, err := countDeleteNestedEntries(targets, remote); err == nil {
+			res.deletedNested = nestedCount
+			res.deletedCountKnown = true
+		}
 		for _, target := range targets {
 			if remote != nil {
 				if err := deleteRemotePath(remote, target.Path); err != nil {
-					doneCh <- err
+					res.err = err
+					doneCh <- res
 					return
 				}
 				continue
 			}
 			if err := filesys.DeletePath(target.Path); err != nil {
-				doneCh <- err
+				res.err = err
+				doneCh <- res
 				return
 			}
 		}
-		doneCh <- nil
+		doneCh <- res
 	}()
 
 	_ = now
@@ -219,14 +241,16 @@ func (ui *UI) pumpFileDeleteState(gtx layout.Context) {
 	}
 
 	select {
-	case err := <-st.doneCh:
+	case res := <-st.doneCh:
 		st.running = false
 		st.doneCh = nil
-		if err != nil {
-			st.lastErr = err.Error()
+		if res.err != nil {
+			st.lastErr = res.err.Error()
 			gtx.Execute(op.InvalidateCmd{})
 			return
 		}
+		st.deletedNestedCount = res.deletedNested
+		st.deletedCountKnown = res.deletedCountKnown
 		ui.finishFileDelete(gtx.Now)
 	default:
 		gtx.Execute(op.InvalidateCmd{})
@@ -258,10 +282,16 @@ func (ui *UI) finishFileDelete(now time.Time) {
 		deletedDirs[dirName(deletedPath)] = struct{}{}
 	}
 	preferRow := st.row
+	nestedCount := 0
+	if st.deletedCountKnown {
+		nestedCount = st.deletedNestedCount
+	}
+	noticeText, noticeDur := fileDeleteSuccessNotice(len(targets), nestedCount)
 
 	ui.fileDelete = nil
 	ui.clearFileDeleteHotkeyHold()
 
+	originReloaded := false
 	for i, pane := range ui.filePanes {
 		if pane == nil || pane.model == nil || pane.table == nil {
 			continue
@@ -311,16 +341,142 @@ func (ui *UI) finishFileDelete(now time.Time) {
 		} else {
 			row = pane.table.Selected
 		}
+
 		primaryPath := ""
 		if selectedPath != "" && !sameSelected {
 			primaryPath = selectedPath
 		}
-		ui.requestPaneLoadWithSelection(i, pane.dir, primaryPath, "", row)
+		restorePos := sanitizePaneListPosition(pane.table.List.Position)
+		restoreAnchor := filePaneRestoreAnchorPathSkipping(pane, deletedPaths, remoteDelete)
+		reloadNoticeText := ""
+		reloadNoticeDur := time.Duration(0)
+		if i == paneIdx {
+			reloadNoticeText = noticeText
+			reloadNoticeDur = noticeDur
+		}
+		if ui.requestPaneLoadWithSelectionAndScroll(i, pane.dir, primaryPath, "", row, restorePos, true, restoreAnchor, reloadNoticeText, reloadNoticeDur) && i == paneIdx {
+			originReloaded = true
+		}
+	}
+	if !originReloaded {
+		if paneIdx >= 0 && paneIdx < len(ui.filePanes) && ui.filePanes[paneIdx] != nil && noticeText != "" {
+			ui.filePanes[paneIdx].setNoticeFor(noticeText, now, noticeDur)
+		}
 	}
 	if st.remote != nil {
 		st.remote.close()
 		st.remote = nil
 	}
+}
+
+func fileDeleteSuccessNotice(count, nestedCount int) (string, time.Duration) {
+	if count <= 0 {
+		return "", 0
+	}
+	label := "items"
+	if count == 1 {
+		label = "item"
+	}
+	msg := fmt.Sprintf("deleted %d %s", count, label)
+	if nestedCount > 0 {
+		nestedLabel := "nested items"
+		if nestedCount == 1 {
+			nestedLabel = "nested item"
+		}
+		msg = fmt.Sprintf("%s (%d %s)", msg, nestedCount, nestedLabel)
+	}
+	return msg, fileDeleteSuccessNoticeDur
+}
+
+func countDeleteNestedEntries(targets []fileDeleteTarget, remote *paneSSHSession) (int, error) {
+	ep := copyEndpoint{remote: remote}
+	total := 0
+	for _, target := range targets {
+		targetPath := strings.TrimSpace(target.Path)
+		if targetPath == "" {
+			continue
+		}
+		info, err := endpointLstat(ep, targetPath)
+		if err != nil {
+			return 0, err
+		}
+		entries, _, err := collectTransferEntries(ep, targetPath, info)
+		if err != nil {
+			return 0, err
+		}
+		if len(entries) > 1 {
+			total += len(entries) - 1
+		}
+	}
+	return total, nil
+}
+
+func filePaneRestoreAnchorPathSkipping(pane *filePaneState, skippedPaths map[string]struct{}, remote bool) string {
+	if pane == nil || pane.table == nil || pane.model == nil || pane.model.Len() == 0 {
+		return ""
+	}
+	first := pane.table.List.Position.First
+	if first < 0 {
+		first = 0
+	}
+	if first >= pane.model.Len() {
+		first = pane.model.Len() - 1
+	}
+
+	if pathVal := filePaneFirstVisiblePathFrom(pane, first, skippedPaths, remote); pathVal != "" {
+		return pathVal
+	}
+	for i := first - 1; i >= 0; i-- {
+		if pathVal := filePaneVisibleEntryPath(pane.model.Entry(i), skippedPaths, remote); pathVal != "" {
+			return pathVal
+		}
+	}
+	return ""
+}
+
+func filePaneFirstVisiblePathFrom(pane *filePaneState, start int, skippedPaths map[string]struct{}, remote bool) string {
+	if pane == nil || pane.model == nil {
+		return ""
+	}
+	for i := start; i < pane.model.Len(); i++ {
+		if pathVal := filePaneVisibleEntryPath(pane.model.Entry(i), skippedPaths, remote); pathVal != "" {
+			return pathVal
+		}
+	}
+	return ""
+}
+
+func filePaneVisibleEntryPath(entry *filesys.Entry, skippedPaths map[string]struct{}, remote bool) string {
+	if entry == nil || entry.Path == "" || entry.Kind == filesys.EntryParent {
+		return ""
+	}
+	if filePanePathSkipped(entry.Path, skippedPaths, remote) {
+		return ""
+	}
+	return entry.Path
+}
+
+func filePanePathSkipped(pathVal string, skippedPaths map[string]struct{}, remote bool) bool {
+	if len(skippedPaths) == 0 || strings.TrimSpace(pathVal) == "" {
+		return false
+	}
+	if remote {
+		_, ok := skippedPaths[path.Clean(pathVal)]
+		return ok
+	}
+	clean := filepath.Clean(pathVal)
+	if _, ok := skippedPaths[clean]; ok {
+		return true
+	}
+	if os.PathSeparator != '\\' {
+		return false
+	}
+	for skippedPath := range skippedPaths {
+		if samePath(clean, skippedPath) {
+			return true
+		}
+	}
+	return false
 }
 
 func (ui *UI) closeFileDeleteDialog() {

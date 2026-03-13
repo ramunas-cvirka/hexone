@@ -171,6 +171,7 @@ type UI struct {
 	activeFilePane              int
 	pendingFileOpen             *fileOpenRequest
 	fileCopy                    *fileCopyState
+	archiveExtract              *archiveExtractState
 	fileDelete                  *fileDeleteState
 	fileMove                    *fileMoveState
 	fileCreate                  *fileCreateState
@@ -1024,7 +1025,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ui.settingsModal != nil || ui.sshModal != nil {
 				continue
 			}
-			if ui.fileViewer != nil || ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil {
+			if ui.fileViewer != nil || ui.hasBlockingFileDialog() {
 				continue
 			}
 			if ui.pathEditActive() {

@@ -70,6 +70,10 @@ func (ui *UI) startFilePermDialog(idx, row int, now time.Time) bool {
 	if pane == nil || pane.model == nil || pane.table == nil {
 		return false
 	}
+	if pane.archiveBrowsing() {
+		pane.setNotice("cannot change permissions inside an archive", now)
+		return false
+	}
 	entry := pane.model.Entry(row)
 	if entry == nil || entry.Path == "" {
 		pane.setNotice("nothing selected", now)
