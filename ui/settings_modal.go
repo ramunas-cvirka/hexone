@@ -4610,7 +4610,7 @@ func (ui *UI) layoutSettingsColorCategoryField(th *material.Theme, gtx layout.Co
 	return dims
 }
 
-func settingsColorCategoryWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface, options []settingsColorOption) int {
+func settingsColorCategoryWidth(th *material.Theme, gtx layout.Context, _ *fm.Config, face font.Typeface, options []settingsColorOption) int {
 	maxTextW := 0
 	for _, opt := range options {
 		lbl := material.Body2(th, opt.label+"  ▾")
@@ -4818,7 +4818,7 @@ func (ui *UI) layoutSettingsColorValueField(th *material.Theme, gtx layout.Conte
 	return dims
 }
 
-func settingsColorPickerButtonWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface) int {
+func settingsColorPickerButtonWidth(th *material.Theme, gtx layout.Context, _ *fm.Config, face font.Typeface) int {
 	lbl := material.Body2(th, "Pick  ▾")
 	lbl.Font.Typeface = face
 	lbl.TextSize = scaleModalThemeFontSize(th, 10)
@@ -4832,7 +4832,7 @@ func settingsColorPickerButtonWidth(th *material.Theme, gtx layout.Context, cfg 
 	return width
 }
 
-func settingsColorHexEditorWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface) int {
+func settingsColorHexEditorWidth(th *material.Theme, gtx layout.Context, _ *fm.Config, face font.Typeface) int {
 	lbl := material.Body2(th, "#RRGGBB")
 	lbl.Font.Typeface = face
 	lbl.TextSize = scaleModalThemeFontSize(th, 10)
@@ -4845,7 +4845,7 @@ func settingsColorHexEditorWidth(th *material.Theme, gtx layout.Context, cfg *fm
 	return width
 }
 
-func (ui *UI) layoutSettingsColorPickerButton(th *material.Theme, gtx layout.Context, st *settingsModalState, swatch color.NRGBA, picker *widget.Clickable, open bool, width int) layout.Dimensions {
+func (ui *UI) layoutSettingsColorPickerButton(th *material.Theme, gtx layout.Context, _ *settingsModalState, swatch color.NRGBA, picker *widget.Clickable, open bool, width int) layout.Dimensions {
 	label := "Pick  ▾"
 	if open {
 		label = "Pick  ▴"

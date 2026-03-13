@@ -156,12 +156,13 @@ func parseFileKeyBindings(raw string) ([]fileKeyBinding, bool) {
 		return nil, false
 	}
 	bindings := []fileKeyBinding{binding}
-	if binding.Name == key.NameEnter {
+	switch binding.Name {
+	case key.NameEnter:
 		bindings = appendUniqueKeyBinding(bindings, fileKeyBinding{
 			Name:     key.NameReturn,
 			Required: binding.Required,
 		})
-	} else if binding.Name == key.NameReturn {
+	case key.NameReturn:
 		bindings = appendUniqueKeyBinding(bindings, fileKeyBinding{
 			Name:     key.NameEnter,
 			Required: binding.Required,

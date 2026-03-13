@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"hexone/filesys"
 	"hexone/fm"
 	"hexone/ui/widget/table"
 	"image"
@@ -192,6 +193,32 @@ func TestFavoriteMenuItemStyleHoverIncreasesContrast(t *testing.T) {
 	}
 	if hoverWeight != font.Medium || baseWeight != font.Normal {
 		t.Fatalf("weights base=%v hover=%v want normal->medium", baseWeight, hoverWeight)
+	}
+}
+
+func TestHandlePlatformInsertKeyMarksAndAdvances(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: ".",
+		Entries: []filesys.Entry{
+			{Name: "alpha.txt", Path: "alpha.txt"},
+			{Name: "beta.txt", Path: "beta.txt"},
+		},
+	}, "", "", 0)
+
+	now := time.Date(2026, time.March, 13, 12, 0, 0, 0, time.UTC)
+	if !ui.HandlePlatformInsertKey(now) {
+		t.Fatal("HandlePlatformInsertKey should report a handled insert press")
+	}
+	if pane.noticeText != "" {
+		t.Fatalf("notice=%q want empty", pane.noticeText)
+	}
+	if !pane.isMarkedRow(0) {
+		t.Fatal("native insert should mark the selected row")
+	}
+	if got, want := pane.table.Selected, 1; got != want {
+		t.Fatalf("selected row=%d want %d", got, want)
 	}
 }
 

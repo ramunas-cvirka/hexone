@@ -191,8 +191,7 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 				ui.rep.active = false
 				continue
 			case fileActionMarkSelectNext:
-				if pane := ui.activePane(); pane != nil && pane.markCurrentAndAdvance() {
-					ui.rep.active = false
+				if ui.handleFileManagerInsert() {
 					gtx.Execute(op.InvalidateCmd{})
 				}
 				continue
@@ -267,6 +266,31 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 		}
 		gtx.Execute(op.InvalidateCmd{At: ui.rep.next})
 	}
+}
+
+func (ui *UI) HandlePlatformInsertKey(_ time.Time) bool {
+	return ui.handleFileManagerInsert()
+}
+
+func (ui *UI) handleFileManagerInsert() bool {
+	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil {
+		return false
+	}
+	if ui.fileViewer != nil {
+		return false
+	}
+	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
+		return false
+	}
+	if ui.pathEditActive() {
+		return false
+	}
+	pane := ui.activePane()
+	if pane == nil {
+		return false
+	}
+	ui.rep.active = false
+	return pane.markCurrentAndAdvance()
 }
 
 func (ui *UI) handleFileManagerEscape(gtx layout.Context) {
@@ -3102,7 +3126,7 @@ func layoutFilePaneFavoriteRemoveButtonVisual(gtx layout.Context, theme filePane
 	})
 }
 
-func layoutFilePaneFavoriteRemoveButton(th *material.Theme, gtx layout.Context, theme filePanePopupTheme, c *widget.Clickable, alpha float32) layout.Dimensions {
+func layoutFilePaneFavoriteRemoveButton(_ *material.Theme, gtx layout.Context, theme filePanePopupTheme, c *widget.Clickable, alpha float32) layout.Dimensions {
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
 		return layoutFilePaneFavoriteRemoveButtonVisual(gtx, theme, alpha, c.Hovered())
@@ -3223,7 +3247,7 @@ func layoutTinyModeButton(th *material.Theme, gtx layout.Context, typeface font.
 	})
 }
 
-func layoutTinyIconModeButton(th *material.Theme, gtx layout.Context, c *widget.Clickable, icon *widget.Icon, active bool) layout.Dimensions {
+func layoutTinyIconModeButton(_ *material.Theme, gtx layout.Context, c *widget.Clickable, icon *widget.Icon, active bool) layout.Dimensions {
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
 		border := color.NRGBA{R: 255, G: 255, B: 255, A: 22}

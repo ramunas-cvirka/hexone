@@ -230,7 +230,7 @@ func (ui *UI) registerEditorContextMenuClipboardTarget(gtx layout.Context) {
 	event.Op(gtx.Ops, &ui.editorMenuClipboardTag)
 }
 
-func (ui *UI) layoutEditorWithContextMenu(th *material.Theme, gtx layout.Context, id string, ed *widget.Editor, enabled bool, host layout.Widget) layout.Dimensions {
+func (ui *UI) layoutEditorWithContextMenu(_ *material.Theme, gtx layout.Context, id string, ed *widget.Editor, enabled bool, host layout.Widget) layout.Dimensions {
 	if ui == nil || id == "" || ed == nil || host == nil {
 		if host == nil {
 			return layout.Dimensions{}

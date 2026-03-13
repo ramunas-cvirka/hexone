@@ -119,13 +119,18 @@ func run(window *app.Window) error {
 
 	var ops op.Ops
 	mainUI := ui.NewUI(cfg)
+	setNativeInsertInvalidate(window.Invalidate)
 	windowTracker := windowstate.NewTracker(session, window.Run)
 	iconSetter := appicon.NewSetter()
+	nativeInsertMonitorInstalled := false
 	sessionApplied := false
 
 	for {
 		switch typ := window.Event().(type) {
 		case app.DestroyEvent:
+			if nativeInsertMonitorInstalled {
+				removeNativeInsertMonitor(window.Run)
+			}
 			snapshot := mainUI.SnapshotSession()
 			windowTracker.ApplyToSession(snapshot)
 			if err := fm.SaveSession(sessionPath, snapshot); err != nil {
@@ -135,10 +140,17 @@ func run(window *app.Window) error {
 		case app.ViewEvent:
 			windowTracker.ObserveView(typ)
 			iconSetter.HandleViewEvent(typ)
+			if !nativeInsertMonitorInstalled {
+				installNativeInsertMonitor(window.Run)
+				nativeInsertMonitorInstalled = true
+			}
 		case app.ConfigEvent:
 			windowTracker.ObserveConfig(typ.Config)
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, typ)
+			for count := consumeNativeInsertPresses(); count > 0; count-- {
+				mainUI.HandlePlatformInsertKey(gtx.Now)
+			}
 			mainUI.Layout(th, gtx)
 			typ.Frame(gtx.Ops)
 			if mainUI.ConsumeWindowCloseRequest() {

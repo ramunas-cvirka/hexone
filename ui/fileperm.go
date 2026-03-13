@@ -204,7 +204,7 @@ func (ui *UI) finishFilePermDialog(now time.Time) {
 	ui.closeFilePermDialog()
 }
 
-func (ui *UI) refreshPanesAfterPermChange(st *filePermState, now time.Time) {
+func (ui *UI) refreshPanesAfterPermChange(st *filePermState, _ time.Time) {
 	if st == nil {
 		return
 	}

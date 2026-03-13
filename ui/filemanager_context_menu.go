@@ -214,7 +214,7 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 	localFileManagerAvailable := pane.writableLocalView()
 	readOnlyArchive := pane.archiveBrowsing()
 	fileOpsMenu := ui.filePaneFileOpsMenuSpec(readOnlyArchive)
-	canExtractHere := !readOnlyArchive && entry != nil && entry.Kind == filesys.EntryFile && entry.CanEnter
+	canExtractHere := !readOnlyArchive && entry.Kind == filesys.EntryFile && entry.CanEnter
 
 	switch entry.Kind {
 	case filesys.EntryParent:

@@ -1785,7 +1785,7 @@ func readViewerContent(ctx context.Context, path string, cfg fm.ViewerConfig, ma
 	}
 }
 
-func readViewerFile(path, encoding string, maxBytes int, started time.Time, remote *paneSSHSession) (string, string, string, viewerReadInfo) {
+func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *paneSSHSession) (string, string, string, viewerReadInfo) {
 	if maxBytes < 1 {
 		maxBytes = viewerDefaultMaxLoadBytes
 	}
@@ -2254,7 +2254,7 @@ func decodeViewerText(path string, data []byte, encoding string) (string, viewer
 	}
 }
 
-func chooseViewerEncoding(path string, data []byte, requested string) viewerEncodingDecision {
+func chooseViewerEncoding(_ string, data []byte, requested string) viewerEncodingDecision {
 	requested = fm.NormalizeViewerFileEncoding(requested)
 	bomEncoding, hasBOM := viewerEncodingFromBOM(data)
 	if hasBOM {
