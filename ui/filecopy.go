@@ -96,6 +96,7 @@ type segmentedAnimState struct {
 	hoverPrev string
 	hoverAt   time.Time
 	pulseKey  string
+	pulseSet  bool
 	pulseAt   time.Time
 }
 
@@ -138,20 +139,22 @@ func (st *segmentedAnimState) hoverFill(now time.Time, key string) (float32, boo
 }
 
 func (st *segmentedAnimState) setPulse(key string, now time.Time) {
-	if st == nil || key == "" {
+	if st == nil {
 		return
 	}
 	st.pulseKey = key
+	st.pulseSet = true
 	st.pulseAt = now
 }
 
 func (st *segmentedAnimState) pulseFill(now time.Time, key string) (float32, bool) {
-	if st == nil || key == "" || st.pulseKey != key || st.pulseAt.IsZero() {
+	if st == nil || !st.pulseSet || st.pulseKey != key || st.pulseAt.IsZero() {
 		return 0, false
 	}
 	elapsed := now.Sub(st.pulseAt)
 	if elapsed >= toolbarClickDur {
 		st.pulseKey = ""
+		st.pulseSet = false
 		st.pulseAt = time.Time{}
 		return 0, false
 	}

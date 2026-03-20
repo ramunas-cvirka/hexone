@@ -566,9 +566,20 @@ func TestNormalizeFilenameColors(t *testing.T) {
 		{MaxAge: "1w", Text: "", Icon: ""},
 	}
 	cfg.Colors.Filenames.PermissionRules = []FilenamePermissionRule{
-		{Permissions: "755", Text: "#556677", Icon: "lock"},
+		{Permissions: "755", Match: "partial", Text: "#556677", Icon: "lock"},
 		{Permissions: "oops", Text: "#123456", Icon: "document"},
 		{Permissions: "0644", Text: "bad", Icon: "description"},
+		{Permissions: "0000", Match: "any", Text: "#654321", Icon: "document"},
+	}
+	cfg.Colors.Filenames.ExtensionRules = []FilenameExtensionRule{
+		{Extension: "GO", Text: "abcdef", Icon: "edit"},
+		{Extension: "*.tar.gz", Text: "", Icon: "archive"},
+		{Extension: "bad/name", Text: "#123456", Icon: "document"},
+	}
+	cfg.Colors.Filenames.SizeRules = []FilenameSizeRule{
+		{Size: "10mb", Match: "max", Text: "102030", Icon: "movie"},
+		{Size: "1g", Text: "", Icon: ""},
+		{Size: "oops", Text: "#123456", Icon: "lock"},
 	}
 
 	cfg.normalize()
@@ -597,17 +608,56 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	if got := cfg.Colors.Filenames.PermissionRules[0].Permissions; got != "0755" {
 		t.Fatalf("PermissionRules[0].Permissions=%q want %q", got, "0755")
 	}
+	if got := cfg.Colors.Filenames.PermissionRules[0].Match; got != FilenamePermissionMatchAny {
+		t.Fatalf("PermissionRules[0].Match=%q want %q", got, FilenamePermissionMatchAny)
+	}
 	if got := cfg.Colors.Filenames.PermissionRules[0].Icon; got != FilenameIconLocked {
 		t.Fatalf("PermissionRules[0].Icon=%q want %q", got, FilenameIconLocked)
 	}
 	if got := cfg.Colors.Filenames.PermissionRules[1].Permissions; got != "0644" {
 		t.Fatalf("PermissionRules[1].Permissions=%q want %q", got, "0644")
 	}
+	if got := cfg.Colors.Filenames.PermissionRules[1].Match; got != FilenamePermissionMatchExact {
+		t.Fatalf("PermissionRules[1].Match=%q want exact", got)
+	}
 	if got := cfg.Colors.Filenames.PermissionRules[1].Text; got != "" {
 		t.Fatalf("PermissionRules[1].Text=%q want empty", got)
 	}
 	if got := cfg.Colors.Filenames.PermissionRules[1].Icon; got != FilenameIconDocument {
 		t.Fatalf("PermissionRules[1].Icon=%q want %q", got, FilenameIconDocument)
+	}
+	if len(cfg.Colors.Filenames.ExtensionRules) != 2 {
+		t.Fatalf("len(Filenames.ExtensionRules)=%d want 2", len(cfg.Colors.Filenames.ExtensionRules))
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[0].Extension; got != ".go" {
+		t.Fatalf("ExtensionRules[0].Extension=%q want %q", got, ".go")
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[0].Text; got != "#ABCDEF" {
+		t.Fatalf("ExtensionRules[0].Text=%q want %q", got, "#ABCDEF")
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[0].Icon; got != FilenameIconCode {
+		t.Fatalf("ExtensionRules[0].Icon=%q want %q", got, FilenameIconCode)
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[1].Extension; got != ".tar.gz" {
+		t.Fatalf("ExtensionRules[1].Extension=%q want %q", got, ".tar.gz")
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[1].Icon; got != FilenameIconArchive {
+		t.Fatalf("ExtensionRules[1].Icon=%q want %q", got, FilenameIconArchive)
+	}
+	if len(cfg.Colors.Filenames.SizeRules) != 1 {
+		t.Fatalf("len(Filenames.SizeRules)=%d want 1", len(cfg.Colors.Filenames.SizeRules))
+	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Size; got != "10m" {
+		t.Fatalf("SizeRules[0].Size=%q want %q", got, "10m")
+	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Match; got != FilenameSizeMatchAtMost {
+		t.Fatalf("SizeRules[0].Match=%q want %q", got, FilenameSizeMatchAtMost)
+	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Text; got != "#102030" {
+		t.Fatalf("SizeRules[0].Text=%q want %q", got, "#102030")
+	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Icon; got != FilenameIconVideo {
+		t.Fatalf("SizeRules[0].Icon=%q want %q", got, FilenameIconVideo)
 	}
 }
 
@@ -627,6 +677,30 @@ func TestNormalizeFilenameAgeRulesSortsAndDedupes(t *testing.T) {
 	}
 	if got[1].Text != "#556677" || got[1].Icon != FilenameIconRecent {
 		t.Fatalf("NormalizeFilenameAgeRules duplicate merge=%#v want last 1d rule", got[1])
+	}
+}
+
+func TestFilenamePermissionAndSizeMatchesSupportPartialRules(t *testing.T) {
+	if !FilenamePermissionMatches("0755", FilenamePermissionRule{Permissions: "0111", Match: FilenamePermissionMatchAny}) {
+		t.Fatal("any-match permissions should detect executables")
+	}
+	if !FilenamePermissionMatches("0444", FilenamePermissionRule{Permissions: "0222", Match: FilenamePermissionMatchNone}) {
+		t.Fatal("none-match permissions should detect readonly files")
+	}
+	if FilenamePermissionMatches("0644", FilenamePermissionRule{Permissions: "0111", Match: FilenamePermissionMatchAny}) {
+		t.Fatal("any-match permissions should not match non-executables")
+	}
+	if !FilenamePermissionMatches("0644", FilenamePermissionRule{Permissions: "0644"}) {
+		t.Fatal("exact permissions should still work")
+	}
+	if !FilenameSizeMatches(10<<20, FilenameSizeRule{Size: "10m"}) {
+		t.Fatal("at-least size match should include equal values")
+	}
+	if !FilenameSizeMatches(512, FilenameSizeRule{Size: "1k", Match: FilenameSizeMatchAtMost}) {
+		t.Fatal("at-most size match should include smaller values")
+	}
+	if FilenameSizeMatches(2048, FilenameSizeRule{Size: "1k", Match: FilenameSizeMatchAtMost}) {
+		t.Fatal("at-most size match should reject larger values")
 	}
 }
 

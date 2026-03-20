@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"hexone/filesys"
 	"hexone/fm"
+	"io"
 	"net"
 	"os"
 	"path"
@@ -20,14 +21,78 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+type sshClientBundle struct {
+	sshClient *ssh.Client
+	sftpBase  *ssh.Client
+	sftp      *sftp.Client
+}
+
+func (b sshClientBundle) close() {
+	if b.sftp != nil {
+		closeSFTPClientFunc(b.sftp)
+	}
+	if b.sftpBase != nil {
+		closeSSHClientFunc(b.sftpBase)
+	}
+	if b.sshClient != nil {
+		closeSSHClientFunc(b.sshClient)
+	}
+}
+
+var readDirSFTPFunc = filesys.ReadDirSFTP
+
+var sftpGetwdFunc = func(client *sftp.Client) (string, error) {
+	return client.Getwd()
+}
+
+var closeSFTPClientFunc = func(client *sftp.Client) {
+	_ = client.Close()
+}
+
+var closeSSHClientFunc = func(client *ssh.Client) {
+	_ = client.Close()
+}
+
+var netDialTimeoutFunc = net.DialTimeout
+
+var sshNewClientConnFunc = ssh.NewClientConn
+
+var newSFTPClientFunc = sftp.NewClient
+
+var timeNowFunc = time.Now
+
+var openSSHClientsFunc = openSSHClients
+
+const sshConnectBudget = 12 * time.Second
+
 type sharedSSHConn struct {
 	mu sync.Mutex
 
 	refs int
 
+	reconnecting  bool
+	reconnectCond *sync.Cond
+
 	sshClient *ssh.Client
 	sftpBase  *ssh.Client
 	sftp      *sftp.Client
+}
+
+func newSharedSSHConn(bundle sshClientBundle) *sharedSSHConn {
+	conn := &sharedSSHConn{
+		refs:      1,
+		sshClient: bundle.sshClient,
+		sftpBase:  bundle.sftpBase,
+		sftp:      bundle.sftp,
+	}
+	conn.reconnectCond = sync.NewCond(&conn.mu)
+	return conn
+}
+
+func (c *sharedSSHConn) ensureReconnectCondLocked() {
+	if c.reconnectCond == nil {
+		c.reconnectCond = sync.NewCond(&c.mu)
+	}
 }
 
 func (c *sharedSSHConn) retain() {
@@ -43,34 +108,25 @@ func (c *sharedSSHConn) release() {
 	if c == nil {
 		return
 	}
-	var (
-		sshClient *ssh.Client
-		sftpBase  *ssh.Client
-		sftpCli   *sftp.Client
-	)
+	var old sshClientBundle
 	c.mu.Lock()
+	c.ensureReconnectCondLocked()
 	if c.refs > 0 {
 		c.refs--
 	}
 	if c.refs == 0 {
-		sftpCli = c.sftp
-		sftpBase = c.sftpBase
-		sshClient = c.sshClient
+		old = sshClientBundle{
+			sshClient: c.sshClient,
+			sftpBase:  c.sftpBase,
+			sftp:      c.sftp,
+		}
 		c.sftp = nil
 		c.sftpBase = nil
 		c.sshClient = nil
 	}
 	c.mu.Unlock()
 
-	if sftpCli != nil {
-		_ = sftpCli.Close()
-	}
-	if sftpBase != nil {
-		_ = sftpBase.Close()
-	}
-	if sshClient != nil {
-		_ = sshClient.Close()
-	}
+	old.close()
 }
 
 func (c *sharedSSHConn) sftpClient() *sftp.Client {
@@ -91,6 +147,71 @@ func (c *sharedSSHConn) commandClient() *ssh.Client {
 	return c.sshClient
 }
 
+func (c *sharedSSHConn) reconnectIfCurrent(setup fm.SSHSetup, failed *sftp.Client) error {
+	if c == nil {
+		return errors.New("sftp session is not connected")
+	}
+
+	c.mu.Lock()
+	c.ensureReconnectCondLocked()
+	for c.reconnecting {
+		c.reconnectCond.Wait()
+		if failed != nil && c.sftp != failed {
+			c.mu.Unlock()
+			return nil
+		}
+		if failed == nil && c.sftp != nil {
+			c.mu.Unlock()
+			return nil
+		}
+	}
+	if c.refs == 0 {
+		c.mu.Unlock()
+		return errors.New("sftp session is not connected")
+	}
+	if failed != nil && c.sftp != failed {
+		c.mu.Unlock()
+		return nil
+	}
+	if failed == nil && c.sftp != nil {
+		c.mu.Unlock()
+		return nil
+	}
+	old := sshClientBundle{
+		sshClient: c.sshClient,
+		sftpBase:  c.sftpBase,
+		sftp:      c.sftp,
+	}
+	c.reconnecting = true
+	c.mu.Unlock()
+
+	bundle, err := openSSHClientsFunc(setup)
+
+	var closeNow sshClientBundle
+	c.mu.Lock()
+	c.ensureReconnectCondLocked()
+	c.reconnecting = false
+	if err != nil {
+		c.reconnectCond.Broadcast()
+		c.mu.Unlock()
+		return err
+	}
+	if c.refs == 0 {
+		closeNow = bundle
+		err = errors.New("sftp session is not connected")
+	} else {
+		c.sshClient = bundle.sshClient
+		c.sftpBase = bundle.sftpBase
+		c.sftp = bundle.sftp
+		closeNow = old
+	}
+	c.reconnectCond.Broadcast()
+	c.mu.Unlock()
+
+	closeNow.close()
+	return err
+}
+
 type paneSSHSession struct {
 	setup    fm.SSHSetup
 	identity string
@@ -109,11 +230,28 @@ func (s *paneSSHSession) close() {
 }
 
 func (s *paneSSHSession) homeDir() string {
-	client := s.sftpClient()
-	if s == nil || client == nil {
+	if s == nil {
 		return "/"
 	}
-	wd, err := client.Getwd()
+	client := s.sftpClient()
+	if client == nil {
+		if err := s.reconnectSFTPClient(nil); err != nil {
+			return "/"
+		}
+		client = s.sftpClient()
+	}
+	if client == nil {
+		return "/"
+	}
+	wd, err := sftpGetwdFunc(client)
+	if err != nil && shouldReconnectSSHTransport(err) {
+		if reconnectErr := s.reconnectSFTPClient(client); reconnectErr == nil {
+			client = s.sftpClient()
+			if client != nil {
+				wd, err = sftpGetwdFunc(client)
+			}
+		}
+	}
 	if err != nil || strings.TrimSpace(wd) == "" {
 		return "/"
 	}
@@ -121,11 +259,32 @@ func (s *paneSSHSession) homeDir() string {
 }
 
 func (s *paneSSHSession) readDir(dir string) (filesys.Listing, error) {
-	client := s.sftpClient()
-	if s == nil || client == nil {
+	if s == nil {
 		return filesys.Listing{}, errors.New("sftp session is not connected")
 	}
-	return filesys.ReadDirSFTP(client, dir)
+	client := s.sftpClient()
+	if client == nil {
+		if err := s.reconnectSFTPClient(nil); err != nil {
+			return filesys.Listing{}, err
+		}
+		client = s.sftpClient()
+	}
+	if client == nil {
+		return filesys.Listing{}, errors.New("sftp session is not connected")
+	}
+
+	listing, err := readDirSFTPFunc(client, dir)
+	if err == nil || !shouldReconnectSSHTransport(err) {
+		return listing, err
+	}
+	if reconnectErr := s.reconnectSFTPClient(client); reconnectErr != nil {
+		return filesys.Listing{}, reconnectErr
+	}
+	client = s.sftpClient()
+	if client == nil {
+		return filesys.Listing{}, errors.New("sftp session is not connected")
+	}
+	return readDirSFTPFunc(client, dir)
 }
 
 func (s *paneSSHSession) sftpClient() *sftp.Client {
@@ -140,6 +299,13 @@ func (s *paneSSHSession) commandClient() *ssh.Client {
 		return nil
 	}
 	return s.conn.commandClient()
+}
+
+func (s *paneSSHSession) reconnectSFTPClient(failed *sftp.Client) error {
+	if s == nil || s.conn == nil {
+		return errors.New("sftp session is not connected")
+	}
+	return s.conn.reconnectIfCurrent(s.setup, failed)
 }
 
 func (s *paneSSHSession) clone() *paneSSHSession {
@@ -370,50 +536,150 @@ func normalizeConnectSSHSetup(raw fm.SSHSetup) (fm.SSHSetup, error) {
 	return setup, nil
 }
 
-func newPaneSSHSession(setup fm.SSHSetup) (*paneSSHSession, error) {
-	setup, err := normalizeConnectSSHSetup(setup)
+func shouldReconnectSSHTransport(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	if errors.Is(err, sftp.ErrSSHFxConnectionLost) || errors.Is(err, sftp.ErrSSHFxNoConnection) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "failed to send packet header: eof"),
+		strings.Contains(msg, "server unexpectedly closed connection"),
+		strings.Contains(msg, "use of closed network connection"),
+		strings.Contains(msg, "connection reset by peer"),
+		strings.Contains(msg, "broken pipe"),
+		strings.Contains(msg, "ssh: disconnect"),
+		strings.Contains(msg, "connection lost"),
+		strings.Contains(msg, "transport is closing"):
+		return true
+	default:
+		return false
+	}
+}
+
+func sshSetupAddress(setup fm.SSHSetup) string {
+	return net.JoinHostPort(setup.Host, strconv.Itoa(setup.Port))
+}
+
+func sshConnectDeadline() time.Time {
+	return timeNowFunc().Add(sshConnectBudget)
+}
+
+func remainingSSHConnectTime(deadline time.Time) (time.Duration, error) {
+	remaining := deadline.Sub(timeNowFunc())
+	if remaining <= 0 {
+		return 0, fmt.Errorf("ssh connect timed out after %s", sshConnectBudget)
+	}
+	return remaining, nil
+}
+
+func dialSSHClientWithDeadline(address string, cfg *ssh.ClientConfig, deadline time.Time) (*ssh.Client, net.Conn, error) {
+	remaining, err := remainingSSHConnectTime(deadline)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	conn, err := netDialTimeoutFunc("tcp", address, remaining)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+
+	clientConn, chans, reqs, err := sshNewClientConnFunc(conn, address, cfg)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = clientConn.Close()
+		return nil, nil, err
+	}
+	return ssh.NewClient(clientConn, chans, reqs), conn, nil
+}
+
+func newSFTPClientWithDeadline(base *ssh.Client, rawConn net.Conn, deadline time.Time) (*sftp.Client, error) {
+	if base == nil || rawConn == nil {
+		return nil, errors.New("ssh sftp session: connection is not established")
+	}
+	if _, err := remainingSSHConnectTime(deadline); err != nil {
 		return nil, err
 	}
+	if err := rawConn.SetDeadline(deadline); err != nil {
+		return nil, err
+	}
+	client, err := newSFTPClientFunc(base)
+	if clearErr := rawConn.SetDeadline(time.Time{}); clearErr != nil {
+		if client != nil {
+			closeSFTPClientFunc(client)
+		}
+		return nil, clearErr
+	}
+	return client, err
+}
+
+func openSSHClients(setup fm.SSHSetup) (sshClientBundle, error) {
 	auth, err := sshAuthMethods(setup)
 	if err != nil {
-		return nil, err
+		return sshClientBundle{}, err
 	}
 
 	cfg := &ssh.ClientConfig{
 		User:            setup.User,
 		Auth:            auth,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: replace with known_hosts verification.
-		Timeout:         8 * time.Second,
 	}
-	address := net.JoinHostPort(setup.Host, strconv.Itoa(setup.Port))
+	address := sshSetupAddress(setup)
+	deadline := sshConnectDeadline()
 
-	cmdClient, err := ssh.Dial("tcp", address, cfg)
+	cmdClient, _, err := dialSSHClientWithDeadline(address, cfg, deadline)
 	if err != nil {
-		return nil, fmt.Errorf("ssh command session: %w", err)
+		return sshClientBundle{}, fmt.Errorf("ssh command session: %w", err)
 	}
-	sftpBase, err := ssh.Dial("tcp", address, cfg)
+	sftpBase, sftpConn, err := dialSSHClientWithDeadline(address, cfg, deadline)
 	if err != nil {
-		_ = cmdClient.Close()
-		return nil, fmt.Errorf("ssh sftp session: %w", err)
+		closeSSHClientFunc(cmdClient)
+		return sshClientBundle{}, fmt.Errorf("ssh sftp session: %w", err)
 	}
-	sftpClient, err := sftp.NewClient(sftpBase)
+	sftpClient, err := newSFTPClientWithDeadline(sftpBase, sftpConn, deadline)
 	if err != nil {
-		_ = sftpBase.Close()
-		_ = cmdClient.Close()
-		return nil, fmt.Errorf("sftp init: %w", err)
+		closeSSHClientFunc(sftpBase)
+		closeSSHClientFunc(cmdClient)
+		return sshClientBundle{}, fmt.Errorf("sftp init: %w", err)
+	}
+	return sshClientBundle{
+		sshClient: cmdClient,
+		sftpBase:  sftpBase,
+		sftp:      sftpClient,
+	}, nil
+}
+
+func newPaneSSHSession(setup fm.SSHSetup) (*paneSSHSession, error) {
+	setup, err := normalizeConnectSSHSetup(setup)
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := openSSHClientsFunc(setup)
+	if err != nil {
+		return nil, err
 	}
 
 	return &paneSSHSession{
 		setup:    setup,
 		identity: sshSetupIdentity(setup),
-		address:  address,
-		conn: &sharedSSHConn{
-			refs:      1,
-			sshClient: cmdClient,
-			sftpBase:  sftpBase,
-			sftp:      sftpClient,
-		},
+		address:  sshSetupAddress(setup),
+		conn:     newSharedSSHConn(bundle),
 	}, nil
 }
 

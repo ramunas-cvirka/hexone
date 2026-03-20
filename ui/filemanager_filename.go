@@ -7,7 +7,7 @@ import (
 	"hexone/filesys"
 	"hexone/fm"
 	"image/color"
-	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,10 +42,28 @@ type filePaneFilenameAgeRule struct {
 	visual filePaneFilenameVisual
 }
 
+type filePaneFilenamePermissionRule struct {
+	rule   fm.FilenamePermissionRule
+	visual filePaneFilenameVisual
+}
+
+type filePaneFilenameExtensionRule struct {
+	suffix string
+	visual filePaneFilenameVisual
+}
+
+type filePaneFilenameSizeRule struct {
+	rule      fm.FilenameSizeRule
+	threshold int64
+	visual    filePaneFilenameVisual
+}
+
 type filePaneFilenameTheme struct {
 	defaultVisual   filePaneFilenameVisual
 	ageRules        []filePaneFilenameAgeRule
-	permissionRules map[string]filePaneFilenameVisual
+	permissionRules []filePaneFilenamePermissionRule
+	extensionRules  []filePaneFilenameExtensionRule
+	sizeRules       []filePaneFilenameSizeRule
 }
 
 var filenameRuleIcons struct {
@@ -140,22 +158,56 @@ func newFilePaneFilenameTheme(cfg *fm.Config) filePaneFilenameTheme {
 				visual: visual,
 			})
 		}
-		sort.SliceStable(theme.ageRules, func(i, j int) bool {
-			return theme.ageRules[i].maxAge < theme.ageRules[j].maxAge
-		})
 	}
-	if len(cfg.Colors.Filenames.PermissionRules) > 0 {
-		theme.permissionRules = make(map[string]filePaneFilenameVisual, len(cfg.Colors.Filenames.PermissionRules))
-		for _, rule := range cfg.Colors.Filenames.PermissionRules {
-			perm := fm.NormalizeFilenamePermissions(rule.Permissions)
-			if perm == "" {
+	if len(cfg.Colors.Filenames.ExtensionRules) > 0 {
+		theme.extensionRules = make([]filePaneFilenameExtensionRule, 0, len(cfg.Colors.Filenames.ExtensionRules))
+		for _, rule := range cfg.Colors.Filenames.ExtensionRules {
+			suffix := fm.NormalizeFilenameExtension(rule.Extension)
+			if suffix == "" {
 				continue
 			}
 			visual := parseFilePaneFilenameVisual(rule.Text, rule.Icon)
 			if !visual.hasColor && visual.iconKey == "" {
 				continue
 			}
-			theme.permissionRules[perm] = visual
+			theme.extensionRules = append(theme.extensionRules, filePaneFilenameExtensionRule{
+				suffix: suffix,
+				visual: visual,
+			})
+		}
+	}
+	if len(cfg.Colors.Filenames.SizeRules) > 0 {
+		theme.sizeRules = make([]filePaneFilenameSizeRule, 0, len(cfg.Colors.Filenames.SizeRules))
+		for _, rule := range cfg.Colors.Filenames.SizeRules {
+			size, ok := fm.ParseFilenameSize(rule.Size)
+			if !ok {
+				continue
+			}
+			visual := parseFilePaneFilenameVisual(rule.Text, rule.Icon)
+			if !visual.hasColor && visual.iconKey == "" {
+				continue
+			}
+			theme.sizeRules = append(theme.sizeRules, filePaneFilenameSizeRule{
+				rule:      rule,
+				threshold: size,
+				visual:    visual,
+			})
+		}
+	}
+	if len(cfg.Colors.Filenames.PermissionRules) > 0 {
+		theme.permissionRules = make([]filePaneFilenamePermissionRule, 0, len(cfg.Colors.Filenames.PermissionRules))
+		for _, rule := range cfg.Colors.Filenames.PermissionRules {
+			if fm.NormalizeFilenamePermissions(rule.Permissions) == "" {
+				continue
+			}
+			visual := parseFilePaneFilenameVisual(rule.Text, rule.Icon)
+			if !visual.hasColor && visual.iconKey == "" {
+				continue
+			}
+			theme.permissionRules = append(theme.permissionRules, filePaneFilenamePermissionRule{
+				rule:   rule,
+				visual: visual,
+			})
 		}
 	}
 	return theme
@@ -200,9 +252,26 @@ func (t filePaneFilenameTheme) visualForEntry(entry filesys.Entry, now time.Time
 			}
 		}
 	}
+	if len(t.extensionRules) > 0 {
+		name := strings.ToLower(entry.Name)
+		for _, rule := range t.extensionRules {
+			if strings.HasSuffix(name, rule.suffix) {
+				visual = visual.merge(rule.visual)
+			}
+		}
+	}
+	if len(t.sizeRules) > 0 {
+		for _, rule := range t.sizeRules {
+			if fm.FilenameSizeMatches(entry.SizeBytes, rule.rule) {
+				visual = visual.merge(rule.visual)
+			}
+		}
+	}
 	if len(t.permissionRules) > 0 {
-		if permVisual, ok := t.permissionRules[fm.NormalizeFilenamePermissions(entry.PermOctal)]; ok {
-			visual = visual.merge(permVisual)
+		for _, rule := range t.permissionRules {
+			if fm.FilenamePermissionMatches(entry.PermOctal, rule.rule) {
+				visual = visual.merge(rule.visual)
+			}
 		}
 	}
 	return visual

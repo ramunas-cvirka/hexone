@@ -55,145 +55,185 @@ type settingsModalState struct {
 	navPulseKey     string
 	navPulseAt      time.Time
 
-	viewModeFileClick         widget.Clickable
-	viewModeHexClick          widget.Clickable
-	viewModeCommandClick      widget.Clickable
-	viewMode                  string
-	viewModePrev              string
-	viewModeAnimAt            time.Time
-	viewModeHoverKey          string
-	viewModeHoverPrev         string
-	viewModeHoverAt           time.Time
-	viewModePulseKey          string
-	viewModePulseAt           time.Time
-	colorScopePaneClick       widget.Clickable
-	colorScopeViewerClick     widget.Clickable
-	colorScopeFilenameClick   widget.Clickable
-	colorScope                string
-	colorScopeAnim            settingsChoiceAnim
-	colorCategoryClick        widget.Clickable
-	colorBgPickerClick        widget.Clickable
-	colorTextPickerClick      widget.Clickable
-	colorValueEdit            widget.Editor
-	colorTextValueEdit        widget.Editor
-	colorCategoryOpen         bool
-	colorCategoryOpenedAt     time.Time
-	colorCategoryHoverID      string
-	colorCategoryHoverAnim    segmentedAnimState
-	colorPickerOpen           bool
-	colorPickerTarget         string
-	popupGlobalPointerTag     uiEventTag
-	colorCategoryPopupTag     uiEventTag
-	colorPickerPopupTag       uiEventTag
-	viewTargetPickerPopupTag  uiEventTag
-	viewAssocPickerPopupTag   uiEventTag
-	viewRulePickerPopupTag    uiEventTag
-	colorCategory             string
-	colorOptionClicks         []widget.Clickable
-	colorSwatchClicks         []widget.Clickable
-	colorPaneBackground       string
-	colorPaneText             string
-	colorHover                string
-	colorHoverText            string
-	colorSelection            string
-	colorSelectionText        string
-	colorSelectedFiles        string
-	colorSelectedFilesText    string
-	colorFocusedSelected      string
-	colorFocusedSelectedText  string
-	colorCurrentDir           string
-	colorCurrentDirText       string
-	colorViewerBackground     string
-	colorViewerText           string
-	colorViewerSelection      string
-	filenameDefaultText       string
-	filenameDefaultTextEdit   widget.Editor
-	filenameDefaultIcon       string
-	filenameDefaultIconClick  widget.Clickable
-	filenameDefaultTextPicker widget.Clickable
-	filenameRuleMode          string
-	filenameRuleModeAnim      settingsChoiceAnim
-	filenameRuleModeAgeClick  widget.Clickable
-	filenameRuleModePermClick widget.Clickable
-	filenameAgeOffsetEdit     widget.Editor
-	filenameAgeUnit           string
-	filenameAgeUnitAnim       settingsChoiceAnim
-	filenameAgeUnitClicks     [4]widget.Clickable
-	filenameAgeTextEdit       widget.Editor
-	filenameAgeIcon           string
-	filenameAgeIconClick      widget.Clickable
-	filenameAgeTextPicker     widget.Clickable
-	filenameAgeApplyClick     widget.Clickable
-	filenameAgeRemoveClick    widget.Clickable
-	filenameAgeList           widget.List
-	filenameAgeEntries        []fm.FilenameAgeRule
-	filenameAgeSavedEntries   []fm.FilenameAgeRule
-	filenameAgeLookup         string
-	filenameAgeRowClicks      map[string]*widget.Clickable
-	filenameAgeRowRemove      map[string]*widget.Clickable
-	filenameAgeInfoText       string
-	filenamePermEdit          widget.Editor
-	filenamePermTextEdit      widget.Editor
-	filenamePermIcon          string
-	filenamePermIconClick     widget.Clickable
-	filenamePermTextPicker    widget.Clickable
-	filenamePermApplyClick    widget.Clickable
-	filenamePermRemoveClick   widget.Clickable
-	filenamePermList          widget.List
-	filenamePermEntries       []fm.FilenamePermissionRule
-	filenamePermSavedEntries  []fm.FilenamePermissionRule
-	filenamePermLookup        string
-	filenamePermRowClicks     map[string]*widget.Clickable
-	filenamePermRowRemove     map[string]*widget.Clickable
-	filenamePermInfoText      string
-	viewCommandEdit           widget.Editor
-	viewShellEdit             widget.Editor
-	paneFontSizeEdit          widget.Editor
-	viewFontSizeEdit          widget.Editor
-	paneFontFamily            string
-	viewFontFamily            string
-	paneFontFamilyClicks      []widget.Clickable
-	viewFontFamilyClicks      []widget.Clickable
-	paneFontPickerAnim        settingsChoiceAnim
-	viewFontPickerAnim        settingsChoiceAnim
-	generalDimInactiveBool    widget.Bool
-	viewHideFunctionBarBool   widget.Bool
-	viewerTabList             widget.List
-	viewTargetKeyEdit         widget.Editor
-	viewTargetCommandEdit     widget.Editor
-	viewTargetApplyClick      widget.Clickable
-	viewTargetPickClick       widget.Clickable
-	viewTargetRemoveClick     widget.Clickable
-	viewTargetPickOpen        bool
-	viewTargetPickList        widget.List
-	viewTargetRowClicks       map[string]*widget.Clickable
-	viewTargetRowRemoveClicks map[string]*widget.Clickable
-	viewTargetEntries         []viewerCommandTargetEntry
-	viewTargetSavedEntries    []viewerCommandTargetEntry
-	viewTargetLookupKey       string
-	viewRulePatternEdit       widget.Editor
-	viewRuleCommandEdit       widget.Editor
-	viewRuleApplyClick        widget.Clickable
-	viewRulePickClick         widget.Clickable
-	viewRuleRemoveClick       widget.Clickable
-	viewRulePickOpen          bool
-	viewRulePickList          widget.List
-	viewRuleRowClicks         map[string]*widget.Clickable
-	viewRuleRowRemoveClicks   map[string]*widget.Clickable
-	viewRuleEntries           []fm.ViewerCommandRule
-	viewRuleSavedEntries      []fm.ViewerCommandRule
-	viewRuleLookupPattern     string
-	viewAssocExtEdit          widget.Editor
-	viewAssocAppEdit          widget.Editor
-	viewAssocApplyClick       widget.Clickable
-	viewAssocPickClick        widget.Clickable
-	viewAssocRemoveClick      widget.Clickable
-	viewAssocPickOpen         bool
-	viewAssocPickList         layout.List
-	viewAssocRowClicks        map[string]*widget.Clickable
-	viewAssocEntries          []fm.ViewerAssociation
-	viewAssocSavedEntries     []fm.ViewerAssociation
-	viewAssocLookupExt        string
+	viewModeFileClick          widget.Clickable
+	viewModeHexClick           widget.Clickable
+	viewModeCommandClick       widget.Clickable
+	viewMode                   string
+	viewModePrev               string
+	viewModeAnimAt             time.Time
+	viewModeHoverKey           string
+	viewModeHoverPrev          string
+	viewModeHoverAt            time.Time
+	viewModePulseKey           string
+	viewModePulseAt            time.Time
+	colorScopePaneClick        widget.Clickable
+	colorScopeViewerClick      widget.Clickable
+	colorScopeFilenameClick    widget.Clickable
+	colorScope                 string
+	colorScopeAnim             settingsChoiceAnim
+	colorCategoryClick         widget.Clickable
+	colorBgPickerClick         widget.Clickable
+	colorTextPickerClick       widget.Clickable
+	colorValueEdit             widget.Editor
+	colorTextValueEdit         widget.Editor
+	colorCategoryOpen          bool
+	colorCategoryOpenedAt      time.Time
+	colorCategoryHoverID       string
+	colorCategoryHoverAnim     segmentedAnimState
+	colorPickerOpen            bool
+	colorPickerTarget          string
+	popupGlobalPointerTag      uiEventTag
+	colorCategoryPopupTag      uiEventTag
+	colorPickerPopupTag        uiEventTag
+	filenamePermPickerPopupTag uiEventTag
+	viewTargetPickerPopupTag   uiEventTag
+	viewAssocPickerPopupTag    uiEventTag
+	viewRulePickerPopupTag     uiEventTag
+	colorCategory              string
+	colorOptionClicks          []widget.Clickable
+	colorSwatchClicks          []widget.Clickable
+	colorPaneBackground        string
+	colorPaneText              string
+	colorHover                 string
+	colorHoverText             string
+	colorSelection             string
+	colorSelectionText         string
+	colorSelectedFiles         string
+	colorSelectedFilesText     string
+	colorFocusedSelected       string
+	colorFocusedSelectedText   string
+	colorCurrentDir            string
+	colorCurrentDirText        string
+	colorViewerBackground      string
+	colorViewerText            string
+	colorViewerSelection       string
+	filenameDefaultText        string
+	filenameDefaultTextEdit    widget.Editor
+	filenameDefaultIcon        string
+	filenameDefaultIconClick   widget.Clickable
+	filenameDefaultTextPicker  widget.Clickable
+	filenameRuleMode           string
+	filenameRuleModeAnim       settingsChoiceAnim
+	filenameRuleModeAgeClick   widget.Clickable
+	filenameRuleModePermClick  widget.Clickable
+	filenameRuleModeExtClick   widget.Clickable
+	filenameRuleModeSizeClick  widget.Clickable
+	filenameAgeOffsetEdit      widget.Editor
+	filenameAgeUnit            string
+	filenameAgeUnitAnim        settingsChoiceAnim
+	filenameAgeUnitClicks      [4]widget.Clickable
+	filenameAgeTextEdit        widget.Editor
+	filenameAgeIcon            string
+	filenameAgeIconClick       widget.Clickable
+	filenameAgeTextPicker      widget.Clickable
+	filenameAgeApplyClick      widget.Clickable
+	filenameAgeRemoveClick     widget.Clickable
+	filenameAgeList            widget.List
+	filenameAgeEntries         []fm.FilenameAgeRule
+	filenameAgeSavedEntries    []fm.FilenameAgeRule
+	filenameAgeLookup          string
+	filenameAgeRowClicks       map[string]*widget.Clickable
+	filenameAgeRowRemove       map[string]*widget.Clickable
+	filenameAgeInfoText        string
+	filenamePermEdit           widget.Editor
+	filenamePermMatch          string
+	filenamePermMatchAnim      settingsChoiceAnim
+	filenamePermMatchClicks    [4]widget.Clickable
+	filenamePermChecks         [9]widget.Bool
+	filenamePermPickerOpen     bool
+	filenamePermPickerClick    widget.Clickable
+	filenamePermTextEdit       widget.Editor
+	filenamePermIcon           string
+	filenamePermIconClick      widget.Clickable
+	filenamePermTextPicker     widget.Clickable
+	filenamePermApplyClick     widget.Clickable
+	filenamePermRemoveClick    widget.Clickable
+	filenamePermList           widget.List
+	filenamePermEntries        []fm.FilenamePermissionRule
+	filenamePermSavedEntries   []fm.FilenamePermissionRule
+	filenamePermLookup         string
+	filenamePermRowClicks      map[string]*widget.Clickable
+	filenamePermRowRemove      map[string]*widget.Clickable
+	filenamePermInfoText       string
+	filenameExtEdit            widget.Editor
+	filenameExtTextEdit        widget.Editor
+	filenameExtIcon            string
+	filenameExtIconClick       widget.Clickable
+	filenameExtTextPicker      widget.Clickable
+	filenameExtApplyClick      widget.Clickable
+	filenameExtRemoveClick     widget.Clickable
+	filenameExtList            widget.List
+	filenameExtEntries         []fm.FilenameExtensionRule
+	filenameExtSavedEntries    []fm.FilenameExtensionRule
+	filenameExtLookup          string
+	filenameExtRowClicks       map[string]*widget.Clickable
+	filenameExtRowRemove       map[string]*widget.Clickable
+	filenameExtInfoText        string
+	filenameSizeEdit           widget.Editor
+	filenameSizeMatch          string
+	filenameSizeMatchAnim      settingsChoiceAnim
+	filenameSizeMatchClicks    [2]widget.Clickable
+	filenameSizeTextEdit       widget.Editor
+	filenameSizeIcon           string
+	filenameSizeIconClick      widget.Clickable
+	filenameSizeTextPicker     widget.Clickable
+	filenameSizeApplyClick     widget.Clickable
+	filenameSizeRemoveClick    widget.Clickable
+	filenameSizeList           widget.List
+	filenameSizeEntries        []fm.FilenameSizeRule
+	filenameSizeSavedEntries   []fm.FilenameSizeRule
+	filenameSizeLookup         string
+	filenameSizeRowClicks      map[string]*widget.Clickable
+	filenameSizeRowRemove      map[string]*widget.Clickable
+	filenameSizeInfoText       string
+	viewCommandEdit            widget.Editor
+	viewShellEdit              widget.Editor
+	paneFontSizeEdit           widget.Editor
+	viewFontSizeEdit           widget.Editor
+	paneFontFamily             string
+	viewFontFamily             string
+	paneFontFamilyClicks       []widget.Clickable
+	viewFontFamilyClicks       []widget.Clickable
+	paneFontPickerAnim         settingsChoiceAnim
+	viewFontPickerAnim         settingsChoiceAnim
+	generalDimInactiveBool     widget.Bool
+	viewHideFunctionBarBool    widget.Bool
+	viewerTabList              widget.List
+	viewTargetKeyEdit          widget.Editor
+	viewTargetCommandEdit      widget.Editor
+	viewTargetApplyClick       widget.Clickable
+	viewTargetPickClick        widget.Clickable
+	viewTargetRemoveClick      widget.Clickable
+	viewTargetPickOpen         bool
+	viewTargetPickList         widget.List
+	viewTargetRowClicks        map[string]*widget.Clickable
+	viewTargetRowRemoveClicks  map[string]*widget.Clickable
+	viewTargetEntries          []viewerCommandTargetEntry
+	viewTargetSavedEntries     []viewerCommandTargetEntry
+	viewTargetLookupKey        string
+	viewRulePatternEdit        widget.Editor
+	viewRuleCommandEdit        widget.Editor
+	viewRuleApplyClick         widget.Clickable
+	viewRulePickClick          widget.Clickable
+	viewRuleRemoveClick        widget.Clickable
+	viewRulePickOpen           bool
+	viewRulePickList           widget.List
+	viewRuleRowClicks          map[string]*widget.Clickable
+	viewRuleRowRemoveClicks    map[string]*widget.Clickable
+	viewRuleEntries            []fm.ViewerCommandRule
+	viewRuleSavedEntries       []fm.ViewerCommandRule
+	viewRuleLookupPattern      string
+	viewAssocExtEdit           widget.Editor
+	viewAssocAppEdit           widget.Editor
+	viewAssocApplyClick        widget.Clickable
+	viewAssocPickClick         widget.Clickable
+	viewAssocRemoveClick       widget.Clickable
+	viewAssocPickOpen          bool
+	viewAssocPickList          layout.List
+	viewAssocRowClicks         map[string]*widget.Clickable
+	viewAssocEntries           []fm.ViewerAssociation
+	viewAssocSavedEntries      []fm.ViewerAssociation
+	viewAssocLookupExt         string
 
 	footerHoverKey  string
 	footerHoverPrev string
@@ -212,9 +252,10 @@ type settingsModalState struct {
 }
 
 type settingsChoiceAnim struct {
-	prev string
-	at   time.Time
-	anim segmentedAnimState
+	prev    string
+	hasPrev bool
+	at      time.Time
+	anim    segmentedAnimState
 }
 
 type viewerAssociationProgram struct {
@@ -346,6 +387,16 @@ func (ui *UI) openSettingsModal() {
 		st.filenamePermTextEdit.SingleLine = true
 		st.filenamePermTextEdit.Submit = false
 		st.filenamePermList.Axis = layout.Vertical
+		st.filenameExtEdit.SingleLine = true
+		st.filenameExtEdit.Submit = false
+		st.filenameExtTextEdit.SingleLine = true
+		st.filenameExtTextEdit.Submit = false
+		st.filenameExtList.Axis = layout.Vertical
+		st.filenameSizeEdit.SingleLine = true
+		st.filenameSizeEdit.Submit = false
+		st.filenameSizeTextEdit.SingleLine = true
+		st.filenameSizeTextEdit.Submit = false
+		st.filenameSizeList.Axis = layout.Vertical
 		st.viewShellEdit.SingleLine = true
 		st.viewShellEdit.Submit = false
 		st.paneFontSizeEdit.SingleLine = true
@@ -680,6 +731,18 @@ func (st *settingsModalState) toggleColorPicker(target string) {
 	st.colorPickerTarget = target
 }
 
+func (st *settingsModalState) toggleFilenamePermissionPicker() {
+	if st == nil {
+		return
+	}
+	if st.filenamePermPickerOpen {
+		st.closeSettingsPopupsExcept("")
+		return
+	}
+	st.closeSettingsPopupsExcept("filename-perm-picker")
+	st.filenamePermPickerOpen = true
+}
+
 func (st *settingsModalState) colorPickerHexValue(target string) string {
 	if st == nil {
 		return ""
@@ -693,6 +756,10 @@ func (st *settingsModalState) colorPickerHexValue(target string) string {
 		return strings.TrimSpace(st.filenameAgeTextEdit.Text())
 	case "filename-perm-text":
 		return strings.TrimSpace(st.filenamePermTextEdit.Text())
+	case "filename-ext-text":
+		return strings.TrimSpace(st.filenameExtTextEdit.Text())
+	case "filename-size-text":
+		return strings.TrimSpace(st.filenameSizeTextEdit.Text())
 	default:
 		return st.colorValue(st.colorCategory)
 	}
@@ -713,6 +780,10 @@ func (st *settingsModalState) setColorPickerHexValue(target, hex string) {
 		st.filenameAgeTextEdit.SetText(hex)
 	case "filename-perm-text":
 		st.filenamePermTextEdit.SetText(hex)
+	case "filename-ext-text":
+		st.filenameExtTextEdit.SetText(hex)
+	case "filename-size-text":
+		st.filenameSizeTextEdit.SetText(hex)
 	default:
 		st.setColorValue(st.colorCategory, hex)
 		st.colorValueEdit.SetText(hex)
@@ -724,7 +795,7 @@ func (st *settingsModalState) colorPickerSwatchGroups(target string) []settingsC
 }
 
 func (st *settingsModalState) anyPopupOpen() bool {
-	return st != nil && (st.colorCategoryOpen || st.colorPickerOpen || st.viewTargetPickOpen || st.viewRulePickOpen || st.viewAssocPickOpen)
+	return st != nil && (st.colorCategoryOpen || st.colorPickerOpen || st.filenamePermPickerOpen || st.viewTargetPickOpen || st.viewRulePickOpen || st.viewAssocPickOpen)
 }
 
 func (st *settingsModalState) popupToggleHovered() bool {
@@ -736,7 +807,10 @@ func (st *settingsModalState) popupToggleHovered() bool {
 		st.colorTextPickerClick.Hovered() ||
 		st.filenameDefaultTextPicker.Hovered() ||
 		st.filenameAgeTextPicker.Hovered() ||
+		st.filenamePermPickerClick.Hovered() ||
 		st.filenamePermTextPicker.Hovered() ||
+		st.filenameExtTextPicker.Hovered() ||
+		st.filenameSizeTextPicker.Hovered() ||
 		st.viewTargetPickClick.Hovered() ||
 		st.viewRulePickClick.Hovered() ||
 		st.viewAssocPickClick.Hovered()
@@ -752,6 +826,9 @@ func (st *settingsModalState) closeSettingsPopupsExcept(except string) {
 	if except != "color-picker" {
 		st.colorPickerOpen = false
 		st.colorPickerTarget = ""
+	}
+	if except != "filename-perm-picker" {
+		st.filenamePermPickerOpen = false
 	}
 	if except != "target-picker" {
 		st.viewTargetPickOpen = false
@@ -800,6 +877,7 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 	pressedPopupToggle := st.popupToggleHovered()
 	pressedColorCategoryPopup := settingsPopupPressed(gtx, &st.colorCategoryPopupTag)
 	pressedColorPickerPopup := settingsPopupPressed(gtx, &st.colorPickerPopupTag)
+	pressedFilenamePermPopup := settingsPopupPressed(gtx, &st.filenamePermPickerPopupTag)
 	pressedTargetPickerPopup := settingsPopupPressed(gtx, &st.viewTargetPickerPopupTag)
 	pressedRulePickerPopup := settingsPopupPressed(gtx, &st.viewRulePickerPopupTag)
 	pressedAssocPickerPopup := settingsPopupPressed(gtx, &st.viewAssocPickerPopupTag)
@@ -832,6 +910,15 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 			}
 			st.colorPickerOpen = false
 			st.colorPickerTarget = ""
+			closed = true
+			continue
+		}
+
+		if st.filenamePermPickerOpen {
+			if pressedPopupToggle || pressedFilenamePermPopup {
+				continue
+			}
+			st.filenamePermPickerOpen = false
 			closed = true
 			continue
 		}
@@ -2241,19 +2328,20 @@ func (st *settingsModalState) setViewMode(next string, now time.Time) {
 }
 
 func (st *settingsChoiceAnim) setValue(current *string, next string, now time.Time) {
-	if st == nil || current == nil || next == "" || *current == next {
+	if st == nil || current == nil || *current == next {
 		return
 	}
 	st.prev = *current
+	st.hasPrev = true
 	st.at = now
 	*current = next
 }
 
 func (st *settingsChoiceAnim) fill(now time.Time, current, key string) (float32, bool) {
-	if st == nil || key == "" {
+	if st == nil {
 		return 0, false
 	}
-	if st.prev == "" || st.at.IsZero() || st.prev == current {
+	if !st.hasPrev || st.at.IsZero() || st.prev == current {
 		if key == current {
 			return 1, false
 		}
@@ -2262,6 +2350,7 @@ func (st *settingsChoiceAnim) fill(now time.Time, current, key string) (float32,
 	elapsed := now.Sub(st.at)
 	if elapsed >= toolbarAnimDur {
 		st.prev = ""
+		st.hasPrev = false
 		st.at = time.Time{}
 		if key == current {
 			return 1, false
@@ -2291,12 +2380,13 @@ func (st *settingsChoiceAnim) position(now time.Time, current string, keys []str
 		return 0
 	}
 	currentIdx := float32(idxOf(current))
-	if st == nil || st.prev == "" || st.at.IsZero() || st.prev == current {
+	if st == nil || !st.hasPrev || st.at.IsZero() || st.prev == current {
 		return currentIdx, false
 	}
 	elapsed := now.Sub(st.at)
 	if elapsed >= toolbarAnimDur {
 		st.prev = ""
+		st.hasPrev = false
 		st.at = time.Time{}
 		return currentIdx, false
 	}

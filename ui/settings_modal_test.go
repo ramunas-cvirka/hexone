@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"hexone/filesys"
 	"image"
 	"image/color"
 	"reflect"
@@ -52,6 +53,37 @@ func TestSettingsShiftTabWraps(t *testing.T) {
 		if got := settingsShiftTab(tc.key, tc.step); got != tc.want {
 			t.Fatalf("settingsShiftTab(%q, %d)=%q want %q", tc.key, tc.step, got, tc.want)
 		}
+	}
+}
+
+func TestSettingsChoiceAnimAllowsEmptyValueSelection(t *testing.T) {
+	now := time.Date(2026, time.March, 20, 12, 0, 0, 0, time.UTC)
+	current := "any"
+	anim := settingsChoiceAnim{}
+
+	anim.setValue(&current, "", now)
+
+	if current != "" {
+		t.Fatalf("current=%q want empty", current)
+	}
+	if !anim.hasPrev || anim.prev != "any" {
+		t.Fatalf("anim previous state=%q hasPrev=%v want any/true", anim.prev, anim.hasPrev)
+	}
+	fill, animating := anim.fill(now.Add(toolbarAnimDur), current, "")
+	if fill != 1 || animating {
+		t.Fatalf("fill=%v animating=%v want 1,false", fill, animating)
+	}
+}
+
+func TestSegmentedAnimStateAllowsEmptyPulseKey(t *testing.T) {
+	now := time.Date(2026, time.March, 20, 12, 0, 0, 0, time.UTC)
+	anim := segmentedAnimState{}
+
+	anim.setPulse("", now)
+
+	fill, animating := anim.pulseFill(now, "")
+	if fill != 1 || !animating {
+		t.Fatalf("fill=%v animating=%v want 1,true", fill, animating)
 	}
 }
 
@@ -400,10 +432,12 @@ func TestViewerAssociationNoticeTextPromptsAddForNewAssociation(t *testing.T) {
 }
 
 func TestViewerCommandTargetPickerEntriesFiltersAndFallsBackToAll(t *testing.T) {
+	localLog := normalizeViewerCommandTargetInput("local:/tmp/error.log")
+	localCompose := normalizeViewerCommandTargetInput("local:/tmp/docker-compose.yml")
 	st := &settingsModalState{
 		viewTargetEntries: []viewerCommandTargetEntry{
-			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
-			{Key: "local:/tmp/docker-compose.yml", Command: `docker compose -f {path} config`},
+			{Key: localLog, Command: `tail -f {path}`},
+			{Key: localCompose, Command: `docker compose -f {path} config`},
 			{Key: "ssh:root@example.com:22:/var/log/app.log", Command: `journalctl -f --file {path}`},
 		},
 	}
@@ -413,7 +447,7 @@ func TestViewerCommandTargetPickerEntriesFiltersAndFallsBackToAll(t *testing.T) 
 	if matches != 1 {
 		t.Fatalf("matches=%d want 1", matches)
 	}
-	if len(entries) != 1 || entries[0].Key != "local:/tmp/docker-compose.yml" {
+	if len(entries) != 1 || entries[0].Key != localCompose {
 		t.Fatalf("unexpected filtered entries: %#v", entries)
 	}
 
@@ -430,10 +464,12 @@ func TestViewerCommandTargetPickerEntriesFiltersAndFallsBackToAll(t *testing.T) 
 func TestSettingsViewerCommandTargetPickerRowClickLoadsTargetAndCommand(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
+	localLog := normalizeViewerCommandTargetInput("local:/tmp/error.log")
+	localCompose := normalizeViewerCommandTargetInput("local:/tmp/docker-compose.yml")
 	st := &settingsModalState{
 		viewTargetEntries: []viewerCommandTargetEntry{
-			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
-			{Key: "local:/tmp/docker-compose.yml", Command: `docker compose -f {path} config`},
+			{Key: localLog, Command: `tail -f {path}`},
+			{Key: localCompose, Command: `docker compose -f {path} config`},
 		},
 	}
 	st.openViewerCommandTargetPicker()
@@ -462,10 +498,10 @@ func TestSettingsViewerCommandTargetPickerRowClickLoadsTargetAndCommand(t *testi
 		t.Fatalf("picker has invalid size: %v", dims.Size)
 	}
 
-	st.viewerCommandTargetRowClick("local:/tmp/error.log").Click()
+	st.viewerCommandTargetRowClick(localLog).Click()
 	frame()
 
-	if got := st.viewTargetKeyEdit.Text(); got != "local:/tmp/error.log" {
+	if got := st.viewTargetKeyEdit.Text(); got != localLog {
 		t.Fatalf("target key not loaded from picker row: got %q", got)
 	}
 	if got := st.viewTargetCommandEdit.Text(); got != `tail -f {path}` {
@@ -479,10 +515,12 @@ func TestSettingsViewerCommandTargetPickerRowClickLoadsTargetAndCommand(t *testi
 func TestSettingsViewerCommandTargetPickerRemoveClickDeletesDraftEntry(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
+	localLog := normalizeViewerCommandTargetInput("local:/tmp/error.log")
+	localCompose := normalizeViewerCommandTargetInput("local:/tmp/docker-compose.yml")
 	st := &settingsModalState{
 		viewTargetEntries: []viewerCommandTargetEntry{
-			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
-			{Key: "local:/tmp/docker-compose.yml", Command: `docker compose -f {path} config`},
+			{Key: localLog, Command: `tail -f {path}`},
+			{Key: localCompose, Command: `docker compose -f {path} config`},
 		},
 	}
 	st.openViewerCommandTargetPicker()
@@ -506,10 +544,10 @@ func TestSettingsViewerCommandTargetPickerRemoveClickDeletesDraftEntry(t *testin
 	}
 
 	frame()
-	st.viewerCommandTargetRowRemoveClick("local:/tmp/error.log").Click()
+	st.viewerCommandTargetRowRemoveClick(localLog).Click()
 	frame()
 
-	if _, ok := st.viewerCommandTarget("local:/tmp/error.log"); ok {
+	if _, ok := st.viewerCommandTarget(localLog); ok {
 		t.Fatal("exact override should be removed from draft list")
 	}
 	if !strings.Contains(st.targetInfoText, "Pending removal") {
@@ -521,20 +559,21 @@ func TestSettingsViewerCommandTargetPickerRemoveClickDeletesDraftEntry(t *testin
 }
 
 func TestRefreshViewerCommandTargetDraftInfoPromptsUpdateForExistingOverride(t *testing.T) {
+	localLog := normalizeViewerCommandTargetInput("local:/tmp/error.log")
 	st := &settingsModalState{
 		viewTargetEntries: []viewerCommandTargetEntry{
-			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
+			{Key: localLog, Command: `tail -f {path}`},
 		},
 		viewTargetSavedEntries: []viewerCommandTargetEntry{
-			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
+			{Key: localLog, Command: `tail -f {path}`},
 		},
 	}
-	st.viewTargetKeyEdit.SetText("/tmp/error.log")
+	st.viewTargetKeyEdit.SetText(localLog)
 	st.viewTargetCommandEdit.SetText(`tail -n 50 {path}`)
 
 	st.refreshViewerCommandTargetDraftInfo(false)
 
-	entry, ok := st.viewerCommandTarget("local:/tmp/error.log")
+	entry, ok := st.viewerCommandTarget(localLog)
 	if !ok {
 		t.Fatal("existing exact override should still exist")
 	}
@@ -547,15 +586,16 @@ func TestRefreshViewerCommandTargetDraftInfoPromptsUpdateForExistingOverride(t *
 }
 
 func TestViewerCommandTargetNoticeTextUsesCurrentEditorState(t *testing.T) {
+	localLog := normalizeViewerCommandTargetInput("local:/tmp/error.log")
 	st := &settingsModalState{
 		viewTargetEntries: []viewerCommandTargetEntry{
-			{Key: "local:/tmp/error.log", Command: `tail -n 50 {path}`},
+			{Key: localLog, Command: `tail -n 50 {path}`},
 		},
 		viewTargetSavedEntries: []viewerCommandTargetEntry{
-			{Key: "local:/tmp/error.log", Command: `tail -f {path}`},
+			{Key: localLog, Command: `tail -f {path}`},
 		},
 	}
-	st.viewTargetKeyEdit.SetText("/tmp/error.log")
+	st.viewTargetKeyEdit.SetText(localLog)
 	st.viewTargetCommandEdit.SetText(`tail -n 50 {path}`)
 
 	got := st.viewerCommandTargetNoticeText()
@@ -1039,7 +1079,7 @@ func TestSettingsViewerPreviewIgnoresSelectedMode(t *testing.T) {
 	}
 }
 
-func TestDraftFilenameColorsNormalizesAgeAndPermissionRules(t *testing.T) {
+func TestDraftFilenameColorsNormalizesAllRuleTypes(t *testing.T) {
 	st := &settingsModalState{
 		filenameDefaultText: "#AABBCC",
 		filenameDefaultIcon: fm.FilenameIconDocument,
@@ -1049,7 +1089,13 @@ func TestDraftFilenameColorsNormalizesAgeAndPermissionRules(t *testing.T) {
 			{MaxAge: "3d", Text: "#334455", Icon: ""},
 		},
 		filenamePermEntries: []fm.FilenamePermissionRule{
-			{Permissions: "755", Text: "#556677", Icon: fm.FilenameIconLocked},
+			{Permissions: "111", Match: "any", Text: "#556677", Icon: fm.FilenameIconLocked},
+		},
+		filenameExtEntries: []fm.FilenameExtensionRule{
+			{Extension: "GO", Text: "#223344", Icon: fm.FilenameIconCode},
+		},
+		filenameSizeEntries: []fm.FilenameSizeRule{
+			{Size: "10mb", Match: "max", Text: "#778899", Icon: fm.FilenameIconArchive},
 		},
 	}
 
@@ -1069,8 +1115,143 @@ func TestDraftFilenameColorsNormalizesAgeAndPermissionRules(t *testing.T) {
 	if got.AgeRules[0].MaxAge != "1d" || got.AgeRules[1].MaxAge != "3d" {
 		t.Fatalf("age rules=%#v want normalized 1d and 3d", got.AgeRules)
 	}
-	if len(got.PermissionRules) != 1 || got.PermissionRules[0].Permissions != "0755" {
-		t.Fatalf("permission rules=%#v want normalized 0755", got.PermissionRules)
+	if len(got.PermissionRules) != 1 || got.PermissionRules[0].Permissions != "0111" {
+		t.Fatalf("permission rules=%#v want normalized 0111", got.PermissionRules)
+	}
+	if got.PermissionRules[0].Match != fm.FilenamePermissionMatchAny {
+		t.Fatalf("permission match=%q want %q", got.PermissionRules[0].Match, fm.FilenamePermissionMatchAny)
+	}
+	if len(got.ExtensionRules) != 1 || got.ExtensionRules[0].Extension != ".go" {
+		t.Fatalf("extension rules=%#v want normalized .go", got.ExtensionRules)
+	}
+	if len(got.SizeRules) != 1 || got.SizeRules[0].Size != "10m" {
+		t.Fatalf("size rules=%#v want normalized 10m", got.SizeRules)
+	}
+	if got.SizeRules[0].Match != fm.FilenameSizeMatchAtMost {
+		t.Fatalf("size match=%q want %q", got.SizeRules[0].Match, fm.FilenameSizeMatchAtMost)
+	}
+}
+
+func TestLoadFilenameColorsFromConfigKeepsPaneTextInheritedUntilEdited(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Colors.FilePaneText = "#13579B"
+	cfg.Colors.Filenames.Icon = fm.FilenameIconCode
+
+	st := &settingsModalState{}
+	st.loadFilenameColorsFromConfig(cfg)
+
+	if st.filenameDefaultText != "" {
+		t.Fatalf("filenameDefaultText=%q want empty inherited override", st.filenameDefaultText)
+	}
+	if got := st.filenameDefaultTextEdit.Text(); got != "#13579B" {
+		t.Fatalf("filenameDefaultTextEdit=%q want pane text color", got)
+	}
+	if st.filenameDefaultIcon != fm.FilenameIconCode {
+		t.Fatalf("filenameDefaultIcon=%q want %q", st.filenameDefaultIcon, fm.FilenameIconCode)
+	}
+
+	got, errText := st.draftFilenameColors()
+	if errText != "" {
+		t.Fatalf("unexpected draft filename error: %q", errText)
+	}
+	if got.Text != "" {
+		t.Fatalf("draft filename text=%q want empty inherited override", got.Text)
+	}
+	if got.Icon != fm.FilenameIconCode {
+		t.Fatalf("draft filename icon=%q want %q", got.Icon, fm.FilenameIconCode)
+	}
+}
+
+func TestFilenameExtensionUIUsesBareSuffixDisplay(t *testing.T) {
+	st := &settingsModalState{}
+	st.loadFilenameExtensionFields(".tar.gz", "", fm.FilenameIconArchive)
+
+	if got := st.filenameExtEdit.Text(); got != "tar.gz" {
+		t.Fatalf("filenameExtEdit=%q want bare suffix", got)
+	}
+
+	rule, err := parseFilenameExtensionRuleFields("go", "", fm.FilenameIconCode)
+	if err != nil {
+		t.Fatalf("parseFilenameExtensionRuleFields error: %v", err)
+	}
+	if rule.Extension != ".go" {
+		t.Fatalf("rule.Extension=%q want %q", rule.Extension, ".go")
+	}
+	if got := formatFilenameExtensionRuleLabel(rule); got != "go" {
+		t.Fatalf("formatFilenameExtensionRuleLabel=%q want %q", got, "go")
+	}
+}
+
+func TestPreviewFilenameThemeUsesCurrentPermissionDraftVisual(t *testing.T) {
+	st := &settingsModalState{
+		filenamePermEntries: []fm.FilenamePermissionRule{
+			{Permissions: "0111", Match: fm.FilenamePermissionMatchAny, Text: "#112233"},
+		},
+		filenamePermMatch: fm.FilenamePermissionMatchAny,
+		filenamePermIcon:  fm.FilenameIconLocked,
+	}
+	st.filenamePermEdit.SetText("0111")
+	st.filenamePermTextEdit.SetText("#AABBCC")
+
+	_, theme, colors, errText := st.previewFilenameTheme(fm.DefaultConfig())
+	if errText != "" {
+		t.Fatalf("unexpected preview filename error: %q", errText)
+	}
+	if len(colors.PermissionRules) != 1 {
+		t.Fatalf("len(colors.PermissionRules)=%d want 1", len(colors.PermissionRules))
+	}
+	if colors.PermissionRules[0].Text != "#AABBCC" {
+		t.Fatalf("preview permission text=%q want %q", colors.PermissionRules[0].Text, "#AABBCC")
+	}
+	if colors.PermissionRules[0].Icon != fm.FilenameIconLocked {
+		t.Fatalf("preview permission icon=%q want %q", colors.PermissionRules[0].Icon, fm.FilenameIconLocked)
+	}
+
+	visual := theme.visualForEntry(filesys.Entry{
+		Name:        "deploy.sh",
+		DisplayName: "deploy.sh",
+		Kind:        filesys.EntryFile,
+		PermOctal:   "0755",
+		ModTime:     time.Now().Add(-48 * time.Hour),
+	}, time.Now())
+	if visual.color != (color.NRGBA{R: 0xAA, G: 0xBB, B: 0xCC, A: 0xFF}) {
+		t.Fatalf("preview permission color=%v want #AABBCC", visual.color)
+	}
+	if visual.iconKey != fm.FilenameIconLocked {
+		t.Fatalf("preview permission icon=%q want %q", visual.iconKey, fm.FilenameIconLocked)
+	}
+}
+
+func TestPreviewFilenameThemeUsesMatchingSampleForHasNonePermissions(t *testing.T) {
+	rule := fm.FilenamePermissionRule{
+		Permissions: "0520",
+		Match:       fm.FilenamePermissionMatchNone,
+		Text:        "#4C3FA8",
+	}
+	samplePerm := settingsFilenamePreviewSamplePermissions(rule)
+	if samplePerm == "" {
+		t.Fatal("samplePerm should not be empty")
+	}
+	if !fm.FilenamePermissionMatches(samplePerm, rule) {
+		t.Fatalf("samplePerm=%q should satisfy rule %#v", samplePerm, rule)
+	}
+
+	theme := newFilePaneFilenameTheme(&fm.Config{
+		Colors: fm.ColorsConfig{
+			Filenames: fm.FilenameColorsConfig{
+				PermissionRules: []fm.FilenamePermissionRule{rule},
+			},
+		},
+	})
+	visual := theme.visualForEntry(filesys.Entry{
+		Name:        "mode-" + samplePerm + ".txt",
+		DisplayName: "mode-" + samplePerm + ".txt",
+		Kind:        filesys.EntryFile,
+		PermOctal:   samplePerm,
+		ModTime:     time.Now().Add(-48 * time.Hour),
+	}, time.Now())
+	if visual.color != (color.NRGBA{R: 0x4C, G: 0x3F, B: 0xA8, A: 0xFF}) {
+		t.Fatalf("preview permission color=%v want #4C3FA8", visual.color)
 	}
 }
 

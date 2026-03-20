@@ -127,10 +127,27 @@ func settingsFilenamePreviewSampleAge(previous, maxAge time.Duration) time.Durat
 	return sample
 }
 
+func settingsFilenamePreviewSamplePermissions(rule fm.FilenamePermissionRule) string {
+	want, ok := fm.ParseFilenamePermissions(rule.Permissions)
+	if !ok {
+		return ""
+	}
+	switch normalizeFilenamePermissionMatch(rule.Match) {
+	case fm.FilenamePermissionMatchNone:
+		return fmt.Sprintf("%04o", (^want)&0o777)
+	default:
+		return fmt.Sprintf("%04o", want)
+	}
+}
+
 func normalizeFilenameRuleMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "permissions", "permission", "perm":
 		return "permissions"
+	case "extensions", "extension", "ext":
+		return "extensions"
+	case "sizes", "size":
+		return "sizes"
 	default:
 		return "age"
 	}
@@ -155,20 +172,34 @@ func (st *settingsModalState) loadFilenameColorsFromConfig(cfg *fm.Config) {
 	st.filenameRuleMode = normalizeFilenameRuleMode(st.filenameRuleMode)
 	st.filenameRuleModeAnim = settingsChoiceAnim{}
 	st.filenameAgeUnitAnim = settingsChoiceAnim{}
+	st.filenamePermMatchAnim = settingsChoiceAnim{}
+	st.filenameSizeMatchAnim = settingsChoiceAnim{}
 	st.filenameAgeEntries = nil
 	st.filenameAgeSavedEntries = nil
+	st.filenamePermEntries = nil
+	st.filenamePermSavedEntries = nil
+	st.filenameExtEntries = nil
+	st.filenameExtSavedEntries = nil
+	st.filenameSizeEntries = nil
+	st.filenameSizeSavedEntries = nil
+	defaultEditorHex := ""
 	if cfg != nil {
 		st.filenameDefaultText = cfg.Colors.Filenames.Text
 		st.filenameDefaultIcon = cfg.Colors.Filenames.Icon
+		defaultEditorHex = cfg.Colors.Filenames.Text
+		if strings.TrimSpace(defaultEditorHex) == "" {
+			defaultEditorHex = cfg.Colors.FilePaneText
+		}
 		st.filenameAgeEntries = append([]fm.FilenameAgeRule(nil), cfg.Colors.Filenames.AgeRules...)
 		st.filenameAgeSavedEntries = append([]fm.FilenameAgeRule(nil), st.filenameAgeEntries...)
 		st.filenamePermEntries = append([]fm.FilenamePermissionRule(nil), cfg.Colors.Filenames.PermissionRules...)
 		st.filenamePermSavedEntries = append([]fm.FilenamePermissionRule(nil), st.filenamePermEntries...)
-	} else {
-		st.filenamePermEntries = nil
-		st.filenamePermSavedEntries = nil
+		st.filenameExtEntries = append([]fm.FilenameExtensionRule(nil), cfg.Colors.Filenames.ExtensionRules...)
+		st.filenameExtSavedEntries = append([]fm.FilenameExtensionRule(nil), st.filenameExtEntries...)
+		st.filenameSizeEntries = append([]fm.FilenameSizeRule(nil), cfg.Colors.Filenames.SizeRules...)
+		st.filenameSizeSavedEntries = append([]fm.FilenameSizeRule(nil), st.filenameSizeEntries...)
 	}
-	st.filenameDefaultTextEdit.SetText(st.filenameDefaultText)
+	st.filenameDefaultTextEdit.SetText(defaultEditorHex)
 	st.filenameAgeList.Position.First = 0
 	st.filenameAgeList.Position.Offset = 0
 	st.filenameAgeRowClicks = nil
@@ -177,10 +208,23 @@ func (st *settingsModalState) loadFilenameColorsFromConfig(cfg *fm.Config) {
 	st.filenameAgeInfoText = ""
 	st.filenamePermList.Position.First = 0
 	st.filenamePermList.Position.Offset = 0
+	st.filenamePermPickerOpen = false
 	st.filenamePermRowClicks = nil
 	st.filenamePermRowRemove = nil
-	st.loadFilenamePermissionFields("", "", "")
+	st.loadFilenamePermissionFields("", "", "", "")
 	st.filenamePermInfoText = ""
+	st.filenameExtList.Position.First = 0
+	st.filenameExtList.Position.Offset = 0
+	st.filenameExtRowClicks = nil
+	st.filenameExtRowRemove = nil
+	st.loadFilenameExtensionFields("", "", "")
+	st.filenameExtInfoText = ""
+	st.filenameSizeList.Position.First = 0
+	st.filenameSizeList.Position.Offset = 0
+	st.filenameSizeRowClicks = nil
+	st.filenameSizeRowRemove = nil
+	st.loadFilenameSizeFields("", "", "", "")
+	st.filenameSizeInfoText = ""
 }
 
 func (st *settingsModalState) draftFilenameColors() (fm.FilenameColorsConfig, string) {
@@ -219,12 +263,42 @@ func (st *settingsModalState) draftFilenameColors() (fm.FilenameColorsConfig, st
 		})
 	}
 	out.PermissionRules = fm.NormalizeFilenamePermissionRules(st.filenamePermEntries)
+	out.ExtensionRules = fm.NormalizeFilenameExtensionRules(st.filenameExtEntries)
+	out.SizeRules = fm.NormalizeFilenameSizeRules(st.filenameSizeEntries)
 	return out, ""
+}
+
+func (st *settingsModalState) previewFilenameColors(colors fm.FilenameColorsConfig) fm.FilenameColorsConfig {
+	if st == nil {
+		return colors
+	}
+	if rule, err := parseFilenameAgeRuleFields(st.filenameAgeOffsetEdit.Text(), st.filenameAgeUnit, st.filenameAgeTextEdit.Text(), st.filenameAgeIcon); err == nil {
+		rules := append([]fm.FilenameAgeRule(nil), colors.AgeRules...)
+		rules = append(rules, rule)
+		colors.AgeRules = fm.NormalizeFilenameAgeRules(rules)
+	}
+	if rule, err := parseFilenamePermissionRuleFields(st.filenamePermEdit.Text(), st.filenamePermMatch, st.filenamePermTextEdit.Text(), st.filenamePermIcon); err == nil {
+		rules := append([]fm.FilenamePermissionRule(nil), colors.PermissionRules...)
+		rules = append(rules, rule)
+		colors.PermissionRules = fm.NormalizeFilenamePermissionRules(rules)
+	}
+	if rule, err := parseFilenameExtensionRuleFields(st.filenameExtEdit.Text(), st.filenameExtTextEdit.Text(), st.filenameExtIcon); err == nil {
+		rules := append([]fm.FilenameExtensionRule(nil), colors.ExtensionRules...)
+		rules = append(rules, rule)
+		colors.ExtensionRules = fm.NormalizeFilenameExtensionRules(rules)
+	}
+	if rule, err := parseFilenameSizeRuleFields(st.filenameSizeEdit.Text(), st.filenameSizeMatch, st.filenameSizeTextEdit.Text(), st.filenameSizeIcon); err == nil {
+		rules := append([]fm.FilenameSizeRule(nil), colors.SizeRules...)
+		rules = append(rules, rule)
+		colors.SizeRules = fm.NormalizeFilenameSizeRules(rules)
+	}
+	return colors
 }
 
 func (st *settingsModalState) previewFilenameTheme(cfg *fm.Config) (filePanePalette, filePaneFilenameTheme, fm.FilenameColorsConfig, string) {
 	palette, errText := st.draftFilePanePalette(cfg)
 	filenameColors, filenameErr := st.draftFilenameColors()
+	filenameColors = st.previewFilenameColors(filenameColors)
 	if errText == "" {
 		errText = filenameErr
 	}
@@ -478,45 +552,103 @@ func (st *settingsModalState) filenamePermissionRuleRowRemoveClick(key string) *
 	return click
 }
 
-func (st *settingsModalState) filenamePermissionRuleIndex(perm string) int {
-	if st == nil || perm == "" {
+func normalizeFilenamePermissionMatch(raw string) string {
+	return fm.NormalizeFilenamePermissionMatch(raw)
+}
+
+func filenamePermissionRuleKey(permRaw, matchRaw string) string {
+	perm := fm.NormalizeFilenamePermissions(permRaw)
+	if perm == "" {
+		return ""
+	}
+	return normalizeFilenamePermissionMatch(matchRaw) + ":" + perm
+}
+
+func filenamePermissionMatchLabel(match string) string {
+	switch normalizeFilenamePermissionMatch(match) {
+	case fm.FilenamePermissionMatchAll:
+		return "Has All Bits"
+	case fm.FilenamePermissionMatchAny:
+		return "Has Any Bit"
+	case fm.FilenamePermissionMatchNone:
+		return "Has No Bits"
+	default:
+		return "Exact"
+	}
+}
+
+func (st *settingsModalState) setFilenamePermissionChecks(permRaw string) {
+	if st == nil {
+		return
+	}
+	mask, ok := fm.ParseFilenamePermissions(permRaw)
+	for i := range st.filenamePermChecks {
+		st.filenamePermChecks[i].Value = ok && mask&uint16(permBitMasks[i]) != 0
+	}
+}
+
+func (st *settingsModalState) filenamePermissionMaskFromChecks() string {
+	if st == nil {
+		return ""
+	}
+	var mask uint16
+	for i := range st.filenamePermChecks {
+		if st.filenamePermChecks[i].Value {
+			mask |= uint16(permBitMasks[i])
+		}
+	}
+	return fmt.Sprintf("%04o", mask)
+}
+
+func (st *settingsModalState) syncFilenamePermissionTextFromChecks() {
+	if st == nil {
+		return
+	}
+	st.filenamePermEdit.SetText(st.filenamePermissionMaskFromChecks())
+}
+
+func (st *settingsModalState) filenamePermissionRuleIndex(key string) int {
+	if st == nil || key == "" {
 		return -1
 	}
 	for i, rule := range st.filenamePermEntries {
-		if rule.Permissions == perm {
+		if filenamePermissionRuleKey(rule.Permissions, rule.Match) == key {
 			return i
 		}
 	}
 	return -1
 }
 
-func (st *settingsModalState) filenamePermissionRule(perm string) (fm.FilenamePermissionRule, bool) {
-	if idx := st.filenamePermissionRuleIndex(perm); idx >= 0 {
+func (st *settingsModalState) filenamePermissionRule(key string) (fm.FilenamePermissionRule, bool) {
+	if idx := st.filenamePermissionRuleIndex(key); idx >= 0 {
 		return st.filenamePermEntries[idx], true
 	}
 	return fm.FilenamePermissionRule{}, false
 }
 
-func (st *settingsModalState) filenameSavedPermissionRule(perm string) (fm.FilenamePermissionRule, bool) {
-	if st == nil || perm == "" {
+func (st *settingsModalState) filenameSavedPermissionRule(key string) (fm.FilenamePermissionRule, bool) {
+	if st == nil || key == "" {
 		return fm.FilenamePermissionRule{}, false
 	}
 	for _, rule := range st.filenamePermSavedEntries {
-		if rule.Permissions == perm {
+		if filenamePermissionRuleKey(rule.Permissions, rule.Match) == key {
 			return rule, true
 		}
 	}
 	return fm.FilenamePermissionRule{}, false
 }
 
-func (st *settingsModalState) loadFilenamePermissionFields(perm, textHex, icon string) {
+func (st *settingsModalState) loadFilenamePermissionFields(perm, match, textHex, icon string) {
 	if st == nil {
 		return
 	}
+	perm = fm.NormalizeFilenamePermissions(perm)
 	st.filenamePermEdit.SetText(perm)
+	st.filenamePermMatch = normalizeFilenamePermissionMatch(match)
 	st.filenamePermTextEdit.SetText(textHex)
 	st.filenamePermIcon = fm.NormalizeFilenameIcon(icon)
-	st.filenamePermLookup = fm.NormalizeFilenamePermissions(perm)
+	st.setFilenamePermissionChecks(perm)
+	st.filenamePermLookup = filenamePermissionRuleKey(perm, st.filenamePermMatch)
 }
 
 func (st *settingsModalState) syncFilenamePermissionEditors() {
@@ -524,13 +656,18 @@ func (st *settingsModalState) syncFilenamePermissionEditors() {
 		return
 	}
 	perm := fm.NormalizeFilenamePermissions(st.filenamePermEdit.Text())
-	if perm == st.filenamePermLookup {
+	if perm != "" {
+		st.setFilenamePermissionChecks(perm)
+	}
+	key := filenamePermissionRuleKey(perm, st.filenamePermMatch)
+	if key == st.filenamePermLookup {
 		return
 	}
-	st.filenamePermLookup = perm
-	if rule, ok := st.filenamePermissionRule(perm); ok {
+	st.filenamePermLookup = key
+	if rule, ok := st.filenamePermissionRule(key); ok {
 		st.filenamePermTextEdit.SetText(rule.Text)
 		st.filenamePermIcon = rule.Icon
+		st.filenamePermMatch = normalizeFilenamePermissionMatch(rule.Match)
 		return
 	}
 	st.filenamePermTextEdit.SetText("")
@@ -542,8 +679,8 @@ func (st *settingsModalState) refreshFilenamePermissionDraftInfo() {
 		return
 	}
 	st.filenamePermInfoText = ""
-	perm := fm.NormalizeFilenamePermissions(st.filenamePermEdit.Text())
-	if perm == "" {
+	key := filenamePermissionRuleKey(st.filenamePermEdit.Text(), st.filenamePermMatch)
+	if key == "" {
 		return
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenamePermTextEdit.Text()))
@@ -552,12 +689,12 @@ func (st *settingsModalState) refreshFilenamePermissionDraftInfo() {
 		st.filenamePermInfoText = "Choose a color, an icon, or both"
 		return
 	}
-	existing, ok := st.filenamePermissionRule(perm)
+	existing, ok := st.filenamePermissionRule(key)
 	if !ok {
 		st.filenamePermInfoText = "Click Add"
 		return
 	}
-	if existing.Text == textHex && existing.Icon == icon {
+	if existing.Text == textHex && existing.Icon == icon && normalizeFilenamePermissionMatch(existing.Match) == normalizeFilenamePermissionMatch(st.filenamePermMatch) {
 		return
 	}
 	st.filenamePermInfoText = "Click Update"
@@ -567,14 +704,14 @@ func (st *settingsModalState) filenamePermissionNoticeText() string {
 	if st == nil {
 		return ""
 	}
-	perm := fm.NormalizeFilenamePermissions(st.filenamePermEdit.Text())
-	if perm == "" {
-		return "Use octal permissions like 0644 or 0755"
+	key := filenamePermissionRuleKey(st.filenamePermEdit.Text(), st.filenamePermMatch)
+	if key == "" {
+		return "Use octal bits like 0644, 0111, or 0222 and choose Exact / Any / All / None"
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenamePermTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenamePermIcon)
-	savedRule, savedExists := st.filenameSavedPermissionRule(perm)
-	currentRule, currentExists := st.filenamePermissionRule(perm)
+	savedRule, savedExists := st.filenameSavedPermissionRule(key)
+	currentRule, currentExists := st.filenamePermissionRule(key)
 	switch {
 	case savedExists && !currentExists:
 		return "Pending removal; Save to persist"
@@ -590,10 +727,14 @@ func (st *settingsModalState) filenamePermissionNoticeText() string {
 	return ""
 }
 
-func parseFilenamePermissionRuleFields(permRaw, textRaw, iconRaw string) (fm.FilenamePermissionRule, error) {
+func parseFilenamePermissionRuleFields(permRaw, matchRaw, textRaw, iconRaw string) (fm.FilenamePermissionRule, error) {
 	perm := fm.NormalizeFilenamePermissions(permRaw)
 	if perm == "" {
-		return fm.FilenamePermissionRule{}, fmt.Errorf("permission value must use octal like 0644 or 0755")
+		return fm.FilenamePermissionRule{}, fmt.Errorf("permission value must use octal like 0644, 0755, 0111, or 0222")
+	}
+	match := normalizeFilenamePermissionMatch(matchRaw)
+	if match != fm.FilenamePermissionMatchExact && perm == "0000" {
+		return fm.FilenamePermissionRule{}, fmt.Errorf("partial permission matches need at least one bit selected")
 	}
 	textHex := strings.TrimSpace(textRaw)
 	if textHex != "" {
@@ -608,6 +749,7 @@ func parseFilenamePermissionRuleFields(permRaw, textRaw, iconRaw string) (fm.Fil
 	}
 	return fm.FilenamePermissionRule{
 		Permissions: perm,
+		Match:       match,
 		Text:        textHex,
 		Icon:        icon,
 	}, nil
@@ -617,19 +759,20 @@ func (st *settingsModalState) upsertCurrentFilenamePermissionRule() (string, err
 	if st == nil {
 		return "Add", nil
 	}
-	rule, err := parseFilenamePermissionRuleFields(st.filenamePermEdit.Text(), st.filenamePermTextEdit.Text(), st.filenamePermIcon)
+	rule, err := parseFilenamePermissionRuleFields(st.filenamePermEdit.Text(), st.filenamePermMatch, st.filenamePermTextEdit.Text(), st.filenamePermIcon)
 	if err != nil {
 		return "Add", err
 	}
 	action := "Add"
-	if idx := st.filenamePermissionRuleIndex(rule.Permissions); idx >= 0 {
+	key := filenamePermissionRuleKey(rule.Permissions, rule.Match)
+	if idx := st.filenamePermissionRuleIndex(key); idx >= 0 {
 		st.filenamePermEntries[idx] = rule
 		action = "Update"
 	} else {
 		st.filenamePermEntries = append(st.filenamePermEntries, rule)
 	}
 	st.filenamePermEntries = fm.NormalizeFilenamePermissionRules(st.filenamePermEntries)
-	st.loadFilenamePermissionFields(rule.Permissions, rule.Text, rule.Icon)
+	st.loadFilenamePermissionFields(rule.Permissions, rule.Match, rule.Text, rule.Icon)
 	return action, nil
 }
 
@@ -637,13 +780,13 @@ func (st *settingsModalState) removeCurrentFilenamePermissionRule() bool {
 	if st == nil {
 		return false
 	}
-	perm := fm.NormalizeFilenamePermissions(st.filenamePermEdit.Text())
-	idx := st.filenamePermissionRuleIndex(perm)
+	key := filenamePermissionRuleKey(st.filenamePermEdit.Text(), st.filenamePermMatch)
+	idx := st.filenamePermissionRuleIndex(key)
 	if idx < 0 {
 		return false
 	}
 	st.filenamePermEntries = append(st.filenamePermEntries[:idx], st.filenamePermEntries[idx+1:]...)
-	st.loadFilenamePermissionFields(perm, "", "")
+	st.loadFilenamePermissionFields(fm.NormalizeFilenamePermissions(st.filenamePermEdit.Text()), st.filenamePermMatch, "", "")
 	return true
 }
 
@@ -801,7 +944,7 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 	if ui == nil || st == nil {
 		return layout.Dimensions{}
 	}
-	keys := []string{"age", "permissions"}
+	keys := []string{"age", "permissions", "extensions", "sizes"}
 	if st.filenameRuleModeAgeClick.Clicked(gtx) {
 		st.filenameRuleModeAnim.anim.setPulse("age", gtx.Now)
 		st.filenameRuleModeAnim.setValue(&st.filenameRuleMode, "age", gtx.Now)
@@ -810,6 +953,16 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 	if st.filenameRuleModePermClick.Clicked(gtx) {
 		st.filenameRuleModeAnim.anim.setPulse("permissions", gtx.Now)
 		st.filenameRuleModeAnim.setValue(&st.filenameRuleMode, "permissions", gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if st.filenameRuleModeExtClick.Clicked(gtx) {
+		st.filenameRuleModeAnim.anim.setPulse("extensions", gtx.Now)
+		st.filenameRuleModeAnim.setValue(&st.filenameRuleMode, "extensions", gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if st.filenameRuleModeSizeClick.Clicked(gtx) {
+		st.filenameRuleModeAnim.anim.setPulse("sizes", gtx.Now)
+		st.filenameRuleModeAnim.setValue(&st.filenameRuleMode, "sizes", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	activeMode := normalizeFilenameRuleMode(st.filenameRuleMode)
@@ -821,14 +974,26 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 	if st.filenameRuleModePermClick.Hovered() {
 		hoverKey = "permissions"
 	}
+	if st.filenameRuleModeExtClick.Hovered() {
+		hoverKey = "extensions"
+	}
+	if st.filenameRuleModeSizeClick.Hovered() {
+		hoverKey = "sizes"
+	}
 	st.filenameRuleModeAnim.anim.setHover(hoverKey, gtx.Now)
 	pos, animPos := st.filenameRuleModeAnim.position(gtx.Now, activeMode, keys)
 	fillAge, animAge := st.filenameRuleModeAnim.fill(gtx.Now, activeMode, "age")
 	fillPerm, animPerm := st.filenameRuleModeAnim.fill(gtx.Now, activeMode, "permissions")
+	fillExt, animExt := st.filenameRuleModeAnim.fill(gtx.Now, activeMode, "extensions")
+	fillSize, animSize := st.filenameRuleModeAnim.fill(gtx.Now, activeMode, "sizes")
 	hoverAge, hoverAnimAge := st.filenameRuleModeAnim.anim.hoverFill(gtx.Now, "age")
 	hoverPerm, hoverAnimPerm := st.filenameRuleModeAnim.anim.hoverFill(gtx.Now, "permissions")
+	hoverExt, hoverAnimExt := st.filenameRuleModeAnim.anim.hoverFill(gtx.Now, "extensions")
+	hoverSize, hoverAnimSize := st.filenameRuleModeAnim.anim.hoverFill(gtx.Now, "sizes")
 	pulseAge, pulseAnimAge := st.filenameRuleModeAnim.anim.pulseFill(gtx.Now, "age")
 	pulsePerm, pulseAnimPerm := st.filenameRuleModeAnim.anim.pulseFill(gtx.Now, "permissions")
+	pulseExt, pulseAnimExt := st.filenameRuleModeAnim.anim.pulseFill(gtx.Now, "extensions")
+	pulseSize, pulseAnimSize := st.filenameRuleModeAnim.anim.pulseFill(gtx.Now, "sizes")
 	specs := []slidingTabSpec{
 		{
 			Label:      "By Age",
@@ -844,8 +1009,24 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 			HoverFill:  hoverPerm,
 			PulseFill:  pulsePerm,
 		},
+		{
+			Label:      "By Extension",
+			Click:      &st.filenameRuleModeExtClick,
+			ActiveFill: fillExt,
+			HoverFill:  hoverExt,
+			PulseFill:  pulseExt,
+		},
+		{
+			Label:      "By Size",
+			Click:      &st.filenameRuleModeSizeClick,
+			ActiveFill: fillSize,
+			HoverFill:  hoverSize,
+			PulseFill:  pulseSize,
+		},
 	}
-	if animPos || animAge || animPerm || hoverAnimAge || hoverAnimPerm || pulseAnimAge || pulseAnimPerm {
+	if animPos || animAge || animPerm || animExt || animSize ||
+		hoverAnimAge || hoverAnimPerm || hoverAnimExt || hoverAnimSize ||
+		pulseAnimAge || pulseAnimPerm || pulseAnimExt || pulseAnimSize {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	stripH := gtx.Dp(unit.Dp(24))
@@ -1017,20 +1198,20 @@ func (ui *UI) layoutSettingsFilenamePermissionList(th *material.Theme, gtx layou
 			colorText = "default color"
 		}
 		items = append(items, settingsFilenameRuleListItem{
-			key:      rule.Permissions,
-			title:    rule.Permissions,
-			detail:   filenameIconLabel(rule.Icon) + " • " + colorText,
+			key:      filenamePermissionRuleKey(rule.Permissions, rule.Match),
+			title:    formatFilenamePermissionRuleLabel(rule),
+			detail:   filenamePermissionMatchLabel(rule.Match) + " • " + filenameIconLabel(rule.Icon) + " • " + colorText,
 			colorHex: rule.Text,
 			iconKey:  rule.Icon,
 		})
 	}
-	currentPerm := fm.NormalizeFilenamePermissions(st.filenamePermEdit.Text())
+	currentPerm := filenamePermissionRuleKey(st.filenamePermEdit.Text(), st.filenamePermMatch)
 	return ui.layoutSettingsFilenameRuleList(th, gtx, &st.filenamePermList, items, "No permission overrides yet", currentPerm, st.filenamePermissionRuleRowClick, st.filenamePermissionRuleRowRemoveClick, func(key string) {
 		rule, ok := st.filenamePermissionRule(key)
 		if !ok {
 			return
 		}
-		st.loadFilenamePermissionFields(rule.Permissions, rule.Text, rule.Icon)
+		st.loadFilenamePermissionFields(rule.Permissions, rule.Match, rule.Text, rule.Icon)
 		st.filenamePermInfoText = ""
 	}, func(key string) {
 		if idx := st.filenamePermissionRuleIndex(key); idx >= 0 {
@@ -1077,16 +1258,66 @@ func (ui *UI) layoutSettingsFilenamePreview(th *material.Theme, gtx layout.Conte
 		if len(rows) >= 6 {
 			break
 		}
+		samplePerm := settingsFilenamePreviewSamplePermissions(rule)
+		if samplePerm == "" {
+			continue
+		}
 		rows = append(rows, struct {
 			label string
 			entry filesys.Entry
 		}{
-			label: rule.Permissions,
+			label: formatFilenamePermissionRuleLabel(rule),
 			entry: filesys.Entry{
-				Name:        "mode-" + rule.Permissions + ".txt",
-				DisplayName: "mode-" + rule.Permissions + ".txt",
+				Name:        "mode-" + samplePerm + ".txt",
+				DisplayName: "mode-" + samplePerm + ".txt",
 				Kind:        filesys.EntryFile,
-				PermOctal:   rule.Permissions,
+				PermOctal:   samplePerm,
+				ModTime:     now.Add(-30 * 24 * time.Hour),
+			},
+		})
+	}
+	for _, rule := range colors.ExtensionRules {
+		if len(rows) >= 8 {
+			break
+		}
+		suffix := fm.NormalizeFilenameExtension(rule.Extension)
+		if suffix == "" {
+			continue
+		}
+		rows = append(rows, struct {
+			label string
+			entry filesys.Entry
+		}{
+			label: suffix,
+			entry: filesys.Entry{
+				Name:        "sample" + suffix,
+				DisplayName: "sample" + suffix,
+				Kind:        filesys.EntryFile,
+				PermOctal:   "0640",
+				ModTime:     now.Add(-30 * 24 * time.Hour),
+			},
+		})
+	}
+	for _, rule := range colors.SizeRules {
+		if len(rows) >= 10 {
+			break
+		}
+		limit, ok := fm.ParseFilenameSize(rule.Size)
+		if !ok {
+			continue
+		}
+		sampleSize := settingsFilenamePreviewSampleSize(limit, rule.Match)
+		rows = append(rows, struct {
+			label string
+			entry filesys.Entry
+		}{
+			label: formatFilenameSizeRuleLabel(rule),
+			entry: filesys.Entry{
+				Name:        "size-" + strings.TrimPrefix(rule.Size, ".") + ".bin",
+				DisplayName: "size-" + strings.TrimPrefix(rule.Size, ".") + ".bin",
+				Kind:        filesys.EntryFile,
+				PermOctal:   "0640",
+				SizeBytes:   sampleSize,
 				ModTime:     now.Add(-30 * 24 * time.Hour),
 			},
 		})
@@ -1226,9 +1457,53 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 			st.errText = ""
 		}
 	}
+	for i := range st.filenamePermChecks {
+		if st.filenamePermChecks[i].Update(gtx) {
+			st.syncFilenamePermissionTextFromChecks()
+			st.errText = ""
+		}
+	}
+	for {
+		ev, ok := st.filenameExtEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			st.errText = ""
+		}
+	}
+	for {
+		ev, ok := st.filenameExtTextEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			st.errText = ""
+		}
+	}
+	for {
+		ev, ok := st.filenameSizeEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			st.errText = ""
+		}
+	}
+	for {
+		ev, ok := st.filenameSizeTextEdit.Update(gtx)
+		if !ok {
+			break
+		}
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			st.errText = ""
+		}
+	}
 	defaultSwatchGroups := st.colorPickerSwatchGroups("filename-default-text")
 	ageSwatchGroups := st.colorPickerSwatchGroups("filename-age-text")
 	permSwatchGroups := st.colorPickerSwatchGroups("filename-perm-text")
+	extSwatchGroups := st.colorPickerSwatchGroups("filename-ext-text")
+	sizeSwatchGroups := st.colorPickerSwatchGroups("filename-size-text")
 	activeSwatchGroups := defaultSwatchGroups
 	if st.colorPickerOpen {
 		switch st.colorPickerTarget {
@@ -1236,6 +1511,10 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 			activeSwatchGroups = ageSwatchGroups
 		case "filename-perm-text":
 			activeSwatchGroups = permSwatchGroups
+		case "filename-ext-text":
+			activeSwatchGroups = extSwatchGroups
+		case "filename-size-text":
+			activeSwatchGroups = sizeSwatchGroups
 		case "filename-default-text":
 			activeSwatchGroups = defaultSwatchGroups
 		}
@@ -1267,6 +1546,15 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	if st.filenamePermTextPicker.Clicked(gtx) {
 		st.toggleColorPicker("filename-perm-text")
 	}
+	if st.filenamePermPickerClick.Clicked(gtx) {
+		st.toggleFilenamePermissionPicker()
+	}
+	if st.filenameExtTextPicker.Clicked(gtx) {
+		st.toggleColorPicker("filename-ext-text")
+	}
+	if st.filenameSizeTextPicker.Clicked(gtx) {
+		st.toggleColorPicker("filename-size-text")
+	}
 	st.syncFilenameAgeEditors()
 	st.refreshFilenameAgeDraftInfo()
 	if st.filenameAgeIconClick.Clicked(gtx) {
@@ -1291,6 +1579,10 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	}
 	st.syncFilenamePermissionEditors()
 	st.refreshFilenamePermissionDraftInfo()
+	st.syncFilenameExtensionEditors()
+	st.refreshFilenameExtensionDraftInfo()
+	st.syncFilenameSizeEditors()
+	st.refreshFilenameSizeDraftInfo()
 	if st.filenameDefaultIconClick.Clicked(gtx) {
 		st.filenameDefaultIcon = nextFilenameIcon(st.filenameDefaultIcon)
 		st.errText = ""
@@ -1315,6 +1607,46 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 			st.filenamePermInfoText = "Pending removal; Save to persist"
 		}
 	}
+	if st.filenameExtIconClick.Clicked(gtx) {
+		st.filenameExtIcon = nextFilenameIcon(st.filenameExtIcon)
+		st.errText = ""
+		st.refreshFilenameExtensionDraftInfo()
+	}
+	if st.filenameExtApplyClick.Clicked(gtx) {
+		action, err := st.upsertCurrentFilenameExtensionRule()
+		if err != nil {
+			st.errText = err.Error()
+		} else {
+			st.errText = ""
+			st.filenameExtInfoText = "Pending " + strings.ToLower(action) + "; Save to persist"
+		}
+	}
+	if st.filenameExtRemoveClick.Clicked(gtx) {
+		if st.removeCurrentFilenameExtensionRule() {
+			st.errText = ""
+			st.filenameExtInfoText = "Pending removal; Save to persist"
+		}
+	}
+	if st.filenameSizeIconClick.Clicked(gtx) {
+		st.filenameSizeIcon = nextFilenameIcon(st.filenameSizeIcon)
+		st.errText = ""
+		st.refreshFilenameSizeDraftInfo()
+	}
+	if st.filenameSizeApplyClick.Clicked(gtx) {
+		action, err := st.upsertCurrentFilenameSizeRule()
+		if err != nil {
+			st.errText = err.Error()
+		} else {
+			st.errText = ""
+			st.filenameSizeInfoText = "Pending " + strings.ToLower(action) + "; Save to persist"
+		}
+	}
+	if st.filenameSizeRemoveClick.Clicked(gtx) {
+		if st.removeCurrentFilenameSizeRule() {
+			st.errText = ""
+			st.filenameSizeInfoText = "Pending removal; Save to persist"
+		}
+	}
 
 	palette, filenameTheme, filenameColors, previewErr := st.previewFilenameTheme(ui.fmCfg)
 	rowLabel := func(txt string, enabled bool) layout.Widget {
@@ -1326,28 +1658,39 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	if currentAgeExists {
 		ageAction = "Update"
 	}
-	currentPerm := fm.NormalizeFilenamePermissions(st.filenamePermEdit.Text())
+	currentPerm := filenamePermissionRuleKey(st.filenamePermEdit.Text(), st.filenamePermMatch)
 	_, currentPermExists := st.filenamePermissionRule(currentPerm)
 	permAction := "Add"
 	if currentPermExists {
 		permAction = "Update"
 	}
+	currentExt := filenameExtensionRuleKey(st.filenameExtEdit.Text())
+	_, currentExtExists := st.filenameExtensionRule(currentExt)
+	extAction := "Add"
+	if currentExtExists {
+		extAction = "Update"
+	}
+	currentSize := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeMatch)
+	_, currentSizeExists := st.filenameSizeRule(currentSize)
+	sizeAction := "Add"
+	if currentSizeExists {
+		sizeAction = "Update"
+	}
 	st.filenameRuleMode = normalizeFilenameRuleMode(st.filenameRuleMode)
+	if st.filenameRuleMode != "permissions" {
+		st.filenamePermPickerOpen = false
+	}
 
 	activeRuleEditor := func(gtx layout.Context) layout.Dimensions {
-		if st.filenameRuleMode == "permissions" {
+		switch st.filenameRuleMode {
+		case "permissions":
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, gtx.Dp(unit.Dp(82)), func(gtx layout.Context) layout.Dimensions {
-						ed := material.Editor(th, &st.filenamePermEdit, "0755")
-						ed.Font.Typeface = ui.mainTypeface()
-						ed.TextSize = scaleModalThemeFontSize(th, 10)
-						ed.Color = txtColor
-						ed.HintColor = hintColor
-						return ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-perm", &st.filenamePermEdit, true, func(gtx layout.Context) layout.Dimensions {
-							return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenamePermEdit), true, ed.Layout)
-						})
-					})
+					return ui.layoutSettingsFilenamePermissionPickerField(th, gtx, st)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsFilenamePermissionMatchTabs(th, gtx, st)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1374,79 +1717,184 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 					)
 				}),
 			)
-		}
-
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return fixedWidth(gtx, gtx.Dp(unit.Dp(72)), func(gtx layout.Context) layout.Dimensions {
-							ed := material.Editor(th, &st.filenameAgeOffsetEdit, "15")
-							ed.Font.Typeface = ui.mainTypeface()
-							ed.TextSize = scaleModalThemeFontSize(th, 10)
-							ed.Color = txtColor
-							ed.HintColor = hintColor
-							return ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-age-offset", &st.filenameAgeOffsetEdit, true, func(gtx layout.Context) layout.Dimensions {
-								return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenameAgeOffsetEdit), true, ed.Layout)
-							})
+		case "extensions":
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, gtx.Dp(unit.Dp(124)), func(gtx layout.Context) layout.Dimensions {
+						ed := material.Editor(th, &st.filenameExtEdit, "go")
+						ed.Font.Typeface = ui.mainTypeface()
+						ed.TextSize = scaleModalThemeFontSize(th, 10)
+						ed.Color = txtColor
+						ed.HintColor = hintColor
+						return ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-ext", &st.filenameExtEdit, true, func(gtx layout.Context) layout.Dimensions {
+							return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenameExtEdit), true, ed.Layout)
 						})
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsFilenameAgeUnitPicker(th, gtx, st)
-					}),
-				)
-			}),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-age-text", &st.filenameAgeTextEdit, &st.filenameAgeTextPicker, "filename-age-text", ageSwatchGroups)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenameAgeIconClick, st.filenameAgeIcon)
-					}),
-				)
-			}),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameAgeApplyClick, ageAction, currentAgeExists)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameAgeRemoveClick, "Remove", false)
-					}),
-				)
-			}),
-		)
+					})
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-ext-text", &st.filenameExtTextEdit, &st.filenameExtTextPicker, "filename-ext-text", extSwatchGroups)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenameExtIconClick, st.filenameExtIcon)
+						}),
+					)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameExtApplyClick, extAction, currentExtExists)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameExtRemoveClick, "Remove", false)
+						}),
+					)
+				}),
+			)
+		case "sizes":
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, gtx.Dp(unit.Dp(104)), func(gtx layout.Context) layout.Dimensions {
+						ed := material.Editor(th, &st.filenameSizeEdit, "10m")
+						ed.Font.Typeface = ui.mainTypeface()
+						ed.TextSize = scaleModalThemeFontSize(th, 10)
+						ed.Color = txtColor
+						ed.HintColor = hintColor
+						return ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-size", &st.filenameSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
+							return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenameSizeEdit), true, ed.Layout)
+						})
+					})
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsFilenameSizeMatchTabs(th, gtx, st)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-size-text", &st.filenameSizeTextEdit, &st.filenameSizeTextPicker, "filename-size-text", sizeSwatchGroups)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenameSizeIconClick, st.filenameSizeIcon)
+						}),
+					)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameSizeApplyClick, sizeAction, currentSizeExists)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameSizeRemoveClick, "Remove", false)
+						}),
+					)
+				}),
+			)
+		default:
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fixedWidth(gtx, gtx.Dp(unit.Dp(72)), func(gtx layout.Context) layout.Dimensions {
+								ed := material.Editor(th, &st.filenameAgeOffsetEdit, "15")
+								ed.Font.Typeface = ui.mainTypeface()
+								ed.TextSize = scaleModalThemeFontSize(th, 10)
+								ed.Color = txtColor
+								ed.HintColor = hintColor
+								return ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-age-offset", &st.filenameAgeOffsetEdit, true, func(gtx layout.Context) layout.Dimensions {
+									return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenameAgeOffsetEdit), true, ed.Layout)
+								})
+							})
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsFilenameAgeUnitPicker(th, gtx, st)
+						}),
+					)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-age-text", &st.filenameAgeTextEdit, &st.filenameAgeTextPicker, "filename-age-text", ageSwatchGroups)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenameAgeIconClick, st.filenameAgeIcon)
+						}),
+					)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameAgeApplyClick, ageAction, currentAgeExists)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameAgeRemoveClick, "Remove", false)
+						}),
+					)
+				}),
+			)
+		}
 	}
 
 	activeRuleInfoText := func() string {
-		if st.filenameRuleMode == "permissions" {
+		switch st.filenameRuleMode {
+		case "permissions":
 			if st.filenamePermInfoText != "" {
 				return st.filenamePermInfoText
 			}
 			return st.filenamePermissionNoticeText()
+		case "extensions":
+			if st.filenameExtInfoText != "" {
+				return st.filenameExtInfoText
+			}
+			return st.filenameExtensionNoticeText()
+		case "sizes":
+			if st.filenameSizeInfoText != "" {
+				return st.filenameSizeInfoText
+			}
+			return st.filenameSizeNoticeText()
+		default:
+			if st.filenameAgeInfoText != "" {
+				return st.filenameAgeInfoText
+			}
+			return st.filenameAgeNoticeText()
 		}
-		if st.filenameAgeInfoText != "" {
-			return st.filenameAgeInfoText
-		}
-		return st.filenameAgeNoticeText()
 	}
 
 	activeRuleList := func(gtx layout.Context) layout.Dimensions {
-		if st.filenameRuleMode == "permissions" {
+		switch st.filenameRuleMode {
+		case "permissions":
 			return ui.layoutSettingsFilenamePermissionList(th, gtx, st)
+		case "extensions":
+			return ui.layoutSettingsFilenameExtensionList(th, gtx, st)
+		case "sizes":
+			return ui.layoutSettingsFilenameSizeList(th, gtx, st)
+		default:
+			return ui.layoutSettingsFilenameAgeList(th, gtx, st)
 		}
-		return ui.layoutSettingsFilenameAgeList(th, gtx, st)
 	}
 
 	activeRuleNote := "Smaller offsets win. Add as many age overrides as you need; each one matches files not older than its offset."
-	if st.filenameRuleMode == "permissions" {
-		activeRuleNote = "Use octal permission matches like 0644 or 0755. Permission rules override age rules when both match."
+	switch st.filenameRuleMode {
+	case "permissions":
+		activeRuleNote = "Exact matches the whole mode, while Has All only requires the selected bits. For example, 0111 with Has Any catches executables, and 0222 with Has None catches read-only files."
+	case "extensions":
+		activeRuleNote = "Extension filters match lowercase filename suffixes like go, md, or tar.gz."
+	case "sizes":
+		activeRuleNote = "Size filters use whole values like 0b, 4k, 10m, or 1g. At Least and At Most can be mixed."
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -1468,6 +1916,14 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 					return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenameDefaultIconClick, st.filenameDefaultIcon)
 				}),
 			)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "This starts from the active pane text color, and only becomes a filename-only override after you change it.")
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Color = hintColor
+			lbl.MaxLines = 2
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, lbl.Layout)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Rigid(rowLabel("Filters", true)),
@@ -1510,7 +1966,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Permission rules override age rules when both match. Filename custom colors stay active even on hovered and selected rows.")
+			lbl := material.Caption(th, "Rule order is age, extension, size, then permissions. Later matching categories override earlier ones, and custom filename colors stay active on hovered and selected rows.")
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleModalThemeFontSize(th, 9)
 			lbl.Color = hintColor

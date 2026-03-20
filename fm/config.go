@@ -444,6 +444,8 @@ func (c *Config) normalize() {
 	c.Colors.Filenames.Icon = NormalizeFilenameIcon(c.Colors.Filenames.Icon)
 	c.Colors.Filenames.AgeRules = NormalizeFilenameAgeRules(c.Colors.Filenames.AgeRules)
 	c.Colors.Filenames.PermissionRules = NormalizeFilenamePermissionRules(c.Colors.Filenames.PermissionRules)
+	c.Colors.Filenames.ExtensionRules = NormalizeFilenameExtensionRules(c.Colors.Filenames.ExtensionRules)
+	c.Colors.Filenames.SizeRules = NormalizeFilenameSizeRules(c.Colors.Filenames.SizeRules)
 
 	switch c.Viewer.Mode {
 	case "file", "hex", "command":

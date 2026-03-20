@@ -288,6 +288,83 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 	}
 }
 
+func TestFilePaneFilenameThemeRulePrecedenceSupportsPartialPermissions(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Colors.Filenames.AgeRules = []fm.FilenameAgeRule{
+		{MaxAge: "1h", Text: "#111111", Icon: fm.FilenameIconRecent},
+	}
+	cfg.Colors.Filenames.ExtensionRules = []fm.FilenameExtensionRule{
+		{Extension: ".tar.gz", Text: "#222222", Icon: fm.FilenameIconArchive},
+		{Extension: ".sh", Text: "#2A2A2A", Icon: fm.FilenameIconCode},
+	}
+	cfg.Colors.Filenames.SizeRules = []fm.FilenameSizeRule{
+		{Size: "1k", Match: fm.FilenameSizeMatchAtMost, Text: "#333333", Icon: fm.FilenameIconImage},
+	}
+	cfg.Colors.Filenames.PermissionRules = []fm.FilenamePermissionRule{
+		{Permissions: "0111", Match: fm.FilenamePermissionMatchAny, Text: "#444444", Icon: fm.FilenameIconLocked},
+		{Permissions: "0222", Match: fm.FilenamePermissionMatchNone, Text: "#555555", Icon: fm.FilenameIconDocument},
+	}
+
+	theme := newFilePaneFilenameTheme(cfg)
+	now := time.Date(2026, time.March, 20, 12, 0, 0, 0, time.UTC)
+
+	execVisual := theme.visualForEntry(filesys.Entry{
+		Name:      "deploy.sh",
+		Kind:      filesys.EntryFile,
+		PermOctal: "0755",
+		SizeBytes: 512,
+		ModTime:   now.Add(-20 * time.Minute),
+	}, now)
+	if execVisual.color != (color.NRGBA{R: 0x44, G: 0x44, B: 0x44, A: 0xFF}) {
+		t.Fatalf("exec visual color=%v want permission override", execVisual.color)
+	}
+	if execVisual.iconKey != fm.FilenameIconLocked {
+		t.Fatalf("exec visual icon=%q want %q", execVisual.iconKey, fm.FilenameIconLocked)
+	}
+
+	readonlyVisual := theme.visualForEntry(filesys.Entry{
+		Name:      "README.tar.gz",
+		Kind:      filesys.EntryFile,
+		PermOctal: "0444",
+		SizeBytes: 512,
+		ModTime:   now.Add(-48 * time.Hour),
+	}, now)
+	if readonlyVisual.color != (color.NRGBA{R: 0x55, G: 0x55, B: 0x55, A: 0xFF}) {
+		t.Fatalf("readonly visual color=%v want permission none override", readonlyVisual.color)
+	}
+	if readonlyVisual.iconKey != fm.FilenameIconDocument {
+		t.Fatalf("readonly visual icon=%q want %q", readonlyVisual.iconKey, fm.FilenameIconDocument)
+	}
+
+	sizeVisual := theme.visualForEntry(filesys.Entry{
+		Name:      "bundle.tar.gz",
+		Kind:      filesys.EntryFile,
+		PermOctal: "0644",
+		SizeBytes: 512,
+		ModTime:   now.Add(-48 * time.Hour),
+	}, now)
+	if sizeVisual.color != (color.NRGBA{R: 0x33, G: 0x33, B: 0x33, A: 0xFF}) {
+		t.Fatalf("size visual color=%v want size override", sizeVisual.color)
+	}
+	if sizeVisual.iconKey != fm.FilenameIconImage {
+		t.Fatalf("size visual icon=%q want %q", sizeVisual.iconKey, fm.FilenameIconImage)
+	}
+
+	extVisual := theme.visualForEntry(filesys.Entry{
+		Name:      "release.tar.gz",
+		Kind:      filesys.EntryFile,
+		PermOctal: "0644",
+		SizeBytes: 2048,
+		ModTime:   now.Add(-48 * time.Hour),
+	}, now)
+	if extVisual.color != (color.NRGBA{R: 0x22, G: 0x22, B: 0x22, A: 0xFF}) {
+		t.Fatalf("extension visual color=%v want extension override", extVisual.color)
+	}
+	if extVisual.iconKey != fm.FilenameIconArchive {
+		t.Fatalf("extension visual icon=%q want %q", extVisual.iconKey, fm.FilenameIconArchive)
+	}
+}
+
 func favoriteMenuColorDistance(a, b color.NRGBA) int {
 	abs := func(v int) int {
 		if v < 0 {
