@@ -222,6 +222,72 @@ func TestHandlePlatformInsertKeyMarksAndAdvances(t *testing.T) {
 	}
 }
 
+func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Colors.Filenames.Text = "#8899AA"
+	cfg.Colors.Filenames.AgeRules = []fm.FilenameAgeRule{
+		{MaxAge: "1h", Text: "#112233", Icon: fm.FilenameIconRecent},
+	}
+	cfg.Colors.Filenames.PermissionRules = []fm.FilenamePermissionRule{
+		{Permissions: "0755", Text: "#445566", Icon: fm.FilenameIconLocked},
+	}
+
+	now := time.Date(2026, time.March, 20, 12, 0, 0, 0, time.UTC)
+	model := &filePaneModel{
+		cfg:           cfg,
+		baseTextColor: color.NRGBA{R: 210, G: 210, B: 210, A: 255},
+		filenameTheme: newFilePaneFilenameTheme(cfg),
+		entries: []filesys.Entry{
+			{Name: "fresh.log", DisplayName: "fresh.log", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-20 * time.Minute)},
+			{Name: "script.sh", DisplayName: "script.sh", Kind: filesys.EntryFile, PermOctal: "0755", ModTime: now.Add(-48 * time.Hour)},
+			{Name: "plain.txt", DisplayName: "plain.txt", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
+			{Name: "bundle.zip", DisplayName: "bundle.zip", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
+			{Name: "photo.png", DisplayName: "photo.png", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
+			{Name: "clip.mp4", DisplayName: "clip.mp4", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
+		},
+	}
+	model.rebuildFilenameVisuals(now)
+
+	if _, st := model.Cell(0, 0); st.Color != (color.NRGBA{R: 0x11, G: 0x22, B: 0x33, A: 0xFF}) {
+		t.Fatalf("recent file color=%v want #112233", st.Color)
+	} else if !st.PreserveColor {
+		t.Fatal("recent file color should preserve custom filename color on row states")
+	}
+	if icon, ok := model.LeadingIcon(0, 0); !ok || icon.Widget == nil {
+		t.Fatal("recent file should expose a custom cached icon")
+	}
+
+	if _, st := model.Cell(1, 0); st.Color != (color.NRGBA{R: 0x44, G: 0x55, B: 0x66, A: 0xFF}) {
+		t.Fatalf("permission override color=%v want #445566", st.Color)
+	} else if !st.PreserveColor {
+		t.Fatal("permission override should preserve custom filename color on row states")
+	}
+	if icon, ok := model.LeadingIcon(1, 0); !ok || icon.Widget == nil {
+		t.Fatal("permission override should expose a custom cached icon")
+	}
+
+	if _, st := model.Cell(2, 0); st.Color != (color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF}) {
+		t.Fatalf("default filename color=%v want #8899AA", st.Color)
+	} else if !st.PreserveColor {
+		t.Fatal("default filename rule should preserve custom filename color on row states")
+	}
+	if icon, ok := model.LeadingIcon(2, 0); !ok || icon.Widget != nil {
+		t.Fatal("default filename rule should keep the stock file icon")
+	}
+
+	if icon, ok := model.LeadingIcon(3, 0); !ok || icon.Widget == nil {
+		t.Fatal("archive files should use the stock archive icon by default")
+	}
+
+	if icon, ok := model.LeadingIcon(4, 0); !ok || icon.Widget == nil {
+		t.Fatal("image files should use the stock image icon by default")
+	}
+
+	if icon, ok := model.LeadingIcon(5, 0); !ok || icon.Widget == nil {
+		t.Fatal("video files should use the stock video icon by default")
+	}
+}
+
 func favoriteMenuColorDistance(a, b color.NRGBA) int {
 	abs := func(v int) int {
 		if v < 0 {

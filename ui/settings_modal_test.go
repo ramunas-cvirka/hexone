@@ -1039,6 +1039,89 @@ func TestSettingsViewerPreviewIgnoresSelectedMode(t *testing.T) {
 	}
 }
 
+func TestDraftFilenameColorsNormalizesAgeAndPermissionRules(t *testing.T) {
+	st := &settingsModalState{
+		filenameDefaultText: "#AABBCC",
+		filenameDefaultIcon: fm.FilenameIconDocument,
+		filenameAgeEntries: []fm.FilenameAgeRule{
+			{MaxAge: "24h", Text: "#112233", Icon: fm.FilenameIconRecent},
+			{MaxAge: "1w", Text: "", Icon: ""},
+			{MaxAge: "3d", Text: "#334455", Icon: ""},
+		},
+		filenamePermEntries: []fm.FilenamePermissionRule{
+			{Permissions: "755", Text: "#556677", Icon: fm.FilenameIconLocked},
+		},
+	}
+
+	got, errText := st.draftFilenameColors()
+	if errText != "" {
+		t.Fatalf("unexpected draft filename error: %q", errText)
+	}
+	if got.Text != "#AABBCC" {
+		t.Fatalf("default text=%q want %q", got.Text, "#AABBCC")
+	}
+	if got.Icon != fm.FilenameIconDocument {
+		t.Fatalf("default icon=%q want %q", got.Icon, fm.FilenameIconDocument)
+	}
+	if len(got.AgeRules) != 2 {
+		t.Fatalf("len(AgeRules)=%d want 2", len(got.AgeRules))
+	}
+	if got.AgeRules[0].MaxAge != "1d" || got.AgeRules[1].MaxAge != "3d" {
+		t.Fatalf("age rules=%#v want normalized 1d and 3d", got.AgeRules)
+	}
+	if len(got.PermissionRules) != 1 || got.PermissionRules[0].Permissions != "0755" {
+		t.Fatalf("permission rules=%#v want normalized 0755", got.PermissionRules)
+	}
+}
+
+func TestDraftFilenameColorsRejectsInvalidAgeRule(t *testing.T) {
+	st := &settingsModalState{
+		filenameAgeEntries: []fm.FilenameAgeRule{
+			{MaxAge: "later", Text: "#112233"},
+		},
+	}
+
+	_, errText := st.draftFilenameColors()
+	if !strings.Contains(errText, "Age rule 1") {
+		t.Fatalf("errText=%q want age rule validation", errText)
+	}
+}
+
+func TestUpsertCurrentFilenameAgeRuleNormalizesAndSortsEntries(t *testing.T) {
+	st := &settingsModalState{
+		filenameAgeEntries: []fm.FilenameAgeRule{
+			{MaxAge: "1w", Text: "#334455"},
+		},
+		filenameAgeUnit: "h",
+	}
+	st.filenameAgeOffsetEdit.SetText("24")
+	st.filenameAgeTextEdit.SetText("#112233")
+	st.filenameAgeIcon = fm.FilenameIconRecent
+
+	action, err := st.upsertCurrentFilenameAgeRule()
+	if err != nil {
+		t.Fatalf("upsertCurrentFilenameAgeRule error: %v", err)
+	}
+	if action != "Add" {
+		t.Fatalf("action=%q want Add", action)
+	}
+	if len(st.filenameAgeEntries) != 2 {
+		t.Fatalf("len(filenameAgeEntries)=%d want 2", len(st.filenameAgeEntries))
+	}
+	if st.filenameAgeEntries[0].MaxAge != "1d" || st.filenameAgeEntries[1].MaxAge != "1w" {
+		t.Fatalf("filenameAgeEntries=%#v want sorted 1d then 1w", st.filenameAgeEntries)
+	}
+}
+
+func TestParseFilenameAgeRuleFieldsRequiresPositiveOffsetAndVisual(t *testing.T) {
+	if _, err := parseFilenameAgeRuleFields("0", "d", "#112233", ""); err == nil {
+		t.Fatal("parseFilenameAgeRuleFields should reject zero offsets")
+	}
+	if _, err := parseFilenameAgeRuleFields("3", "d", "", ""); err == nil {
+		t.Fatal("parseFilenameAgeRuleFields should require a color or icon")
+	}
+}
+
 func colorNRGBA(r, g, b, a uint8) color.NRGBA {
 	return color.NRGBA{R: r, G: g, B: b, A: a}
 }

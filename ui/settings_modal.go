@@ -68,6 +68,7 @@ type settingsModalState struct {
 	viewModePulseAt           time.Time
 	colorScopePaneClick       widget.Clickable
 	colorScopeViewerClick     widget.Clickable
+	colorScopeFilenameClick   widget.Clickable
 	colorScope                string
 	colorScopeAnim            settingsChoiceAnim
 	colorCategoryClick        widget.Clickable
@@ -105,6 +106,46 @@ type settingsModalState struct {
 	colorViewerBackground     string
 	colorViewerText           string
 	colorViewerSelection      string
+	filenameDefaultText       string
+	filenameDefaultTextEdit   widget.Editor
+	filenameDefaultIcon       string
+	filenameDefaultIconClick  widget.Clickable
+	filenameDefaultTextPicker widget.Clickable
+	filenameRuleMode          string
+	filenameRuleModeAnim      settingsChoiceAnim
+	filenameRuleModeAgeClick  widget.Clickable
+	filenameRuleModePermClick widget.Clickable
+	filenameAgeOffsetEdit     widget.Editor
+	filenameAgeUnit           string
+	filenameAgeUnitAnim       settingsChoiceAnim
+	filenameAgeUnitClicks     [4]widget.Clickable
+	filenameAgeTextEdit       widget.Editor
+	filenameAgeIcon           string
+	filenameAgeIconClick      widget.Clickable
+	filenameAgeTextPicker     widget.Clickable
+	filenameAgeApplyClick     widget.Clickable
+	filenameAgeRemoveClick    widget.Clickable
+	filenameAgeList           widget.List
+	filenameAgeEntries        []fm.FilenameAgeRule
+	filenameAgeSavedEntries   []fm.FilenameAgeRule
+	filenameAgeLookup         string
+	filenameAgeRowClicks      map[string]*widget.Clickable
+	filenameAgeRowRemove      map[string]*widget.Clickable
+	filenameAgeInfoText       string
+	filenamePermEdit          widget.Editor
+	filenamePermTextEdit      widget.Editor
+	filenamePermIcon          string
+	filenamePermIconClick     widget.Clickable
+	filenamePermTextPicker    widget.Clickable
+	filenamePermApplyClick    widget.Clickable
+	filenamePermRemoveClick   widget.Clickable
+	filenamePermList          widget.List
+	filenamePermEntries       []fm.FilenamePermissionRule
+	filenamePermSavedEntries  []fm.FilenamePermissionRule
+	filenamePermLookup        string
+	filenamePermRowClicks     map[string]*widget.Clickable
+	filenamePermRowRemove     map[string]*widget.Clickable
+	filenamePermInfoText      string
 	viewCommandEdit           widget.Editor
 	viewShellEdit             widget.Editor
 	paneFontSizeEdit          widget.Editor
@@ -293,6 +334,18 @@ func (ui *UI) openSettingsModal() {
 		st.colorValueEdit.Submit = false
 		st.colorTextValueEdit.SingleLine = true
 		st.colorTextValueEdit.Submit = false
+		st.filenameDefaultTextEdit.SingleLine = true
+		st.filenameDefaultTextEdit.Submit = false
+		st.filenameAgeOffsetEdit.SingleLine = true
+		st.filenameAgeOffsetEdit.Submit = false
+		st.filenameAgeTextEdit.SingleLine = true
+		st.filenameAgeTextEdit.Submit = false
+		st.filenameAgeList.Axis = layout.Vertical
+		st.filenamePermEdit.SingleLine = true
+		st.filenamePermEdit.Submit = false
+		st.filenamePermTextEdit.SingleLine = true
+		st.filenamePermTextEdit.Submit = false
+		st.filenamePermList.Axis = layout.Vertical
 		st.viewShellEdit.SingleLine = true
 		st.viewShellEdit.Submit = false
 		st.paneFontSizeEdit.SingleLine = true
@@ -343,7 +396,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 		st.colorCategory = "selection"
 	}
 	switch st.colorScope {
-	case "viewer":
+	case "viewer", "filenames":
 	default:
 		st.colorScope = "panes"
 	}
@@ -362,6 +415,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorViewerBackground = cfg.Viewer.Background
 	st.colorViewerText = cfg.Viewer.Text
 	st.colorViewerSelection = cfg.Viewer.Selection
+	st.loadFilenameColorsFromConfig(cfg)
 	st.colorCategory = normalizeSettingsColorCategory(st.colorScope, st.colorCategory)
 	st.syncColorEditors()
 	st.colorCategoryOpen = false
@@ -413,12 +467,17 @@ func settingsColorOptionsForScope(scope string) []settingsColorOption {
 	switch scope {
 	case "viewer":
 		return settingsViewerColorOptions
+	case "filenames":
+		return nil
 	default:
 		return settingsPaneColorOptions
 	}
 }
 
 func normalizeSettingsColorCategory(scope, key string) string {
+	if scope == "filenames" {
+		return ""
+	}
 	options := settingsColorOptionsForScope(scope)
 	for _, opt := range options {
 		if opt.key == key {
@@ -432,6 +491,9 @@ func normalizeSettingsColorCategory(scope, key string) string {
 }
 
 func settingsColorLabel(scope, key string) string {
+	if scope == "filenames" {
+		return ""
+	}
 	for _, opt := range settingsColorOptionsForScope(scope) {
 		if opt.key == key {
 			return opt.label
@@ -618,6 +680,49 @@ func (st *settingsModalState) toggleColorPicker(target string) {
 	st.colorPickerTarget = target
 }
 
+func (st *settingsModalState) colorPickerHexValue(target string) string {
+	if st == nil {
+		return ""
+	}
+	switch target {
+	case "text":
+		return st.colorTextValue(st.colorCategory)
+	case "filename-default-text":
+		return strings.TrimSpace(st.filenameDefaultTextEdit.Text())
+	case "filename-age-text":
+		return strings.TrimSpace(st.filenameAgeTextEdit.Text())
+	case "filename-perm-text":
+		return strings.TrimSpace(st.filenamePermTextEdit.Text())
+	default:
+		return st.colorValue(st.colorCategory)
+	}
+}
+
+func (st *settingsModalState) setColorPickerHexValue(target, hex string) {
+	if st == nil || hex == "" {
+		return
+	}
+	switch target {
+	case "text":
+		st.setColorTextValue(st.colorCategory, hex)
+		st.colorTextValueEdit.SetText(hex)
+	case "filename-default-text":
+		st.filenameDefaultText = hex
+		st.filenameDefaultTextEdit.SetText(hex)
+	case "filename-age-text":
+		st.filenameAgeTextEdit.SetText(hex)
+	case "filename-perm-text":
+		st.filenamePermTextEdit.SetText(hex)
+	default:
+		st.setColorValue(st.colorCategory, hex)
+		st.colorValueEdit.SetText(hex)
+	}
+}
+
+func (st *settingsModalState) colorPickerSwatchGroups(target string) []settingsColorSwatchGroup {
+	return settingsColorSwatchGroups(st.colorPickerHexValue(target))
+}
+
 func (st *settingsModalState) anyPopupOpen() bool {
 	return st != nil && (st.colorCategoryOpen || st.colorPickerOpen || st.viewTargetPickOpen || st.viewRulePickOpen || st.viewAssocPickOpen)
 }
@@ -629,6 +734,9 @@ func (st *settingsModalState) popupToggleHovered() bool {
 	return st.colorCategoryClick.Hovered() ||
 		st.colorBgPickerClick.Hovered() ||
 		st.colorTextPickerClick.Hovered() ||
+		st.filenameDefaultTextPicker.Hovered() ||
+		st.filenameAgeTextPicker.Hovered() ||
+		st.filenamePermTextPicker.Hovered() ||
 		st.viewTargetPickClick.Hovered() ||
 		st.viewRulePickClick.Hovered() ||
 		st.viewAssocPickClick.Hovered()
@@ -2462,6 +2570,11 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	} else {
 		ui.fmCfg.Colors.CurrentDirText = fm.FormatHexColor(c)
 	}
+	filenameColors, filenameErr := st.draftFilenameColors()
+	if filenameErr != "" {
+		return fmt.Errorf("%s", filenameErr)
+	}
+	ui.fmCfg.Colors.Filenames = filenameColors
 
 	mode := strings.ToLower(strings.TrimSpace(st.viewMode))
 	switch mode {
@@ -3957,7 +4070,7 @@ func (ui *UI) layoutSettingsViewerCommandRulePicker(th *material.Theme, gtx layo
 }
 
 func (ui *UI) layoutSettingsColorScopeTabs(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
-	keys := []string{"panes", "viewer"}
+	keys := []string{"panes", "viewer", "filenames"}
 	if st.colorScopePaneClick.Clicked(gtx) {
 		st.colorScopeAnim.anim.setPulse("panes", gtx.Now)
 		st.setColorScope("panes", gtx.Now)
@@ -3968,6 +4081,11 @@ func (ui *UI) layoutSettingsColorScopeTabs(th *material.Theme, gtx layout.Contex
 		st.setColorScope("viewer", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
+	if st.colorScopeFilenameClick.Clicked(gtx) {
+		st.colorScopeAnim.anim.setPulse("filenames", gtx.Now)
+		st.setColorScope("filenames", gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	hoverKey := ""
 	if st.colorScopePaneClick.Hovered() {
 		hoverKey = "panes"
@@ -3975,15 +4093,23 @@ func (ui *UI) layoutSettingsColorScopeTabs(th *material.Theme, gtx layout.Contex
 	if st.colorScopeViewerClick.Hovered() {
 		hoverKey = "viewer"
 	}
+	if st.colorScopeFilenameClick.Hovered() {
+		hoverKey = "filenames"
+	}
 	st.colorScopeAnim.anim.setHover(hoverKey, gtx.Now)
 	fillPanes, animPanes := st.colorScopeAnim.fill(gtx.Now, st.colorScope, "panes")
 	fillViewer, animViewer := st.colorScopeAnim.fill(gtx.Now, st.colorScope, "viewer")
+	fillFilenames, animFilenames := st.colorScopeAnim.fill(gtx.Now, st.colorScope, "filenames")
 	hoverPanes, hoverAnimPanes := st.colorScopeAnim.anim.hoverFill(gtx.Now, "panes")
 	hoverViewer, hoverAnimViewer := st.colorScopeAnim.anim.hoverFill(gtx.Now, "viewer")
+	hoverFilenames, hoverAnimFilenames := st.colorScopeAnim.anim.hoverFill(gtx.Now, "filenames")
 	pulsePanes, pulseAnimPanes := st.colorScopeAnim.anim.pulseFill(gtx.Now, "panes")
 	pulseViewer, pulseAnimViewer := st.colorScopeAnim.anim.pulseFill(gtx.Now, "viewer")
+	pulseFilenames, pulseAnimFilenames := st.colorScopeAnim.anim.pulseFill(gtx.Now, "filenames")
 	pos, animPos := st.colorScopeAnim.position(gtx.Now, st.colorScope, keys)
-	if animPanes || animViewer || hoverAnimPanes || hoverAnimViewer || pulseAnimPanes || pulseAnimViewer || animPos {
+	if animPanes || animViewer || animFilenames ||
+		hoverAnimPanes || hoverAnimViewer || hoverAnimFilenames ||
+		pulseAnimPanes || pulseAnimViewer || pulseAnimFilenames || animPos {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	stripH := gtx.Dp(unit.Dp(22))
@@ -4006,6 +4132,13 @@ func (ui *UI) layoutSettingsColorScopeTabs(th *material.Theme, gtx layout.Contex
 					ActiveFill: fillViewer,
 					HoverFill:  hoverViewer,
 					PulseFill:  pulseViewer,
+				},
+				{
+					Label:      "Filenames",
+					Click:      &st.colorScopeFilenameClick,
+					ActiveFill: fillFilenames,
+					HoverFill:  hoverFilenames,
+					PulseFill:  pulseFilenames,
 				},
 			})
 		}),
@@ -4384,6 +4517,9 @@ func (ui *UI) layoutSettingsViewerPreviewScrollbar(gtx layout.Context, theme fil
 }
 
 func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	if st.colorScope == "filenames" {
+		return ui.layoutSettingsFilenameColorsTab(th, gtx, st)
+	}
 	options := settingsColorOptionsForScope(st.colorScope)
 	st.ensureColorOptionClicks(len(options))
 
@@ -4407,11 +4543,11 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 			st.errText = ""
 		}
 	}
-	bgSwatchGroups := settingsColorSwatchGroups(st.colorValue(st.colorCategory))
-	textSwatchGroups := settingsColorSwatchGroups(st.colorTextValue(st.colorCategory))
+	bgSwatchGroups := st.colorPickerSwatchGroups("background")
+	textSwatchGroups := st.colorPickerSwatchGroups("text")
 	activeSwatchGroups := bgSwatchGroups
-	if st.colorPickerTarget == "text" {
-		activeSwatchGroups = textSwatchGroups
+	if st.colorPickerOpen {
+		activeSwatchGroups = st.colorPickerSwatchGroups(st.colorPickerTarget)
 	}
 	st.ensureColorSwatchClicks(settingsColorSwatchCount(activeSwatchGroups))
 
@@ -4434,14 +4570,7 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 					break
 				}
 				if st.colorSwatchClicks[clickIdx].Clicked(gtx) {
-					switch st.colorPickerTarget {
-					case "text":
-						st.setColorTextValue(st.colorCategory, hex)
-						st.colorTextValueEdit.SetText(hex)
-					default:
-						st.setColorValue(st.colorCategory, hex)
-						st.colorValueEdit.SetText(hex)
-					}
+					st.setColorPickerHexValue(st.colorPickerTarget, hex)
 					st.colorPickerOpen = false
 					st.colorPickerTarget = ""
 					st.errText = ""
@@ -4892,10 +5021,7 @@ func (ui *UI) layoutSettingsColorPickerButton(th *material.Theme, gtx layout.Con
 }
 
 func (ui *UI) layoutSettingsColorPickerPopup(th *material.Theme, gtx layout.Context, st *settingsModalState, groups []settingsColorSwatchGroup) layout.Dimensions {
-	current := fm.NormalizeHexColor(st.colorValue(st.colorCategory), fm.DefaultFilePaneSelectionHex)
-	if st.colorPickerTarget == "text" {
-		current = fm.NormalizeHexColor(st.colorTextValue(st.colorCategory), fm.DefaultFilePaneSelectionTextHex)
-	}
+	current := fm.NormalizeHexColor(st.colorPickerHexValue(st.colorPickerTarget), fm.DefaultFilePaneSelectionHex)
 	width := settingsColorPickerPopupWidth(gtx)
 	if max := gtx.Constraints.Max.X; max > 0 && width > max {
 		width = max

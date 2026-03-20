@@ -29,11 +29,13 @@ import (
 )
 
 type filePaneModel struct {
-	entries       []filesys.Entry
-	cfg           *fm.Config
-	baseTextColor color.NRGBA
-	measureTextPx func(string) int
-	measureCache  map[string]int
+	entries         []filesys.Entry
+	cfg             *fm.Config
+	baseTextColor   color.NRGBA
+	filenameTheme   filePaneFilenameTheme
+	filenameVisuals []filePaneFilenameVisual
+	measureTextPx   func(string) int
+	measureCache    map[string]int
 }
 
 type fileSortKey uint8
@@ -75,6 +77,10 @@ func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 		switch entry.Kind {
 		case filesys.EntryDir, filesys.EntryParent, filesys.EntryBroken:
 			st.Weight = font.Bold
+		}
+		if visual := m.filenameVisual(r); visual.hasColor {
+			st.Color = visual.color
+			st.PreserveColor = true
 		}
 	}
 
@@ -189,9 +195,21 @@ func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
 			Color: color.NRGBA{R: 220, G: 85, B: 85, A: 255},
 		}, true
 	default:
+		baseColor := m.fileIconColor(entry.Name)
+		if visual := m.filenameVisual(r); visual.iconKey != "" {
+			if visual.hasColor {
+				baseColor = visual.color
+			}
+			return table.LeadingIcon{
+				Kind:   table.IconFile,
+				Color:  baseColor,
+				Widget: filenameRuleIcon(visual.iconKey),
+			}, true
+		}
 		return table.LeadingIcon{
-			Kind:  table.IconFile,
-			Color: m.fileIconColor(entry.Name),
+			Kind:   table.IconFile,
+			Color:  baseColor,
+			Widget: m.defaultFileIconWidget(entry.Name),
 		}, true
 	}
 }
@@ -350,7 +368,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 
 	pane := &filePaneState{
 		table:        table.New(cols),
-		model:        &filePaneModel{cfg: cfg},
+		model:        &filePaneModel{cfg: cfg, filenameTheme: newFilePaneFilenameTheme(cfg)},
 		sortKey:      parseFileSortKey(cfg.Sort.DefaultKey),
 		sortDesc:     cfg.Sort.Descending,
 		dirsFirst:    cfg.Sort.DirectoriesFirst,
@@ -2051,6 +2069,7 @@ func (p *filePaneState) applySort(preservePath string) {
 		return
 	}
 	markedPaths := p.markedPaths()
+	p.model.rebuildFilenameVisuals(time.Now())
 
 	start := 0
 	if p.model.entries[0].Kind == filesys.EntryParent {
@@ -2082,7 +2101,6 @@ func (p *filePaneState) applySort(preservePath string) {
 		}
 		return cmp < 0
 	})
-
 	if preservePath != "" && p.table != nil {
 		if idx := p.findEntryPathIndex(preservePath); idx >= 0 {
 			p.table.SetSelected(idx, p.model.Len(), true)
@@ -2139,7 +2157,7 @@ func compareStrings(a, b string) int {
 }
 
 func (m *filePaneModel) fileIconColor(name string) color.NRGBA {
-	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+	ext := fileExtension(name)
 	switch ext {
 	case "go", "js", "ts", "tsx", "jsx", "py", "rb", "rs", "c", "cc", "cpp", "h", "hpp", "java", "cs", "swift", "kt", "php", "lua", "sh", "zsh", "bash":
 		return color.NRGBA{R: 92, G: 168, B: 255, A: 255}
@@ -2156,6 +2174,53 @@ func (m *filePaneModel) fileIconColor(name string) color.NRGBA {
 	default:
 		return color.NRGBA{R: 170, G: 176, B: 190, A: 255}
 	}
+}
+
+func (m *filePaneModel) defaultFileIconWidget(name string) *widget.Icon {
+	switch {
+	case isImageFileExtension(name):
+		return filenameRuleIcon(fm.FilenameIconImage)
+	case isVideoFileExtension(name):
+		return filenameRuleIcon(fm.FilenameIconVideo)
+	case isArchiveFileExtension(name):
+		return filenameRuleIcon(fm.FilenameIconArchive)
+	default:
+		return nil
+	}
+}
+
+func isArchiveFileExtension(name string) bool {
+	ext := fileExtension(name)
+	switch ext {
+	case "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar":
+		return true
+	default:
+		return false
+	}
+}
+
+func isImageFileExtension(name string) bool {
+	ext := fileExtension(name)
+	switch ext {
+	case "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tif", "tiff", "ico":
+		return true
+	default:
+		return false
+	}
+}
+
+func isVideoFileExtension(name string) bool {
+	ext := fileExtension(name)
+	switch ext {
+	case "mp4", "mkv", "mov", "avi", "webm":
+		return true
+	default:
+		return false
+	}
+}
+
+func fileExtension(name string) string {
+	return strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
 }
 
 func (ui *UI) activePane() *filePaneState {

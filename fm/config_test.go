@@ -556,6 +556,80 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	}
 }
 
+func TestNormalizeFilenameColors(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Colors.Filenames.Text = "oops"
+	cfg.Colors.Filenames.Icon = "mystery"
+	cfg.Colors.Filenames.AgeRules = []FilenameAgeRule{
+		{MaxAge: "24h", Text: "aabbcc", Icon: "schedule"},
+		{MaxAge: "bad", Text: "#112233", Icon: "lock"},
+		{MaxAge: "1w", Text: "", Icon: ""},
+	}
+	cfg.Colors.Filenames.PermissionRules = []FilenamePermissionRule{
+		{Permissions: "755", Text: "#556677", Icon: "lock"},
+		{Permissions: "oops", Text: "#123456", Icon: "document"},
+		{Permissions: "0644", Text: "bad", Icon: "description"},
+	}
+
+	cfg.normalize()
+
+	if cfg.Colors.Filenames.Text != "" {
+		t.Fatalf("Filenames.Text=%q want empty", cfg.Colors.Filenames.Text)
+	}
+	if cfg.Colors.Filenames.Icon != "" {
+		t.Fatalf("Filenames.Icon=%q want empty", cfg.Colors.Filenames.Icon)
+	}
+	if len(cfg.Colors.Filenames.AgeRules) != 1 {
+		t.Fatalf("len(Filenames.AgeRules)=%d want 1", len(cfg.Colors.Filenames.AgeRules))
+	}
+	if got := cfg.Colors.Filenames.AgeRules[0].MaxAge; got != "1d" {
+		t.Fatalf("AgeRules[0].MaxAge=%q want %q", got, "1d")
+	}
+	if got := cfg.Colors.Filenames.AgeRules[0].Text; got != "#AABBCC" {
+		t.Fatalf("AgeRules[0].Text=%q want %q", got, "#AABBCC")
+	}
+	if got := cfg.Colors.Filenames.AgeRules[0].Icon; got != FilenameIconRecent {
+		t.Fatalf("AgeRules[0].Icon=%q want %q", got, FilenameIconRecent)
+	}
+	if len(cfg.Colors.Filenames.PermissionRules) != 2 {
+		t.Fatalf("len(Filenames.PermissionRules)=%d want 2", len(cfg.Colors.Filenames.PermissionRules))
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[0].Permissions; got != "0755" {
+		t.Fatalf("PermissionRules[0].Permissions=%q want %q", got, "0755")
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[0].Icon; got != FilenameIconLocked {
+		t.Fatalf("PermissionRules[0].Icon=%q want %q", got, FilenameIconLocked)
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[1].Permissions; got != "0644" {
+		t.Fatalf("PermissionRules[1].Permissions=%q want %q", got, "0644")
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[1].Text; got != "" {
+		t.Fatalf("PermissionRules[1].Text=%q want empty", got)
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[1].Icon; got != FilenameIconDocument {
+		t.Fatalf("PermissionRules[1].Icon=%q want %q", got, FilenameIconDocument)
+	}
+}
+
+func TestNormalizeFilenameAgeRulesSortsAndDedupes(t *testing.T) {
+	got := NormalizeFilenameAgeRules([]FilenameAgeRule{
+		{MaxAge: "1w", Text: "#334455"},
+		{MaxAge: "24h", Text: "#112233"},
+		{MaxAge: "1d", Text: "#556677", Icon: "schedule"},
+		{MaxAge: "45m", Icon: "lock"},
+	})
+
+	if len(got) != 3 {
+		t.Fatalf("len(NormalizeFilenameAgeRules)=%d want 3", len(got))
+	}
+	if got[0].MaxAge != "45m" || got[1].MaxAge != "1d" || got[2].MaxAge != "1w" {
+		t.Fatalf("NormalizeFilenameAgeRules order=%#v want 45m, 1d, 1w", got)
+	}
+	if got[1].Text != "#556677" || got[1].Icon != FilenameIconRecent {
+		t.Fatalf("NormalizeFilenameAgeRules duplicate merge=%#v want last 1d rule", got[1])
+	}
+}
+
 func mustMarshalConfig(t *testing.T, cfg *Config) []byte {
 	t.Helper()
 	data, err := yaml.Marshal(cfg)

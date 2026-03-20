@@ -26,18 +26,19 @@ const (
 )
 
 type ColorsConfig struct {
-	FilePaneBackground  string `yaml:"file_pane_background"`
-	FilePaneText        string `yaml:"file_pane_text"`
-	Hover               string `yaml:"hover"`
-	HoverText           string `yaml:"hover_text"`
-	Selection           string `yaml:"selection"`
-	SelectionText       string `yaml:"selection_text"`
-	SelectedFiles       string `yaml:"selected_files"`
-	SelectedFilesText   string `yaml:"selected_files_text"`
-	FocusedSelected     string `yaml:"focused_selected"`
-	FocusedSelectedText string `yaml:"focused_selected_text"`
-	CurrentDirBg        string `yaml:"current_dir_background"`
-	CurrentDirText      string `yaml:"current_dir_text"`
+	FilePaneBackground  string               `yaml:"file_pane_background"`
+	FilePaneText        string               `yaml:"file_pane_text"`
+	Hover               string               `yaml:"hover"`
+	HoverText           string               `yaml:"hover_text"`
+	Selection           string               `yaml:"selection"`
+	SelectionText       string               `yaml:"selection_text"`
+	SelectedFiles       string               `yaml:"selected_files"`
+	SelectedFilesText   string               `yaml:"selected_files_text"`
+	FocusedSelected     string               `yaml:"focused_selected"`
+	FocusedSelectedText string               `yaml:"focused_selected_text"`
+	CurrentDirBg        string               `yaml:"current_dir_background"`
+	CurrentDirText      string               `yaml:"current_dir_text"`
+	Filenames           FilenameColorsConfig `yaml:"filenames,omitempty"`
 }
 
 func ParseHexColor(raw string) (color.NRGBA, bool) {
@@ -70,4 +71,11 @@ func NormalizeHexColor(raw, fallback string) string {
 		return FormatHexColor(c)
 	}
 	return DefaultFilePaneBackgroundHex
+}
+
+func NormalizeOptionalHexColor(raw string) string {
+	if c, ok := ParseHexColor(raw); ok {
+		return FormatHexColor(c)
+	}
+	return ""
 }

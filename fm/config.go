@@ -440,6 +440,10 @@ func (c *Config) normalize() {
 	c.Colors.FocusedSelectedText = NormalizeHexColor(c.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
 	c.Colors.CurrentDirBg = NormalizeHexColor(c.Colors.CurrentDirBg, DefaultCurrentDirBackgroundHex)
 	c.Colors.CurrentDirText = NormalizeHexColor(c.Colors.CurrentDirText, DefaultCurrentDirTextHex)
+	c.Colors.Filenames.Text = NormalizeOptionalHexColor(c.Colors.Filenames.Text)
+	c.Colors.Filenames.Icon = NormalizeFilenameIcon(c.Colors.Filenames.Icon)
+	c.Colors.Filenames.AgeRules = NormalizeFilenameAgeRules(c.Colors.Filenames.AgeRules)
+	c.Colors.Filenames.PermissionRules = NormalizeFilenamePermissionRules(c.Colors.Filenames.PermissionRules)
 
 	switch c.Viewer.Mode {
 	case "file", "hex", "command":
