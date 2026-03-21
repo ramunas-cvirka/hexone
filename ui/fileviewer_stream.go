@@ -520,7 +520,14 @@ func (v *streamOutputView) selectedText() string {
 
 func (v *streamOutputView) selectionColsForLine(line int) (int, int, bool) {
 	start, end, ok := v.selectionBounds()
-	if !ok || line < 0 || line >= len(v.lines) || len(v.lineOffsets) != len(v.lines) {
+	if !ok {
+		return 0, 0, false
+	}
+	return v.rangeColsForLine(line, start, end)
+}
+
+func (v *streamOutputView) rangeColsForLine(line, start, end int) (int, int, bool) {
+	if line < 0 || line >= len(v.lines) || len(v.lineOffsets) != len(v.lines) {
 		return 0, 0, false
 	}
 	lineText := v.lines[line]
@@ -1618,9 +1625,12 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 	}
 	v := &st.stream
 	theme := ui.fileViewerTheme()
+	findFill, _ := fileViewerFindHighlightColors(theme)
 	if textW <= 0 || lineHeight <= 0 {
 		return
 	}
+	lineFace := ui.viewerTypeface()
+	lineSize := ui.viewerTextSize()
 	textH := v.textRect.Dy()
 	if textH <= 0 {
 		return
@@ -1646,6 +1656,26 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 		}
 		lineDraw, textX := v.linePaintSpec(line)
 		offset := op.Offset(image.Pt(textX, y)).Push(gtx.Ops)
+		if from, to, ok := fileViewerFindColsForLine(st, i); ok {
+			x0 := v.textPad + v.colOffsetPx(from-v.hCol)
+			x1 := v.textPad + v.colOffsetPx(to-v.hCol)
+			if x1 <= x0 {
+				x1 = x0 + v.minCellWidthPx()
+			}
+			if x0 < textW {
+				if x0 < 0 {
+					x0 = 0
+				}
+				if x1 > textW {
+					x1 = textW
+				}
+				if x1 > x0 {
+					if findRect := viewerLineContentRect(ui, th, gtx, lineFace, lineSize, lineHeight, x0, x1); !findRect.Empty() {
+						paint.FillShape(gtx.Ops, findFill, clip.Rect(findRect).Op())
+					}
+				}
+			}
+		}
 		if from, to, ok := v.selectionColsForLine(i); ok {
 			x0 := v.textPad + v.colOffsetPx(from-v.hCol)
 			x1 := v.textPad + v.colOffsetPx(to-v.hCol)
@@ -1660,20 +1690,21 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 					x1 = textW
 				}
 				if x1 > x0 {
-					selRect := image.Rect(x0, 1, x1, lineHeight-1)
-					paint.FillShape(gtx.Ops, theme.Selection, clip.Rect(selRect).Op())
+					if selRect := viewerLineSelectionRect(lineHeight, x0, x1); !selRect.Empty() {
+						paint.FillShape(gtx.Ops, theme.Selection, clip.Rect(selRect).Op())
+					}
 				}
 			}
 		}
 		_ = func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th, lineDraw)
-			lbl.Font.Typeface = ui.viewerTypeface()
+			lbl.Font.Typeface = lineFace
 			lbl.Font.Weight = font.Normal
-			lbl.TextSize = ui.viewerTextSize()
+			lbl.TextSize = lineSize
 			lbl.Color = theme.Text
 			lbl.MaxLines = 1
 			lbl.Truncator = ""
-			return lbl.Layout(gtx)
+			return layoutVCenteredLabel(gtx, lbl)
 		}(lineGTX)
 		offset.Pop()
 		y += lineHeight

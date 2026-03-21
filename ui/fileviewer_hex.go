@@ -1219,8 +1219,9 @@ func (ui *UI) drawHexOutput(gtx layout.Context, th *material.Theme, st *fileView
 		lineBytes, lineStart := v.lineBytes(line)
 		offsetText := formatHexOffset(lineStart, v.offsetDigits)
 		offset := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
-		ui.drawHexLineSelections(gtx, st, line, len(lineBytes))
-		ui.drawHexLineLabel(th, gtx, image.Pt(v.offsetRect.Min.X, 0), v.offsetRect.Dx(), offsetText, theme.OffsetText)
+		ui.drawHexLineFindMatch(gtx, th, st, line, len(lineBytes))
+		ui.drawHexLineSelections(gtx, th, st, line, len(lineBytes))
+		ui.drawHexLineLabel(th, gtx, image.Pt(v.offsetRect.Min.X, 0), v.offsetRect.Dx(), v.lineH, offsetText, theme.OffsetText)
 		ui.drawHexBytesLine(th, gtx, v, lineBytes, theme.Text)
 		ui.drawHexASCIIline(th, gtx, v, lineBytes, theme.ASCIIText)
 		offset.Pop()
@@ -1228,13 +1229,13 @@ func (ui *UI) drawHexOutput(gtx layout.Context, th *material.Theme, st *fileView
 	}
 }
 
-func (ui *UI) drawHexLineLabel(th *material.Theme, gtx layout.Context, pos image.Point, width int, text string, fg color.NRGBA) {
-	if width <= 0 {
+func (ui *UI) drawHexLineLabel(th *material.Theme, gtx layout.Context, pos image.Point, width, rowH int, text string, fg color.NRGBA) {
+	if width <= 0 || rowH <= 0 {
 		return
 	}
 	offset := op.Offset(pos).Push(gtx.Ops)
 	lineGTX := gtx
-	lineGTX.Constraints = layout.Exact(image.Pt(width, gtx.Constraints.Max.Y))
+	lineGTX.Constraints = layout.Exact(image.Pt(width, rowH))
 	lbl := material.Body2(th, text)
 	lbl.Font.Typeface = ui.viewerMonospaceTypeface()
 	lbl.Font.Weight = font.Normal
@@ -1242,17 +1243,17 @@ func (ui *UI) drawHexLineLabel(th *material.Theme, gtx layout.Context, pos image
 	lbl.Color = fg
 	lbl.MaxLines = 1
 	lbl.Truncator = ""
-	lbl.Layout(lineGTX)
+	layoutVCenteredLabel(lineGTX, lbl)
 	offset.Pop()
 }
 
-func (ui *UI) drawMonoCell(th *material.Theme, gtx layout.Context, pos image.Point, width int, text string, fg color.NRGBA) {
-	if width <= 0 || text == "" {
+func (ui *UI) drawMonoCell(th *material.Theme, gtx layout.Context, pos image.Point, width, rowH int, text string, fg color.NRGBA) {
+	if width <= 0 || rowH <= 0 || text == "" {
 		return
 	}
 	offset := op.Offset(pos).Push(gtx.Ops)
 	lineGTX := gtx
-	lineGTX.Constraints = layout.Exact(image.Pt(width, gtx.Constraints.Max.Y))
+	lineGTX.Constraints = layout.Exact(image.Pt(width, rowH))
 	lbl := material.Body2(th, text)
 	lbl.Font.Typeface = ui.viewerMonospaceTypeface()
 	lbl.Font.Weight = font.Normal
@@ -1260,7 +1261,7 @@ func (ui *UI) drawMonoCell(th *material.Theme, gtx layout.Context, pos image.Poi
 	lbl.Color = fg
 	lbl.MaxLines = 1
 	lbl.Truncator = ""
-	lbl.Layout(lineGTX)
+	layoutVCenteredLabel(lineGTX, lbl)
 	offset.Pop()
 }
 
@@ -1271,7 +1272,7 @@ func (ui *UI) drawHexBytesLine(th *material.Theme, gtx layout.Context, v *hexVie
 	for i, b := range data {
 		txt := fmt.Sprintf("%02X", b)
 		x := v.hexRect.Min.X + v.hexByteLeft(i)
-		ui.drawMonoCell(th, gtx, image.Pt(x, 0), 2*v.charW, txt, fg)
+		ui.drawMonoCell(th, gtx, image.Pt(x, 0), 2*v.charW, v.lineH, txt, fg)
 	}
 }
 
@@ -1286,29 +1287,44 @@ func (ui *UI) drawHexASCIIline(th *material.Theme, gtx layout.Context, v *hexVie
 			ch = string(b)
 		}
 		x := v.textRect.Min.X + i*v.charW
-		ui.drawMonoCell(th, gtx, image.Pt(x, 0), v.charW, ch, fg)
+		ui.drawMonoCell(th, gtx, image.Pt(x, 0), v.charW, v.lineH, ch, fg)
 	}
 }
 
-func (ui *UI) drawHexLineSelections(gtx layout.Context, st *fileViewerState, line int64, lineLen int) {
+func (ui *UI) drawHexLineSelections(gtx layout.Context, th *material.Theme, st *fileViewerState, line int64, lineLen int) {
 	v := st.hex
 	if v == nil || !v.hasSelection() || lineLen <= 0 {
 		return
 	}
 	theme := ui.fileViewerTheme()
+	ui.drawHexLineRangeHighlight(gtx, th, st, line, lineLen, v.selectionStart, v.selectionEnd(), theme.Selection, theme.StrongSelection, true)
+}
 
+func (ui *UI) drawHexLineFindMatch(gtx layout.Context, th *material.Theme, st *fileViewerState, line int64, lineLen int) {
+	if st == nil || !st.find.open || !st.find.currentValid || st.find.currentLen <= 0 {
+		return
+	}
+	theme := ui.fileViewerTheme()
+	findHex, findText := fileViewerFindHighlightColors(theme)
+	ui.drawHexLineRangeHighlight(gtx, th, st, line, lineLen, st.find.currentStart, st.find.currentStart+st.find.currentLen, findHex, findText, false)
+}
+
+func (ui *UI) drawHexLineRangeHighlight(gtx layout.Context, th *material.Theme, st *fileViewerState, line int64, lineLen int, rangeStart, rangeEnd int64, hexSel, textSel color.NRGBA, fullRow bool) {
+	v := st.hex
+	if v == nil || lineLen <= 0 || rangeEnd <= rangeStart {
+		return
+	}
 	lineStart := line * int64(v.bytesPerLine)
 	lineEnd := lineStart + int64(lineLen)
-	selectionEnd := v.selectionEnd()
-	if lineEnd <= v.selectionStart || lineStart >= selectionEnd {
+	if lineEnd <= rangeStart || lineStart >= rangeEnd {
 		return
 	}
 
-	selStart := v.selectionStart
+	selStart := rangeStart
 	if selStart < lineStart {
 		selStart = lineStart
 	}
-	selEnd := selectionEnd
+	selEnd := rangeEnd
 	if selEnd > lineEnd {
 		selEnd = lineEnd
 	}
@@ -1319,9 +1335,6 @@ func (ui *UI) drawHexLineSelections(gtx layout.Context, st *fileViewerState, lin
 	firstIdx := int(selStart - lineStart)
 	lastIdx := int(selEnd - lineStart - 1)
 
-	hexSel := theme.Selection
-	textSel := theme.StrongSelection
-
 	hexX0 := v.hexRect.Min.X + v.hexByteLeft(firstIdx)
 	var hexX1 int
 	if lastIdx+1 < lineLen {
@@ -1329,11 +1342,23 @@ func (ui *UI) drawHexLineSelections(gtx layout.Context, st *fileViewerState, lin
 	} else {
 		hexX1 = v.hexRect.Min.X + v.hexByteRight(lastIdx)
 	}
-	paint.FillShape(gtx.Ops, hexSel, clip.Rect(image.Rect(hexX0, 1, hexX1, v.lineH-1)).Op())
+	hexRect := viewerLineContentRect(ui, th, gtx, ui.viewerMonospaceTypeface(), ui.viewerTextSize(), v.lineH, hexX0, hexX1)
+	if fullRow {
+		hexRect = viewerLineSelectionRect(v.lineH, hexX0, hexX1)
+	}
+	if !hexRect.Empty() {
+		paint.FillShape(gtx.Ops, hexSel, clip.Rect(hexRect).Op())
+	}
 
 	textX0 := v.textRect.Min.X + firstIdx*v.charW
 	textX1 := v.textRect.Min.X + (lastIdx+1)*v.charW
-	paint.FillShape(gtx.Ops, textSel, clip.Rect(image.Rect(textX0, 1, textX1, v.lineH-1)).Op())
+	textRect := viewerLineContentRect(ui, th, gtx, ui.viewerMonospaceTypeface(), ui.viewerTextSize(), v.lineH, textX0, textX1)
+	if fullRow {
+		textRect = viewerLineSelectionRect(v.lineH, textX0, textX1)
+	}
+	if !textRect.Empty() {
+		paint.FillShape(gtx.Ops, textSel, clip.Rect(textRect).Op())
+	}
 }
 
 func (ui *UI) drawHexScrollbar(gtx layout.Context, st *fileViewerState) {

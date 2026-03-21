@@ -65,6 +65,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		ui.startViewerCommandEdit(gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
+	ui.handleFileViewerFindInput(gtx, st)
 	if st.modeFileClick.Clicked(gtx) {
 		st.tabAnim.setPulse("file", gtx.Now)
 		ui.setFileViewerMode("file", gtx.Now)
@@ -139,6 +140,9 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		// results can remain pending until an external event (e.g. resize).
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
 	}
+	if st.find.open && st.find.searching {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+	}
 
 	ui.scheduleFileViewerWatch(gtx)
 
@@ -203,6 +207,9 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 									}),
 									layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 										return ui.layoutFileViewerOverlay(th, gtx, st)
+									}),
+									layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+										return ui.layoutFileViewerFindBar(th, gtx, st)
 									}),
 								)
 							})
@@ -311,6 +318,12 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 				!viewerPointInRect(pos, st.encodingMenuRect) &&
 				!viewerPointInRect(pos, st.encodingBarRect) {
 				st.closeEncodingMenu()
+				gtx.Execute(op.InvalidateCmd{})
+			}
+			if st.find.sourceMenuOpen &&
+				!viewerPointInRect(pos, st.find.sourceMenuRect) &&
+				!viewerPointInRect(pos, st.find.sourceButtonRect) {
+				st.find.closeSourceMenu()
 				gtx.Execute(op.InvalidateCmd{})
 			}
 			if st.commandEditOn {

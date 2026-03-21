@@ -27,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"gioui.org/io/clipboard"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -109,6 +110,7 @@ type fileViewerState struct {
 	tabAnimAt           time.Time
 	stream              streamOutputView
 	hex                 *hexViewerState
+	find                fileViewerFindState
 	historyOpen         bool
 
 	loading    bool
@@ -209,9 +211,28 @@ func (st *fileViewerState) closeEncodingMenu() {
 
 func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 	anyMods := ^key.Modifiers(0)
-	for {
-		ev, ok := gtx.Event(
-			key.Filter{Name: key.NameEscape},
+	st := ui.fileViewer
+	if st == nil {
+		return
+	}
+	findFocused := st.find.open && gtx.Focused(&st.find.editor)
+	editorFocused := st.commandEditOn || findFocused
+	filters := []event.Filter{
+		key.Filter{Name: key.NameEscape},
+		key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
+		key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
+	}
+	if st.find.open {
+		filters = append(filters,
+			key.Filter{Focus: &st.find.editor, Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Focus: &st.find.editor, Name: key.NameReturn, Optional: anyMods},
+			key.Filter{Focus: &st.find.editor, Name: key.NameTab, Optional: anyMods},
+		)
+	}
+	if !editorFocused {
+		filters = append(filters,
 			key.Filter{Name: key.NameF3},
 			key.Filter{Name: key.NameTab, Optional: anyMods},
 			key.Filter{Name: key.NameUpArrow},
@@ -229,6 +250,9 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			key.Filter{Name: "a", Required: key.ModShortcut, Optional: anyMods},
 			key.Filter{Name: "A", Required: key.ModShortcut, Optional: anyMods},
 		)
+	}
+	for {
+		ev, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}
@@ -275,8 +299,24 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			continue
 		}
 		switch ke.Name {
+		case "f", "F":
+			if ke.Modifiers != key.ModCtrl && ke.Modifiers != key.ModShortcut {
+				continue
+			}
+			ui.openFileViewerFind(gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
 		case key.NameEscape:
-			if st := ui.fileViewer; st != nil && st.commandEditOn {
+			if st.find.open {
+				if st.find.sourceMenuOpen {
+					st.find.closeSourceMenu()
+					gtx.Execute(op.InvalidateCmd{})
+					continue
+				}
+				ui.closeFileViewerFind()
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
+			if st.commandEditOn {
 				ui.cancelViewerCommandEdit()
 				gtx.Execute(op.InvalidateCmd{})
 				continue
@@ -284,9 +324,29 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			ui.closeFileViewer()
 		case key.NameF3:
 			ui.startFileViewerLoad(gtx.Now)
+		case key.NameEnter, key.NameReturn:
+			if !st.find.open || !findFocused {
+				continue
+			}
+			switch ke.Modifiers {
+			case 0:
+				if ui.stepFileViewerFind(gtx.Now, 1) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			case key.ModShift:
+				if ui.stepFileViewerFind(gtx.Now, -1) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
 		case key.NameTab:
-			st := ui.fileViewer
-			if st == nil || st.commandEditOn {
+			if st.find.open && st.mode == "hex" && findFocused {
+				step, ok := viewerModeTabStep(ke.Modifiers)
+				if !ok {
+					continue
+				}
+				if ui.stepFileViewerFindMode(gtx.Now, step) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
 				continue
 			}
 			step, ok := viewerModeTabStep(ke.Modifiers)
@@ -296,16 +356,14 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			ui.setFileViewerMode(viewerStepMode(st.mode, step), gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
 		case "c", "C":
-			st := ui.fileViewer
-			if st == nil || st.commandEditOn {
+			if st.commandEditOn || findFocused {
 				continue
 			}
 			if ui.copyFileViewerText(gtx, false) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case "a", "A":
-			st := ui.fileViewer
-			if st == nil || st.commandEditOn {
+			if st.commandEditOn || findFocused {
 				continue
 			}
 			if st.mode == "hex" {
@@ -443,6 +501,10 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.commandEditor.SingleLine = true
 	st.commandEditor.Submit = true
 	st.commandEditor.SetText(st.command)
+	st.find.editor.SingleLine = true
+	st.find.editor.Submit = false
+	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	st.find.index = -1
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.captureWatchState()
 	st.hex = newHexViewerState()
@@ -468,6 +530,7 @@ func (ui *UI) closeFileViewer() {
 			st.loadCancel()
 			st.loadCancel = nil
 		}
+		ui.cancelFileViewerFindSearch(st)
 		st.closeEncodingMenu()
 		if st.remote != nil {
 			st.remote.close()
@@ -721,6 +784,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		return
 	}
 	ui.pumpHexViewerState(gtx, st)
+	ui.pumpFileViewerFindState(gtx, st)
 	if st.resultCh == nil {
 		return
 	}
@@ -738,6 +802,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.status = "ready"
 		}
 		applyFileViewerContentResult(st, st.pendingContent)
+		ui.refreshFileViewerFind(gtx.Now, true)
 		st.markUpdated(gtx.Now)
 		st.captureWatchState()
 		gtx.Execute(op.InvalidateCmd{})
@@ -762,6 +827,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 				}
 				if viewerUpdateAction(st, res.content) != viewerUpdateSame {
 					applyFileViewerContentResult(st, res.content)
+					ui.refreshFileViewerFind(gtx.Now, true)
 					st.markUpdated(gtx.Now)
 				}
 				gtx.Execute(op.InvalidateCmd{})
@@ -796,6 +862,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.detectedEncodingBOM = res.encodingBOM
 			st.detectedLineEnding = res.lineEnding
 			applyFileViewerContentResult(st, res.content)
+			ui.refreshFileViewerFind(gtx.Now, true)
 			st.markUpdated(gtx.Now)
 			st.captureWatchState()
 			ui.scheduleFileViewerWatch(gtx)
@@ -1469,6 +1536,7 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 		}
 	}
 	st.nextWatchCheck = time.Time{}
+	ui.refreshFileViewerFind(now, false)
 	ui.restartFileViewerLoad(now)
 }
 

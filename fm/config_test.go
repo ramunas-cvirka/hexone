@@ -336,6 +336,61 @@ func TestNormalizeViewerCommandRules(t *testing.T) {
 	}
 }
 
+func TestNormalizeViewerRemoteSearchCommandDefaultsAndAllowsOff(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Viewer.RemoteSearchMode != ViewerRemoteSearchModeRemote {
+		t.Fatalf("default remote search mode=%q want %q", cfg.Viewer.RemoteSearchMode, ViewerRemoteSearchModeRemote)
+	}
+	if cfg.Viewer.RemoteSearchCommand != DefaultViewerRemoteSearchCommand {
+		t.Fatalf("default remote search command=%q want %q", cfg.Viewer.RemoteSearchCommand, DefaultViewerRemoteSearchCommand)
+	}
+
+	cfg.Viewer.RemoteSearchCommand = ""
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchCommand != DefaultViewerRemoteSearchCommand {
+		t.Fatalf("normalized remote search command=%q want default", cfg.Viewer.RemoteSearchCommand)
+	}
+
+	cfg.Viewer.RemoteSearchCommand = "off"
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchCommand != "off" {
+		t.Fatalf("remote search disable value=%q want %q", cfg.Viewer.RemoteSearchCommand, "off")
+	}
+	if got := EffectiveViewerRemoteSearchCommand(cfg.Viewer.RemoteSearchCommand); got != "" {
+		t.Fatalf("effective remote search command=%q want empty", got)
+	}
+}
+
+func TestNormalizeViewerRemoteSearchModeDefaultsAndAcceptsAliases(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.RemoteSearchMode = ""
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchMode != ViewerRemoteSearchModeRemote {
+		t.Fatalf("normalized remote search mode=%q want %q", cfg.Viewer.RemoteSearchMode, ViewerRemoteSearchModeRemote)
+	}
+
+	cfg.Viewer.RemoteSearchMode = "utility"
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchMode != ViewerRemoteSearchModeRemote {
+		t.Fatalf("utility remote search mode=%q want %q", cfg.Viewer.RemoteSearchMode, ViewerRemoteSearchModeRemote)
+	}
+
+	cfg.Viewer.RemoteSearchMode = "internal"
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchMode != ViewerRemoteSearchModeLocal {
+		t.Fatalf("internal remote search mode=%q want %q", cfg.Viewer.RemoteSearchMode, ViewerRemoteSearchModeLocal)
+	}
+}
+
+func TestNormalizeViewerRemoteSearchCommandMigratesLegacyDefault(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.RemoteSearchCommand = legacyViewerRemoteSearchCommand
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchCommand != DefaultViewerRemoteSearchCommand {
+		t.Fatalf("legacy remote search command=%q want %q", cfg.Viewer.RemoteSearchCommand, DefaultViewerRemoteSearchCommand)
+	}
+}
+
 func TestMatchViewerCommandRulesUsesLastMatch(t *testing.T) {
 	rules := []ViewerCommandRule{
 		{Pattern: `\.log$`, Command: `tail -f {path}`},
