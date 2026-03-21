@@ -33,6 +33,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/text/encoding/charmap"
 )
 
@@ -649,8 +650,8 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	st.seq++
 	seq := st.seq
 	st.loading = true
-	st.err = ""
-	if st.content == "" {
+	if st.updatedAt.IsZero() && st.content == "" {
+		st.err = ""
 		st.status = "loading..."
 	}
 	st.nextWatchCheck = time.Time{}
@@ -1951,7 +1952,13 @@ loop:
 		if runCtx.Err() == context.Canceled && errors.Is(ctx.Err(), context.Canceled) {
 			return "", "", "viewer command canceled"
 		}
-		return content, status, err.Error()
+		if viewerCommandTreatsExitAsEmpty(cmdline, content, err) {
+			return "", "no output", ""
+		}
+		return content, status, viewerCommandErrorMessage(err)
+	}
+	if content == "" {
+		return "", "no output", ""
 	}
 	return content, status, ""
 }
@@ -2058,9 +2065,79 @@ loop:
 		if runCtx.Err() == context.Canceled && errors.Is(ctx.Err(), context.Canceled) {
 			return "", "", "viewer command canceled"
 		}
-		return content, status, waitErr.Error()
+		if viewerCommandTreatsExitAsEmpty(cmdline, content, waitErr) {
+			return "", "no output", ""
+		}
+		return content, status, viewerCommandErrorMessage(waitErr)
+	}
+	if content == "" {
+		return "", "no output", ""
 	}
 	return content, status, ""
+}
+
+func viewerCommandErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	if code, ok := viewerCommandExitStatus(err); ok {
+		return fmt.Sprintf("command exited with status %d", code)
+	}
+	return err.Error()
+}
+
+func viewerCommandExitStatus(err error) (int, bool) {
+	if err == nil {
+		return 0, false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if code := exitErr.ExitCode(); code >= 0 {
+			return code, true
+		}
+	}
+	var sshExitErr *ssh.ExitError
+	if errors.As(err, &sshExitErr) {
+		return sshExitErr.ExitStatus(), true
+	}
+	return 0, false
+}
+
+func viewerCommandTreatsExitAsEmpty(cmdline, content string, err error) bool {
+	if strings.TrimSpace(content) != "" {
+		return false
+	}
+	code, ok := viewerCommandExitStatus(err)
+	if !ok || code != 1 {
+		return false
+	}
+	return viewerCommandUsesNoMatchExit(cmdline)
+}
+
+func viewerCommandUsesNoMatchExit(cmdline string) bool {
+	tokens := strings.FieldsFunc(cmdline, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune("|&;()", r)
+	})
+	for i := 0; i < len(tokens); i++ {
+		name := viewerCommandTokenName(tokens[i])
+		switch name {
+		case "grep", "egrep", "fgrep", "rg", "ripgrep", "findstr":
+			return true
+		case "git":
+			if i+1 < len(tokens) && viewerCommandTokenName(tokens[i+1]) == "grep" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func viewerCommandTokenName(token string) string {
+	token = strings.TrimSpace(strings.Trim(token, `"'`))
+	token = strings.TrimSuffix(token, ".exe")
+	token = strings.ReplaceAll(token, `\`, "/")
+	token = pathpkg.Base(token)
+	return strings.ToLower(token)
 }
 
 func emitViewerCommandProgress(onProgress func(string, string), buf *viewerCommandBuffer, kind string, shell viewerShellSpec, started time.Time, infinite, running bool, lastLen int, lastTruncated bool) (int, bool) {

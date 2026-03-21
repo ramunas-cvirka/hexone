@@ -187,7 +187,9 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 											if st.mode == "hex" && st.hex != nil && len(st.hex.buffer) > 0 {
 												return ui.layoutHexOutputView(th, gtx, st)
 											}
-											wait := material.Body2(th, "Loading...")
+										}
+										if message := fileViewerEmptyPanelMessage(st); message != "" {
+											wait := material.Body2(th, message)
 											wait.Font.Typeface = ui.viewerTypeface()
 											wait.TextSize = ui.viewerTextSize()
 											wait.Color = theme.Hint
@@ -220,6 +222,19 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		}
 		return dims
 	})
+}
+
+func fileViewerEmptyPanelMessage(st *fileViewerState) string {
+	if st == nil {
+		return ""
+	}
+	if st.loading && st.content == "" && st.updatedAt.IsZero() {
+		return "Loading..."
+	}
+	if st.mode == "command" && st.content == "" && st.err == "" {
+		return "No output"
+	}
+	return ""
 }
 
 func (ui *UI) handleFileViewerRootPointerEvents(gtx layout.Context, st *fileViewerState) {

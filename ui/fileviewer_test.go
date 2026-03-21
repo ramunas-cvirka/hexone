@@ -205,3 +205,86 @@ func TestViewerClipboardContentPreservesCRLFForFileMode(t *testing.T) {
 		t.Fatalf("viewerClipboardContent=%q want %q", got, "alpha\r\nbeta")
 	}
 }
+
+func TestViewerCommandUsesNoMatchExitRecognizesSearchTools(t *testing.T) {
+	tests := []string{
+		`grep needle {path}`,
+		`rg needle {path}`,
+		`findstr needle {path}`,
+		`git grep needle`,
+	}
+
+	for _, cmdline := range tests {
+		if !viewerCommandUsesNoMatchExit(cmdline) {
+			t.Fatalf("viewerCommandUsesNoMatchExit(%q)=false want true", cmdline)
+		}
+	}
+}
+
+func TestViewerCommandUsesNoMatchExitRejectsNonSearchTools(t *testing.T) {
+	tests := []string{
+		`cat {path}`,
+		`pgrep hexone`,
+		`git status`,
+	}
+
+	for _, cmdline := range tests {
+		if viewerCommandUsesNoMatchExit(cmdline) {
+			t.Fatalf("viewerCommandUsesNoMatchExit(%q)=true want false", cmdline)
+		}
+	}
+}
+
+func TestViewerCommandTokenNameNormalizesExeAndPaths(t *testing.T) {
+	tests := map[string]string{
+		`C:\Tools\rg.exe`: `rg`,
+		`/usr/bin/grep`:   `grep`,
+		`"findstr.exe"`:   `findstr`,
+	}
+
+	for token, want := range tests {
+		if got := viewerCommandTokenName(token); got != want {
+			t.Fatalf("viewerCommandTokenName(%q)=%q want %q", token, got, want)
+		}
+	}
+}
+
+func TestFileViewerEmptyPanelMessageUsesNoOutputForSettledEmptyCommand(t *testing.T) {
+	st := &fileViewerState{
+		mode:      "command",
+		content:   "",
+		err:       "",
+		updatedAt: time.Now(),
+	}
+
+	if got := fileViewerEmptyPanelMessage(st); got != "No output" {
+		t.Fatalf("fileViewerEmptyPanelMessage=%q want %q", got, "No output")
+	}
+}
+
+func TestFileViewerEmptyPanelMessageKeepsNoOutputDuringRefresh(t *testing.T) {
+	st := &fileViewerState{
+		mode:      "command",
+		content:   "",
+		err:       "",
+		loading:   true,
+		updatedAt: time.Now(),
+	}
+
+	if got := fileViewerEmptyPanelMessage(st); got != "No output" {
+		t.Fatalf("fileViewerEmptyPanelMessage=%q want %q", got, "No output")
+	}
+}
+
+func TestFileViewerEmptyPanelMessageKeepsLoadingForInitialEmptyLoad(t *testing.T) {
+	st := &fileViewerState{
+		mode:    "command",
+		content: "",
+		err:     "",
+		loading: true,
+	}
+
+	if got := fileViewerEmptyPanelMessage(st); got != "Loading..." {
+		t.Fatalf("fileViewerEmptyPanelMessage=%q want %q", got, "Loading...")
+	}
+}
