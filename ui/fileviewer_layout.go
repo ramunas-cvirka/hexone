@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"fmt"
 	"hexone/fm"
 	uitheme "hexone/ui/theme"
 	"image"
@@ -81,7 +82,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		ui.setFileViewerMode("command", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	if st.mode == "file" {
+	if st.mode == "file" && !st.detectedImagePreview {
 		if st.encodingMenuClick.Clicked(gtx) {
 			if st.encodingMenuOpen {
 				st.closeEncodingMenu()
@@ -202,6 +203,9 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 										gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
 										if st.mode == "hex" {
 											return ui.layoutHexOutputView(th, gtx, st)
+										}
+										if st.detectedImagePreview {
+											return ui.layoutImageOutputView(th, gtx, st)
 										}
 										return ui.layoutStreamOutputView(th, gtx, st)
 									}),
@@ -711,7 +715,9 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 	lineEnding := ""
 	encodingLabel := ""
 	if st.mode == "file" {
-		if !st.detectedBinaryPreview {
+		if st.detectedImagePreview {
+			lineEnding = viewerImageSizeLabel(st)
+		} else if !st.detectedBinaryPreview {
 			lineEnding = viewerLineEndingLabel(st.detectedLineEnding)
 		}
 		encodingLabel = viewerEncodingStatusLabel(st)
@@ -775,7 +781,7 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 					addGap(unit.Dp(4))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						click := &st.encodingMenuClick
-						if st.mode != "file" {
+						if st.mode != "file" || st.detectedImagePreview {
 							click = nil
 						}
 						return ui.layoutFileViewerOverlayChip(th, gtx, encodingLabel, theme.CommandText, st.encodingMenuOpen, click)
@@ -956,6 +962,12 @@ func viewerEncodingStatusLabel(st *fileViewerState) string {
 	if st == nil {
 		return ""
 	}
+	if st.detectedImagePreview {
+		if label := viewerImageFormatDisplayName(st.imagePreviewFormat); label != "" {
+			return label
+		}
+		return "Image"
+	}
 	if st.detectedBinaryPreview {
 		return "Binary"
 	}
@@ -980,6 +992,12 @@ func viewerEncodingStatusLabel(st *fileViewerState) string {
 }
 
 func viewerEncodingAutoDetail(st *fileViewerState) string {
+	if st != nil && st.detectedImagePreview {
+		if label := viewerImageFormatDisplayName(st.imagePreviewFormat); label != "" {
+			return "Detected " + label + " image"
+		}
+		return "Detected image"
+	}
 	if st != nil && st.detectedBinaryPreview {
 		return "Detected binary data"
 	}
@@ -1009,6 +1027,26 @@ func viewerEncodingDisplayName(encoding string) string {
 	default:
 		return "UTF-8"
 	}
+}
+
+func viewerImageFormatDisplayName(format string) string {
+	switch normalizeViewerImageFormat(format) {
+	case "png":
+		return "PNG"
+	case "jpeg":
+		return "JPEG"
+	case "gif":
+		return "GIF"
+	default:
+		return ""
+	}
+}
+
+func viewerImageSizeLabel(st *fileViewerState) string {
+	if st == nil || st.imagePreviewSize.X <= 0 || st.imagePreviewSize.Y <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%dx%d", st.imagePreviewSize.X, st.imagePreviewSize.Y)
 }
 
 func viewerLineEndingLabel(kind string) string {

@@ -231,6 +231,9 @@ func (ui *UI) openFileViewerFind(now time.Time) {
 	if st == nil {
 		return
 	}
+	if !viewerSupportsFind(st) {
+		return
+	}
 	if st.commandEditOn {
 		ui.cancelViewerCommandEdit()
 	}
@@ -305,6 +308,10 @@ func (ui *UI) viewerRemoteSearchSpec(remote *paneSSHSession, hexInput, enabled b
 func (ui *UI) refreshFileViewerFind(now time.Time, preserve bool) {
 	st := ui.fileViewer
 	if st == nil || !st.find.open {
+		return
+	}
+	if !viewerSupportsFind(st) {
+		ui.closeFileViewerFind()
 		return
 	}
 	ui.ensureFileViewerFindSearchSource(now, st)
@@ -1532,7 +1539,7 @@ func (ui *UI) fileViewerFindBarWidths(th *material.Theme, gtx layout.Context, st
 }
 
 func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
-	if st == nil || !st.find.open {
+	if st == nil || !st.find.open || !viewerSupportsFind(st) {
 		return layout.Dimensions{}
 	}
 	theme := ui.fileViewerTheme()

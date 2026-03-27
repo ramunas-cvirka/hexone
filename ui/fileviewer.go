@@ -12,6 +12,9 @@ import (
 	"hexone/filesys"
 	"hexone/fm"
 	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime"
 	"net/http"
@@ -105,6 +108,11 @@ type fileViewerState struct {
 	command               string
 	detectedEncoding      string
 	detectedEncodingBOM   bool
+	detectedImagePreview  bool
+	imagePreview          image.Image
+	imagePreviewData      []byte
+	imagePreviewFormat    string
+	imagePreviewSize      image.Point
 	detectedBinaryPreview bool
 	detectedLineEnding    string
 	binaryPreviewData     []byte
@@ -116,6 +124,7 @@ type fileViewerState struct {
 	updatedAt             time.Time
 	tabAnimAt             time.Time
 	stream                streamOutputView
+	imageView             imagePreviewView
 	hex                   *hexViewerState
 	find                  fileViewerFindState
 	historyOpen           bool
@@ -135,6 +144,11 @@ type fileViewerState struct {
 	pendingErr           string
 	pendingEncoding      string
 	pendingEncodingBOM   bool
+	pendingImagePreview  bool
+	pendingImage         image.Image
+	pendingImageData     []byte
+	pendingImageFormat   string
+	pendingImageSize     image.Point
 	pendingBinaryPreview bool
 	pendingLineEnding    string
 	pendingBinaryData    []byte
@@ -175,6 +189,11 @@ type fileViewerResult struct {
 	err           string
 	encoding      string
 	encodingBOM   bool
+	imagePreview  bool
+	image         image.Image
+	imageData     []byte
+	imageFormat   string
+	imageSize     image.Point
 	binaryPreview bool
 	lineEnding    string
 	binaryData    []byte
@@ -185,6 +204,11 @@ type fileViewerResult struct {
 type viewerReadInfo struct {
 	encoding      string
 	encodingBOM   bool
+	imagePreview  bool
+	image         image.Image
+	imageData     []byte
+	imageFormat   string
+	imageSize     image.Point
 	binaryPreview bool
 	lineEnding    string
 	binaryData    []byte
@@ -263,6 +287,20 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			key.Filter{Name: "a", Required: key.ModShortcut, Optional: anyMods},
 			key.Filter{Name: "A", Required: key.ModShortcut, Optional: anyMods},
 		)
+		if st.detectedImagePreview {
+			filters = append(filters,
+				key.Filter{Name: key.NameLeftArrow},
+				key.Filter{Name: key.NameRightArrow},
+				key.Filter{Name: "+", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "+", Required: key.ModShortcut, Optional: anyMods},
+				key.Filter{Name: "=", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "=", Required: key.ModShortcut, Optional: anyMods},
+				key.Filter{Name: "-", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "-", Required: key.ModShortcut, Optional: anyMods},
+				key.Filter{Name: "_", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "_", Required: key.ModShortcut, Optional: anyMods},
+			)
+		}
 	}
 	for {
 		ev, ok := gtx.Event(filters...)
@@ -275,6 +313,16 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 		}
 		if ke.Name == key.NameF3 && ke.State == key.Release {
 			ui.clearFileViewHotkeyHold()
+			continue
+		}
+		if factor, ok := viewerImageZoomFactorForKey(ke.Name, ke.Modifiers); ok {
+			if ke.State != key.Press || !st.detectedImagePreview {
+				continue
+			}
+			if st.imageView.zoomBy(st.imagePreview, factor) {
+				st.markUserBrowsing(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
+			}
 			continue
 		}
 		if viewerScrollKeySupported(ke.Name) {
@@ -554,6 +602,8 @@ func (ui *UI) clearFileViewHotkeyHold() {
 }
 
 func (ui *UI) clearFileViewerScrollHold() {
+	ui.stopFileViewerScrollRepeat(key.NameLeftArrow)
+	ui.stopFileViewerScrollRepeat(key.NameRightArrow)
 	ui.stopFileViewerScrollRepeat(key.NameUpArrow)
 	ui.stopFileViewerScrollRepeat(key.NameDownArrow)
 	ui.stopFileViewerScrollRepeat(key.NamePageUp)
@@ -562,7 +612,7 @@ func (ui *UI) clearFileViewerScrollHold() {
 
 func viewerScrollKeySupported(name key.Name) bool {
 	switch name {
-	case key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown, key.NameHome, key.NameEnd:
+	case key.NameLeftArrow, key.NameRightArrow, key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown, key.NameHome, key.NameEnd:
 		return true
 	default:
 		return false
@@ -571,7 +621,7 @@ func viewerScrollKeySupported(name key.Name) bool {
 
 func viewerScrollRepeatableKey(name key.Name) bool {
 	switch name {
-	case key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown:
+	case key.NameLeftArrow, key.NameRightArrow, key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown:
 		return true
 	default:
 		return false
@@ -585,6 +635,27 @@ func (ui *UI) performFileViewerKeyScroll(now time.Time, name key.Name) bool {
 	}
 	st.markUserBrowsing(now)
 	changed := false
+	if st.detectedImagePreview {
+		switch name {
+		case key.NameLeftArrow:
+			changed = st.imageView.scrollByKeyStep(st.imagePreview, -1, 0)
+		case key.NameRightArrow:
+			changed = st.imageView.scrollByKeyStep(st.imagePreview, 1, 0)
+		case key.NameUpArrow:
+			changed = st.imageView.scrollByKeyStep(st.imagePreview, 0, -1)
+		case key.NameDownArrow:
+			changed = st.imageView.scrollByKeyStep(st.imagePreview, 0, 1)
+		case key.NamePageUp:
+			changed = st.imageView.scrollByPage(st.imagePreview, -1)
+		case key.NamePageDown:
+			changed = st.imageView.scrollByPage(st.imagePreview, 1)
+		case key.NameHome:
+			changed = st.imageView.scrollToOrigin()
+		case key.NameEnd:
+			changed = st.imageView.scrollToEnd(st.imagePreview)
+		}
+		return changed
+	}
 	switch name {
 	case key.NameUpArrow:
 		changed = viewerScrollByLines(st, -1)
@@ -747,6 +818,11 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 			err:           err,
 			encoding:      info.encoding,
 			encodingBOM:   info.encodingBOM,
+			imagePreview:  info.imagePreview,
+			image:         info.image,
+			imageData:     info.imageData,
+			imageFormat:   info.imageFormat,
+			imageSize:     info.imageSize,
 			binaryPreview: info.binaryPreview,
 			lineEnding:    info.lineEnding,
 			binaryData:    info.binaryData,
@@ -799,16 +875,30 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		st.status = st.pendingStatus
 		st.detectedEncoding = st.pendingEncoding
 		st.detectedEncodingBOM = st.pendingEncodingBOM
+		st.detectedImagePreview = st.pendingImagePreview
+		st.imagePreview = st.pendingImage
+		st.imagePreviewData = st.pendingImageData
+		st.imagePreviewFormat = st.pendingImageFormat
+		st.imagePreviewSize = st.pendingImageSize
 		st.detectedBinaryPreview = st.pendingBinaryPreview
 		st.detectedLineEnding = st.pendingLineEnding
 		st.binaryPreviewData = st.pendingBinaryData
-		if st.detectedBinaryPreview {
+		if st.detectedImagePreview {
+			st.imageView.reset()
+			st.closeEncodingMenu()
+			st.binaryPreviewCols = 0
+		} else if st.detectedBinaryPreview {
 			st.binaryPreviewCols = viewerBinaryPreviewBytes
 		} else {
 			st.binaryPreviewCols = 0
 		}
 		st.pendingEncoding = ""
 		st.pendingEncodingBOM = false
+		st.pendingImagePreview = false
+		st.pendingImage = nil
+		st.pendingImageData = nil
+		st.pendingImageFormat = ""
+		st.pendingImageSize = image.Point{}
 		st.pendingBinaryPreview = false
 		st.pendingLineEnding = ""
 		st.pendingBinaryData = nil
@@ -816,6 +906,9 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.status = "ready"
 		}
 		applyFileViewerContentResult(st, st.pendingContent)
+		if !viewerSupportsFind(st) && st.find.open {
+			ui.closeFileViewerFind()
+		}
 		ui.refreshFileViewerFind(gtx.Now, true)
 		st.markUpdated(gtx.Now)
 		st.captureWatchState()
@@ -839,7 +932,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 					gtx.Execute(op.InvalidateCmd{})
 					continue
 				}
-				if viewerUpdateAction(st, res.content, false, nil) != viewerUpdateSame {
+				if viewerUpdateAction(st, res.content, false, nil, false, nil) != viewerUpdateSame {
 					applyFileViewerContentResult(st, res.content)
 					ui.refreshFileViewerFind(gtx.Now, true)
 					st.markUpdated(gtx.Now)
@@ -854,7 +947,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			if st.status == "" {
 				st.status = "ready"
 			}
-			updateAction := viewerUpdateAction(st, res.content, res.binaryPreview, res.binaryData)
+			updateAction := viewerUpdateAction(st, res.content, res.imagePreview, res.imageData, res.binaryPreview, res.binaryData)
 			contentToApply := res.content
 			if updateAction == viewerUpdateSame && res.binaryPreview && st.detectedBinaryPreview {
 				contentToApply = st.content
@@ -866,6 +959,11 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 				st.pendingErr = st.err
 				st.pendingEncoding = res.encoding
 				st.pendingEncodingBOM = res.encodingBOM
+				st.pendingImagePreview = res.imagePreview
+				st.pendingImage = res.image
+				st.pendingImageData = append([]byte(nil), res.imageData...)
+				st.pendingImageFormat = res.imageFormat
+				st.pendingImageSize = res.imageSize
 				st.pendingBinaryPreview = res.binaryPreview
 				st.pendingLineEnding = res.lineEnding
 				st.pendingBinaryData = append([]byte(nil), res.binaryData...)
@@ -877,15 +975,31 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.pendingUpdate = false
 			st.pendingEncoding = ""
 			st.pendingEncodingBOM = false
+			st.pendingImagePreview = false
+			st.pendingImage = nil
+			st.pendingImageData = nil
+			st.pendingImageFormat = ""
+			st.pendingImageSize = image.Point{}
 			st.pendingBinaryPreview = false
 			st.pendingLineEnding = ""
 			st.pendingBinaryData = nil
 			st.detectedEncoding = res.encoding
 			st.detectedEncodingBOM = res.encodingBOM
+			st.detectedImagePreview = res.imagePreview
+			st.imagePreview = res.image
+			st.imagePreviewData = append([]byte(nil), res.imageData...)
+			st.imagePreviewFormat = res.imageFormat
+			st.imagePreviewSize = res.imageSize
 			st.detectedBinaryPreview = res.binaryPreview
 			st.detectedLineEnding = res.lineEnding
 			st.binaryPreviewData = append([]byte(nil), res.binaryData...)
-			if st.detectedBinaryPreview {
+			if st.detectedImagePreview {
+				if updateAction != viewerUpdateSame {
+					st.imageView.reset()
+				}
+				st.closeEncodingMenu()
+				st.binaryPreviewCols = 0
+			} else if st.detectedBinaryPreview {
 				if updateAction != viewerUpdateSame {
 					st.binaryPreviewCols = viewerBinaryPreviewBytes
 				}
@@ -893,6 +1007,9 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 				st.binaryPreviewCols = 0
 			}
 			applyFileViewerContentResult(st, contentToApply)
+			if !viewerSupportsFind(st) && st.find.open {
+				ui.closeFileViewerFind()
+			}
 			ui.refreshFileViewerFind(gtx.Now, true)
 			st.markUpdated(gtx.Now)
 			st.captureWatchState()
@@ -980,12 +1097,18 @@ const (
 	viewerUpdateReplace
 )
 
-func viewerUpdateAction(st *fileViewerState, next string, nextBinaryPreview bool, nextBinaryData []byte) int {
+func viewerUpdateAction(st *fileViewerState, next string, nextImagePreview bool, nextImageData []byte, nextBinaryPreview bool, nextBinaryData []byte) int {
 	if st == nil {
 		return viewerUpdateReplace
 	}
-	if nextBinaryPreview {
-		if st.detectedBinaryPreview && bytes.Equal(st.binaryPreviewData, nextBinaryData) {
+	if st.detectedImagePreview || nextImagePreview {
+		if st.detectedImagePreview && nextImagePreview && bytes.Equal(st.imagePreviewData, nextImageData) {
+			return viewerUpdateSame
+		}
+		return viewerUpdateReplace
+	}
+	if st.detectedBinaryPreview || nextBinaryPreview {
+		if st.detectedBinaryPreview && nextBinaryPreview && bytes.Equal(st.binaryPreviewData, nextBinaryData) {
 			return viewerUpdateSame
 		}
 		return viewerUpdateReplace
@@ -1963,6 +2086,12 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 	if err != nil {
 		return "", "", err.Error(), viewerReadInfo{}
 	}
+	if img, ok := decodeViewerImagePreview(path, data); ok {
+		if size >= 0 {
+			return "", fmt.Sprintf("%s: %d bytes", prefix, size), "", img
+		}
+		return "", fmt.Sprintf("%s: %d bytes", prefix, len(data)), "", img
+	}
 	content, info := decodeViewerText(path, data, encoding)
 	if !info.binaryPreview {
 		info.lineEnding = detectViewerLineEnding(content)
@@ -1975,6 +2104,27 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 		return content, fmt.Sprintf("%s: %d bytes", prefix, size), "", info
 	}
 	return content, fmt.Sprintf("%s: %d bytes", prefix, len(data)), "", info
+}
+
+func decodeViewerImagePreview(path string, data []byte) (viewerReadInfo, bool) {
+	if !viewerLooksPreviewableImage(path, data) {
+		return viewerReadInfo{}, false
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return viewerReadInfo{}, false
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return viewerReadInfo{}, false
+	}
+	return viewerReadInfo{
+		imagePreview: true,
+		image:        img,
+		imageData:    append([]byte(nil), data...),
+		imageFormat:  normalizeViewerImageFormat(format),
+		imageSize:    image.Pt(cfg.Width, cfg.Height),
+	}, true
 }
 
 func readViewerCommand(ctx context.Context, path string, cfg fm.ViewerConfig, maxBytes int, started time.Time, remote *paneSSHSession, onProgress func(string, string)) (string, string, string) {
@@ -2535,6 +2685,62 @@ func viewerMediaTypeLooksText(mediaType string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func viewerLooksPreviewableImage(path string, data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	return viewerMediaTypeLooksPreviewableImage(viewerBinaryMediaType(path, data))
+}
+
+func viewerMediaTypeLooksPreviewableImage(mediaType string) bool {
+	switch viewerTrimMediaType(mediaType) {
+	case "image/png", "image/jpeg", "image/gif":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeViewerImageFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "jpg", "jpeg":
+		return "jpeg"
+	case "png":
+		return "png"
+	case "gif":
+		return "gif"
+	default:
+		return strings.ToLower(strings.TrimSpace(format))
+	}
+}
+
+func viewerSupportsFind(st *fileViewerState) bool {
+	if st == nil {
+		return false
+	}
+	if st.mode == "hex" {
+		return true
+	}
+	if st.mode == "command" {
+		return true
+	}
+	return !st.detectedImagePreview
+}
+
+func viewerImageZoomFactorForKey(name key.Name, mods key.Modifiers) (float32, bool) {
+	if !mods.Contain(key.ModCtrl) && !mods.Contain(key.ModShortcut) {
+		return 0, false
+	}
+	switch name {
+	case "+", "=":
+		return fileViewerImageZoomFactor, true
+	case "-", "_":
+		return 1 / fileViewerImageZoomFactor, true
+	default:
+		return 0, false
 	}
 }
 

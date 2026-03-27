@@ -117,6 +117,23 @@ func TestFileViewerRootSecondaryPressUpdatesMenuAnchor(t *testing.T) {
 	}
 }
 
+func TestOpenFileViewerFindSkipsImagePreview(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	now := time.Date(2026, time.March, 27, 14, 0, 0, 0, time.UTC)
+	st := &fileViewerState{
+		mode:                 "file",
+		detectedImagePreview: true,
+	}
+	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	ui.fileViewer = st
+
+	ui.openFileViewerFind(now)
+
+	if st.find.open {
+		t.Fatal("image preview should not open text find UI")
+	}
+}
+
 func TestFileViewerContentPressClosesEncodingMenuOutsidePopup(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	st := &fileViewerState{

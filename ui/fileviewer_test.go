@@ -6,6 +6,11 @@ package ui
 import (
 	"bytes"
 	"encoding/binary"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +21,44 @@ import (
 
 	"hexone/fm"
 )
+
+func testViewerPreviewImage() image.Image {
+	img := image.NewNRGBA(image.Rect(0, 0, 3, 2))
+	img.Set(0, 0, color.NRGBA{R: 0xCC, G: 0x33, B: 0x22, A: 0xFF})
+	img.Set(1, 0, color.NRGBA{R: 0x22, G: 0x99, B: 0x44, A: 0xFF})
+	img.Set(2, 0, color.NRGBA{R: 0x11, G: 0x55, B: 0xCC, A: 0xFF})
+	img.Set(0, 1, color.NRGBA{R: 0xF0, G: 0xE0, B: 0x60, A: 0xFF})
+	img.Set(1, 1, color.NRGBA{R: 0x44, G: 0x44, B: 0x44, A: 0xFF})
+	img.Set(2, 1, color.NRGBA{R: 0xEE, G: 0xEE, B: 0xEE, A: 0xFF})
+	return img
+}
+
+func encodeViewerPreviewPNG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, testViewerPreviewImage()); err != nil {
+		t.Fatalf("png.Encode: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func encodeViewerPreviewJPEG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, testViewerPreviewImage(), &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("jpeg.Encode: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func encodeViewerPreviewGIF(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := gif.Encode(&buf, testViewerPreviewImage(), nil); err != nil {
+		t.Fatalf("gif.Encode: %v", err)
+	}
+	return buf.Bytes()
+}
 
 func encodeViewerUTF16Test(text string, order binary.ByteOrder) []byte {
 	units := utf16.Encode([]rune(text))
@@ -291,6 +334,78 @@ func TestReadViewerFileAutoUsesBinaryPreview(t *testing.T) {
 	}
 }
 
+func TestReadViewerFileAutoUsesPNGImagePreview(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.png")
+	data := encodeViewerPreviewPNG(t)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	content, _, errText, info := readViewerFile(path, fm.ViewerFileEncodingAuto, 1<<20, time.Time{}, nil)
+
+	if errText != "" {
+		t.Fatalf("readViewerFile err=%q", errText)
+	}
+	if content != "" {
+		t.Fatalf("content=%q want empty image payload", content)
+	}
+	if !info.imagePreview {
+		t.Fatal("expected PNG image preview info")
+	}
+	if info.image == nil {
+		t.Fatal("expected decoded PNG image")
+	}
+	if info.imageFormat != "png" {
+		t.Fatalf("imageFormat=%q want %q", info.imageFormat, "png")
+	}
+	if info.imageSize != image.Pt(3, 2) {
+		t.Fatalf("imageSize=%v want %v", info.imageSize, image.Pt(3, 2))
+	}
+	if info.binaryPreview {
+		t.Fatal("image preview should not be marked as binary preview")
+	}
+}
+
+func TestDecodeViewerImagePreviewUsesJPEG(t *testing.T) {
+	info, ok := decodeViewerImagePreview("sample.jpg", encodeViewerPreviewJPEG(t))
+
+	if !ok {
+		t.Fatal("expected JPEG preview decode")
+	}
+	if !info.imagePreview {
+		t.Fatal("expected JPEG image preview info")
+	}
+	if info.image == nil {
+		t.Fatal("expected decoded JPEG image")
+	}
+	if info.imageFormat != "jpeg" {
+		t.Fatalf("imageFormat=%q want %q", info.imageFormat, "jpeg")
+	}
+	if info.imageSize != image.Pt(3, 2) {
+		t.Fatalf("imageSize=%v want %v", info.imageSize, image.Pt(3, 2))
+	}
+}
+
+func TestDecodeViewerImagePreviewUsesGIF(t *testing.T) {
+	info, ok := decodeViewerImagePreview("sample.gif", encodeViewerPreviewGIF(t))
+
+	if !ok {
+		t.Fatal("expected GIF preview decode")
+	}
+	if !info.imagePreview {
+		t.Fatal("expected GIF image preview info")
+	}
+	if info.image == nil {
+		t.Fatal("expected decoded GIF image")
+	}
+	if info.imageFormat != "gif" {
+		t.Fatalf("imageFormat=%q want %q", info.imageFormat, "gif")
+	}
+	if info.imageSize != image.Pt(3, 2) {
+		t.Fatalf("imageSize=%v want %v", info.imageSize, image.Pt(3, 2))
+	}
+}
+
 func TestReflowFileViewerBinaryPreviewUsesViewportCols(t *testing.T) {
 	data := bytes.Repeat([]byte{'A'}, 11)
 	st := &fileViewerState{
@@ -320,7 +435,21 @@ func TestViewerUpdateActionTreatsSameBinaryPreviewBytesAsSame(t *testing.T) {
 		binaryPreviewCols:     5,
 	}
 
-	got := viewerUpdateAction(st, formatViewerBinaryPreview(data), true, data)
+	got := viewerUpdateAction(st, formatViewerBinaryPreview(data), false, nil, true, data)
+
+	if got != viewerUpdateSame {
+		t.Fatalf("viewerUpdateAction=%d want %d", got, viewerUpdateSame)
+	}
+}
+
+func TestViewerUpdateActionTreatsSameImageBytesAsSame(t *testing.T) {
+	data := encodeViewerPreviewPNG(t)
+	st := &fileViewerState{
+		detectedImagePreview: true,
+		imagePreviewData:     append([]byte(nil), data...),
+	}
+
+	got := viewerUpdateAction(st, "", true, data, false, nil)
 
 	if got != viewerUpdateSame {
 		t.Fatalf("viewerUpdateAction=%d want %d", got, viewerUpdateSame)
@@ -356,6 +485,17 @@ func TestViewerEncodingStatusLabelUsesBinaryPreviewLabel(t *testing.T) {
 
 	if got := viewerEncodingStatusLabel(st); got != "Binary" {
 		t.Fatalf("viewerEncodingStatusLabel=%q want %q", got, "Binary")
+	}
+}
+
+func TestViewerEncodingStatusLabelUsesImageFormatLabel(t *testing.T) {
+	st := &fileViewerState{
+		detectedImagePreview: true,
+		imagePreviewFormat:   "png",
+	}
+
+	if got := viewerEncodingStatusLabel(st); got != "PNG" {
+		t.Fatalf("viewerEncodingStatusLabel=%q want %q", got, "PNG")
 	}
 }
 
