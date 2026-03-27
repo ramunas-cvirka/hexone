@@ -45,8 +45,9 @@ type Column struct {
 }
 
 type CellStyle struct {
-	Color  color.NRGBA
-	Weight font.Weight
+	Color         color.NRGBA
+	Weight        font.Weight
+	PreserveColor bool
 }
 
 type Mode uint8
@@ -76,8 +77,9 @@ const (
 )
 
 type LeadingIcon struct {
-	Kind  IconKind
-	Color color.NRGBA
+	Kind   IconKind
+	Color  color.NRGBA
+	Widget *widget.Icon
 }
 
 type LeadingIconModel interface {
@@ -513,7 +515,11 @@ func layoutCellLabelWithIcon(gtx layout.Context, th *material.Theme, face font.T
 	}
 
 	if reserve > 0 {
-		if ic := leadingWidgetIcon(icon.Kind); ic != nil {
+		ic := icon.Widget
+		if ic == nil {
+			ic = leadingWidgetIcon(icon.Kind)
+		}
+		if ic != nil {
 			iconGtx := gtx
 			iconGtx.Constraints = layout.Exact(image.Pt(iconPx, iconPx))
 			y := (gtx.Constraints.Max.Y - iconPx) / 2
@@ -1085,6 +1091,13 @@ func (t *Table) rowColors(row int, hovered, marked bool) (color.NRGBA, *color.NR
 	return color.NRGBA{}, nil
 }
 
+func applyRowForeground(st CellStyle, fg *color.NRGBA) CellStyle {
+	if fg != nil && !st.PreserveColor {
+		st.Color = *fg
+	}
+	return st
+}
+
 func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, rowHpx int) layout.Dimensions {
 	face := t.textTypeface(th)
 	return t.List.Layout(gtx, n, func(gtx layout.Context, row int) layout.Dimensions {
@@ -1170,9 +1183,7 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 					if awareOK {
 						txt, st = aware.CellWithWidth(row, col, contentW)
 					}
-					if fg != nil {
-						st.Color = *fg
-					}
+					st = applyRowForeground(st, fg)
 
 					align := text.Start
 					switch c.Align {
@@ -1417,9 +1428,7 @@ func (t *Table) layoutBriefRow(th *material.Theme, gtx layout.Context, m Model, 
 			if aware, ok := m.(WidthAwareModel); ok {
 				txt, st = aware.CellWithWidth(row, 0, contentW)
 			}
-			if fg != nil {
-				st.Color = *fg
-			}
+			st = applyRowForeground(st, fg)
 
 			cellGtx := gtx
 			cellGtx.Constraints = layout.Exact(image.Pt(maxW, cellH))

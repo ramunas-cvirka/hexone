@@ -5,6 +5,8 @@ package ui
 
 import (
 	"image"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 	"unsafe"
@@ -13,6 +15,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -111,6 +114,23 @@ func TestFileViewerRootSecondaryPressUpdatesMenuAnchor(t *testing.T) {
 
 	if got := st.menuPos; got != image.Pt(50, 70) {
 		t.Fatalf("menuPos=%v want %v", got, image.Pt(50, 70))
+	}
+}
+
+func TestOpenFileViewerFindSkipsImagePreview(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	now := time.Date(2026, time.March, 27, 14, 0, 0, 0, time.UTC)
+	st := &fileViewerState{
+		mode:                 "file",
+		detectedImagePreview: true,
+	}
+	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	ui.fileViewer = st
+
+	ui.openFileViewerFind(now)
+
+	if st.find.open {
+		t.Fatal("image preview should not open text find UI")
 	}
 }
 
@@ -281,6 +301,72 @@ func TestFileViewerHeaderStatusTextKeepsStreamingForInfiniteCommand(t *testing.T
 	})
 	if got != "streaming" {
 		t.Fatalf("status=%q want %q", got, "streaming")
+	}
+}
+
+func TestFileViewerFindFocusedEnterStepsNextMatch(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Date(2026, time.March, 21, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "viewer.txt")
+	if err := os.WriteFile(path, []byte("alpha beta alpha"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	st := &fileViewerState{
+		path:     path,
+		name:     "viewer.txt",
+		mode:     "file",
+		content:  "alpha beta alpha",
+		status:   "file: 16 bytes",
+		resultCh: make(chan fileViewerResult, 1),
+	}
+	st.find.editor.SingleLine = true
+	st.find.editor.Submit = false
+	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	st.captureWatchState()
+	ui.fileViewer = st
+	st.find.editor.SetText("alpha")
+	ui.openFileViewerFind(now)
+
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(1024, 720),
+		},
+		Now: now,
+	}
+	frame := func(now time.Time) {
+		gtx.Now = now
+		gtx.Ops.Reset()
+		ui.layoutFileViewer(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	frame(now.Add(time.Millisecond))
+	frame(now.Add(2 * time.Millisecond))
+	if !gtx.Focused(&st.find.editor) {
+		t.Fatal("find editor did not gain focus")
+	}
+	if st.find.index != 0 {
+		t.Fatalf("initial find index=%d want 0", st.find.index)
+	}
+
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+
+	if got := st.find.editor.Text(); got != "alpha" {
+		t.Fatalf("find text=%q want %q", got, "alpha")
+	}
+	if st.find.index != 1 {
+		t.Fatalf("find index after Enter=%d want 1", st.find.index)
+	}
+	if st.find.status != "2/2" {
+		t.Fatalf("find status after Enter=%q want %q", st.find.status, "2/2")
 	}
 }
 

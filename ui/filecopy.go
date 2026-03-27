@@ -96,6 +96,7 @@ type segmentedAnimState struct {
 	hoverPrev string
 	hoverAt   time.Time
 	pulseKey  string
+	pulseSet  bool
 	pulseAt   time.Time
 }
 
@@ -138,20 +139,22 @@ func (st *segmentedAnimState) hoverFill(now time.Time, key string) (float32, boo
 }
 
 func (st *segmentedAnimState) setPulse(key string, now time.Time) {
-	if st == nil || key == "" {
+	if st == nil {
 		return
 	}
 	st.pulseKey = key
+	st.pulseSet = true
 	st.pulseAt = now
 }
 
 func (st *segmentedAnimState) pulseFill(now time.Time, key string) (float32, bool) {
-	if st == nil || key == "" || st.pulseKey != key || st.pulseAt.IsZero() {
+	if st == nil || !st.pulseSet || st.pulseKey != key || st.pulseAt.IsZero() {
 		return 0, false
 	}
 	elapsed := now.Sub(st.pulseAt)
 	if elapsed >= toolbarClickDur {
 		st.pulseKey = ""
+		st.pulseSet = false
 		st.pulseAt = time.Time{}
 		return 0, false
 	}
@@ -491,8 +494,17 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 	st.dstInfo = dstInfo
 	st.dstPath = effectiveDst
 
+	_, entriesTotal, bytesTotal, err := collectCopyTransferTotals(st.srcEndpoint, st.srcPath)
+	if err != nil {
+		st.lastErr = err.Error()
+		return
+	}
+
 	st.lastErr = ""
-	st.progress = filesys.CopyProgress{}
+	st.progress = filesys.CopyProgress{
+		EntriesTotal: entriesTotal,
+		BytesTotal:   bytesTotal,
+	}
 	st.running = true
 
 	progressCh := make(chan filesys.CopyProgress, 32)
@@ -600,6 +612,7 @@ func (ui *UI) finishFileCopy(now time.Time) {
 	if dstPaneIdx != srcPaneIdx {
 		reloadPane(dstPaneIdx)
 	}
+	ui.setActiveFilePane(srcPaneIdx)
 	if !noticeShown && noticeText != "" && noticePaneIdx >= 0 && noticePaneIdx < len(ui.filePanes) && ui.filePanes[noticePaneIdx] != nil {
 		ui.filePanes[noticePaneIdx].setNoticeFor(noticeText, now, noticeDur)
 	}
@@ -617,7 +630,15 @@ func fileCopySuccessNotice(st *fileCopyState) (string, time.Duration) {
 	if count == 1 {
 		label = "item"
 	}
-	return fmt.Sprintf("copied %d %s", count, label), fileCopySuccessNoticeDur
+	msg := fmt.Sprintf("copied %d %s", count, label)
+	if nestedCount := st.progress.EntriesTotal - count; nestedCount > 0 {
+		nestedLabel := "nested items"
+		if nestedCount == 1 {
+			nestedLabel = "nested item"
+		}
+		msg = fmt.Sprintf("%s (%d %s)", msg, nestedCount, nestedLabel)
+	}
+	return msg, fileCopySuccessNoticeDur
 }
 
 func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layout.Dimensions {

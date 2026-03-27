@@ -73,3 +73,23 @@ func TestGlobalShortcutOpensSettings(t *testing.T) {
 		t.Fatal("ctrl+s should open settings")
 	}
 }
+
+func TestGlobalShortcutLeavesViewerCtrlFForViewer(t *testing.T) {
+	ui := &UI{
+		Tabs: widget.Enum{Value: "tab0"},
+		fileViewer: &fileViewerState{
+			resultCh: make(chan fileViewerResult, 1),
+		},
+	}
+
+	gtx, router := testKeyContext()
+	router.Event(key.Filter{Name: "F", Required: key.ModCtrl})
+	router.Queue(key.Event{Name: "F", Modifiers: key.ModCtrl, State: key.Press})
+
+	ui.handleGlobalFunctionKeys(gtx)
+	ui.handleFileViewerKeys(gtx)
+
+	if !ui.fileViewer.find.open {
+		t.Fatal("ctrl+f should reach the viewer when it is open")
+	}
+}

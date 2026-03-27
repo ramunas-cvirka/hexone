@@ -12,7 +12,12 @@ import (
 	"hexone/filesys"
 	"hexone/fm"
 	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
+	"mime"
+	"net/http"
 	"os"
 	"os/exec"
 	pathpkg "path"
@@ -27,26 +32,30 @@ import (
 	"unicode/utf8"
 
 	"gioui.org/io/clipboard"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/text/encoding/charmap"
 )
 
 const (
-	viewerDefaultMaxLoadBytes = 1 << 20
-	viewerHexCopyMaxBytes     = 1 << 20
-	viewerCommandExecTimeout  = 15 * time.Second
-	viewerCommandStreamTick   = 180 * time.Millisecond
-	viewerDefaultRefreshMs    = 1500
-	viewerMinimumRefreshMs    = 200
-	viewerDefaultAutoRefresh  = true
-	viewerDefaultMaxReadMB    = 1
-	viewerDefaultWordRegex    = `[a-zA-Z0-9]+`
-	viewerCommandHistoryLimit = 80
+	viewerDefaultMaxLoadBytes  = 1 << 20
+	viewerHexCopyMaxBytes      = 1 << 20
+	viewerBinaryPreviewBytes   = 64
+	viewerBinaryPreviewMaxCols = viewerBinaryPreviewBytes
+	viewerCommandExecTimeout   = 15 * time.Second
+	viewerCommandStreamTick    = 180 * time.Millisecond
+	viewerDefaultRefreshMs     = 1500
+	viewerMinimumRefreshMs     = 200
+	viewerDefaultAutoRefresh   = true
+	viewerDefaultMaxReadMB     = 1
+	viewerDefaultWordRegex     = `[a-zA-Z0-9]+`
+	viewerCommandHistoryLimit  = 80
 )
 
 const (
@@ -93,55 +102,72 @@ type fileViewerState struct {
 	fileEncoding         string
 	encodingMenuOpen     bool
 
-	content             string
-	status              string
-	err                 string
-	command             string
-	detectedEncoding    string
-	detectedEncodingBOM bool
-	detectedLineEnding  string
-	commandInfinite     bool
-	autoRefresh         bool
-	wordSelectRE        *regexp.Regexp
-	wordSelectExpr      string
-	updatedAt           time.Time
-	tabAnimAt           time.Time
-	stream              streamOutputView
-	hex                 *hexViewerState
-	historyOpen         bool
+	content               string
+	status                string
+	err                   string
+	command               string
+	detectedEncoding      string
+	detectedEncodingBOM   bool
+	detectedImagePreview  bool
+	imagePreview          image.Image
+	imagePreviewData      []byte
+	imagePreviewFormat    string
+	imagePreviewSize      image.Point
+	detectedBinaryPreview bool
+	detectedLineEnding    string
+	binaryPreviewData     []byte
+	binaryPreviewCols     int
+	commandInfinite       bool
+	autoRefresh           bool
+	wordSelectRE          *regexp.Regexp
+	wordSelectExpr        string
+	updatedAt             time.Time
+	tabAnimAt             time.Time
+	stream                streamOutputView
+	imageView             imagePreviewView
+	hex                   *hexViewerState
+	find                  fileViewerFindState
+	historyOpen           bool
 
 	loading    bool
 	seq        int
 	loadCancel context.CancelFunc
 
-	contentPointerTag  fileViewerEventTag
-	rootPointerTag     fileViewerEventTag
-	commandAreaTag     fileViewerEventTag
-	commandAreaPress   map[pointer.ID]struct{}
-	userBrowseUntil    time.Time
-	pendingUpdate      bool
-	pendingContent     string
-	pendingStatus      string
-	pendingErr         string
-	pendingEncoding    string
-	pendingEncodingBOM bool
-	pendingLineEnding  string
-	wrapEnabled        bool
-	menuOpen           bool
-	menuPos            image.Point
-	menuRect           image.Rectangle
-	menuOpenedAt       time.Time
-	menuHoverID        string
-	menuPointerTag     fileViewerEventTag
-	scrollCarry        float32
-	scrollbarTrack     image.Rectangle
-	scrollbarThumb     image.Rectangle
-	scrollbarDragging  bool
-	scrollbarDragID    pointer.ID
-	scrollbarHover     bool
-	scrollbarVisible   bool
-	scrollbarLines     int
-	scrollbarVisibleN  int
+	contentPointerTag    fileViewerEventTag
+	rootPointerTag       fileViewerEventTag
+	commandAreaTag       fileViewerEventTag
+	commandAreaPress     map[pointer.ID]struct{}
+	userBrowseUntil      time.Time
+	pendingUpdate        bool
+	pendingContent       string
+	pendingStatus        string
+	pendingErr           string
+	pendingEncoding      string
+	pendingEncodingBOM   bool
+	pendingImagePreview  bool
+	pendingImage         image.Image
+	pendingImageData     []byte
+	pendingImageFormat   string
+	pendingImageSize     image.Point
+	pendingBinaryPreview bool
+	pendingLineEnding    string
+	pendingBinaryData    []byte
+	wrapEnabled          bool
+	menuOpen             bool
+	menuPos              image.Point
+	menuRect             image.Rectangle
+	menuOpenedAt         time.Time
+	menuHoverID          string
+	menuPointerTag       fileViewerEventTag
+	scrollCarry          float32
+	scrollbarTrack       image.Rectangle
+	scrollbarThumb       image.Rectangle
+	scrollbarDragging    bool
+	scrollbarDragID      pointer.ID
+	scrollbarHover       bool
+	scrollbarVisible     bool
+	scrollbarLines       int
+	scrollbarVisibleN    int
 
 	nextWatchCheck   time.Time
 	watchExists      bool
@@ -157,21 +183,35 @@ type fileViewerState struct {
 }
 
 type fileViewerResult struct {
-	seq         int
-	content     string
-	status      string
-	err         string
-	encoding    string
-	encodingBOM bool
-	lineEnding  string
-	partial     bool
-	final       bool
+	seq           int
+	content       string
+	status        string
+	err           string
+	encoding      string
+	encodingBOM   bool
+	imagePreview  bool
+	image         image.Image
+	imageData     []byte
+	imageFormat   string
+	imageSize     image.Point
+	binaryPreview bool
+	lineEnding    string
+	binaryData    []byte
+	partial       bool
+	final         bool
 }
 
 type viewerReadInfo struct {
-	encoding    string
-	encodingBOM bool
-	lineEnding  string
+	encoding      string
+	encodingBOM   bool
+	imagePreview  bool
+	image         image.Image
+	imageData     []byte
+	imageFormat   string
+	imageSize     image.Point
+	binaryPreview bool
+	lineEnding    string
+	binaryData    []byte
 }
 
 func (st *fileViewerState) openContextMenu(pos image.Point, now time.Time) {
@@ -208,9 +248,28 @@ func (st *fileViewerState) closeEncodingMenu() {
 
 func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 	anyMods := ^key.Modifiers(0)
-	for {
-		ev, ok := gtx.Event(
-			key.Filter{Name: key.NameEscape},
+	st := ui.fileViewer
+	if st == nil {
+		return
+	}
+	findFocused := st.find.open && gtx.Focused(&st.find.editor)
+	editorFocused := st.commandEditOn || findFocused
+	filters := []event.Filter{
+		key.Filter{Name: key.NameEscape},
+		key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
+		key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
+	}
+	if st.find.open {
+		filters = append(filters,
+			key.Filter{Focus: &st.find.editor, Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Focus: &st.find.editor, Name: key.NameReturn, Optional: anyMods},
+			key.Filter{Focus: &st.find.editor, Name: key.NameTab, Optional: anyMods},
+		)
+	}
+	if !editorFocused {
+		filters = append(filters,
 			key.Filter{Name: key.NameF3},
 			key.Filter{Name: key.NameTab, Optional: anyMods},
 			key.Filter{Name: key.NameUpArrow},
@@ -228,6 +287,23 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			key.Filter{Name: "a", Required: key.ModShortcut, Optional: anyMods},
 			key.Filter{Name: "A", Required: key.ModShortcut, Optional: anyMods},
 		)
+		if st.detectedImagePreview {
+			filters = append(filters,
+				key.Filter{Name: key.NameLeftArrow},
+				key.Filter{Name: key.NameRightArrow},
+				key.Filter{Name: "+", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "+", Required: key.ModShortcut, Optional: anyMods},
+				key.Filter{Name: "=", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "=", Required: key.ModShortcut, Optional: anyMods},
+				key.Filter{Name: "-", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "-", Required: key.ModShortcut, Optional: anyMods},
+				key.Filter{Name: "_", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "_", Required: key.ModShortcut, Optional: anyMods},
+			)
+		}
+	}
+	for {
+		ev, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}
@@ -237,6 +313,16 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 		}
 		if ke.Name == key.NameF3 && ke.State == key.Release {
 			ui.clearFileViewHotkeyHold()
+			continue
+		}
+		if factor, ok := viewerImageZoomFactorForKey(ke.Name, ke.Modifiers); ok {
+			if ke.State != key.Press || !st.detectedImagePreview {
+				continue
+			}
+			if st.imageView.zoomBy(st.imagePreview, factor) {
+				st.markUserBrowsing(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
+			}
 			continue
 		}
 		if viewerScrollKeySupported(ke.Name) {
@@ -274,8 +360,24 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			continue
 		}
 		switch ke.Name {
+		case "f", "F":
+			if ke.Modifiers != key.ModCtrl && ke.Modifiers != key.ModShortcut {
+				continue
+			}
+			ui.openFileViewerFind(gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
 		case key.NameEscape:
-			if st := ui.fileViewer; st != nil && st.commandEditOn {
+			if st.find.open {
+				if st.find.sourceMenuOpen {
+					st.find.closeSourceMenu()
+					gtx.Execute(op.InvalidateCmd{})
+					continue
+				}
+				ui.closeFileViewerFind()
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
+			if st.commandEditOn {
 				ui.cancelViewerCommandEdit()
 				gtx.Execute(op.InvalidateCmd{})
 				continue
@@ -283,11 +385,21 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			ui.closeFileViewer()
 		case key.NameF3:
 			ui.startFileViewerLoad(gtx.Now)
-		case key.NameTab:
-			st := ui.fileViewer
-			if st == nil || st.commandEditOn {
+		case key.NameEnter, key.NameReturn:
+			if !st.find.open || !findFocused {
 				continue
 			}
+			switch ke.Modifiers {
+			case 0:
+				if ui.stepFileViewerFind(gtx.Now, 1) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			case key.ModShift:
+				if ui.stepFileViewerFind(gtx.Now, -1) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
+		case key.NameTab:
 			step, ok := viewerModeTabStep(ke.Modifiers)
 			if !ok {
 				continue
@@ -295,16 +407,14 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			ui.setFileViewerMode(viewerStepMode(st.mode, step), gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
 		case "c", "C":
-			st := ui.fileViewer
-			if st == nil || st.commandEditOn {
+			if st.commandEditOn || findFocused {
 				continue
 			}
 			if ui.copyFileViewerText(gtx, false) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case "a", "A":
-			st := ui.fileViewer
-			if st == nil || st.commandEditOn {
+			if st.commandEditOn || findFocused {
 				continue
 			}
 			if st.mode == "hex" {
@@ -442,6 +552,10 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.commandEditor.SingleLine = true
 	st.commandEditor.Submit = true
 	st.commandEditor.SetText(st.command)
+	st.find.editor.SingleLine = true
+	st.find.editor.Submit = false
+	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	st.find.index = -1
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.captureWatchState()
 	st.hex = newHexViewerState()
@@ -467,6 +581,7 @@ func (ui *UI) closeFileViewer() {
 			st.loadCancel()
 			st.loadCancel = nil
 		}
+		ui.cancelFileViewerFindSearch(st)
 		st.closeEncodingMenu()
 		if st.remote != nil {
 			st.remote.close()
@@ -487,6 +602,8 @@ func (ui *UI) clearFileViewHotkeyHold() {
 }
 
 func (ui *UI) clearFileViewerScrollHold() {
+	ui.stopFileViewerScrollRepeat(key.NameLeftArrow)
+	ui.stopFileViewerScrollRepeat(key.NameRightArrow)
 	ui.stopFileViewerScrollRepeat(key.NameUpArrow)
 	ui.stopFileViewerScrollRepeat(key.NameDownArrow)
 	ui.stopFileViewerScrollRepeat(key.NamePageUp)
@@ -495,7 +612,7 @@ func (ui *UI) clearFileViewerScrollHold() {
 
 func viewerScrollKeySupported(name key.Name) bool {
 	switch name {
-	case key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown, key.NameHome, key.NameEnd:
+	case key.NameLeftArrow, key.NameRightArrow, key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown, key.NameHome, key.NameEnd:
 		return true
 	default:
 		return false
@@ -504,7 +621,7 @@ func viewerScrollKeySupported(name key.Name) bool {
 
 func viewerScrollRepeatableKey(name key.Name) bool {
 	switch name {
-	case key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown:
+	case key.NameLeftArrow, key.NameRightArrow, key.NameUpArrow, key.NameDownArrow, key.NamePageUp, key.NamePageDown:
 		return true
 	default:
 		return false
@@ -518,6 +635,27 @@ func (ui *UI) performFileViewerKeyScroll(now time.Time, name key.Name) bool {
 	}
 	st.markUserBrowsing(now)
 	changed := false
+	if st.detectedImagePreview {
+		switch name {
+		case key.NameLeftArrow:
+			changed = st.imageView.scrollByKeyStep(st.imagePreview, -1, 0)
+		case key.NameRightArrow:
+			changed = st.imageView.scrollByKeyStep(st.imagePreview, 1, 0)
+		case key.NameUpArrow:
+			changed = st.imageView.scrollByKeyStep(st.imagePreview, 0, -1)
+		case key.NameDownArrow:
+			changed = st.imageView.scrollByKeyStep(st.imagePreview, 0, 1)
+		case key.NamePageUp:
+			changed = st.imageView.scrollByPage(st.imagePreview, -1)
+		case key.NamePageDown:
+			changed = st.imageView.scrollByPage(st.imagePreview, 1)
+		case key.NameHome:
+			changed = st.imageView.scrollToOrigin()
+		case key.NameEnd:
+			changed = st.imageView.scrollToEnd(st.imagePreview)
+		}
+		return changed
+	}
 	switch name {
 	case key.NameUpArrow:
 		changed = viewerScrollByLines(st, -1)
@@ -649,8 +787,8 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	st.seq++
 	seq := st.seq
 	st.loading = true
-	st.err = ""
-	if st.content == "" {
+	if st.updatedAt.IsZero() && st.content == "" {
+		st.err = ""
 		st.status = "loading..."
 	}
 	st.nextWatchCheck = time.Time{}
@@ -674,14 +812,21 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 		}
 		content, status, err, info := readViewerContent(ctx, path, cfg, maxBytes, remote, progress)
 		res := fileViewerResult{
-			seq:         seq,
-			content:     content,
-			status:      status,
-			err:         err,
-			encoding:    info.encoding,
-			encodingBOM: info.encodingBOM,
-			lineEnding:  info.lineEnding,
-			final:       true,
+			seq:           seq,
+			content:       content,
+			status:        status,
+			err:           err,
+			encoding:      info.encoding,
+			encodingBOM:   info.encodingBOM,
+			imagePreview:  info.imagePreview,
+			image:         info.image,
+			imageData:     info.imageData,
+			imageFormat:   info.imageFormat,
+			imageSize:     info.imageSize,
+			binaryPreview: info.binaryPreview,
+			lineEnding:    info.lineEnding,
+			binaryData:    info.binaryData,
+			final:         true,
 		}
 		sendViewerResult(ch, res)
 	}()
@@ -720,6 +865,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		return
 	}
 	ui.pumpHexViewerState(gtx, st)
+	ui.pumpFileViewerFindState(gtx, st)
 	if st.resultCh == nil {
 		return
 	}
@@ -729,14 +875,41 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		st.status = st.pendingStatus
 		st.detectedEncoding = st.pendingEncoding
 		st.detectedEncodingBOM = st.pendingEncodingBOM
+		st.detectedImagePreview = st.pendingImagePreview
+		st.imagePreview = st.pendingImage
+		st.imagePreviewData = st.pendingImageData
+		st.imagePreviewFormat = st.pendingImageFormat
+		st.imagePreviewSize = st.pendingImageSize
+		st.detectedBinaryPreview = st.pendingBinaryPreview
 		st.detectedLineEnding = st.pendingLineEnding
+		st.binaryPreviewData = st.pendingBinaryData
+		if st.detectedImagePreview {
+			st.imageView.reset()
+			st.closeEncodingMenu()
+			st.binaryPreviewCols = 0
+		} else if st.detectedBinaryPreview {
+			st.binaryPreviewCols = viewerBinaryPreviewBytes
+		} else {
+			st.binaryPreviewCols = 0
+		}
 		st.pendingEncoding = ""
 		st.pendingEncodingBOM = false
+		st.pendingImagePreview = false
+		st.pendingImage = nil
+		st.pendingImageData = nil
+		st.pendingImageFormat = ""
+		st.pendingImageSize = image.Point{}
+		st.pendingBinaryPreview = false
 		st.pendingLineEnding = ""
+		st.pendingBinaryData = nil
 		if st.status == "" {
 			st.status = "ready"
 		}
 		applyFileViewerContentResult(st, st.pendingContent)
+		if !viewerSupportsFind(st) && st.find.open {
+			ui.closeFileViewerFind()
+		}
+		ui.refreshFileViewerFind(gtx.Now, true)
 		st.markUpdated(gtx.Now)
 		st.captureWatchState()
 		gtx.Execute(op.InvalidateCmd{})
@@ -759,8 +932,9 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 					gtx.Execute(op.InvalidateCmd{})
 					continue
 				}
-				if viewerUpdateAction(st, res.content) != viewerUpdateSame {
+				if viewerUpdateAction(st, res.content, false, nil, false, nil) != viewerUpdateSame {
 					applyFileViewerContentResult(st, res.content)
+					ui.refreshFileViewerFind(gtx.Now, true)
 					st.markUpdated(gtx.Now)
 				}
 				gtx.Execute(op.InvalidateCmd{})
@@ -773,15 +947,26 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			if st.status == "" {
 				st.status = "ready"
 			}
-			updateAction := viewerUpdateAction(st, res.content)
+			updateAction := viewerUpdateAction(st, res.content, res.imagePreview, res.imageData, res.binaryPreview, res.binaryData)
+			contentToApply := res.content
+			if updateAction == viewerUpdateSame && res.binaryPreview && st.detectedBinaryPreview {
+				contentToApply = st.content
+			}
 			if updateAction == viewerUpdateReplace && (st.userIsBrowsing(gtx.Now) || st.stream.hasSelection()) {
 				st.pendingUpdate = true
-				st.pendingContent = res.content
+				st.pendingContent = contentToApply
 				st.pendingStatus = st.status
 				st.pendingErr = st.err
 				st.pendingEncoding = res.encoding
 				st.pendingEncodingBOM = res.encodingBOM
+				st.pendingImagePreview = res.imagePreview
+				st.pendingImage = res.image
+				st.pendingImageData = append([]byte(nil), res.imageData...)
+				st.pendingImageFormat = res.imageFormat
+				st.pendingImageSize = res.imageSize
+				st.pendingBinaryPreview = res.binaryPreview
 				st.pendingLineEnding = res.lineEnding
+				st.pendingBinaryData = append([]byte(nil), res.binaryData...)
 				st.status = "update pending"
 				ui.scheduleFileViewerWatch(gtx)
 				gtx.Execute(op.InvalidateCmd{})
@@ -790,11 +975,42 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.pendingUpdate = false
 			st.pendingEncoding = ""
 			st.pendingEncodingBOM = false
+			st.pendingImagePreview = false
+			st.pendingImage = nil
+			st.pendingImageData = nil
+			st.pendingImageFormat = ""
+			st.pendingImageSize = image.Point{}
+			st.pendingBinaryPreview = false
 			st.pendingLineEnding = ""
+			st.pendingBinaryData = nil
 			st.detectedEncoding = res.encoding
 			st.detectedEncodingBOM = res.encodingBOM
+			st.detectedImagePreview = res.imagePreview
+			st.imagePreview = res.image
+			st.imagePreviewData = append([]byte(nil), res.imageData...)
+			st.imagePreviewFormat = res.imageFormat
+			st.imagePreviewSize = res.imageSize
+			st.detectedBinaryPreview = res.binaryPreview
 			st.detectedLineEnding = res.lineEnding
-			applyFileViewerContentResult(st, res.content)
+			st.binaryPreviewData = append([]byte(nil), res.binaryData...)
+			if st.detectedImagePreview {
+				if updateAction != viewerUpdateSame {
+					st.imageView.reset()
+				}
+				st.closeEncodingMenu()
+				st.binaryPreviewCols = 0
+			} else if st.detectedBinaryPreview {
+				if updateAction != viewerUpdateSame {
+					st.binaryPreviewCols = viewerBinaryPreviewBytes
+				}
+			} else {
+				st.binaryPreviewCols = 0
+			}
+			applyFileViewerContentResult(st, contentToApply)
+			if !viewerSupportsFind(st) && st.find.open {
+				ui.closeFileViewerFind()
+			}
+			ui.refreshFileViewerFind(gtx.Now, true)
 			st.markUpdated(gtx.Now)
 			st.captureWatchState()
 			ui.scheduleFileViewerWatch(gtx)
@@ -881,8 +1097,20 @@ const (
 	viewerUpdateReplace
 )
 
-func viewerUpdateAction(st *fileViewerState, next string) int {
+func viewerUpdateAction(st *fileViewerState, next string, nextImagePreview bool, nextImageData []byte, nextBinaryPreview bool, nextBinaryData []byte) int {
 	if st == nil {
+		return viewerUpdateReplace
+	}
+	if st.detectedImagePreview || nextImagePreview {
+		if st.detectedImagePreview && nextImagePreview && bytes.Equal(st.imagePreviewData, nextImageData) {
+			return viewerUpdateSame
+		}
+		return viewerUpdateReplace
+	}
+	if st.detectedBinaryPreview || nextBinaryPreview {
+		if st.detectedBinaryPreview && nextBinaryPreview && bytes.Equal(st.binaryPreviewData, nextBinaryData) {
+			return viewerUpdateSame
+		}
 		return viewerUpdateReplace
 	}
 	prev := st.content
@@ -1468,6 +1696,7 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 		}
 	}
 	st.nextWatchCheck = time.Time{}
+	ui.refreshFileViewerFind(now, false)
 	ui.restartFileViewerLoad(now)
 }
 
@@ -1857,14 +2086,45 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 	if err != nil {
 		return "", "", err.Error(), viewerReadInfo{}
 	}
+	if img, ok := decodeViewerImagePreview(path, data); ok {
+		if size >= 0 {
+			return "", fmt.Sprintf("%s: %d bytes", prefix, size), "", img
+		}
+		return "", fmt.Sprintf("%s: %d bytes", prefix, len(data)), "", img
+	}
 	content, info := decodeViewerText(path, data, encoding)
-	info.lineEnding = detectViewerLineEnding(content)
-	content = normalizeViewerLineEndings(content)
-	content = sanitizeViewerContent(content)
+	if !info.binaryPreview {
+		info.lineEnding = detectViewerLineEnding(content)
+		content = normalizeViewerLineEndings(content)
+		content = sanitizeViewerContent(content)
+	} else {
+		info.binaryData = append([]byte(nil), data...)
+	}
 	if size >= 0 {
 		return content, fmt.Sprintf("%s: %d bytes", prefix, size), "", info
 	}
 	return content, fmt.Sprintf("%s: %d bytes", prefix, len(data)), "", info
+}
+
+func decodeViewerImagePreview(path string, data []byte) (viewerReadInfo, bool) {
+	if !viewerLooksPreviewableImage(path, data) {
+		return viewerReadInfo{}, false
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return viewerReadInfo{}, false
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return viewerReadInfo{}, false
+	}
+	return viewerReadInfo{
+		imagePreview: true,
+		image:        img,
+		imageData:    append([]byte(nil), data...),
+		imageFormat:  normalizeViewerImageFormat(format),
+		imageSize:    image.Pt(cfg.Width, cfg.Height),
+	}, true
 }
 
 func readViewerCommand(ctx context.Context, path string, cfg fm.ViewerConfig, maxBytes int, started time.Time, remote *paneSSHSession, onProgress func(string, string)) (string, string, string) {
@@ -1951,7 +2211,13 @@ loop:
 		if runCtx.Err() == context.Canceled && errors.Is(ctx.Err(), context.Canceled) {
 			return "", "", "viewer command canceled"
 		}
-		return content, status, err.Error()
+		if viewerCommandTreatsExitAsEmpty(cmdline, content, err) {
+			return "", "no output", ""
+		}
+		return content, status, viewerCommandErrorMessage(err)
+	}
+	if content == "" {
+		return "", "no output", ""
 	}
 	return content, status, ""
 }
@@ -2058,9 +2324,79 @@ loop:
 		if runCtx.Err() == context.Canceled && errors.Is(ctx.Err(), context.Canceled) {
 			return "", "", "viewer command canceled"
 		}
-		return content, status, waitErr.Error()
+		if viewerCommandTreatsExitAsEmpty(cmdline, content, waitErr) {
+			return "", "no output", ""
+		}
+		return content, status, viewerCommandErrorMessage(waitErr)
+	}
+	if content == "" {
+		return "", "no output", ""
 	}
 	return content, status, ""
+}
+
+func viewerCommandErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	if code, ok := viewerCommandExitStatus(err); ok {
+		return fmt.Sprintf("command exited with status %d", code)
+	}
+	return err.Error()
+}
+
+func viewerCommandExitStatus(err error) (int, bool) {
+	if err == nil {
+		return 0, false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if code := exitErr.ExitCode(); code >= 0 {
+			return code, true
+		}
+	}
+	var sshExitErr *ssh.ExitError
+	if errors.As(err, &sshExitErr) {
+		return sshExitErr.ExitStatus(), true
+	}
+	return 0, false
+}
+
+func viewerCommandTreatsExitAsEmpty(cmdline, content string, err error) bool {
+	if strings.TrimSpace(content) != "" {
+		return false
+	}
+	code, ok := viewerCommandExitStatus(err)
+	if !ok || code != 1 {
+		return false
+	}
+	return viewerCommandUsesNoMatchExit(cmdline)
+}
+
+func viewerCommandUsesNoMatchExit(cmdline string) bool {
+	tokens := strings.FieldsFunc(cmdline, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune("|&;()", r)
+	})
+	for i := 0; i < len(tokens); i++ {
+		name := viewerCommandTokenName(tokens[i])
+		switch name {
+		case "grep", "egrep", "fgrep", "rg", "ripgrep", "findstr":
+			return true
+		case "git":
+			if i+1 < len(tokens) && viewerCommandTokenName(tokens[i+1]) == "grep" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func viewerCommandTokenName(token string) string {
+	token = strings.TrimSpace(strings.Trim(token, `"'`))
+	token = strings.TrimSuffix(token, ".exe")
+	token = strings.ReplaceAll(token, `\`, "/")
+	token = pathpkg.Base(token)
+	return strings.ToLower(token)
 }
 
 func emitViewerCommandProgress(onProgress func(string, string), buf *viewerCommandBuffer, kind string, shell viewerShellSpec, started time.Time, infinite, running bool, lastLen int, lastTruncated bool) (int, bool) {
@@ -2247,11 +2583,222 @@ func decodeViewerText(path string, data []byte, encoding string) (string, viewer
 	case fm.ViewerFileEncodingCP437:
 		return decodeViewerCP437(data), info
 	default:
+		if decision.encoding == fm.ViewerFileEncodingUTF8 && viewerLooksBinary(path, data) {
+			info.binaryPreview = true
+			return formatViewerBinaryPreview(data), info
+		}
 		if decision.withBOM {
 			data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 		}
 		return string(bytes.ToValidUTF8(data, []byte("\xef\xbf\xbd"))), info
 	}
+}
+
+func viewerLooksBinary(path string, data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	sample := data
+	if len(sample) > 4096 {
+		sample = sample[:4096]
+	}
+	if bytes.IndexByte(sample, 0) >= 0 {
+		return true
+	}
+	if mediaType := viewerBinaryMediaType(path, sample); mediaType != "" {
+		if viewerMediaTypeLooksText(mediaType) {
+			return false
+		}
+		return true
+	}
+	controls := 0
+	for _, b := range sample {
+		switch {
+		case b == '\n' || b == '\r' || b == '\t' || b == '\f':
+		case b >= 0x20 && b <= 0x7E:
+		case b < 0x20 || b == 0x7F:
+			controls++
+		}
+	}
+	if controls >= 4 && controls*10 >= len(sample) {
+		return true
+	}
+	if !utf8.Valid(sample) {
+		decoded := string(bytes.ToValidUTF8(sample, []byte("\xef\xbf\xbd")))
+		runes := len([]rune(decoded))
+		if runes < 1 {
+			runes = 1
+		}
+		if suspicious := viewerSuspiciousTextRunes(decoded); suspicious > max(1, runes/24) {
+			return true
+		}
+	}
+	return false
+}
+
+func viewerBinaryMediaType(path string, sample []byte) string {
+	if len(sample) > 0 {
+		if mediaType := viewerTrimMediaType(http.DetectContentType(sample)); mediaType != "" && mediaType != "application/octet-stream" {
+			return mediaType
+		}
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		ext = strings.ToLower(pathpkg.Ext(path))
+	}
+	if ext != "" {
+		if mediaType := viewerTrimMediaType(mime.TypeByExtension(ext)); mediaType != "" {
+			return mediaType
+		}
+	}
+	return ""
+}
+
+func viewerTrimMediaType(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if semi := strings.IndexByte(raw, ';'); semi >= 0 {
+		raw = raw[:semi]
+	}
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func viewerMediaTypeLooksText(mediaType string) bool {
+	switch {
+	case strings.HasPrefix(mediaType, "text/"):
+		return true
+	}
+	switch mediaType {
+	case "application/json",
+		"application/ld+json",
+		"application/xml",
+		"application/xhtml+xml",
+		"application/javascript",
+		"application/x-javascript",
+		"application/ecmascript",
+		"application/x-sh",
+		"application/x-yaml",
+		"application/yaml",
+		"image/svg+xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func viewerLooksPreviewableImage(path string, data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	return viewerMediaTypeLooksPreviewableImage(viewerBinaryMediaType(path, data))
+}
+
+func viewerMediaTypeLooksPreviewableImage(mediaType string) bool {
+	switch viewerTrimMediaType(mediaType) {
+	case "image/png", "image/jpeg", "image/gif":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeViewerImageFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "jpg", "jpeg":
+		return "jpeg"
+	case "png":
+		return "png"
+	case "gif":
+		return "gif"
+	default:
+		return strings.ToLower(strings.TrimSpace(format))
+	}
+}
+
+func viewerSupportsFind(st *fileViewerState) bool {
+	if st == nil {
+		return false
+	}
+	if st.mode == "hex" {
+		return true
+	}
+	if st.mode == "command" {
+		return true
+	}
+	return !st.detectedImagePreview
+}
+
+func viewerImageZoomFactorForKey(name key.Name, mods key.Modifiers) (float32, bool) {
+	if !mods.Contain(key.ModCtrl) && !mods.Contain(key.ModShortcut) {
+		return 0, false
+	}
+	switch name {
+	case "+", "=":
+		return fileViewerImageZoomFactor, true
+	case "-", "_":
+		return 1 / fileViewerImageZoomFactor, true
+	default:
+		return 0, false
+	}
+}
+
+func formatViewerBinaryPreview(data []byte) string {
+	return formatViewerBinaryPreviewWithCols(data, viewerBinaryPreviewBytes)
+}
+
+func formatViewerBinaryPreviewWithCols(data []byte, cols int) string {
+	if len(data) == 0 {
+		return ""
+	}
+	cols = viewerBinaryPreviewWrapCols(cols)
+	var b strings.Builder
+	lines := (len(data) + cols - 1) / cols
+	b.Grow(len(data) + max(0, lines-1))
+	for i, raw := range data {
+		if i > 0 && i%cols == 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteByte(viewerBinaryPreviewByte(raw))
+	}
+	return b.String()
+}
+
+func viewerBinaryPreviewWrapCols(cols int) int {
+	if cols <= 0 {
+		return viewerBinaryPreviewBytes
+	}
+	if cols > viewerBinaryPreviewMaxCols {
+		return viewerBinaryPreviewMaxCols
+	}
+	return cols
+}
+
+func reflowFileViewerBinaryPreview(st *fileViewerState, cols int) bool {
+	if st == nil || !st.detectedBinaryPreview || len(st.binaryPreviewData) == 0 {
+		return false
+	}
+	cols = viewerBinaryPreviewWrapCols(cols)
+	if cols == st.binaryPreviewCols {
+		return false
+	}
+	next := formatViewerBinaryPreviewWithCols(st.binaryPreviewData, cols)
+	st.binaryPreviewCols = cols
+	if st.content == next {
+		return false
+	}
+	st.content = next
+	st.stream.SetContent(next)
+	st.stream.clearSelection()
+	return true
+}
+
+func viewerBinaryPreviewByte(b byte) byte {
+	if b >= 0x20 && b <= 0x7E {
+		return b
+	}
+	return '.'
 }
 
 func chooseViewerEncoding(_ string, data []byte, requested string) viewerEncodingDecision {
@@ -2680,10 +3227,10 @@ func sanitizeViewerContent(raw string) string {
 		case '\t':
 			b.WriteString("    ")
 		case unicode.ReplacementChar:
-			b.WriteByte('?')
+			b.WriteByte('.')
 		default:
 			if !unicode.IsPrint(r) {
-				appendEscapedRune(&b, r)
+				b.WriteByte('.')
 				continue
 			}
 			b.WriteRune(r)
@@ -2700,30 +3247,4 @@ func viewerClipboardContent(st *fileViewerState, text string) string {
 		return strings.ReplaceAll(text, "\n", "\r\n")
 	}
 	return text
-}
-
-func appendEscapedRune(b *strings.Builder, r rune) {
-	const hex = "0123456789ABCDEF"
-	switch {
-	case r <= 0xFF:
-		b.WriteString(`\x`)
-		b.WriteByte(hex[(r>>4)&0xF])
-		b.WriteByte(hex[r&0xF])
-	case r <= 0xFFFF:
-		b.WriteString(`\u`)
-		b.WriteByte(hex[(r>>12)&0xF])
-		b.WriteByte(hex[(r>>8)&0xF])
-		b.WriteByte(hex[(r>>4)&0xF])
-		b.WriteByte(hex[r&0xF])
-	default:
-		b.WriteString(`\U`)
-		b.WriteByte(hex[(r>>28)&0xF])
-		b.WriteByte(hex[(r>>24)&0xF])
-		b.WriteByte(hex[(r>>20)&0xF])
-		b.WriteByte(hex[(r>>16)&0xF])
-		b.WriteByte(hex[(r>>12)&0xF])
-		b.WriteByte(hex[(r>>8)&0xF])
-		b.WriteByte(hex[(r>>4)&0xF])
-		b.WriteByte(hex[r&0xF])
-	}
 }

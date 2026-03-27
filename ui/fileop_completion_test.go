@@ -50,7 +50,69 @@ func TestFinishFileCopyKeepsDestinationScrollStableAndShowsNotice(t *testing.T) 
 	if got := dstPane.table.List.Position.First; got != 12 {
 		t.Fatalf("destination first visible row = %d, want 12", got)
 	}
+	if got := ui.activeFilePane; got != 0 {
+		t.Fatalf("activeFilePane = %d, want 0", got)
+	}
 	if got, want := dstPane.noticeText, "copied 1 item"; got != want {
+		t.Fatalf("destination noticeText = %q, want %q", got, want)
+	}
+}
+
+func TestFinishFileCopyShowsNestedCopyCount(t *testing.T) {
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "folder")
+	srcSubDir := filepath.Join(srcPath, "sub")
+	if err := os.MkdirAll(srcSubDir, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(%q): %v", srcSubDir, err)
+	}
+	for _, name := range []string{
+		filepath.Join(srcPath, "a.txt"),
+		filepath.Join(srcSubDir, "b.txt"),
+	} {
+		if err := os.WriteFile(name, []byte("src"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(%q): %v", name, err)
+		}
+	}
+
+	dstDir := t.TempDir()
+	createFileOpRows(t, dstDir, 30)
+	dstPath := filepath.Join(dstDir, "folder")
+	dstSubDir := filepath.Join(dstPath, "sub")
+	if err := os.MkdirAll(dstSubDir, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll(%q): %v", dstSubDir, err)
+	}
+	for _, name := range []string{
+		filepath.Join(dstPath, "a.txt"),
+		filepath.Join(dstSubDir, "b.txt"),
+	} {
+		if err := os.WriteFile(name, []byte("dst"), 0o644); err != nil {
+			t.Fatalf("os.WriteFile(%q): %v", name, err)
+		}
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	srcPane := ui.filePanes[0]
+	dstPane := ui.filePanes[1]
+	waitForPaneLoads(t, ui, srcPane, dstPane)
+	prepareFileOpPane(t, srcPane, srcDir, 0)
+	prepareFileOpPane(t, dstPane, dstDir, 10)
+
+	ui.fileCopy = &fileCopyState{
+		srcPane: 0,
+		dstPane: 1,
+		sources: []fileCopySource{{
+			Path: srcPath,
+			Name: "folder",
+		}},
+		progress: filesys.CopyProgress{
+			EntriesTotal: 4,
+		},
+	}
+
+	ui.finishFileCopy(time.Now())
+	waitForPaneLoads(t, ui, srcPane, dstPane)
+
+	if got, want := dstPane.noticeText, "copied 1 item (3 nested items)"; got != want {
 		t.Fatalf("destination noticeText = %q, want %q", got, want)
 	}
 }

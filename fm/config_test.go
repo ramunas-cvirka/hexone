@@ -336,6 +336,61 @@ func TestNormalizeViewerCommandRules(t *testing.T) {
 	}
 }
 
+func TestNormalizeViewerRemoteSearchCommandDefaultsAndAllowsOff(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Viewer.RemoteSearchMode != ViewerRemoteSearchModeRemote {
+		t.Fatalf("default remote search mode=%q want %q", cfg.Viewer.RemoteSearchMode, ViewerRemoteSearchModeRemote)
+	}
+	if cfg.Viewer.RemoteSearchCommand != DefaultViewerRemoteSearchCommand {
+		t.Fatalf("default remote search command=%q want %q", cfg.Viewer.RemoteSearchCommand, DefaultViewerRemoteSearchCommand)
+	}
+
+	cfg.Viewer.RemoteSearchCommand = ""
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchCommand != DefaultViewerRemoteSearchCommand {
+		t.Fatalf("normalized remote search command=%q want default", cfg.Viewer.RemoteSearchCommand)
+	}
+
+	cfg.Viewer.RemoteSearchCommand = "off"
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchCommand != "off" {
+		t.Fatalf("remote search disable value=%q want %q", cfg.Viewer.RemoteSearchCommand, "off")
+	}
+	if got := EffectiveViewerRemoteSearchCommand(cfg.Viewer.RemoteSearchCommand); got != "" {
+		t.Fatalf("effective remote search command=%q want empty", got)
+	}
+}
+
+func TestNormalizeViewerRemoteSearchModeDefaultsAndAcceptsAliases(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.RemoteSearchMode = ""
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchMode != ViewerRemoteSearchModeRemote {
+		t.Fatalf("normalized remote search mode=%q want %q", cfg.Viewer.RemoteSearchMode, ViewerRemoteSearchModeRemote)
+	}
+
+	cfg.Viewer.RemoteSearchMode = "utility"
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchMode != ViewerRemoteSearchModeRemote {
+		t.Fatalf("utility remote search mode=%q want %q", cfg.Viewer.RemoteSearchMode, ViewerRemoteSearchModeRemote)
+	}
+
+	cfg.Viewer.RemoteSearchMode = "internal"
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchMode != ViewerRemoteSearchModeLocal {
+		t.Fatalf("internal remote search mode=%q want %q", cfg.Viewer.RemoteSearchMode, ViewerRemoteSearchModeLocal)
+	}
+}
+
+func TestNormalizeViewerRemoteSearchCommandMigratesLegacyDefault(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.RemoteSearchCommand = legacyViewerRemoteSearchCommand
+	cfg.normalize()
+	if cfg.Viewer.RemoteSearchCommand != DefaultViewerRemoteSearchCommand {
+		t.Fatalf("legacy remote search command=%q want %q", cfg.Viewer.RemoteSearchCommand, DefaultViewerRemoteSearchCommand)
+	}
+}
+
 func TestMatchViewerCommandRulesUsesLastMatch(t *testing.T) {
 	rules := []ViewerCommandRule{
 		{Pattern: `\.log$`, Command: `tail -f {path}`},
@@ -553,6 +608,170 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	}
 	if cfg.Viewer.Selection != "#3355DD" {
 		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, "#3355DD")
+	}
+}
+
+func TestNormalizeFilenameColors(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Colors.Filenames.Text = "oops"
+	cfg.Colors.Filenames.Icon = "mystery"
+	cfg.Colors.Filenames.AgeRules = []FilenameAgeRule{
+		{MaxAge: "24h", Text: "aabbcc", Icon: "schedule"},
+		{MaxAge: "bad", Text: "#112233", Icon: "lock"},
+		{MaxAge: "1w", Text: "", Icon: ""},
+	}
+	cfg.Colors.Filenames.PermissionRules = []FilenamePermissionRule{
+		{Permissions: "755", Match: "partial", Text: "#556677", Icon: "lock"},
+		{Permissions: "oops", Text: "#123456", Icon: "document"},
+		{Permissions: "0644", Text: "bad", Icon: "description"},
+		{Permissions: "0000", Match: "any", Text: "#654321", Icon: "document"},
+	}
+	cfg.Colors.Filenames.ExtensionRules = []FilenameExtensionRule{
+		{Extension: "GO", Text: "abcdef", Icon: "edit"},
+		{Extension: "*.tar.gz", Text: "", Icon: "archive"},
+		{Extension: "bad/name", Text: "#123456", Icon: "document"},
+	}
+	cfg.Colors.Filenames.SizeRules = []FilenameSizeRule{
+		{Size: "10mb", Match: "max", Text: "102030", Icon: "movie"},
+		{Size: "1g", Text: "", Icon: ""},
+		{Size: "oops", Text: "#123456", Icon: "lock"},
+	}
+
+	cfg.normalize()
+
+	if cfg.Colors.Filenames.Text != "" {
+		t.Fatalf("Filenames.Text=%q want empty", cfg.Colors.Filenames.Text)
+	}
+	if cfg.Colors.Filenames.Icon != "" {
+		t.Fatalf("Filenames.Icon=%q want empty", cfg.Colors.Filenames.Icon)
+	}
+	if len(cfg.Colors.Filenames.AgeRules) != 1 {
+		t.Fatalf("len(Filenames.AgeRules)=%d want 1", len(cfg.Colors.Filenames.AgeRules))
+	}
+	if got := cfg.Colors.Filenames.AgeRules[0].MaxAge; got != "1d" {
+		t.Fatalf("AgeRules[0].MaxAge=%q want %q", got, "1d")
+	}
+	if got := cfg.Colors.Filenames.AgeRules[0].Text; got != "#AABBCC" {
+		t.Fatalf("AgeRules[0].Text=%q want %q", got, "#AABBCC")
+	}
+	if got := cfg.Colors.Filenames.AgeRules[0].Icon; got != FilenameIconRecent {
+		t.Fatalf("AgeRules[0].Icon=%q want %q", got, FilenameIconRecent)
+	}
+	if len(cfg.Colors.Filenames.PermissionRules) != 2 {
+		t.Fatalf("len(Filenames.PermissionRules)=%d want 2", len(cfg.Colors.Filenames.PermissionRules))
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[0].Permissions; got != "0755" {
+		t.Fatalf("PermissionRules[0].Permissions=%q want %q", got, "0755")
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[0].Match; got != FilenamePermissionMatchAny {
+		t.Fatalf("PermissionRules[0].Match=%q want %q", got, FilenamePermissionMatchAny)
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[0].Icon; got != FilenameIconLocked {
+		t.Fatalf("PermissionRules[0].Icon=%q want %q", got, FilenameIconLocked)
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[1].Permissions; got != "0644" {
+		t.Fatalf("PermissionRules[1].Permissions=%q want %q", got, "0644")
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[1].Match; got != FilenamePermissionMatchExact {
+		t.Fatalf("PermissionRules[1].Match=%q want exact", got)
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[1].Text; got != "" {
+		t.Fatalf("PermissionRules[1].Text=%q want empty", got)
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[1].Icon; got != FilenameIconDocument {
+		t.Fatalf("PermissionRules[1].Icon=%q want %q", got, FilenameIconDocument)
+	}
+	if len(cfg.Colors.Filenames.ExtensionRules) != 2 {
+		t.Fatalf("len(Filenames.ExtensionRules)=%d want 2", len(cfg.Colors.Filenames.ExtensionRules))
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[0].Extension; got != ".go" {
+		t.Fatalf("ExtensionRules[0].Extension=%q want %q", got, ".go")
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[0].Text; got != "#ABCDEF" {
+		t.Fatalf("ExtensionRules[0].Text=%q want %q", got, "#ABCDEF")
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[0].Icon; got != FilenameIconCode {
+		t.Fatalf("ExtensionRules[0].Icon=%q want %q", got, FilenameIconCode)
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[1].Extension; got != ".tar.gz" {
+		t.Fatalf("ExtensionRules[1].Extension=%q want %q", got, ".tar.gz")
+	}
+	if got := cfg.Colors.Filenames.ExtensionRules[1].Icon; got != FilenameIconArchive {
+		t.Fatalf("ExtensionRules[1].Icon=%q want %q", got, FilenameIconArchive)
+	}
+	if len(cfg.Colors.Filenames.SizeRules) != 1 {
+		t.Fatalf("len(Filenames.SizeRules)=%d want 1", len(cfg.Colors.Filenames.SizeRules))
+	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Size; got != "10m" {
+		t.Fatalf("SizeRules[0].Size=%q want %q", got, "10m")
+	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Match; got != FilenameSizeMatchAtMost {
+		t.Fatalf("SizeRules[0].Match=%q want %q", got, FilenameSizeMatchAtMost)
+	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Text; got != "#102030" {
+		t.Fatalf("SizeRules[0].Text=%q want %q", got, "#102030")
+	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Icon; got != FilenameIconVideo {
+		t.Fatalf("SizeRules[0].Icon=%q want %q", got, FilenameIconVideo)
+	}
+}
+
+func TestNormalizeFilenameAgeRulesSortsAndDedupes(t *testing.T) {
+	got := NormalizeFilenameAgeRules([]FilenameAgeRule{
+		{MaxAge: "1w", Text: "#334455"},
+		{MaxAge: "24h", Text: "#112233"},
+		{MaxAge: "1d", Text: "#556677", Icon: "schedule"},
+		{MaxAge: "45m", Icon: "lock"},
+	})
+
+	if len(got) != 3 {
+		t.Fatalf("len(NormalizeFilenameAgeRules)=%d want 3", len(got))
+	}
+	if got[0].MaxAge != "45m" || got[1].MaxAge != "1d" || got[2].MaxAge != "1w" {
+		t.Fatalf("NormalizeFilenameAgeRules order=%#v want 45m, 1d, 1w", got)
+	}
+	if got[1].Text != "#556677" || got[1].Icon != FilenameIconRecent {
+		t.Fatalf("NormalizeFilenameAgeRules duplicate merge=%#v want last 1d rule", got[1])
+	}
+}
+
+func TestNormalizeFilenameIconSupportsExtendedChoices(t *testing.T) {
+	cases := map[string]string{
+		"music":       FilenameIconAudio,
+		"book":        FilenameIconBook,
+		"spreadsheet": FilenameIconTable,
+		"application": FilenameIconApp,
+		"shortcut":    FilenameIconLink,
+	}
+
+	for raw, want := range cases {
+		if got := NormalizeFilenameIcon(raw); got != want {
+			t.Fatalf("NormalizeFilenameIcon(%q)=%q want %q", raw, got, want)
+		}
+	}
+}
+
+func TestFilenamePermissionAndSizeMatchesSupportPartialRules(t *testing.T) {
+	if !FilenamePermissionMatches("0755", FilenamePermissionRule{Permissions: "0111", Match: FilenamePermissionMatchAny}) {
+		t.Fatal("any-match permissions should detect executables")
+	}
+	if !FilenamePermissionMatches("0444", FilenamePermissionRule{Permissions: "0222", Match: FilenamePermissionMatchNone}) {
+		t.Fatal("none-match permissions should detect readonly files")
+	}
+	if FilenamePermissionMatches("0644", FilenamePermissionRule{Permissions: "0111", Match: FilenamePermissionMatchAny}) {
+		t.Fatal("any-match permissions should not match non-executables")
+	}
+	if !FilenamePermissionMatches("0644", FilenamePermissionRule{Permissions: "0644"}) {
+		t.Fatal("exact permissions should still work")
+	}
+	if !FilenameSizeMatches(10<<20, FilenameSizeRule{Size: "10m"}) {
+		t.Fatal("at-least size match should include equal values")
+	}
+	if !FilenameSizeMatches(512, FilenameSizeRule{Size: "1k", Match: FilenameSizeMatchAtMost}) {
+		t.Fatal("at-most size match should include smaller values")
+	}
+	if FilenameSizeMatches(2048, FilenameSizeRule{Size: "1k", Match: FilenameSizeMatchAtMost}) {
+		t.Fatal("at-most size match should reject larger values")
 	}
 }
 

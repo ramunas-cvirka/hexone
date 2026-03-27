@@ -1891,7 +1891,7 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 	if stripH < 1 {
 		stripH = 1
 	}
-	return fillRoundedBox(
+	return fillRoundedClipBox(
 		gtx,
 		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 		color.NRGBA{R: 18, G: 22, B: 30, A: 255},

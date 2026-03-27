@@ -192,6 +192,8 @@ type ViewerConfig struct {
 	Selection               string              `yaml:"selection,omitempty"`
 	Shell                   string              `yaml:"shell"`
 	Command                 string              `yaml:"command"`
+	RemoteSearchMode        string              `yaml:"remote_search_mode"`
+	RemoteSearchCommand     string              `yaml:"remote_search_command"`
 	Associations            []ViewerAssociation `yaml:"associations,omitempty"`
 	AssociatedExtensions    []string            `yaml:"associated_extensions,omitempty"`
 	CommandRules            []ViewerCommandRule `yaml:"command_rules,omitempty"`
@@ -324,6 +326,8 @@ func DefaultConfig() *Config {
 			Selection:               DefaultFilePaneSelectionHex,
 			Shell:                   "auto",
 			Command:                 "cat {path}",
+			RemoteSearchMode:        ViewerRemoteSearchModeRemote,
+			RemoteSearchCommand:     DefaultViewerRemoteSearchCommand,
 			Associations:            nil,
 			CommandRules:            nil,
 			CommandByTarget:         map[string]string{},
@@ -440,6 +444,12 @@ func (c *Config) normalize() {
 	c.Colors.FocusedSelectedText = NormalizeHexColor(c.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
 	c.Colors.CurrentDirBg = NormalizeHexColor(c.Colors.CurrentDirBg, DefaultCurrentDirBackgroundHex)
 	c.Colors.CurrentDirText = NormalizeHexColor(c.Colors.CurrentDirText, DefaultCurrentDirTextHex)
+	c.Colors.Filenames.Text = NormalizeOptionalHexColor(c.Colors.Filenames.Text)
+	c.Colors.Filenames.Icon = NormalizeFilenameIcon(c.Colors.Filenames.Icon)
+	c.Colors.Filenames.AgeRules = NormalizeFilenameAgeRules(c.Colors.Filenames.AgeRules)
+	c.Colors.Filenames.PermissionRules = NormalizeFilenamePermissionRules(c.Colors.Filenames.PermissionRules)
+	c.Colors.Filenames.ExtensionRules = NormalizeFilenameExtensionRules(c.Colors.Filenames.ExtensionRules)
+	c.Colors.Filenames.SizeRules = NormalizeFilenameSizeRules(c.Colors.Filenames.SizeRules)
 
 	switch c.Viewer.Mode {
 	case "file", "hex", "command":
@@ -534,8 +544,53 @@ func (c *Config) normalize() {
 	if c.Viewer.CommandRefreshMs < 200 {
 		c.Viewer.CommandRefreshMs = 1500
 	}
+	c.Viewer.RemoteSearchMode = NormalizeViewerRemoteSearchMode(c.Viewer.RemoteSearchMode)
+	c.Viewer.RemoteSearchCommand = NormalizeViewerRemoteSearchCommand(c.Viewer.RemoteSearchCommand)
 
 	c.normalizeSSHSetups()
+}
+
+const (
+	ViewerRemoteSearchModeRemote = "remote"
+	ViewerRemoteSearchModeLocal  = "local"
+
+	DefaultViewerRemoteSearchCommand = "tail -c +{range_start_1based} {path} | head -c {range_len} | LC_ALL=C grep -aobF {match_limit} -- {pattern} | {result_select}"
+	legacyViewerRemoteSearchCommand  = "tail -c +{range_start1} {path} | head -c {range_len} | LC_ALL=C grep -aobF {match_limit} -- {pattern} | {result_select}"
+	viewerRemoteSearchDisabledValue  = "off"
+)
+
+func NormalizeViewerRemoteSearchMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "default", "auto", ViewerRemoteSearchModeRemote, "command", "utility", "remote-command":
+		return ViewerRemoteSearchModeRemote
+	case ViewerRemoteSearchModeLocal, "builtin", "internal", "sftp":
+		return ViewerRemoteSearchModeLocal
+	default:
+		return ViewerRemoteSearchModeRemote
+	}
+}
+
+func NormalizeViewerRemoteSearchCommand(raw string) string {
+	cmd := strings.TrimSpace(raw)
+	switch strings.ToLower(cmd) {
+	case "", "default":
+		return DefaultViewerRemoteSearchCommand
+	case "off", "none", "disabled":
+		return viewerRemoteSearchDisabledValue
+	default:
+		if cmd == legacyViewerRemoteSearchCommand {
+			return DefaultViewerRemoteSearchCommand
+		}
+		return cmd
+	}
+}
+
+func EffectiveViewerRemoteSearchCommand(raw string) string {
+	cmd := NormalizeViewerRemoteSearchCommand(raw)
+	if strings.EqualFold(cmd, viewerRemoteSearchDisabledValue) {
+		return ""
+	}
+	return cmd
 }
 
 func (c *Config) normalizeFavoriteLocations() {

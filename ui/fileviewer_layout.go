@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"fmt"
 	"hexone/fm"
 	uitheme "hexone/ui/theme"
 	"image"
@@ -65,6 +66,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		ui.startViewerCommandEdit(gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
+	ui.handleFileViewerFindInput(gtx, st)
 	if st.modeFileClick.Clicked(gtx) {
 		st.tabAnim.setPulse("file", gtx.Now)
 		ui.setFileViewerMode("file", gtx.Now)
@@ -80,7 +82,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		ui.setFileViewerMode("command", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	if st.mode == "file" {
+	if st.mode == "file" && !st.detectedImagePreview {
 		if st.encodingMenuClick.Clicked(gtx) {
 			if st.encodingMenuOpen {
 				st.closeEncodingMenu()
@@ -139,6 +141,9 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		// results can remain pending until an external event (e.g. resize).
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
 	}
+	if st.find.open && st.find.searching {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+	}
 
 	ui.scheduleFileViewerWatch(gtx)
 
@@ -187,7 +192,9 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 											if st.mode == "hex" && st.hex != nil && len(st.hex.buffer) > 0 {
 												return ui.layoutHexOutputView(th, gtx, st)
 											}
-											wait := material.Body2(th, "Loading...")
+										}
+										if message := fileViewerEmptyPanelMessage(st); message != "" {
+											wait := material.Body2(th, message)
 											wait.Font.Typeface = ui.viewerTypeface()
 											wait.TextSize = ui.viewerTextSize()
 											wait.Color = theme.Hint
@@ -197,10 +204,16 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 										if st.mode == "hex" {
 											return ui.layoutHexOutputView(th, gtx, st)
 										}
+										if st.detectedImagePreview {
+											return ui.layoutImageOutputView(th, gtx, st)
+										}
 										return ui.layoutStreamOutputView(th, gtx, st)
 									}),
 									layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 										return ui.layoutFileViewerOverlay(th, gtx, st)
+									}),
+									layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+										return ui.layoutFileViewerFindBar(th, gtx, st)
 									}),
 								)
 							})
@@ -220,6 +233,19 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		}
 		return dims
 	})
+}
+
+func fileViewerEmptyPanelMessage(st *fileViewerState) string {
+	if st == nil {
+		return ""
+	}
+	if st.loading && st.content == "" && st.updatedAt.IsZero() {
+		return "Loading..."
+	}
+	if st.mode == "command" && st.content == "" && st.err == "" {
+		return "No output"
+	}
+	return ""
 }
 
 func (ui *UI) handleFileViewerRootPointerEvents(gtx layout.Context, st *fileViewerState) {
@@ -296,6 +322,12 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 				!viewerPointInRect(pos, st.encodingMenuRect) &&
 				!viewerPointInRect(pos, st.encodingBarRect) {
 				st.closeEncodingMenu()
+				gtx.Execute(op.InvalidateCmd{})
+			}
+			if st.find.sourceMenuOpen &&
+				!viewerPointInRect(pos, st.find.sourceMenuRect) &&
+				!viewerPointInRect(pos, st.find.sourceButtonRect) {
+				st.find.closeSourceMenu()
 				gtx.Execute(op.InvalidateCmd{})
 			}
 			if st.commandEditOn {
@@ -683,7 +715,11 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 	lineEnding := ""
 	encodingLabel := ""
 	if st.mode == "file" {
-		lineEnding = viewerLineEndingLabel(st.detectedLineEnding)
+		if st.detectedImagePreview {
+			lineEnding = viewerImageSizeLabel(st)
+		} else if !st.detectedBinaryPreview {
+			lineEnding = viewerLineEndingLabel(st.detectedLineEnding)
+		}
 		encodingLabel = viewerEncodingStatusLabel(st)
 	}
 	if title == "" && statusText == "" && updatedText == "" && lineEnding == "" && encodingLabel == "" {
@@ -745,7 +781,7 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 					addGap(unit.Dp(4))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						click := &st.encodingMenuClick
-						if st.mode != "file" {
+						if st.mode != "file" || st.detectedImagePreview {
 							click = nil
 						}
 						return ui.layoutFileViewerOverlayChip(th, gtx, encodingLabel, theme.CommandText, st.encodingMenuOpen, click)
@@ -926,6 +962,15 @@ func viewerEncodingStatusLabel(st *fileViewerState) string {
 	if st == nil {
 		return ""
 	}
+	if st.detectedImagePreview {
+		if label := viewerImageFormatDisplayName(st.imagePreviewFormat); label != "" {
+			return label
+		}
+		return "Image"
+	}
+	if st.detectedBinaryPreview {
+		return "Binary"
+	}
 	enc := st.detectedEncoding
 	if enc == "" {
 		enc = fm.NormalizeViewerFileEncoding(st.fileEncoding)
@@ -947,6 +992,15 @@ func viewerEncodingStatusLabel(st *fileViewerState) string {
 }
 
 func viewerEncodingAutoDetail(st *fileViewerState) string {
+	if st != nil && st.detectedImagePreview {
+		if label := viewerImageFormatDisplayName(st.imagePreviewFormat); label != "" {
+			return "Detected " + label + " image"
+		}
+		return "Detected image"
+	}
+	if st != nil && st.detectedBinaryPreview {
+		return "Detected binary data"
+	}
 	if st == nil || st.detectedEncoding == "" {
 		return "Detect UTF-8 / UTF-16 / CP437"
 	}
@@ -973,6 +1027,26 @@ func viewerEncodingDisplayName(encoding string) string {
 	default:
 		return "UTF-8"
 	}
+}
+
+func viewerImageFormatDisplayName(format string) string {
+	switch normalizeViewerImageFormat(format) {
+	case "png":
+		return "PNG"
+	case "jpeg":
+		return "JPEG"
+	case "gif":
+		return "GIF"
+	default:
+		return ""
+	}
+}
+
+func viewerImageSizeLabel(st *fileViewerState) string {
+	if st == nil || st.imagePreviewSize.X <= 0 || st.imagePreviewSize.Y <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%dx%d", st.imagePreviewSize.X, st.imagePreviewSize.Y)
 }
 
 func viewerLineEndingLabel(kind string) string {

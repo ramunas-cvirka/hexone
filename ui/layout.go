@@ -919,24 +919,25 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 
 func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 	anyMods := ^key.Modifiers(0)
+	filters := []event.Filter{
+		key.Filter{Name: key.NameF1, Optional: anyMods},
+		key.Filter{Name: key.NameF2, Optional: anyMods},
+		key.Filter{Name: key.NameF3, Optional: anyMods},
+		key.Filter{Name: key.NameF4, Optional: anyMods},
+		key.Filter{Name: key.NameF9, Optional: anyMods},
+		key.Filter{Name: key.NameF10, Optional: anyMods},
+		key.Filter{Name: key.NameF11, Optional: anyMods},
+		key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
+		key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
+		key.Filter{Name: "S", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "s", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
+		key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
+	}
 	for {
-		ev, ok := gtx.Event(
-			key.Filter{Name: key.NameF1, Optional: anyMods},
-			key.Filter{Name: key.NameF2, Optional: anyMods},
-			key.Filter{Name: key.NameF3, Optional: anyMods},
-			key.Filter{Name: key.NameF4, Optional: anyMods},
-			key.Filter{Name: key.NameF9, Optional: anyMods},
-			key.Filter{Name: key.NameF10, Optional: anyMods},
-			key.Filter{Name: key.NameF11, Optional: anyMods},
-			key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
-			key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
-			key.Filter{Name: "S", Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Name: "s", Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
-			key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
-		)
+		ev, ok := gtx.Event(filters...)
 		if !ok {
 			return
 		}
@@ -1022,10 +1023,15 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ui == nil || ui.Tabs.Value != "tab0" {
 				continue
 			}
+			if ui.fileViewer != nil {
+				ui.openFileViewerFind(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
 			if ui.settingsModal != nil || ui.sshModal != nil {
 				continue
 			}
-			if ui.fileViewer != nil || ui.hasBlockingFileDialog() {
+			if ui.hasBlockingFileDialog() {
 				continue
 			}
 			if ui.pathEditActive() {

@@ -5,6 +5,47 @@ package ui
 
 import "testing"
 
+func TestEncodeHexTextUsesSpacedUppercaseBytes(t *testing.T) {
+	got, n := encodeHexText("Hello")
+
+	if got != "48 65 6C 6C 6F" {
+		t.Fatalf("encodeHexText=%q want %q", got, "48 65 6C 6C 6F")
+	}
+	if n != 5 {
+		t.Fatalf("byteCount=%d want 5", n)
+	}
+}
+
+func TestOnRightTextChangedUpdatesLeftEditor(t *testing.T) {
+	ui := NewUI(nil)
+
+	ui.onRightTextChanged("Hi")
+
+	if got := ui.LeftEd.Text(); got != "48 69" {
+		t.Fatalf("LeftEd=%q want %q", got, "48 69")
+	}
+	if got := ui.LeftInfo; got != "2 bytes" {
+		t.Fatalf("LeftInfo=%q want %q", got, "2 bytes")
+	}
+	if got := ui.leftPrev; got != "48 69" {
+		t.Fatalf("leftPrev=%q want %q", got, "48 69")
+	}
+}
+
+func TestOnRightTextChangedUpdatesByteCountWithoutReset(t *testing.T) {
+	ui := NewUI(nil)
+	ui.LeftEd.SetText("48 69")
+
+	ui.onRightTextChanged("Hi")
+
+	if got := ui.LeftEd.Text(); got != "48 69" {
+		t.Fatalf("LeftEd=%q want unchanged %q", got, "48 69")
+	}
+	if got := ui.LeftInfo; got != "2 bytes" {
+		t.Fatalf("LeftInfo=%q want %q", got, "2 bytes")
+	}
+}
+
 func TestDecodeHexIgnoresMultilineSeparators(t *testing.T) {
 	got, n, err := decodeHex("48 65 6c 6c 6f\n57 6f 72 6c 64")
 	if err != nil {

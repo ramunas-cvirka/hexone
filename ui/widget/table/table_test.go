@@ -106,6 +106,25 @@ func TestLeadingIconMetricsScaleWithCellHeight(t *testing.T) {
 	}
 }
 
+func TestApplyRowForegroundRespectsPreserveColor(t *testing.T) {
+	fg := color.NRGBA{R: 0xAA, G: 0xBB, B: 0xCC, A: 0xFF}
+	base := CellStyle{
+		Color:         color.NRGBA{R: 0x11, G: 0x22, B: 0x33, A: 0xFF},
+		PreserveColor: true,
+	}
+
+	got := applyRowForeground(base, &fg)
+	if got.Color != base.Color {
+		t.Fatalf("applyRowForeground preserved color=%v want %v", got.Color, base.Color)
+	}
+
+	base.PreserveColor = false
+	got = applyRowForeground(base, &fg)
+	if got.Color != fg {
+		t.Fatalf("applyRowForeground color=%v want row fg %v", got.Color, fg)
+	}
+}
+
 func testTableLayoutContext(size image.Point) layout.Context {
 	var router input.Router
 	return layout.Context{

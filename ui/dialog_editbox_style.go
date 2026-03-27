@@ -460,6 +460,11 @@ func (ui *UI) editorForMenuID(id string) (*widget.Editor, bool) {
 			return nil, false
 		}
 		return &ui.fileViewer.commandEditor, true
+	case "viewer-find":
+		if ui.fileViewer == nil {
+			return nil, false
+		}
+		return &ui.fileViewer.find.editor, true
 	case "settings-view-command":
 		if ui.settingsModal == nil {
 			return nil, false
