@@ -15,6 +15,8 @@ var (
 	closeIconRef       *widget.Icon
 	refreshIcon        *widget.Icon
 	copyIcon           *widget.Icon
+	arrowUpIcon        *widget.Icon
+	arrowDownIcon      *widget.Icon
 	favoriteIcon       *widget.Icon
 	favoriteBorderIcon *widget.Icon
 	disconnectIcon     *widget.Icon
@@ -35,6 +37,16 @@ func CopyIcon() *widget.Icon {
 	return copyIcon
 }
 
+func ArrowUpIcon() *widget.Icon {
+	initIcons()
+	return arrowUpIcon
+}
+
+func ArrowDownIcon() *widget.Icon {
+	initIcons()
+	return arrowDownIcon
+}
+
 func FavoriteIcon(active bool) *widget.Icon {
 	initIcons()
 	if active {
@@ -53,6 +65,8 @@ func initIcons() {
 		closeIconRef = mustIcon(widget.NewIcon(mdicons.NavigationClose))
 		refreshIcon = mustIcon(widget.NewIcon(mdicons.NavigationRefresh))
 		copyIcon = mustIcon(widget.NewIcon(mdicons.ContentContentCopy))
+		arrowUpIcon = mustIcon(widget.NewIcon(mdicons.NavigationExpandLess))
+		arrowDownIcon = mustIcon(widget.NewIcon(mdicons.NavigationExpandMore))
 		favoriteIcon = mustIcon(widget.NewIcon(mdicons.ToggleStar))
 		favoriteBorderIcon = mustIcon(widget.NewIcon(mdicons.ToggleStarBorder))
 		disconnectIcon = mustIcon(widget.NewIcon(mdicons.ActionPowerSettingsNew))

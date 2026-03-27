@@ -85,6 +85,7 @@ type settingsModalState struct {
 	popupGlobalPointerTag       uiEventTag
 	colorCategoryPopupTag       uiEventTag
 	colorPickerPopupTag         uiEventTag
+	filenameIconPickerPopupTag  uiEventTag
 	filenamePermPickerPopupTag  uiEventTag
 	viewTargetPickerPopupTag    uiEventTag
 	viewAssocPickerPopupTag     uiEventTag
@@ -112,6 +113,9 @@ type settingsModalState struct {
 	filenameDefaultIcon         string
 	filenameDefaultIconClick    widget.Clickable
 	filenameDefaultTextPicker   widget.Clickable
+	filenameIconPickerOpen      bool
+	filenameIconPickerTarget    string
+	filenameIconSwatchClicks    []widget.Clickable
 	filenameRuleMode            string
 	filenameRuleModeAnim        settingsChoiceAnim
 	filenameRuleModeAgeClick    widget.Clickable
@@ -478,6 +482,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorCategoryHoverAnim = segmentedAnimState{}
 	st.colorPickerOpen = false
 	st.colorPickerTarget = ""
+	st.filenameIconPickerOpen = false
+	st.filenameIconPickerTarget = ""
 	st.viewCommandEdit.SetText(cfg.Viewer.Command)
 	st.viewShellEdit.SetText(normalizeViewerShellInput(cfg.Viewer.Shell))
 	st.viewRemoteSearchCommandEdit.SetText(fm.NormalizeViewerRemoteSearchCommand(cfg.Viewer.RemoteSearchCommand))
@@ -735,6 +741,19 @@ func (st *settingsModalState) toggleColorPicker(target string) {
 	st.colorPickerTarget = target
 }
 
+func (st *settingsModalState) toggleFilenameIconPicker(target string) {
+	if st == nil || target == "" {
+		return
+	}
+	if st.filenameIconPickerOpen && st.filenameIconPickerTarget == target {
+		st.closeSettingsPopupsExcept("")
+		return
+	}
+	st.closeSettingsPopupsExcept("filename-icon-picker")
+	st.filenameIconPickerOpen = true
+	st.filenameIconPickerTarget = target
+}
+
 func (st *settingsModalState) toggleFilenamePermissionPicker() {
 	if st == nil {
 		return
@@ -799,7 +818,7 @@ func (st *settingsModalState) colorPickerSwatchGroups(target string) []settingsC
 }
 
 func (st *settingsModalState) anyPopupOpen() bool {
-	return st != nil && (st.colorCategoryOpen || st.colorPickerOpen || st.filenamePermPickerOpen || st.viewTargetPickOpen || st.viewRulePickOpen || st.viewAssocPickOpen)
+	return st != nil && (st.colorCategoryOpen || st.colorPickerOpen || st.filenameIconPickerOpen || st.filenamePermPickerOpen || st.viewTargetPickOpen || st.viewRulePickOpen || st.viewAssocPickOpen)
 }
 
 func (st *settingsModalState) popupToggleHovered() bool {
@@ -810,11 +829,16 @@ func (st *settingsModalState) popupToggleHovered() bool {
 		st.colorBgPickerClick.Hovered() ||
 		st.colorTextPickerClick.Hovered() ||
 		st.filenameDefaultTextPicker.Hovered() ||
+		st.filenameDefaultIconClick.Hovered() ||
 		st.filenameAgeTextPicker.Hovered() ||
+		st.filenameAgeIconClick.Hovered() ||
 		st.filenamePermPickerClick.Hovered() ||
 		st.filenamePermTextPicker.Hovered() ||
+		st.filenamePermIconClick.Hovered() ||
 		st.filenameExtTextPicker.Hovered() ||
+		st.filenameExtIconClick.Hovered() ||
 		st.filenameSizeTextPicker.Hovered() ||
+		st.filenameSizeIconClick.Hovered() ||
 		st.viewTargetPickClick.Hovered() ||
 		st.viewRulePickClick.Hovered() ||
 		st.viewAssocPickClick.Hovered()
@@ -830,6 +854,10 @@ func (st *settingsModalState) closeSettingsPopupsExcept(except string) {
 	if except != "color-picker" {
 		st.colorPickerOpen = false
 		st.colorPickerTarget = ""
+	}
+	if except != "filename-icon-picker" {
+		st.filenameIconPickerOpen = false
+		st.filenameIconPickerTarget = ""
 	}
 	if except != "filename-perm-picker" {
 		st.filenamePermPickerOpen = false
@@ -881,6 +909,7 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 	pressedPopupToggle := st.popupToggleHovered()
 	pressedColorCategoryPopup := settingsPopupPressed(gtx, &st.colorCategoryPopupTag)
 	pressedColorPickerPopup := settingsPopupPressed(gtx, &st.colorPickerPopupTag)
+	pressedFilenameIconPopup := settingsPopupPressed(gtx, &st.filenameIconPickerPopupTag)
 	pressedFilenamePermPopup := settingsPopupPressed(gtx, &st.filenamePermPickerPopupTag)
 	pressedTargetPickerPopup := settingsPopupPressed(gtx, &st.viewTargetPickerPopupTag)
 	pressedRulePickerPopup := settingsPopupPressed(gtx, &st.viewRulePickerPopupTag)
@@ -914,6 +943,16 @@ func (ui *UI) handleSettingsPopupOutsideClick(gtx layout.Context, st *settingsMo
 			}
 			st.colorPickerOpen = false
 			st.colorPickerTarget = ""
+			closed = true
+			continue
+		}
+
+		if st.filenameIconPickerOpen {
+			if pressedPopupToggle || pressedFilenameIconPopup {
+				continue
+			}
+			st.filenameIconPickerOpen = false
+			st.filenameIconPickerTarget = ""
 			closed = true
 			continue
 		}
@@ -986,6 +1025,16 @@ func (st *settingsModalState) ensureColorSwatchClicks(n int) {
 	old := st.colorSwatchClicks
 	st.colorSwatchClicks = make([]widget.Clickable, n)
 	copy(st.colorSwatchClicks, old)
+}
+
+func (st *settingsModalState) ensureFilenameIconSwatchClicks(n int) {
+	if n <= cap(st.filenameIconSwatchClicks) {
+		st.filenameIconSwatchClicks = st.filenameIconSwatchClicks[:n]
+		return
+	}
+	old := st.filenameIconSwatchClicks
+	st.filenameIconSwatchClicks = make([]widget.Clickable, n)
+	copy(st.filenameIconSwatchClicks, old)
 }
 
 func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePalette, string) {

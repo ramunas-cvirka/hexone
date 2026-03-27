@@ -735,6 +735,22 @@ func TestNormalizeFilenameAgeRulesSortsAndDedupes(t *testing.T) {
 	}
 }
 
+func TestNormalizeFilenameIconSupportsExtendedChoices(t *testing.T) {
+	cases := map[string]string{
+		"music":       FilenameIconAudio,
+		"book":        FilenameIconBook,
+		"spreadsheet": FilenameIconTable,
+		"application": FilenameIconApp,
+		"shortcut":    FilenameIconLink,
+	}
+
+	for raw, want := range cases {
+		if got := NormalizeFilenameIcon(raw); got != want {
+			t.Fatalf("NormalizeFilenameIcon(%q)=%q want %q", raw, got, want)
+		}
+	}
+}
+
 func TestFilenamePermissionAndSizeMatchesSupportPartialRules(t *testing.T) {
 	if !FilenamePermissionMatches("0755", FilenamePermissionRule{Permissions: "0111", Match: FilenamePermissionMatchAny}) {
 		t.Fatal("any-match permissions should detect executables")

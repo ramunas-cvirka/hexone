@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+func encodeHexText(text string) (string, int) {
+	data := []byte(text)
+	return bytesHexSpaced(data), len(data)
+}
+
 func decodeHex(hexStr string) (string, int, error) {
 	data, err := parseHexText(hexStr)
 	if err != nil {
@@ -58,4 +63,15 @@ func (ui *UI) onLeftTextChanged(text string) {
 	// onRightTextChanged for this programmatic update (optional).
 	ui.rightPrev = rText
 }
-func (ui *UI) onRightTextChanged(text string) {}
+
+func (ui *UI) onRightTextChanged(text string) {
+	lText, byteCount := encodeHexText(text)
+	if lText == ui.LeftEd.Text() {
+		ui.LeftInfo = strconv.Itoa(byteCount) + " bytes"
+		return
+	}
+
+	ui.LeftEd.SetText(lText)
+	ui.LeftInfo = strconv.Itoa(byteCount) + " bytes"
+	ui.leftPrev = lText
+}

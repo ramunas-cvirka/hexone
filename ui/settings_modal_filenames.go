@@ -153,22 +153,14 @@ func normalizeFilenameRuleMode(raw string) string {
 	}
 }
 
-func nextFilenameIcon(current string) string {
-	current = fm.NormalizeFilenameIcon(current)
-	for i, opt := range filenameIconOptions {
-		if opt.key == current {
-			return filenameIconOptions[(i+1)%len(filenameIconOptions)].key
-		}
-	}
-	return filenameIconOptions[0].key
-}
-
 func (st *settingsModalState) loadFilenameColorsFromConfig(cfg *fm.Config) {
 	if st == nil {
 		return
 	}
 	st.filenameDefaultText = ""
 	st.filenameDefaultIcon = ""
+	st.filenameIconPickerOpen = false
+	st.filenameIconPickerTarget = ""
 	st.filenameRuleMode = normalizeFilenameRuleMode(st.filenameRuleMode)
 	st.filenameRuleModeAnim = settingsChoiceAnim{}
 	st.filenameAgeUnitAnim = settingsChoiceAnim{}
@@ -418,7 +410,7 @@ func (st *settingsModalState) refreshFilenameAgeDraftInfo() {
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameAgeTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameAgeIcon)
 	if textHex == "" && icon == "" {
-		st.filenameAgeInfoText = "Choose a color, an icon, or both"
+		st.filenameAgeInfoText = "Pick a color, icon, or both"
 		return
 	}
 	existing, ok := st.filenameAgeRule(maxAge)
@@ -438,7 +430,7 @@ func (st *settingsModalState) filenameAgeNoticeText() string {
 	}
 	offset := strings.TrimSpace(st.filenameAgeOffsetEdit.Text())
 	if offset == "" {
-		return "Use a positive offset and choose minutes, hours, days, or weeks"
+		return "Enter an age and unit"
 	}
 	maxAge := filenameAgeRuleKeyFromFields(offset, st.filenameAgeUnit)
 	if maxAge == "" {
@@ -686,7 +678,7 @@ func (st *settingsModalState) refreshFilenamePermissionDraftInfo() {
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenamePermTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenamePermIcon)
 	if textHex == "" && icon == "" {
-		st.filenamePermInfoText = "Choose a color, an icon, or both"
+		st.filenamePermInfoText = "Pick a color, icon, or both"
 		return
 	}
 	existing, ok := st.filenamePermissionRule(key)
@@ -706,7 +698,7 @@ func (st *settingsModalState) filenamePermissionNoticeText() string {
 	}
 	key := filenamePermissionRuleKey(st.filenamePermEdit.Text(), st.filenamePermMatch)
 	if key == "" {
-		return "Use octal bits like 0644, 0111, or 0222 and choose Exact / Any / All / None"
+		return "Enter octal bits and a match mode"
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenamePermTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenamePermIcon)
@@ -826,6 +818,61 @@ func (ui *UI) layoutSettingsFilenameColorValueField(th *material.Theme, gtx layo
 	return dims
 }
 
+func (st *settingsModalState) filenameIconPickerValue(target string) string {
+	if st == nil {
+		return ""
+	}
+	switch target {
+	case "filename-default-icon":
+		return st.filenameDefaultIcon
+	case "filename-age-icon":
+		return st.filenameAgeIcon
+	case "filename-perm-icon":
+		return st.filenamePermIcon
+	case "filename-ext-icon":
+		return st.filenameExtIcon
+	case "filename-size-icon":
+		return st.filenameSizeIcon
+	default:
+		return ""
+	}
+}
+
+func (st *settingsModalState) setFilenameIconPickerValue(target, iconKey string) {
+	if st == nil {
+		return
+	}
+	iconKey = fm.NormalizeFilenameIcon(iconKey)
+	switch target {
+	case "filename-default-icon":
+		st.filenameDefaultIcon = iconKey
+	case "filename-age-icon":
+		st.filenameAgeIcon = iconKey
+	case "filename-perm-icon":
+		st.filenamePermIcon = iconKey
+	case "filename-ext-icon":
+		st.filenameExtIcon = iconKey
+	case "filename-size-icon":
+		st.filenameSizeIcon = iconKey
+	}
+}
+
+func (st *settingsModalState) refreshFilenameIconPickerTarget(target string) {
+	if st == nil {
+		return
+	}
+	switch target {
+	case "filename-age-icon":
+		st.refreshFilenameAgeDraftInfo()
+	case "filename-perm-icon":
+		st.refreshFilenamePermissionDraftInfo()
+	case "filename-ext-icon":
+		st.refreshFilenameExtensionDraftInfo()
+	case "filename-size-icon":
+		st.refreshFilenameSizeDraftInfo()
+	}
+}
+
 func settingsFilenameIconButtonWidth(th *material.Theme, gtx layout.Context, face font.Typeface) int {
 	maxW := 0
 	for _, opt := range filenameIconOptions {
@@ -837,7 +884,7 @@ func settingsFilenameIconButtonWidth(th *material.Theme, gtx layout.Context, fac
 			maxW = w
 		}
 	}
-	width := maxW + gtx.Dp(unit.Dp(42))
+	width := maxW + gtx.Dp(unit.Dp(52))
 	minW := gtx.Dp(unit.Dp(112))
 	if width < minW {
 		width = minW
@@ -845,14 +892,30 @@ func settingsFilenameIconButtonWidth(th *material.Theme, gtx layout.Context, fac
 	return width
 }
 
-func (ui *UI) layoutSettingsFilenameIconCycleButton(th *material.Theme, gtx layout.Context, click *widget.Clickable, iconKey string) layout.Dimensions {
+func (ui *UI) layoutSettingsFilenameIconPickerField(th *material.Theme, gtx layout.Context, st *settingsModalState, click *widget.Clickable, pickerTarget, iconKey string) layout.Dimensions {
+	open := st != nil && st.filenameIconPickerOpen && st.filenameIconPickerTarget == pickerTarget
+	dims := ui.layoutSettingsFilenameIconPickerButton(th, gtx, click, iconKey, open)
+	if open {
+		m := op.Record(gtx.Ops)
+		offset := op.Offset(image.Pt(0, dims.Size.Y+gtx.Dp(unit.Dp(4))))
+		offset.Add(gtx.Ops)
+		ui.layoutSettingsFilenameIconPickerPopup(th, gtx, st)
+		op.Defer(gtx.Ops, m.Stop())
+	}
+	return dims
+}
+
+func (ui *UI) layoutSettingsFilenameIconPickerButton(th *material.Theme, gtx layout.Context, click *widget.Clickable, iconKey string, open bool) layout.Dimensions {
 	width := settingsFilenameIconButtonWidth(th, gtx, ui.mainTypeface())
-	label := filenameIconLabel(iconKey)
+	label := filenameIconLabel(iconKey) + "  ▾"
+	if open {
+		label = filenameIconLabel(iconKey) + "  ▴"
+	}
 	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
 		dims := click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			bg := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
 			bd := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
-			if click.Hovered() {
+			if click.Hovered() || open {
 				bg = color.NRGBA{R: 30, G: 34, B: 44, A: 255}
 				bd = color.NRGBA{R: 130, G: 160, B: 255, A: 70}
 			}
@@ -890,6 +953,138 @@ func (ui *UI) layoutSettingsFilenameIconCycleButton(th *material.Theme, gtx layo
 			pointer.CursorPointer.Add(gtx.Ops)
 		}
 		return dims
+	})
+}
+
+func settingsFilenameIconPickerPopupWidth(gtx layout.Context) int {
+	cellW := gtx.Dp(unit.Dp(64))
+	gap := gtx.Dp(unit.Dp(4))
+	inset := gtx.Dp(unit.Dp(4))
+	width := inset*2 + cellW*4 + gap*3
+	if width < 1 {
+		width = 1
+	}
+	return width
+}
+
+func (ui *UI) layoutSettingsFilenameIconPickerPopup(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	if st == nil {
+		return layout.Dimensions{}
+	}
+	current := fm.NormalizeFilenameIcon(st.filenameIconPickerValue(st.filenameIconPickerTarget))
+	width := settingsFilenameIconPickerPopupWidth(gtx)
+	if max := gtx.Constraints.Max.X; max > 0 && width > max {
+		width = max
+	}
+	if width < 1 {
+		width = 1
+	}
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		dims := fillRoundedBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+			color.NRGBA{R: 18, G: 22, B: 30, A: 255},
+			color.NRGBA{R: 255, G: 255, B: 255, A: 18},
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					children := make([]layout.FlexChild, 0, len(filenameIconOptions))
+					for rowStart := 0; rowStart < len(filenameIconOptions); rowStart += 4 {
+						rowStart := rowStart
+						rowEnd := rowStart + 4
+						if rowEnd > len(filenameIconOptions) {
+							rowEnd = len(filenameIconOptions)
+						}
+						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsFilenameIconPickerRow(th, gtx, st, filenameIconOptions[rowStart:rowEnd], rowStart, current)
+						}))
+						if rowEnd < len(filenameIconOptions) {
+							children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout))
+						}
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+				})
+			},
+		)
+		registerSettingsPopupArea(gtx, &st.filenameIconPickerPopupTag, dims.Size)
+		return dims
+	})
+}
+
+func (ui *UI) layoutSettingsFilenameIconPickerRow(th *material.Theme, gtx layout.Context, st *settingsModalState, options []filenameIconOption, start int, current string) layout.Dimensions {
+	children := make([]layout.FlexChild, 0, len(options)*2)
+	for i, opt := range options {
+		opt := opt
+		click := &st.filenameIconSwatchClicks[start+i]
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsFilenameIconSwatch(th, gtx, click, opt, opt.key == current)
+		}))
+		if i < len(options)-1 {
+			children = append(children, layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout))
+		}
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
+func (ui *UI) layoutSettingsFilenameIconSwatch(th *material.Theme, gtx layout.Context, click *widget.Clickable, opt filenameIconOption, selected bool) layout.Dimensions {
+	cellW := gtx.Dp(unit.Dp(64))
+	cellH := gtx.Dp(unit.Dp(46))
+	if cellW < 1 {
+		cellW = 1
+	}
+	if cellH < 1 {
+		cellH = 1
+	}
+	return fixedWidth(gtx, cellW, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, cellH, func(gtx layout.Context) layout.Dimensions {
+			dims := click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				bg := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
+				border := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
+				if selected {
+					bg = color.NRGBA{R: 30, G: 34, B: 44, A: 255}
+					border = color.NRGBA{R: 230, G: 236, B: 255, A: 210}
+				} else if click.Hovered() {
+					bg = color.NRGBA{R: 28, G: 32, B: 40, A: 255}
+					border = color.NRGBA{R: 230, G: 236, B: 255, A: 110}
+				}
+				return fillRoundedBox(gtx, gtx.Dp(unit.Dp(6)), bg, border, func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									size := gtx.Dp(unit.Dp(16))
+									if size < 1 {
+										size = 1
+									}
+									if ic := filenamePreviewIcon(opt.key); ic != nil {
+										iconGtx := gtx
+										iconGtx.Constraints = layout.Exact(image.Pt(size, size))
+										ic.Layout(iconGtx, color.NRGBA{R: 216, G: 226, B: 244, A: 255})
+									}
+									return layout.Dimensions{Size: image.Pt(size, size)}
+								})
+							}),
+							layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Caption(th, opt.label)
+									lbl.Font.Typeface = ui.mainTypeface()
+									lbl.TextSize = scaleModalThemeFontSize(th, 8)
+									lbl.Color = txtColor
+									lbl.MaxLines = 1
+									lbl.Truncator = "..."
+									return lbl.Layout(gtx)
+								})
+							}),
+						)
+					})
+				})
+			})
+			if dims.Size.X > 0 && dims.Size.Y > 0 {
+				defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+				pointer.CursorPointer.Add(gtx.Ops)
+			}
+			return dims
+		})
 	})
 }
 
@@ -1520,6 +1715,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}
 	}
 	st.ensureColorSwatchClicks(settingsColorSwatchCount(activeSwatchGroups))
+	st.ensureFilenameIconSwatchClicks(len(filenameIconOptions))
 	if st.colorPickerOpen {
 		clickIdx := 0
 		for _, group := range activeSwatchGroups {
@@ -1534,6 +1730,21 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 					st.errText = ""
 				}
 				clickIdx++
+			}
+		}
+	}
+	if st.filenameIconPickerOpen {
+		for i, opt := range filenameIconOptions {
+			if i >= len(st.filenameIconSwatchClicks) {
+				break
+			}
+			if st.filenameIconSwatchClicks[i].Clicked(gtx) {
+				target := st.filenameIconPickerTarget
+				st.setFilenameIconPickerValue(target, opt.key)
+				st.filenameIconPickerOpen = false
+				st.filenameIconPickerTarget = ""
+				st.errText = ""
+				st.refreshFilenameIconPickerTarget(target)
 			}
 		}
 	}
@@ -1558,9 +1769,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	st.syncFilenameAgeEditors()
 	st.refreshFilenameAgeDraftInfo()
 	if st.filenameAgeIconClick.Clicked(gtx) {
-		st.filenameAgeIcon = nextFilenameIcon(st.filenameAgeIcon)
-		st.errText = ""
-		st.refreshFilenameAgeDraftInfo()
+		st.toggleFilenameIconPicker("filename-age-icon")
 	}
 	if st.filenameAgeApplyClick.Clicked(gtx) {
 		action, err := st.upsertCurrentFilenameAgeRule()
@@ -1584,13 +1793,10 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	st.syncFilenameSizeEditors()
 	st.refreshFilenameSizeDraftInfo()
 	if st.filenameDefaultIconClick.Clicked(gtx) {
-		st.filenameDefaultIcon = nextFilenameIcon(st.filenameDefaultIcon)
-		st.errText = ""
+		st.toggleFilenameIconPicker("filename-default-icon")
 	}
 	if st.filenamePermIconClick.Clicked(gtx) {
-		st.filenamePermIcon = nextFilenameIcon(st.filenamePermIcon)
-		st.errText = ""
-		st.refreshFilenamePermissionDraftInfo()
+		st.toggleFilenameIconPicker("filename-perm-icon")
 	}
 	if st.filenamePermApplyClick.Clicked(gtx) {
 		action, err := st.upsertCurrentFilenamePermissionRule()
@@ -1608,9 +1814,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}
 	}
 	if st.filenameExtIconClick.Clicked(gtx) {
-		st.filenameExtIcon = nextFilenameIcon(st.filenameExtIcon)
-		st.errText = ""
-		st.refreshFilenameExtensionDraftInfo()
+		st.toggleFilenameIconPicker("filename-ext-icon")
 	}
 	if st.filenameExtApplyClick.Clicked(gtx) {
 		action, err := st.upsertCurrentFilenameExtensionRule()
@@ -1628,9 +1832,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}
 	}
 	if st.filenameSizeIconClick.Clicked(gtx) {
-		st.filenameSizeIcon = nextFilenameIcon(st.filenameSizeIcon)
-		st.errText = ""
-		st.refreshFilenameSizeDraftInfo()
+		st.toggleFilenameIconPicker("filename-size-icon")
 	}
 	if st.filenameSizeApplyClick.Clicked(gtx) {
 		action, err := st.upsertCurrentFilenameSizeRule()
@@ -1700,7 +1902,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenamePermIconClick, st.filenamePermIcon)
+							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenamePermIconClick, "filename-perm-icon", st.filenamePermIcon)
 						}),
 					)
 				}),
@@ -1739,7 +1941,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenameExtIconClick, st.filenameExtIcon)
+							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameExtIconClick, "filename-ext-icon", st.filenameExtIcon)
 						}),
 					)
 				}),
@@ -1782,7 +1984,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenameSizeIconClick, st.filenameSizeIcon)
+							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameSizeIconClick, "filename-size-icon", st.filenameSizeIcon)
 						}),
 					)
 				}),
@@ -1829,7 +2031,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenameAgeIconClick, st.filenameAgeIcon)
+							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameAgeIconClick, "filename-age-icon", st.filenameAgeIcon)
 						}),
 					)
 				}),
@@ -1887,14 +2089,14 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}
 	}
 
-	activeRuleNote := "Smaller offsets win. Add as many age overrides as you need; each one matches files not older than its offset."
+	activeRuleNote := "Smaller ages win."
 	switch st.filenameRuleMode {
 	case "permissions":
-		activeRuleNote = "Exact matches the whole mode, while Has All only requires the selected bits. For example, 0111 with Has Any catches executables, and 0222 with Has None catches read-only files."
+		activeRuleNote = "Exact matches the full mode. Other options check selected bits."
 	case "extensions":
-		activeRuleNote = "Extension filters match lowercase filename suffixes like go, md, or tar.gz."
+		activeRuleNote = "Matches lowercase suffixes."
 	case "sizes":
-		activeRuleNote = "Size filters use whole values like 0b, 4k, 10m, or 1g. At Least and At Most can be mixed."
+		activeRuleNote = "Use whole sizes like 4k or 10m."
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -1913,12 +2115,12 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsFilenameIconCycleButton(th, gtx, &st.filenameDefaultIconClick, st.filenameDefaultIcon)
+					return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameDefaultIconClick, "filename-default-icon", st.filenameDefaultIcon)
 				}),
 			)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "This starts from the active pane text color, and only becomes a filename-only override after you change it.")
+			lbl := material.Caption(th, "Blank uses the pane text color.")
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleModalThemeFontSize(th, 9)
 			lbl.Color = hintColor
@@ -1966,7 +2168,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Rule order is age, extension, size, then permissions. Later matching categories override earlier ones, and custom filename colors stay active on hovered and selected rows.")
+			lbl := material.Caption(th, "Order: age, extension, size, permissions. Later matches win.")
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleModalThemeFontSize(th, 9)
 			lbl.Color = hintColor

@@ -5,12 +5,18 @@ package ui
 
 import (
 	"context"
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"gioui.org/io/input"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
+	"gioui.org/widget/material"
 	"hexone/fm"
 )
 
@@ -126,25 +132,178 @@ func TestFileViewerFindStatusTextDelaysSearchingIndicator(t *testing.T) {
 	}
 }
 
-func TestViewerFindModeTabsToggleBetweenTextAndHex(t *testing.T) {
-	ui := &UI{
-		fileViewer: &fileViewerState{
-			mode: "hex",
+func TestFileViewerFindBarWidthsStayStableAcrossStatusChanges(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Now()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(640, 120),
 		},
 	}
-	now := time.Now()
 
-	if !ui.stepFileViewerFindMode(now, 1) {
-		t.Fatal("stepFileViewerFindMode should toggle from text to hex")
+	empty := &fileViewerState{}
+	counted := &fileViewerState{
+		find: fileViewerFindState{
+			status: "1234/3441",
+		},
 	}
-	if !ui.fileViewer.find.hexInput {
-		t.Fatal("hexInput should be enabled after stepping forward")
+	searching := &fileViewerState{
+		find: fileViewerFindState{
+			searching:       true,
+			searchStartedAt: now.Add(-viewerFindSearchingDelay),
+		},
 	}
-	if !ui.stepFileViewerFindMode(now, -1) {
-		t.Fatal("stepFileViewerFindMode should toggle from hex to text")
+
+	emptyBarW, _ := ui.fileViewerFindBarWidths(th, gtx, empty, now)
+	countedBarW, _ := ui.fileViewerFindBarWidths(th, gtx, counted, now)
+	searchingBarW, _ := ui.fileViewerFindBarWidths(th, gtx, searching, now)
+
+	if emptyBarW != countedBarW {
+		t.Fatalf("find bar width empty=%d counted=%d want equal", emptyBarW, countedBarW)
 	}
-	if ui.fileViewer.find.hexInput {
-		t.Fatal("hexInput should be disabled after stepping backward")
+	if emptyBarW != searchingBarW {
+		t.Fatalf("find bar width empty=%d searching=%d want equal", emptyBarW, searchingBarW)
+	}
+}
+
+func TestFileViewerFindBarHeightStaysStableAcrossStatusChanges(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Now()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(640, 120),
+		},
+		Now: now,
+	}
+
+	searching := &fileViewerState{
+		find: fileViewerFindState{
+			open:            true,
+			searching:       true,
+			searchStartedAt: now.Add(-viewerFindSearchingDelay),
+		},
+	}
+	counted := &fileViewerState{
+		find: fileViewerFindState{
+			open:   true,
+			status: "1234/3441",
+		},
+	}
+
+	searchingDims := ui.layoutFileViewerFindBar(th, gtx, searching)
+	countedDims := ui.layoutFileViewerFindBar(th, gtx, counted)
+
+	if searchingDims.Size.Y != countedDims.Size.Y {
+		t.Fatalf("find bar height searching=%d counted=%d want equal", searchingDims.Size.Y, countedDims.Size.Y)
+	}
+}
+
+func TestViewerScrollStreamFindMatchKeepsMatchVisibleBeforeScrolling(t *testing.T) {
+	now := time.Now()
+	st := &fileViewerState{}
+	st.stream.SetContent(strings.Join([]string{
+		"match",
+		"match",
+		"match",
+		"match",
+		"match",
+		"match",
+	}, "\n"))
+	st.stream.visibleLines = 5
+
+	lastVisibleStart := st.stream.lineByteStart(4)
+	viewerScrollStreamFindMatch(st, viewerFindMatch{Start: lastVisibleStart, End: lastVisibleStart + len("match")}, now)
+	if got := st.stream.topLine; got != 0 {
+		t.Fatalf("topLine at last visible match=%d want 0", got)
+	}
+
+	nextStart := st.stream.lineByteStart(5)
+	viewerScrollStreamFindMatch(st, viewerFindMatch{Start: nextStart, End: nextStart + len("match")}, now)
+	if got := st.stream.topLine; got != 1 {
+		t.Fatalf("topLine after next offscreen match=%d want 1", got)
+	}
+}
+
+func TestViewerScrollHexFindMatchKeepsMatchVisibleBeforeScrolling(t *testing.T) {
+	now := time.Now()
+	st := &fileViewerState{
+		hex: &hexViewerState{
+			bytesPerLine: 16,
+			fileSize:     16 * 32,
+			visibleLines: 5,
+			topLine:      10,
+		},
+	}
+
+	lastVisibleStart := int64((10 + 4) * 16)
+	viewerScrollHexFindMatch(st, lastVisibleStart, 1, now)
+	if got := st.hex.topLine; got != 10 {
+		t.Fatalf("hex topLine at last visible match=%d want 10", got)
+	}
+
+	nextStart := int64((10 + 5) * 16)
+	viewerScrollHexFindMatch(st, nextStart, 1, now)
+	if got := st.hex.topLine; got != 11 {
+		t.Fatalf("hex topLine after next offscreen match=%d want 11", got)
+	}
+}
+
+func TestViewerFindHexModeFromQuery(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  bool
+	}{
+		{name: "even upper hex", query: "DEADBEEF", want: true},
+		{name: "even lower hex", query: "deed", want: true},
+		{name: "trimmed hex", query: "  0A0B  ", want: true},
+		{name: "odd digits fall back to text", query: "ABC", want: false},
+		{name: "non hex text falls back to text", query: "needle", want: false},
+		{name: "hex with separators falls back to text", query: "DE AD", want: false},
+	}
+
+	for _, tt := range tests {
+		if got := viewerFindHexModeFromQuery(tt.query); got != tt.want {
+			t.Fatalf("%s: viewerFindHexModeFromQuery(%q)=%v want %v", tt.name, tt.query, got, tt.want)
+		}
+	}
+}
+
+func TestViewerFindAutoPatternBytesPrefersHexOnlyForPureEvenHex(t *testing.T) {
+	pattern, useHex, errText := viewerFindAutoPatternBytes("DEADBEEF")
+	if errText != "" {
+		t.Fatalf("viewerFindAutoPatternBytes hex err=%q", errText)
+	}
+	if !useHex {
+		t.Fatal("viewerFindAutoPatternBytes should treat pure even hex as bytes")
+	}
+	wantHex := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	if len(pattern) != len(wantHex) {
+		t.Fatalf("hex pattern len=%d want %d", len(pattern), len(wantHex))
+	}
+	for i := range wantHex {
+		if pattern[i] != wantHex[i] {
+			t.Fatalf("hex pattern[%d]=0x%X want 0x%X", i, pattern[i], wantHex[i])
+		}
+	}
+
+	pattern, useHex, errText = viewerFindAutoPatternBytes("ABC")
+	if errText != "" {
+		t.Fatalf("viewerFindAutoPatternBytes text err=%q", errText)
+	}
+	if useHex {
+		t.Fatal("viewerFindAutoPatternBytes should fall back to text for odd-length hex-like input")
+	}
+	if got := string(pattern); got != "ABC" {
+		t.Fatalf("text pattern=%q want %q", got, "ABC")
 	}
 }
 

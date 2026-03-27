@@ -1367,6 +1367,9 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 		scrollbarW = 0
 	}
 	v.textPad = gtx.Dp(unit.Dp(2))
+	if reflowFileViewerBinaryPreview(st, v.visibleCols(textW)) {
+		ui.refreshFileViewerFind(gtx.Now, true)
+	}
 	hbarH := 0
 	if !v.wrapEnabled && v.maxHCol(textW) > 0 {
 		hbarH = gtx.Dp(unit.Dp(10))

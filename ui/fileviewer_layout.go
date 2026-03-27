@@ -711,7 +711,9 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 	lineEnding := ""
 	encodingLabel := ""
 	if st.mode == "file" {
-		lineEnding = viewerLineEndingLabel(st.detectedLineEnding)
+		if !st.detectedBinaryPreview {
+			lineEnding = viewerLineEndingLabel(st.detectedLineEnding)
+		}
 		encodingLabel = viewerEncodingStatusLabel(st)
 	}
 	if title == "" && statusText == "" && updatedText == "" && lineEnding == "" && encodingLabel == "" {
@@ -954,6 +956,9 @@ func viewerEncodingStatusLabel(st *fileViewerState) string {
 	if st == nil {
 		return ""
 	}
+	if st.detectedBinaryPreview {
+		return "Binary"
+	}
 	enc := st.detectedEncoding
 	if enc == "" {
 		enc = fm.NormalizeViewerFileEncoding(st.fileEncoding)
@@ -975,6 +980,9 @@ func viewerEncodingStatusLabel(st *fileViewerState) string {
 }
 
 func viewerEncodingAutoDetail(st *fileViewerState) string {
+	if st != nil && st.detectedBinaryPreview {
+		return "Detected binary data"
+	}
 	if st == nil || st.detectedEncoding == "" {
 		return "Detect UTF-8 / UTF-16 / CP437"
 	}

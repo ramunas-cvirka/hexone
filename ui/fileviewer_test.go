@@ -4,12 +4,14 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/binary"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 	"unicode/utf16"
 
 	"hexone/fm"
@@ -185,6 +187,146 @@ func TestDecodeViewerTextAutoDetectsCP437ByContent(t *testing.T) {
 	}
 }
 
+func TestDecodeViewerTextAutoUsesBinaryPreviewForBinaryData(t *testing.T) {
+	data := []byte{'A', 0x00, 'B', 0x01, 'C', 0x7F, 'D'}
+
+	got, info := decodeViewerText("sample.bin", data, fm.ViewerFileEncodingAuto)
+
+	if got != "A.B.C.D" {
+		t.Fatalf("decodeViewerText=%q want %q", got, "A.B.C.D")
+	}
+	if strings.Contains(got, `\x`) {
+		t.Fatalf("decodeViewerText=%q should not contain escaped bytes", got)
+	}
+	if !info.binaryPreview {
+		t.Fatal("expected binary preview for NUL-heavy data")
+	}
+}
+
+func TestFormatViewerBinaryPreviewWrapsFixedRows(t *testing.T) {
+	data := bytes.Repeat([]byte{'A'}, viewerBinaryPreviewBytes+1)
+
+	got := formatViewerBinaryPreview(data)
+	want := strings.Repeat("A", viewerBinaryPreviewBytes) + "\nA"
+
+	if got != want {
+		t.Fatalf("formatViewerBinaryPreview=%q want %q", got, want)
+	}
+}
+
+func TestFormatViewerBinaryPreviewWithColsUsesViewportWidth(t *testing.T) {
+	data := bytes.Repeat([]byte{'A'}, 11)
+
+	got := formatViewerBinaryPreviewWithCols(data, 5)
+	want := "AAAAA\nAAAAA\nA"
+
+	if got != want {
+		t.Fatalf("formatViewerBinaryPreviewWithCols=%q want %q", got, want)
+	}
+}
+
+func TestViewerBinaryPreviewWrapColsCapsWideViewports(t *testing.T) {
+	if got := viewerBinaryPreviewWrapCols(400); got != viewerBinaryPreviewBytes {
+		t.Fatalf("viewerBinaryPreviewWrapCols=%d want %d", got, viewerBinaryPreviewBytes)
+	}
+}
+
+func TestDecodeViewerTextAutoUsesBinaryPreviewForPDFData(t *testing.T) {
+	data := []byte("%PDF-1.7\r\n1 0 obj\r\n<< /Type /Catalog >>\r\nendobj\r\n")
+
+	got, info := decodeViewerText("sample.pdf", data, fm.ViewerFileEncodingAuto)
+
+	if !info.binaryPreview {
+		t.Fatal("expected PDF data to use binary preview")
+	}
+	if strings.Contains(got, "\n") {
+		t.Fatalf("decodeViewerText=%q should not preserve source newlines in binary preview", got)
+	}
+}
+
+func TestDecodeViewerTextManualUTF8StillUsesBinaryPreviewForPDFData(t *testing.T) {
+	data := []byte("%PDF-1.7\r\n1 0 obj\r\n<< /Type /Catalog >>\r\nendobj\r\n")
+
+	_, info := decodeViewerText("sample.pdf", data, fm.ViewerFileEncodingUTF8)
+
+	if !info.binaryPreview {
+		t.Fatal("expected manual UTF-8 PDF view to still use binary preview")
+	}
+}
+
+func TestSanitizeViewerContentReplacesControlRunesWithDots(t *testing.T) {
+	raw := "A\tB" + string([]rune{0x07, unicode.ReplacementChar}) + "C"
+
+	got := sanitizeViewerContent(raw)
+
+	if got != "A    B..C" {
+		t.Fatalf("sanitizeViewerContent=%q want %q", got, "A    B..C")
+	}
+	if strings.Contains(got, `\x`) || strings.Contains(got, `\u`) {
+		t.Fatalf("sanitizeViewerContent=%q should not contain escaped controls", got)
+	}
+}
+
+func TestReadViewerFileAutoUsesBinaryPreview(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sample.bin")
+	data := append(bytes.Repeat([]byte{'A'}, viewerBinaryPreviewBytes), 0x00)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	content, _, errText, info := readViewerFile(path, fm.ViewerFileEncodingAuto, 1<<20, time.Time{}, nil)
+
+	if errText != "" {
+		t.Fatalf("readViewerFile err=%q", errText)
+	}
+	want := strings.Repeat("A", viewerBinaryPreviewBytes) + "\n."
+	if content != want {
+		t.Fatalf("content=%q want %q", content, want)
+	}
+	if !info.binaryPreview {
+		t.Fatal("expected binary preview info")
+	}
+	if info.lineEnding != "" {
+		t.Fatalf("lineEnding=%q want empty for binary preview", info.lineEnding)
+	}
+}
+
+func TestReflowFileViewerBinaryPreviewUsesViewportCols(t *testing.T) {
+	data := bytes.Repeat([]byte{'A'}, 11)
+	st := &fileViewerState{
+		content:               formatViewerBinaryPreview(data),
+		detectedBinaryPreview: true,
+		binaryPreviewData:     append([]byte(nil), data...),
+		binaryPreviewCols:     viewerBinaryPreviewBytes,
+	}
+
+	if !reflowFileViewerBinaryPreview(st, 5) {
+		t.Fatal("expected binary preview reflow")
+	}
+	if got := st.content; got != "AAAAA\nAAAAA\nA" {
+		t.Fatalf("reflowed content=%q want %q", got, "AAAAA\nAAAAA\nA")
+	}
+	if got := st.binaryPreviewCols; got != 5 {
+		t.Fatalf("binaryPreviewCols=%d want %d", got, 5)
+	}
+}
+
+func TestViewerUpdateActionTreatsSameBinaryPreviewBytesAsSame(t *testing.T) {
+	data := bytes.Repeat([]byte{'A'}, 11)
+	st := &fileViewerState{
+		content:               formatViewerBinaryPreviewWithCols(data, 5),
+		detectedBinaryPreview: true,
+		binaryPreviewData:     append([]byte(nil), data...),
+		binaryPreviewCols:     5,
+	}
+
+	got := viewerUpdateAction(st, formatViewerBinaryPreview(data), true, data)
+
+	if got != viewerUpdateSame {
+		t.Fatalf("viewerUpdateAction=%d want %d", got, viewerUpdateSame)
+	}
+}
+
 func TestDetectViewerLineEndingMixed(t *testing.T) {
 	got := detectViewerLineEnding("alpha\r\nbeta\ngamma")
 
@@ -203,6 +345,17 @@ func TestViewerClipboardContentPreservesCRLFForFileMode(t *testing.T) {
 
 	if got != "alpha\r\nbeta" {
 		t.Fatalf("viewerClipboardContent=%q want %q", got, "alpha\r\nbeta")
+	}
+}
+
+func TestViewerEncodingStatusLabelUsesBinaryPreviewLabel(t *testing.T) {
+	st := &fileViewerState{
+		fileEncoding:          fm.ViewerFileEncodingAuto,
+		detectedBinaryPreview: true,
+	}
+
+	if got := viewerEncodingStatusLabel(st); got != "Binary" {
+		t.Fatalf("viewerEncodingStatusLabel=%q want %q", got, "Binary")
 	}
 }
 

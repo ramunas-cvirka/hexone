@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"gioui.org/font"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -46,8 +47,10 @@ type sshModalState struct {
 	keyPathEdit widget.Editor
 	keyPassEdit widget.Editor
 
-	footerAnim segmentedAnimState
-	errText    string
+	footerAnim   segmentedAnimState
+	errText      string
+	keyTag       struct{}
+	wantKeyFocus bool
 }
 
 func (st *sshModalState) currentEditorSetup() (fm.SSHSetup, bool) {
@@ -100,6 +103,7 @@ func (ui *UI) openSSHModal() {
 	}
 
 	st.loadFromConfig(ui.fmCfg)
+	st.focusKeyboard()
 	ui.sshModal = st
 }
 
@@ -108,14 +112,27 @@ func (ui *UI) closeSSHModal() {
 }
 
 func (st *sshModalState) loadFromConfig(cfg *fm.Config) {
+	st.loadFromConfigWithSelected(cfg, 0)
+}
+
+func (st *sshModalState) loadFromConfigWithSelected(cfg *fm.Config, selected int) {
 	if st == nil || cfg == nil {
 		return
 	}
 	st.setups = cloneSSHSetups(cfg.SSH.Setups)
 	if len(st.setups) > 0 {
-		st.selected = 0
+		if selected < 0 {
+			selected = 0
+		}
+		if selected >= len(st.setups) {
+			selected = len(st.setups) - 1
+		}
+		st.selected = selected
+		st.setupList.Position.First = st.selected
+		st.setupList.Position.Offset = 0
 	} else {
 		st.selected = -1
+		st.setupList.Position = layout.Position{}
 	}
 	st.loadEditorsFromSelected()
 	st.errText = ""
@@ -201,11 +218,103 @@ func (st *sshModalState) syncSelectedFromEditors() {
 	}
 }
 
-func (st *sshModalState) validatedSetups() ([]fm.SSHSetup, error) {
+func (st *sshModalState) focusKeyboard() {
 	if st == nil {
-		return nil, nil
+		return
+	}
+	st.wantKeyFocus = true
+}
+
+func (st *sshModalState) hasFocusedEditor(gtx layout.Context) bool {
+	if st == nil {
+		return false
+	}
+	return gtx.Focused(&st.nameEdit) ||
+		gtx.Focused(&st.hostEdit) ||
+		gtx.Focused(&st.portEdit) ||
+		gtx.Focused(&st.userEdit) ||
+		gtx.Focused(&st.passEdit) ||
+		gtx.Focused(&st.keyPathEdit) ||
+		gtx.Focused(&st.keyPassEdit)
+}
+
+func (st *sshModalState) ensureSelectedVisible() {
+	if st == nil || st.selected < 0 || st.selected >= len(st.setups) {
+		return
+	}
+	if rowIndexVisible(st.setupList.Position, st.selected, len(st.setups)) {
+		return
+	}
+	visible := st.setupList.Position.Count
+	if visible <= 0 {
+		st.setupList.Position.First = st.selected
+		st.setupList.Position.Offset = 0
+		return
+	}
+	first := st.setupList.Position.First
+	if first < 0 {
+		first = 0
+	}
+	last := first + visible - 1
+	if st.selected < first {
+		first = st.selected
+	} else if st.selected > last {
+		first = st.selected - (visible - 1)
+	}
+	if first < 0 {
+		first = 0
+	}
+	if first >= len(st.setups) {
+		first = len(st.setups) - 1
+	}
+	st.setupList.Position.First = first
+	st.setupList.Position.Offset = 0
+}
+
+func (st *sshModalState) setSelected(index int) bool {
+	if st == nil || len(st.setups) == 0 {
+		return false
+	}
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(st.setups) {
+		index = len(st.setups) - 1
+	}
+	if index == st.selected {
+		return false
+	}
+	st.syncSelectedFromEditors()
+	st.selected = index
+	st.loadEditorsFromSelected()
+	st.errText = ""
+	st.ensureSelectedVisible()
+	return true
+}
+
+func (st *sshModalState) stepSelected(step int) bool {
+	if st == nil || step == 0 || len(st.setups) == 0 {
+		return false
+	}
+	next := st.selected
+	if next < 0 {
+		if step > 0 {
+			next = 0
+		} else {
+			next = len(st.setups) - 1
+		}
+	} else {
+		next += step
+	}
+	return st.setSelected(next)
+}
+
+func (st *sshModalState) validatedSetupsWithSelected() ([]fm.SSHSetup, int, error) {
+	if st == nil {
+		return nil, -1, nil
 	}
 	out := make([]fm.SSHSetup, 0, len(st.setups))
+	selected := -1
 	for i, raw := range st.setups {
 		setup := fm.SSHSetup{
 			Name:          strings.TrimSpace(raw.Name),
@@ -220,7 +329,7 @@ func (st *sshModalState) validatedSetups() ([]fm.SSHSetup, error) {
 			setup.Port = 22
 		}
 		if setup.Port > 65535 {
-			return nil, fmt.Errorf("setup %d port must be between 1 and 65535", i+1)
+			return nil, -1, fmt.Errorf("setup %d port must be between 1 and 65535", i+1)
 		}
 		empty := setup.Name == "" && setup.Host == "" && setup.User == "" &&
 			setup.Password == "" && setup.KeyPath == "" && setup.KeyPassphrase == ""
@@ -228,16 +337,19 @@ func (st *sshModalState) validatedSetups() ([]fm.SSHSetup, error) {
 			continue
 		}
 		if setup.Host == "" {
-			return nil, fmt.Errorf("setup %d host is required", i+1)
+			return nil, -1, fmt.Errorf("setup %d host is required", i+1)
 		}
 		if setup.User == "" {
-			return nil, fmt.Errorf("setup %d user is required", i+1)
+			return nil, -1, fmt.Errorf("setup %d user is required", i+1)
 		}
 		// Keep name derived from connection identity.
 		setup.Name = sshSetupIdentity(setup)
+		if i == st.selected {
+			selected = len(out)
+		}
 		out = append(out, setup)
 	}
-	return out, nil
+	return out, selected, nil
 }
 
 func (st *sshModalState) ensureSetupClicks(n int) {
@@ -289,7 +401,7 @@ func (ui *UI) saveSSHModal() error {
 			st.selected = len(st.setups) - 1
 		}
 	}
-	setups, err := st.validatedSetups()
+	setups, selected, err := st.validatedSetupsWithSelected()
 	if err != nil {
 		return err
 	}
@@ -297,7 +409,7 @@ func (ui *UI) saveSSHModal() error {
 	if err := ui.saveFMConfig(); err != nil {
 		return err
 	}
-	st.loadFromConfig(ui.fmCfg)
+	st.loadFromConfigWithSelected(ui.fmCfg, selected)
 	return nil
 }
 
@@ -305,6 +417,11 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 	st := ui.sshModal
 	if st == nil {
 		return layout.Dimensions{}
+	}
+	event.Op(gtx.Ops, &st.keyTag)
+	if st.wantKeyFocus {
+		gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+		st.wantKeyFocus = false
 	}
 
 	// Explicitly drain Ctrl/Cmd+F while modal is open to avoid macOS beep
@@ -334,6 +451,41 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 			return layout.Dimensions{}
 		}
 	}
+	for {
+		ev, ok := gtx.Event(
+			key.FocusFilter{Target: &st.keyTag},
+			key.Filter{Focus: &st.keyTag, Name: key.NameUpArrow},
+			key.Filter{Focus: &st.keyTag, Name: key.NameDownArrow},
+			key.Filter{Focus: &st.keyTag, Name: key.NameEnter},
+			key.Filter{Focus: &st.keyTag, Name: key.NameReturn},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press || ke.Modifiers != 0 || st.hasFocusedEditor(gtx) {
+			continue
+		}
+		switch ke.Name {
+		case key.NameUpArrow:
+			if st.stepSelected(-1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameDownArrow:
+			if st.stepSelected(1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameEnter, key.NameReturn:
+			st.footerAnim.setPulse("connect", gtx.Now)
+			if err := ui.connectSSHModalToActivePane(gtx.Now); err != nil {
+				st.errText = err.Error()
+				gtx.Execute(op.InvalidateCmd{})
+			} else {
+				ui.closeSSHModal()
+				return layout.Dimensions{}
+			}
+		}
+	}
 
 	for st.backdropClick.Clicked(gtx) {
 	}
@@ -350,6 +502,8 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		st.footerAnim.setPulse("save", gtx.Now)
 		if err := ui.saveSSHModal(); err != nil {
 			st.errText = err.Error()
+		} else {
+			st.focusKeyboard()
 		}
 	}
 	if st.connectClick.Clicked(gtx) {
@@ -373,7 +527,9 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		}
 		st.selected = len(st.setups) - 1
 		st.loadEditorsFromSelected()
+		st.ensureSelectedVisible()
 		st.errText = ""
+		st.focusKeyboard()
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
@@ -399,6 +555,7 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		}
 		st.loadEditorsFromSelected()
 		st.errText = ""
+		st.focusKeyboard()
 		gtx.Execute(op.InvalidateCmd{})
 		break
 	}
@@ -407,12 +564,10 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 			continue
 		}
 		if st.setupClicks[i].Clicked(gtx) {
-			if st.selected != i {
-				st.syncSelectedFromEditors()
-				st.selected = i
-				st.loadEditorsFromSelected()
-				st.errText = ""
+			if st.setSelected(i) {
+				gtx.Execute(op.InvalidateCmd{})
 			}
+			st.focusKeyboard()
 		}
 	}
 

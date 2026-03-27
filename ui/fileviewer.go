@@ -13,6 +13,8 @@ import (
 	"hexone/fm"
 	"image"
 	"io"
+	"mime"
+	"net/http"
 	"os"
 	"os/exec"
 	pathpkg "path"
@@ -39,16 +41,18 @@ import (
 )
 
 const (
-	viewerDefaultMaxLoadBytes = 1 << 20
-	viewerHexCopyMaxBytes     = 1 << 20
-	viewerCommandExecTimeout  = 15 * time.Second
-	viewerCommandStreamTick   = 180 * time.Millisecond
-	viewerDefaultRefreshMs    = 1500
-	viewerMinimumRefreshMs    = 200
-	viewerDefaultAutoRefresh  = true
-	viewerDefaultMaxReadMB    = 1
-	viewerDefaultWordRegex    = `[a-zA-Z0-9]+`
-	viewerCommandHistoryLimit = 80
+	viewerDefaultMaxLoadBytes  = 1 << 20
+	viewerHexCopyMaxBytes      = 1 << 20
+	viewerBinaryPreviewBytes   = 64
+	viewerBinaryPreviewMaxCols = viewerBinaryPreviewBytes
+	viewerCommandExecTimeout   = 15 * time.Second
+	viewerCommandStreamTick    = 180 * time.Millisecond
+	viewerDefaultRefreshMs     = 1500
+	viewerMinimumRefreshMs     = 200
+	viewerDefaultAutoRefresh   = true
+	viewerDefaultMaxReadMB     = 1
+	viewerDefaultWordRegex     = `[a-zA-Z0-9]+`
+	viewerCommandHistoryLimit  = 80
 )
 
 const (
@@ -95,56 +99,61 @@ type fileViewerState struct {
 	fileEncoding         string
 	encodingMenuOpen     bool
 
-	content             string
-	status              string
-	err                 string
-	command             string
-	detectedEncoding    string
-	detectedEncodingBOM bool
-	detectedLineEnding  string
-	commandInfinite     bool
-	autoRefresh         bool
-	wordSelectRE        *regexp.Regexp
-	wordSelectExpr      string
-	updatedAt           time.Time
-	tabAnimAt           time.Time
-	stream              streamOutputView
-	hex                 *hexViewerState
-	find                fileViewerFindState
-	historyOpen         bool
+	content               string
+	status                string
+	err                   string
+	command               string
+	detectedEncoding      string
+	detectedEncodingBOM   bool
+	detectedBinaryPreview bool
+	detectedLineEnding    string
+	binaryPreviewData     []byte
+	binaryPreviewCols     int
+	commandInfinite       bool
+	autoRefresh           bool
+	wordSelectRE          *regexp.Regexp
+	wordSelectExpr        string
+	updatedAt             time.Time
+	tabAnimAt             time.Time
+	stream                streamOutputView
+	hex                   *hexViewerState
+	find                  fileViewerFindState
+	historyOpen           bool
 
 	loading    bool
 	seq        int
 	loadCancel context.CancelFunc
 
-	contentPointerTag  fileViewerEventTag
-	rootPointerTag     fileViewerEventTag
-	commandAreaTag     fileViewerEventTag
-	commandAreaPress   map[pointer.ID]struct{}
-	userBrowseUntil    time.Time
-	pendingUpdate      bool
-	pendingContent     string
-	pendingStatus      string
-	pendingErr         string
-	pendingEncoding    string
-	pendingEncodingBOM bool
-	pendingLineEnding  string
-	wrapEnabled        bool
-	menuOpen           bool
-	menuPos            image.Point
-	menuRect           image.Rectangle
-	menuOpenedAt       time.Time
-	menuHoverID        string
-	menuPointerTag     fileViewerEventTag
-	scrollCarry        float32
-	scrollbarTrack     image.Rectangle
-	scrollbarThumb     image.Rectangle
-	scrollbarDragging  bool
-	scrollbarDragID    pointer.ID
-	scrollbarHover     bool
-	scrollbarVisible   bool
-	scrollbarLines     int
-	scrollbarVisibleN  int
+	contentPointerTag    fileViewerEventTag
+	rootPointerTag       fileViewerEventTag
+	commandAreaTag       fileViewerEventTag
+	commandAreaPress     map[pointer.ID]struct{}
+	userBrowseUntil      time.Time
+	pendingUpdate        bool
+	pendingContent       string
+	pendingStatus        string
+	pendingErr           string
+	pendingEncoding      string
+	pendingEncodingBOM   bool
+	pendingBinaryPreview bool
+	pendingLineEnding    string
+	pendingBinaryData    []byte
+	wrapEnabled          bool
+	menuOpen             bool
+	menuPos              image.Point
+	menuRect             image.Rectangle
+	menuOpenedAt         time.Time
+	menuHoverID          string
+	menuPointerTag       fileViewerEventTag
+	scrollCarry          float32
+	scrollbarTrack       image.Rectangle
+	scrollbarThumb       image.Rectangle
+	scrollbarDragging    bool
+	scrollbarDragID      pointer.ID
+	scrollbarHover       bool
+	scrollbarVisible     bool
+	scrollbarLines       int
+	scrollbarVisibleN    int
 
 	nextWatchCheck   time.Time
 	watchExists      bool
@@ -160,21 +169,25 @@ type fileViewerState struct {
 }
 
 type fileViewerResult struct {
-	seq         int
-	content     string
-	status      string
-	err         string
-	encoding    string
-	encodingBOM bool
-	lineEnding  string
-	partial     bool
-	final       bool
+	seq           int
+	content       string
+	status        string
+	err           string
+	encoding      string
+	encodingBOM   bool
+	binaryPreview bool
+	lineEnding    string
+	binaryData    []byte
+	partial       bool
+	final         bool
 }
 
 type viewerReadInfo struct {
-	encoding    string
-	encodingBOM bool
-	lineEnding  string
+	encoding      string
+	encodingBOM   bool
+	binaryPreview bool
+	lineEnding    string
+	binaryData    []byte
 }
 
 func (st *fileViewerState) openContextMenu(pos image.Point, now time.Time) {
@@ -339,16 +352,6 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 				}
 			}
 		case key.NameTab:
-			if st.find.open && st.mode == "hex" && findFocused {
-				step, ok := viewerModeTabStep(ke.Modifiers)
-				if !ok {
-					continue
-				}
-				if ui.stepFileViewerFindMode(gtx.Now, step) {
-					gtx.Execute(op.InvalidateCmd{})
-				}
-				continue
-			}
 			step, ok := viewerModeTabStep(ke.Modifiers)
 			if !ok {
 				continue
@@ -738,14 +741,16 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 		}
 		content, status, err, info := readViewerContent(ctx, path, cfg, maxBytes, remote, progress)
 		res := fileViewerResult{
-			seq:         seq,
-			content:     content,
-			status:      status,
-			err:         err,
-			encoding:    info.encoding,
-			encodingBOM: info.encodingBOM,
-			lineEnding:  info.lineEnding,
-			final:       true,
+			seq:           seq,
+			content:       content,
+			status:        status,
+			err:           err,
+			encoding:      info.encoding,
+			encodingBOM:   info.encodingBOM,
+			binaryPreview: info.binaryPreview,
+			lineEnding:    info.lineEnding,
+			binaryData:    info.binaryData,
+			final:         true,
 		}
 		sendViewerResult(ch, res)
 	}()
@@ -794,10 +799,19 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		st.status = st.pendingStatus
 		st.detectedEncoding = st.pendingEncoding
 		st.detectedEncodingBOM = st.pendingEncodingBOM
+		st.detectedBinaryPreview = st.pendingBinaryPreview
 		st.detectedLineEnding = st.pendingLineEnding
+		st.binaryPreviewData = st.pendingBinaryData
+		if st.detectedBinaryPreview {
+			st.binaryPreviewCols = viewerBinaryPreviewBytes
+		} else {
+			st.binaryPreviewCols = 0
+		}
 		st.pendingEncoding = ""
 		st.pendingEncodingBOM = false
+		st.pendingBinaryPreview = false
 		st.pendingLineEnding = ""
+		st.pendingBinaryData = nil
 		if st.status == "" {
 			st.status = "ready"
 		}
@@ -825,7 +839,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 					gtx.Execute(op.InvalidateCmd{})
 					continue
 				}
-				if viewerUpdateAction(st, res.content) != viewerUpdateSame {
+				if viewerUpdateAction(st, res.content, false, nil) != viewerUpdateSame {
 					applyFileViewerContentResult(st, res.content)
 					ui.refreshFileViewerFind(gtx.Now, true)
 					st.markUpdated(gtx.Now)
@@ -840,15 +854,21 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			if st.status == "" {
 				st.status = "ready"
 			}
-			updateAction := viewerUpdateAction(st, res.content)
+			updateAction := viewerUpdateAction(st, res.content, res.binaryPreview, res.binaryData)
+			contentToApply := res.content
+			if updateAction == viewerUpdateSame && res.binaryPreview && st.detectedBinaryPreview {
+				contentToApply = st.content
+			}
 			if updateAction == viewerUpdateReplace && (st.userIsBrowsing(gtx.Now) || st.stream.hasSelection()) {
 				st.pendingUpdate = true
-				st.pendingContent = res.content
+				st.pendingContent = contentToApply
 				st.pendingStatus = st.status
 				st.pendingErr = st.err
 				st.pendingEncoding = res.encoding
 				st.pendingEncodingBOM = res.encodingBOM
+				st.pendingBinaryPreview = res.binaryPreview
 				st.pendingLineEnding = res.lineEnding
+				st.pendingBinaryData = append([]byte(nil), res.binaryData...)
 				st.status = "update pending"
 				ui.scheduleFileViewerWatch(gtx)
 				gtx.Execute(op.InvalidateCmd{})
@@ -857,11 +877,22 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.pendingUpdate = false
 			st.pendingEncoding = ""
 			st.pendingEncodingBOM = false
+			st.pendingBinaryPreview = false
 			st.pendingLineEnding = ""
+			st.pendingBinaryData = nil
 			st.detectedEncoding = res.encoding
 			st.detectedEncodingBOM = res.encodingBOM
+			st.detectedBinaryPreview = res.binaryPreview
 			st.detectedLineEnding = res.lineEnding
-			applyFileViewerContentResult(st, res.content)
+			st.binaryPreviewData = append([]byte(nil), res.binaryData...)
+			if st.detectedBinaryPreview {
+				if updateAction != viewerUpdateSame {
+					st.binaryPreviewCols = viewerBinaryPreviewBytes
+				}
+			} else {
+				st.binaryPreviewCols = 0
+			}
+			applyFileViewerContentResult(st, contentToApply)
 			ui.refreshFileViewerFind(gtx.Now, true)
 			st.markUpdated(gtx.Now)
 			st.captureWatchState()
@@ -949,8 +980,14 @@ const (
 	viewerUpdateReplace
 )
 
-func viewerUpdateAction(st *fileViewerState, next string) int {
+func viewerUpdateAction(st *fileViewerState, next string, nextBinaryPreview bool, nextBinaryData []byte) int {
 	if st == nil {
+		return viewerUpdateReplace
+	}
+	if nextBinaryPreview {
+		if st.detectedBinaryPreview && bytes.Equal(st.binaryPreviewData, nextBinaryData) {
+			return viewerUpdateSame
+		}
 		return viewerUpdateReplace
 	}
 	prev := st.content
@@ -1927,9 +1964,13 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 		return "", "", err.Error(), viewerReadInfo{}
 	}
 	content, info := decodeViewerText(path, data, encoding)
-	info.lineEnding = detectViewerLineEnding(content)
-	content = normalizeViewerLineEndings(content)
-	content = sanitizeViewerContent(content)
+	if !info.binaryPreview {
+		info.lineEnding = detectViewerLineEnding(content)
+		content = normalizeViewerLineEndings(content)
+		content = sanitizeViewerContent(content)
+	} else {
+		info.binaryData = append([]byte(nil), data...)
+	}
 	if size >= 0 {
 		return content, fmt.Sprintf("%s: %d bytes", prefix, size), "", info
 	}
@@ -2392,11 +2433,166 @@ func decodeViewerText(path string, data []byte, encoding string) (string, viewer
 	case fm.ViewerFileEncodingCP437:
 		return decodeViewerCP437(data), info
 	default:
+		if decision.encoding == fm.ViewerFileEncodingUTF8 && viewerLooksBinary(path, data) {
+			info.binaryPreview = true
+			return formatViewerBinaryPreview(data), info
+		}
 		if decision.withBOM {
 			data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 		}
 		return string(bytes.ToValidUTF8(data, []byte("\xef\xbf\xbd"))), info
 	}
+}
+
+func viewerLooksBinary(path string, data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	sample := data
+	if len(sample) > 4096 {
+		sample = sample[:4096]
+	}
+	if bytes.IndexByte(sample, 0) >= 0 {
+		return true
+	}
+	if mediaType := viewerBinaryMediaType(path, sample); mediaType != "" {
+		if viewerMediaTypeLooksText(mediaType) {
+			return false
+		}
+		return true
+	}
+	controls := 0
+	for _, b := range sample {
+		switch {
+		case b == '\n' || b == '\r' || b == '\t' || b == '\f':
+		case b >= 0x20 && b <= 0x7E:
+		case b < 0x20 || b == 0x7F:
+			controls++
+		}
+	}
+	if controls >= 4 && controls*10 >= len(sample) {
+		return true
+	}
+	if !utf8.Valid(sample) {
+		decoded := string(bytes.ToValidUTF8(sample, []byte("\xef\xbf\xbd")))
+		runes := len([]rune(decoded))
+		if runes < 1 {
+			runes = 1
+		}
+		if suspicious := viewerSuspiciousTextRunes(decoded); suspicious > max(1, runes/24) {
+			return true
+		}
+	}
+	return false
+}
+
+func viewerBinaryMediaType(path string, sample []byte) string {
+	if len(sample) > 0 {
+		if mediaType := viewerTrimMediaType(http.DetectContentType(sample)); mediaType != "" && mediaType != "application/octet-stream" {
+			return mediaType
+		}
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		ext = strings.ToLower(pathpkg.Ext(path))
+	}
+	if ext != "" {
+		if mediaType := viewerTrimMediaType(mime.TypeByExtension(ext)); mediaType != "" {
+			return mediaType
+		}
+	}
+	return ""
+}
+
+func viewerTrimMediaType(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if semi := strings.IndexByte(raw, ';'); semi >= 0 {
+		raw = raw[:semi]
+	}
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func viewerMediaTypeLooksText(mediaType string) bool {
+	switch {
+	case strings.HasPrefix(mediaType, "text/"):
+		return true
+	}
+	switch mediaType {
+	case "application/json",
+		"application/ld+json",
+		"application/xml",
+		"application/xhtml+xml",
+		"application/javascript",
+		"application/x-javascript",
+		"application/ecmascript",
+		"application/x-sh",
+		"application/x-yaml",
+		"application/yaml",
+		"image/svg+xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatViewerBinaryPreview(data []byte) string {
+	return formatViewerBinaryPreviewWithCols(data, viewerBinaryPreviewBytes)
+}
+
+func formatViewerBinaryPreviewWithCols(data []byte, cols int) string {
+	if len(data) == 0 {
+		return ""
+	}
+	cols = viewerBinaryPreviewWrapCols(cols)
+	var b strings.Builder
+	lines := (len(data) + cols - 1) / cols
+	b.Grow(len(data) + max(0, lines-1))
+	for i, raw := range data {
+		if i > 0 && i%cols == 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteByte(viewerBinaryPreviewByte(raw))
+	}
+	return b.String()
+}
+
+func viewerBinaryPreviewWrapCols(cols int) int {
+	if cols <= 0 {
+		return viewerBinaryPreviewBytes
+	}
+	if cols > viewerBinaryPreviewMaxCols {
+		return viewerBinaryPreviewMaxCols
+	}
+	return cols
+}
+
+func reflowFileViewerBinaryPreview(st *fileViewerState, cols int) bool {
+	if st == nil || !st.detectedBinaryPreview || len(st.binaryPreviewData) == 0 {
+		return false
+	}
+	cols = viewerBinaryPreviewWrapCols(cols)
+	if cols == st.binaryPreviewCols {
+		return false
+	}
+	next := formatViewerBinaryPreviewWithCols(st.binaryPreviewData, cols)
+	st.binaryPreviewCols = cols
+	if st.content == next {
+		return false
+	}
+	st.content = next
+	st.stream.SetContent(next)
+	st.stream.clearSelection()
+	return true
+}
+
+func viewerBinaryPreviewByte(b byte) byte {
+	if b >= 0x20 && b <= 0x7E {
+		return b
+	}
+	return '.'
 }
 
 func chooseViewerEncoding(_ string, data []byte, requested string) viewerEncodingDecision {
@@ -2825,10 +3021,10 @@ func sanitizeViewerContent(raw string) string {
 		case '\t':
 			b.WriteString("    ")
 		case unicode.ReplacementChar:
-			b.WriteByte('?')
+			b.WriteByte('.')
 		default:
 			if !unicode.IsPrint(r) {
-				appendEscapedRune(&b, r)
+				b.WriteByte('.')
 				continue
 			}
 			b.WriteRune(r)
@@ -2845,30 +3041,4 @@ func viewerClipboardContent(st *fileViewerState, text string) string {
 		return strings.ReplaceAll(text, "\n", "\r\n")
 	}
 	return text
-}
-
-func appendEscapedRune(b *strings.Builder, r rune) {
-	const hex = "0123456789ABCDEF"
-	switch {
-	case r <= 0xFF:
-		b.WriteString(`\x`)
-		b.WriteByte(hex[(r>>4)&0xF])
-		b.WriteByte(hex[r&0xF])
-	case r <= 0xFFFF:
-		b.WriteString(`\u`)
-		b.WriteByte(hex[(r>>12)&0xF])
-		b.WriteByte(hex[(r>>8)&0xF])
-		b.WriteByte(hex[(r>>4)&0xF])
-		b.WriteByte(hex[r&0xF])
-	default:
-		b.WriteString(`\U`)
-		b.WriteByte(hex[(r>>28)&0xF])
-		b.WriteByte(hex[(r>>24)&0xF])
-		b.WriteByte(hex[(r>>20)&0xF])
-		b.WriteByte(hex[(r>>16)&0xF])
-		b.WriteByte(hex[(r>>12)&0xF])
-		b.WriteByte(hex[(r>>8)&0xF])
-		b.WriteByte(hex[(r>>4)&0xF])
-		b.WriteByte(hex[r&0xF])
-	}
 }

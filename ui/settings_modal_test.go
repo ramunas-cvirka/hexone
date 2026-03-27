@@ -1162,6 +1162,28 @@ func TestLoadFilenameColorsFromConfigKeepsPaneTextInheritedUntilEdited(t *testin
 	}
 }
 
+func TestFilenameIconPickerValueMapsTargets(t *testing.T) {
+	st := &settingsModalState{}
+
+	tests := []struct {
+		target string
+		icon   string
+	}{
+		{target: "filename-default-icon", icon: fm.FilenameIconBook},
+		{target: "filename-age-icon", icon: fm.FilenameIconAudio},
+		{target: "filename-perm-icon", icon: fm.FilenameIconLink},
+		{target: "filename-ext-icon", icon: fm.FilenameIconTable},
+		{target: "filename-size-icon", icon: fm.FilenameIconApp},
+	}
+
+	for _, tc := range tests {
+		st.setFilenameIconPickerValue(tc.target, tc.icon)
+		if got := st.filenameIconPickerValue(tc.target); got != tc.icon {
+			t.Fatalf("filenameIconPickerValue(%q)=%q want %q", tc.target, got, tc.icon)
+		}
+	}
+}
+
 func TestFilenameExtensionUIUsesBareSuffixDisplay(t *testing.T) {
 	st := &settingsModalState{}
 	st.loadFilenameExtensionFields(".tar.gz", "", fm.FilenameIconArchive)

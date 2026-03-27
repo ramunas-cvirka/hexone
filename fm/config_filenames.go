@@ -17,7 +17,12 @@ const (
 	FilenameIconCode     = "code"
 	FilenameIconImage    = "image"
 	FilenameIconVideo    = "video"
+	FilenameIconAudio    = "audio"
+	FilenameIconBook     = "book"
+	FilenameIconTable    = "table"
 	FilenameIconArchive  = "archive"
+	FilenameIconApp      = "app"
+	FilenameIconLink     = "link"
 	FilenameIconLocked   = "locked"
 )
 
@@ -82,8 +87,18 @@ func NormalizeFilenameIcon(raw string) string {
 		return FilenameIconImage
 	case "video", "movie", "media", "film":
 		return FilenameIconVideo
+	case "audio", "music", "album", "sound":
+		return FilenameIconAudio
+	case "book", "manual", "read":
+		return FilenameIconBook
+	case "table", "grid", "sheet", "spreadsheet":
+		return FilenameIconTable
 	case "archive", "zip", "compressed":
 		return FilenameIconArchive
+	case "app", "application", "binary", "executable", "program":
+		return FilenameIconApp
+	case "link", "shortcut", "symlink", "alias":
+		return FilenameIconLink
 	case "locked", "lock", "private":
 		return FilenameIconLocked
 	default:

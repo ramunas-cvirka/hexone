@@ -429,7 +429,7 @@ func (st *settingsModalState) refreshFilenameExtensionDraftInfo() {
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameExtTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameExtIcon)
 	if textHex == "" && icon == "" {
-		st.filenameExtInfoText = "Choose a color, an icon, or both"
+		st.filenameExtInfoText = "Pick a color, icon, or both"
 		return
 	}
 	existing, ok := st.filenameExtensionRule(key)
@@ -449,7 +449,7 @@ func (st *settingsModalState) filenameExtensionNoticeText() string {
 	}
 	key := filenameExtensionRuleKey(st.filenameExtEdit.Text())
 	if key == "" {
-		return "Use suffixes like go, md, or tar.gz"
+		return "Enter a lowercase suffix"
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameExtTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameExtIcon)
@@ -632,7 +632,7 @@ func (st *settingsModalState) refreshFilenameSizeDraftInfo() {
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameSizeTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameSizeIcon)
 	if textHex == "" && icon == "" {
-		st.filenameSizeInfoText = "Choose a color, an icon, or both"
+		st.filenameSizeInfoText = "Pick a color, icon, or both"
 		return
 	}
 	existing, ok := st.filenameSizeRule(key)
@@ -652,7 +652,7 @@ func (st *settingsModalState) filenameSizeNoticeText() string {
 	}
 	key := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeMatch)
 	if key == "" {
-		return "Use whole sizes like 0b, 4k, 10m, or 1g"
+		return "Enter a whole size"
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameSizeTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameSizeIcon)

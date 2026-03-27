@@ -24,10 +24,15 @@ var filenameIconOptions = []filenameIconOption{
 	{key: "", label: "Default"},
 	{key: fm.FilenameIconRecent, label: "Recent"},
 	{key: fm.FilenameIconDocument, label: "Document"},
+	{key: fm.FilenameIconBook, label: "Book"},
 	{key: fm.FilenameIconCode, label: "Code"},
+	{key: fm.FilenameIconTable, label: "Table"},
 	{key: fm.FilenameIconImage, label: "Image"},
 	{key: fm.FilenameIconVideo, label: "Video"},
+	{key: fm.FilenameIconAudio, label: "Audio"},
 	{key: fm.FilenameIconArchive, label: "Archive"},
+	{key: fm.FilenameIconApp, label: "App"},
+	{key: fm.FilenameIconLink, label: "Link"},
 	{key: fm.FilenameIconLocked, label: "Locked"},
 }
 
@@ -71,10 +76,15 @@ var filenameRuleIcons struct {
 	file     *widget.Icon
 	recent   *widget.Icon
 	document *widget.Icon
+	book     *widget.Icon
 	code     *widget.Icon
+	table    *widget.Icon
 	image    *widget.Icon
 	video    *widget.Icon
+	audio    *widget.Icon
 	archive  *widget.Icon
+	app      *widget.Icon
+	link     *widget.Icon
 	locked   *widget.Icon
 }
 
@@ -89,10 +99,15 @@ func loadFilenameRuleIcons() {
 	filenameRuleIcons.file = mustFilenameIcon(widget.NewIcon(mdicons.EditorInsertDriveFile))
 	filenameRuleIcons.recent = mustFilenameIcon(widget.NewIcon(mdicons.ActionSchedule))
 	filenameRuleIcons.document = mustFilenameIcon(widget.NewIcon(mdicons.ActionDescription))
+	filenameRuleIcons.book = mustFilenameIcon(widget.NewIcon(mdicons.ActionBook))
 	filenameRuleIcons.code = mustFilenameIcon(widget.NewIcon(mdicons.EditorModeEdit))
+	filenameRuleIcons.table = mustFilenameIcon(widget.NewIcon(mdicons.ImageGridOn))
 	filenameRuleIcons.image = mustFilenameIcon(widget.NewIcon(mdicons.EditorInsertPhoto))
 	filenameRuleIcons.video = mustFilenameIcon(widget.NewIcon(mdicons.AVMovie))
+	filenameRuleIcons.audio = mustFilenameIcon(widget.NewIcon(mdicons.AVLibraryMusic))
 	filenameRuleIcons.archive = mustFilenameIcon(widget.NewIcon(mdicons.ContentArchive))
+	filenameRuleIcons.app = mustFilenameIcon(widget.NewIcon(mdicons.ActionSettingsApplications))
+	filenameRuleIcons.link = mustFilenameIcon(widget.NewIcon(mdicons.ContentLink))
 	filenameRuleIcons.locked = mustFilenameIcon(widget.NewIcon(mdicons.ActionLock))
 }
 
@@ -120,14 +135,24 @@ func filenameRuleIcon(key string) *widget.Icon {
 		return filenameRuleIcons.recent
 	case fm.FilenameIconDocument:
 		return filenameRuleIcons.document
+	case fm.FilenameIconBook:
+		return filenameRuleIcons.book
 	case fm.FilenameIconCode:
 		return filenameRuleIcons.code
+	case fm.FilenameIconTable:
+		return filenameRuleIcons.table
 	case fm.FilenameIconImage:
 		return filenameRuleIcons.image
 	case fm.FilenameIconVideo:
 		return filenameRuleIcons.video
+	case fm.FilenameIconAudio:
+		return filenameRuleIcons.audio
 	case fm.FilenameIconArchive:
 		return filenameRuleIcons.archive
+	case fm.FilenameIconApp:
+		return filenameRuleIcons.app
+	case fm.FilenameIconLink:
+		return filenameRuleIcons.link
 	case fm.FilenameIconLocked:
 		return filenameRuleIcons.locked
 	default:
