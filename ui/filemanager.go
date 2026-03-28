@@ -1085,6 +1085,37 @@ func (p *filePaneState) clearMarkedRows() bool {
 	return true
 }
 
+func (p *filePaneState) toggleMarkedRow(row int) bool {
+	if p == nil || p.model == nil {
+		return false
+	}
+	entry := p.model.Entry(row)
+	if entry == nil || entry.Path == "" || entry.Kind == filesys.EntryParent {
+		return false
+	}
+	if p.isMarkedRow(row) {
+		delete(p.markedRows, row)
+		if len(p.markedRows) == 0 {
+			p.markedRows = nil
+		}
+		return true
+	}
+	return p.markRow(row)
+}
+
+func (p *filePaneState) replaceMarkedRows(rows []int) bool {
+	if p == nil {
+		return false
+	}
+	changed := p.clearMarkedRows()
+	for _, row := range rows {
+		if p.markRow(row) {
+			changed = true
+		}
+	}
+	return changed
+}
+
 func (p *filePaneState) markRow(row int) bool {
 	if p == nil || p.model == nil {
 		return false
@@ -1100,6 +1131,21 @@ func (p *filePaneState) markRow(row int) bool {
 		return false
 	}
 	p.markedRows[row] = struct{}{}
+	return true
+}
+
+func (p *filePaneState) markedRowsExactly(rows []int) bool {
+	if p == nil {
+		return len(rows) == 0
+	}
+	if len(rows) != len(p.markedRows) {
+		return false
+	}
+	for _, row := range rows {
+		if !p.isMarkedRow(row) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -1119,6 +1165,72 @@ func (p *filePaneState) replaceMarkedRange(start, end int) bool {
 	return changed
 }
 
+func (p *filePaneState) selectableRowIndexes() []int {
+	if p == nil || p.model == nil {
+		return nil
+	}
+	rows := make([]int, 0, p.model.Len())
+	for row := 0; row < p.model.Len(); row++ {
+		entry := p.model.Entry(row)
+		if entry == nil || entry.Path == "" || entry.Kind == filesys.EntryParent {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (p *filePaneState) matchingRowIndexesForCurrentSelection() []int {
+	if p == nil || p.model == nil {
+		return nil
+	}
+	selected := p.selectedEntry()
+	if selected == nil || selected.Path == "" || selected.Kind == filesys.EntryParent {
+		return nil
+	}
+
+	rows := make([]int, 0, p.model.Len())
+	switch selected.Kind {
+	case filesys.EntryDir:
+		for row := 0; row < p.model.Len(); row++ {
+			entry := p.model.Entry(row)
+			if entry != nil && entry.Kind == filesys.EntryDir && entry.Path != "" {
+				rows = append(rows, row)
+			}
+		}
+	default:
+		wantExt := fileExtension(selected.Name)
+		for row := 0; row < p.model.Len(); row++ {
+			entry := p.model.Entry(row)
+			if entry == nil || entry.Path == "" || entry.Kind == filesys.EntryParent || entry.Kind == filesys.EntryDir {
+				continue
+			}
+			if fileExtension(entry.Name) == wantExt {
+				rows = append(rows, row)
+			}
+		}
+	}
+	return rows
+}
+
+func (p *filePaneState) toggleMarkedRows(rows []int) bool {
+	if len(rows) == 0 {
+		return false
+	}
+	if p.markedRowsExactly(rows) {
+		return p.clearMarkedRows()
+	}
+	return p.replaceMarkedRows(rows)
+}
+
+func (p *filePaneState) toggleMarkAllSelectable() bool {
+	return p.toggleMarkedRows(p.selectableRowIndexes())
+}
+
+func (p *filePaneState) toggleMarkRowsMatchingCurrentSelection() bool {
+	return p.toggleMarkedRows(p.matchingRowIndexesForCurrentSelection())
+}
+
 func (p *filePaneState) markCurrentAndAdvance() bool {
 	if p == nil || p.table == nil || p.model == nil {
 		return false
@@ -1127,7 +1239,7 @@ func (p *filePaneState) markCurrentAndAdvance() bool {
 	if total <= 0 {
 		return false
 	}
-	changed := p.markRow(p.table.Selected)
+	changed := p.toggleMarkedRow(p.table.Selected)
 	if p.table.Selected < total-1 {
 		p.table.SetSelected(p.table.Selected+1, total, true)
 		changed = true

@@ -1341,6 +1341,20 @@ func bytesHexSpaced(bb []byte) string {
 	return sb.String()
 }
 
+func bytesHexCompact(bb []byte) string {
+	if len(bb) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.Grow(len(bb) * 2)
+	const hexd = "0123456789ABCDEF"
+	for _, v := range bb {
+		sb.WriteByte(hexd[v>>4])
+		sb.WriteByte(hexd[v&0x0F])
+	}
+	return sb.String()
+}
+
 func isHexChar(c byte) bool {
 	return (c >= '0' && c <= '9') ||
 		(c >= 'a' && c <= 'f') ||

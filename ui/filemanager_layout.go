@@ -133,6 +133,43 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 		}
 	}
 
+	anyMods := ^key.Modifiers(0)
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: "A", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "a", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "A", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Name: "a", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Name: "E", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "e", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "E", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Name: "e", Required: key.ModShortcut, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		switch ke.Name {
+		case "A", "a":
+			if ke.Modifiers != key.ModCtrl && ke.Modifiers != key.ModShortcut {
+				continue
+			}
+			if ui.handleFileManagerSelectAll(gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case "E", "e":
+			if ke.Modifiers != key.ModCtrl && ke.Modifiers != key.ModShortcut {
+				continue
+			}
+			if ui.handleFileManagerSelectMatching(gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+	}
+
 	filters := ui.fileKeys.Filters()
 	if len(filters) == 0 {
 		return
@@ -291,6 +328,48 @@ func (ui *UI) handleFileManagerInsert() bool {
 	}
 	ui.rep.active = false
 	return pane.markCurrentAndAdvance()
+}
+
+func (ui *UI) handleFileManagerSelectAll(_ time.Time) bool {
+	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil {
+		return false
+	}
+	if ui.fileViewer != nil {
+		return false
+	}
+	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
+		return false
+	}
+	if ui.pathEditActive() {
+		return false
+	}
+	pane := ui.activePane()
+	if pane == nil {
+		return false
+	}
+	ui.rep.active = false
+	return pane.toggleMarkAllSelectable()
+}
+
+func (ui *UI) handleFileManagerSelectMatching(_ time.Time) bool {
+	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil {
+		return false
+	}
+	if ui.fileViewer != nil {
+		return false
+	}
+	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
+		return false
+	}
+	if ui.pathEditActive() {
+		return false
+	}
+	pane := ui.activePane()
+	if pane == nil {
+		return false
+	}
+	ui.rep.active = false
+	return pane.toggleMarkRowsMatchingCurrentSelection()
 }
 
 func (ui *UI) handleFileManagerEscape(gtx layout.Context) {

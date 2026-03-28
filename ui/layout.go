@@ -161,6 +161,7 @@ type UI struct {
 	functionBarSliderPrevShown  bool
 	functionBarSliderShown      bool
 	functionBarSliderAnimAt     time.Time
+	functionBarHeldMods         key.Modifiers
 	requestedWindowClose        bool
 	filePanes                   []*filePaneState
 	fmCfg                       *fm.Config
@@ -259,6 +260,7 @@ func (ui *UI) resetKeys() {
 	for k := range ui.held {
 		ui.held[k] = false
 	}
+	ui.functionBarHeldMods = 0
 }
 
 func (ui *UI) mainTypeface() font.Typeface {
@@ -682,6 +684,7 @@ func (ui *UI) syncThemeRuntime(th *material.Theme) {
 
 func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.syncThemeRuntime(th)
+	ui.handleFunctionBarModifierKeys(gtx)
 	ui.handleGlobalFunctionKeys(gtx)
 	ui.handleFunctionBarPopupKeys(gtx)
 	ui.handleGlobalEscapeToFileManager(gtx)

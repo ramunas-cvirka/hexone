@@ -13,6 +13,11 @@ Press `F1` to open or close this help window.
 - In `brief` mode, `Left` and `Right` move across the visible columns.
 - `Enter` opens the selected file or directory.
 - `Esc` closes the current popup, leaves an editor, or returns to the file manager.
+- `Insert` toggles the current row selection and moves to the next row.
+- `Ctrl+A` or `Cmd+A` toggles `Select All`.
+- `Ctrl+E` or `Cmd+E` toggles selecting rows that match the current item.
+- when a file is selected, `Ctrl+E` matches the same extension, including files with no extension
+- when a directory is selected, `Ctrl+E` matches all directories
 
 Each pane has a mode badge in its header:
 

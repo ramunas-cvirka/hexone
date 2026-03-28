@@ -14,6 +14,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -219,6 +220,90 @@ func TestHandlePlatformInsertKeyMarksAndAdvances(t *testing.T) {
 	}
 	if got, want := pane.table.Selected, 1; got != want {
 		t.Fatalf("selected row=%d want %d", got, want)
+	}
+}
+
+func TestHandlePlatformInsertKeyTogglesCurrentRowOffAndAdvances(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: ".",
+		Entries: []filesys.Entry{
+			{Name: "alpha.txt", Path: "alpha.txt"},
+			{Name: "beta.txt", Path: "beta.txt"},
+			{Name: "gamma.txt", Path: "gamma.txt"},
+		},
+	}, "", "", 0)
+
+	now := time.Date(2026, time.March, 13, 12, 0, 0, 0, time.UTC)
+	if !ui.HandlePlatformInsertKey(now) {
+		t.Fatal("first HandlePlatformInsertKey should report a handled insert press")
+	}
+	pane.table.Selected = 0
+	if !ui.HandlePlatformInsertKey(now) {
+		t.Fatal("second HandlePlatformInsertKey should report a handled insert press")
+	}
+	if pane.isMarkedRow(0) {
+		t.Fatal("native insert should toggle the current row off when pressed again")
+	}
+	if got, want := pane.table.Selected, 1; got != want {
+		t.Fatalf("selected row=%d want %d", got, want)
+	}
+}
+
+func TestHandleFileManagerCtrlASelectAllToggles(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: ".",
+		Entries: []filesys.Entry{
+			{Name: "..", Path: "..", Kind: filesys.EntryParent},
+			{Name: "docs", Path: "docs", Kind: filesys.EntryDir},
+			{Name: "alpha.txt", Path: "alpha.txt"},
+			{Name: "beta.log", Path: "beta.log"},
+		},
+	}, "", "", 1)
+
+	gtx, router := testKeyContext()
+	router.Event(key.Filter{Name: "A", Required: key.ModCtrl})
+	router.Queue(key.Event{Name: "A", Modifiers: key.ModCtrl, State: key.Press})
+
+	ui.handleFileManagerKeys(gtx)
+	if pane.isMarkedRow(0) || !pane.isMarkedRow(1) || !pane.isMarkedRow(2) || !pane.isMarkedRow(3) {
+		t.Fatal("ctrl+a should mark every selectable row and skip parent rows")
+	}
+
+	router.Event(key.Filter{Name: "A", Required: key.ModCtrl})
+	router.Queue(key.Event{Name: "A", Modifiers: key.ModCtrl, State: key.Press})
+
+	ui.handleFileManagerKeys(gtx)
+	if pane.hasMarkedRows() {
+		t.Fatal("ctrl+a should clear all marks when everything is already selected")
+	}
+}
+
+func TestHandleFileManagerCtrlEMatchesExtension(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: ".",
+		Entries: []filesys.Entry{
+			{Name: "alpha.txt", Path: "alpha.txt"},
+			{Name: "beta.log", Path: "beta.log"},
+			{Name: "gamma.txt", Path: "gamma.txt"},
+		},
+	}, "", "", 0)
+
+	gtx, router := testKeyContext()
+	router.Event(key.Filter{Name: "E", Required: key.ModCtrl})
+	router.Queue(key.Event{Name: "E", Modifiers: key.ModCtrl, State: key.Press})
+
+	ui.handleFileManagerKeys(gtx)
+	if !pane.isMarkedRow(0) || !pane.isMarkedRow(2) {
+		t.Fatal("ctrl+e should mark rows with the same extension as the selected file")
+	}
+	if pane.isMarkedRow(1) {
+		t.Fatal("ctrl+e should not mark rows with a different extension")
 	}
 }
 
