@@ -283,6 +283,7 @@ type filePaneState struct {
 	driveMenuRect         image.Rectangle
 	driveSegmentRect      image.Rectangle
 	driveMenuOpenedAt     time.Time
+	driveMenuSelected     int
 	driveMenuHoverID      string
 	driveMenuHoverAnim    segmentedAnimState
 	sortKey               fileSortKey
@@ -384,6 +385,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	pane.ctxMenuRow = -1
 	pane.tableClickRow = -1
 	pane.tableClickCol = -1
+	pane.driveMenuSelected = -1
 	pane.table.TextSize = scaleConfigFontSize(cfg, 13)
 	pane.table.Typeface = font.Typeface(cfg.General.Typeface)
 	pane.table.RowHeight = scaleDp(18)
@@ -847,6 +849,7 @@ func (p *filePaneState) closeDriveMenu() {
 	p.driveMenuOpen = false
 	p.driveMenuRect = image.Rectangle{}
 	p.driveMenuOpenedAt = time.Time{}
+	p.driveMenuSelected = -1
 	p.driveMenuHoverID = ""
 }
 
@@ -879,8 +882,77 @@ func (p *filePaneState) openDriveMenu(pos image.Point, now time.Time) {
 	p.driveMenuPos = pos
 	p.driveMenuRect = image.Rectangle{}
 	p.driveMenuOpenedAt = now
+	p.driveMenuSelected = -1
 	p.driveMenuHoverID = ""
 	p.driveMenuHoverAnim = segmentedAnimState{}
+}
+
+func driveMenuDefaultSelection(p *filePaneState, drives []string) int {
+	if p == nil || len(drives) == 0 {
+		return -1
+	}
+	currentDrive := localDriveRoot(p.displayDir())
+	for i, drive := range drives {
+		if strings.EqualFold(localDriveRoot(drive), currentDrive) || strings.EqualFold(drive, currentDrive) {
+			return i
+		}
+	}
+	return 0
+}
+
+func clampDriveMenuSelection(index int, count int) int {
+	if count <= 0 {
+		return -1
+	}
+	if index < 0 {
+		return -1
+	}
+	if index >= count {
+		return count - 1
+	}
+	return index
+}
+
+func (p *filePaneState) currentDriveMenuSelection(drives []string) int {
+	if p == nil {
+		return -1
+	}
+	if p.driveMenuSelected >= 0 && p.driveMenuSelected < len(drives) {
+		return p.driveMenuSelected
+	}
+	return driveMenuDefaultSelection(p, drives)
+}
+
+func (p *filePaneState) setDriveMenuSelection(index int, drives []string) bool {
+	if p == nil {
+		return false
+	}
+	next := clampDriveMenuSelection(index, len(drives))
+	if next < 0 {
+		next = driveMenuDefaultSelection(p, drives)
+	}
+	if p.driveMenuSelected == next {
+		return false
+	}
+	p.driveMenuSelected = next
+	return true
+}
+
+func (p *filePaneState) moveDriveMenuSelection(delta int, drives []string) bool {
+	if p == nil || delta == 0 || len(drives) == 0 {
+		return false
+	}
+	index := p.currentDriveMenuSelection(drives)
+	if index < 0 {
+		return false
+	}
+	index += delta
+	if index < 0 {
+		index = len(drives) - 1
+	} else if index >= len(drives) {
+		index = 0
+	}
+	return p.setDriveMenuSelection(index, drives)
 }
 
 func (p *filePaneState) contextMenuClick(id string) *widget.Clickable {
@@ -2456,7 +2528,32 @@ func (ui *UI) openPaneDriveMenu(idx int) bool {
 		X: 0,
 		Y: pane.headerHeight + 4,
 	}, time.Now())
+	pane.setDriveMenuSelection(-1, platform.AvailableLocalDrives())
 	return true
+}
+
+func (ui *UI) openDriveMenuPane() (int, *filePaneState) {
+	if ui == nil {
+		return -1, nil
+	}
+	for idx, pane := range ui.filePanes {
+		if pane != nil && pane.driveMenuOpen {
+			return idx, pane
+		}
+	}
+	return -1, nil
+}
+
+func (ui *UI) activatePaneDriveMenuSelection(idx int, pane *filePaneState, drives []string) bool {
+	if ui == nil || pane == nil || len(drives) == 0 {
+		return false
+	}
+	selected := pane.currentDriveMenuSelection(drives)
+	if selected < 0 || selected >= len(drives) {
+		return false
+	}
+	pane.closeDriveMenu()
+	return ui.requestPaneLoadWithSelection(idx, drives[selected], "", "", 0)
 }
 
 func sendFilePaneLoadResult(ch chan filePaneLoadResult, res filePaneLoadResult) {

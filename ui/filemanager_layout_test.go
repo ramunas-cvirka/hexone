@@ -6,9 +6,11 @@ package ui
 import (
 	"hexone/filesys"
 	"hexone/fm"
+	"hexone/ui/platform"
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -304,6 +306,106 @@ func TestHandleFileManagerCtrlEMatchesExtension(t *testing.T) {
 	}
 	if pane.isMarkedRow(1) {
 		t.Fatal("ctrl+e should not mark rows with a different extension")
+	}
+}
+
+func TestGlobalFunctionKeysAlt1OpensLeftDrivePicker(t *testing.T) {
+	drives := platform.AvailableLocalDrives()
+	if len(drives) == 0 {
+		t.Skip("drive picker is only available when local drives are exposed")
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	pane.dir = drives[0]
+	pane.localDirBeforeRemote = drives[0]
+
+	gtx, router := testKeyContext()
+	anyMods := ^key.Modifiers(0)
+	router.Event(key.Filter{Name: "1", Required: key.ModAlt, Optional: anyMods})
+	router.Queue(key.Event{Name: "1", Modifiers: key.ModAlt, State: key.Press})
+
+	ui.handleGlobalFunctionKeys(gtx)
+
+	if !pane.driveMenuOpen {
+		t.Fatal("alt+1 should open the left drive picker")
+	}
+}
+
+func TestGlobalFunctionKeysAlt2OpensRightDrivePicker(t *testing.T) {
+	drives := platform.AvailableLocalDrives()
+	if len(drives) == 0 {
+		t.Skip("drive picker is only available when local drives are exposed")
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	right := ui.filePanes[1]
+	right.dir = drives[0]
+	right.localDirBeforeRemote = drives[0]
+
+	gtx, router := testKeyContext()
+	anyMods := ^key.Modifiers(0)
+	router.Event(key.Filter{Name: "2", Required: key.ModAlt, Optional: anyMods})
+	router.Queue(key.Event{Name: "2", Modifiers: key.ModAlt, State: key.Press})
+
+	ui.handleGlobalFunctionKeys(gtx)
+
+	if !right.driveMenuOpen {
+		t.Fatal("alt+2 should open the right drive picker")
+	}
+}
+
+func TestDriveMenuSelectionDefaultsToCurrentDriveAndWraps(t *testing.T) {
+	pane := newFilePaneState(".", fm.DefaultConfig())
+	drives := []string{`C:\`, `D:\`, `E:\`}
+	if filepath.VolumeName(drives[0]) == "" {
+		t.Skip("volume-style drive paths are not supported on this platform")
+	}
+	pane.dir = filepath.Join(`D:\`, "work")
+
+	if got, want := pane.currentDriveMenuSelection(drives), 1; got != want {
+		t.Fatalf("default drive selection=%d want %d", got, want)
+	}
+	if !pane.moveDriveMenuSelection(1, drives) {
+		t.Fatal("moveDriveMenuSelection should advance the highlighted drive")
+	}
+	if got, want := pane.currentDriveMenuSelection(drives), 2; got != want {
+		t.Fatalf("selection after moving down=%d want %d", got, want)
+	}
+	if !pane.moveDriveMenuSelection(1, drives) {
+		t.Fatal("moveDriveMenuSelection should wrap from the end to the start")
+	}
+	if got, want := pane.currentDriveMenuSelection(drives), 0; got != want {
+		t.Fatalf("wrapped selection=%d want %d", got, want)
+	}
+	if !pane.moveDriveMenuSelection(-1, drives) {
+		t.Fatal("moveDriveMenuSelection should wrap from the start to the end")
+	}
+	if got, want := pane.currentDriveMenuSelection(drives), 2; got != want {
+		t.Fatalf("wrapped selection after moving up=%d want %d", got, want)
+	}
+}
+
+func TestActivatePaneDriveMenuSelectionLoadsSelectedDrive(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	drives := []string{`C:\`, `D:\`}
+	if filepath.VolumeName(drives[0]) == "" {
+		t.Skip("volume-style drive paths are not supported on this platform")
+	}
+	pane.dir = filepath.Join(`C:\`, "logs")
+	pane.localDirBeforeRemote = pane.dir
+	pane.driveMenuOpen = true
+	pane.driveMenuSelected = 1
+
+	if !ui.activatePaneDriveMenuSelection(0, pane, drives) {
+		t.Fatal("activatePaneDriveMenuSelection should request loading the selected drive")
+	}
+	if pane.driveMenuOpen {
+		t.Fatal("activating a drive selection should close the drive picker")
+	}
+	if got, want := pane.loadingDir, filepath.Clean(`D:\`); got != want {
+		t.Fatalf("loadingDir=%q want %q", got, want)
 	}
 }
 

@@ -14,3 +14,7 @@ func removeNativeInsertMonitor(func(func())) {}
 func consumeNativeInsertPresses() int {
 	return 0
 }
+
+func platformAltKeyDown() bool {
+	return false
+}

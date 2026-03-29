@@ -744,7 +744,7 @@ func (ui *UI) layoutHelpSectionTabs(th *material.Theme, gtx layout.Context, st *
 }
 
 func (ui *UI) layoutHelpNavSegment(th *material.Theme, gtx layout.Context, _ helpModalTheme, label string, c *widget.Clickable, activeFill, hoverFill, pulseFill float32, stripH int) layout.Dimensions {
-	return ui.layoutSettingsNavSliderSegment(th, gtx, c, label, activeFill, hoverFill, pulseFill, stripH)
+	return ui.layoutSettingsNavSliderSegment(th, gtx, c, label, activeFill, hoverFill, pulseFill, 0, stripH)
 }
 
 func (ui *UI) layoutHelpSectionContent(th *material.Theme, gtx layout.Context, st *helpModalState, theme helpModalTheme) layout.Dimensions {

@@ -261,6 +261,22 @@ func TestFunctionBarModifierHintTextUsesCmdLabelWhenCommandHeld(t *testing.T) {
 	}
 }
 
+func TestFunctionBarModifierHintTextShowsFileManagerAltShortcuts(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModAlt,
+	}
+
+	got, ok := ui.functionBarModifierHintText()
+	if !ok {
+		t.Fatal("expected alt hints for the file manager")
+	}
+	want := "Alt+1 Left Drive | Alt+2 Right Drive"
+	if got != want {
+		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
+	}
+}
+
 func TestFunctionBarHintSlotLabelsUseLeadingFunctionBarSlots(t *testing.T) {
 	ui := &UI{
 		Tabs:                widget.Enum{Value: "tab0"},
@@ -290,6 +306,29 @@ func TestFunctionBarHintSlotLabelsUseLeadingFunctionBarSlots(t *testing.T) {
 	}
 }
 
+func TestFunctionBarHintSlotLabelsUseLeadingSlotsForAltShortcuts(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModAlt,
+	}
+
+	labels := ui.functionBarHintSlotLabels(10)
+	if len(labels) != 10 {
+		t.Fatalf("slot count=%d want 10", len(labels))
+	}
+	if labels[0] != "Alt+1 Left Drive" {
+		t.Fatalf("slot 0=%q want %q", labels[0], "Alt+1 Left Drive")
+	}
+	if labels[1] != "Alt+2 Right Drive" {
+		t.Fatalf("slot 1=%q want %q", labels[1], "Alt+2 Right Drive")
+	}
+	for i := 2; i < len(labels); i++ {
+		if labels[i] != "" {
+			t.Fatalf("slot %d=%q want empty", i, labels[i])
+		}
+	}
+}
+
 func TestHandleFunctionBarModifierKeysTracksHeldCtrl(t *testing.T) {
 	ui := &UI{}
 
@@ -308,5 +347,21 @@ func TestHandleFunctionBarModifierKeysTracksHeldCtrl(t *testing.T) {
 	ui.handleFunctionBarModifierKeys(gtx)
 	if ui.functionBarHeldMods.Contain(key.ModCtrl) {
 		t.Fatal("ctrl release should clear the function bar modifier state")
+	}
+}
+
+func TestSyncPlatformAltHeldClearsStuckAltModifier(t *testing.T) {
+	ui := &UI{
+		functionBarHeldMods: key.ModAlt,
+	}
+
+	if !ui.SyncPlatformAltHeld(false) {
+		t.Fatal("SyncPlatformAltHeld should report a change when clearing Alt")
+	}
+	if ui.functionBarHeldMods.Contain(key.ModAlt) {
+		t.Fatal("platform Alt sync should clear the held Alt modifier")
+	}
+	if ui.SyncPlatformAltHeld(false) {
+		t.Fatal("SyncPlatformAltHeld should be a no-op when Alt is already cleared")
 	}
 }

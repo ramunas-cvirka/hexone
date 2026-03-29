@@ -151,6 +151,7 @@ func run(window *app.Window) error {
 			for count := consumeNativeInsertPresses(); count > 0; count-- {
 				mainUI.HandlePlatformInsertKey(gtx.Now)
 			}
+			mainUI.SyncPlatformAltHeld(platformAltKeyDown())
 			mainUI.Layout(th, gtx)
 			typ.Frame(gtx.Ops)
 			if mainUI.ConsumeWindowCloseRequest() {

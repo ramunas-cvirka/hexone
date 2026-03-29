@@ -24,6 +24,7 @@ type slidingTabSpec struct {
 	ActiveFill float32
 	HoverFill  float32
 	PulseFill  float32
+	FocusFill  float32
 }
 
 func float32Abs(v float32) float32 {
@@ -148,6 +149,7 @@ func (ui *UI) layoutSlidingTabStrip(th *material.Theme, gtx layout.Context, stri
 										activeFill := clamp01(spec.ActiveFill)
 										hoverFill := clamp01(spec.HoverFill)
 										pulseFill := clamp01(spec.PulseFill)
+										focusFill := clamp01(spec.FocusFill)
 										if spec.Click.Pressed() && pulseFill < 0.5 {
 											pulseFill = 0.5
 										}
@@ -156,8 +158,10 @@ func (ui *UI) layoutSlidingTabStrip(th *material.Theme, gtx layout.Context, stri
 										bg := color.NRGBA{}
 										bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 8}, hoverFill*(1-labelActive)*0.45)
 										bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 14}, pulseFill*0.18)
+										bg = mixNRGBA(bg, color.NRGBA{R: 212, G: 196, B: 164, A: 28}, focusFill*0.34)
 										fg := slidingStripTextColor(labelActive, hoverFill, pulseFill)
-										return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+										fg = mixNRGBA(fg, color.NRGBA{R: 248, G: 242, B: 228, A: 255}, focusFill*0.24)
+										dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 											lbl := material.Body2(th, spec.Label)
 											lbl.Font.Typeface = ui.mainTypeface()
 											lbl.Font.Weight = font.Medium
@@ -170,6 +174,21 @@ func (ui *UI) layoutSlidingTabStrip(th *material.Theme, gtx layout.Context, stri
 											pointer.CursorPointer.Add(gtx.Ops)
 											return dims
 										})
+										if focusFill > 0 && dims.Size.X > 0 && dims.Size.Y > 0 {
+											pad := gtx.Dp(unit.Dp(5))
+											if pad*2 >= dims.Size.X {
+												pad = 0
+											}
+											h := gtx.Dp(unit.Dp(2))
+											if h < 1 {
+												h = 1
+											}
+											rect := image.Rect(pad, dims.Size.Y-h, dims.Size.X-pad, dims.Size.Y)
+											if rect.Dx() > 0 && rect.Dy() > 0 {
+												paint.FillShape(gtx.Ops, color.NRGBA{R: 214, G: 198, B: 166, A: uint8(140 + 64*focusFill)}, clip.UniformRRect(rect, h).Op(gtx.Ops))
+											}
+										}
+										return dims
 									})
 								})
 							}))

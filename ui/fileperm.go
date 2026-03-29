@@ -465,6 +465,8 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 					th, gtx,
 					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, st.running,
 					&st.confirmClick, label, hoverConfirm, pulseConfirm, st.running || !valid,
+					dialogActionVisualState{},
+					dialogActionVisualState{Default: !st.running && valid},
 				)
 			})
 		}),

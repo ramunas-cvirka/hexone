@@ -114,6 +114,7 @@ func (ui *UI) layoutSettingsFilenamePermissionMatchTabs(th *material.Theme, gtx 
 	for i, opt := range filenamePermissionMatchOptions {
 		keys[i] = opt.key
 		if st.filenamePermMatchClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusFilenamePermMatch)
 			st.filenamePermMatchAnim.anim.setPulse(opt.key, gtx.Now)
 			st.filenamePermMatchAnim.setValue(&st.filenamePermMatch, opt.key, gtx.Now)
 			st.errText = ""
@@ -133,12 +134,17 @@ func (ui *UI) layoutSettingsFilenamePermissionMatchTabs(th *material.Theme, gtx 
 		activeFill, activeAnim := st.filenamePermMatchAnim.fill(gtx.Now, active, opt.key)
 		hoverFill, hoverAnim := st.filenamePermMatchAnim.anim.hoverFill(gtx.Now, opt.key)
 		pulseFill, pulseAnim := st.filenamePermMatchAnim.anim.pulseFill(gtx.Now, opt.key)
+		focusFill := float32(0)
+		if st.focus == settingsKeyboardFocusFilenamePermMatch && active == opt.key {
+			focusFill = 1
+		}
 		specs = append(specs, slidingTabSpec{
 			Label:      opt.label,
 			Click:      &st.filenamePermMatchClicks[i],
 			ActiveFill: activeFill,
 			HoverFill:  hoverFill,
 			PulseFill:  pulseFill,
+			FocusFill:  focusFill,
 		})
 		animating = animating || activeAnim || hoverAnim || pulseAnim
 	}
@@ -171,14 +177,16 @@ func (ui *UI) layoutSettingsFilenamePermissionPickerField(th *material.Theme, gt
 				ed.TextSize = scaleModalThemeFontSize(th, 10)
 				ed.Color = txtColor
 				ed.HintColor = hintColor
-				return ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-perm", &st.filenamePermEdit, true, func(gtx layout.Context) layout.Dimensions {
+				dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-perm", &st.filenamePermEdit, true, func(gtx layout.Context) layout.Dimensions {
 					return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenamePermEdit), true, ed.Layout)
 				})
+				st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusFilenamePermMask, &st.filenamePermEdit)
+				return dims
 			})
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenamePermPickerClick, settingsFilenamePermissionPickerLabel(st.filenamePermPickerOpen), st.filenamePermPickerOpen)
+			return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenamePermPickerClick, settingsFilenamePermissionPickerLabel(st.filenamePermPickerOpen), st.filenamePermPickerOpen, st.focus == settingsKeyboardFocusFilenamePermPicker)
 		}),
 	)
 	if st.filenamePermPickerOpen {
@@ -209,6 +217,7 @@ func (ui *UI) layoutSettingsFilenameSizeMatchTabs(th *material.Theme, gtx layout
 	for i, opt := range filenameSizeMatchOptions {
 		keys[i] = opt.key
 		if st.filenameSizeMatchClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusFilenameSizeMatch)
 			st.filenameSizeMatchAnim.anim.setPulse(opt.key, gtx.Now)
 			st.filenameSizeMatchAnim.setValue(&st.filenameSizeMatch, opt.key, gtx.Now)
 			st.errText = ""
@@ -228,12 +237,17 @@ func (ui *UI) layoutSettingsFilenameSizeMatchTabs(th *material.Theme, gtx layout
 		activeFill, activeAnim := st.filenameSizeMatchAnim.fill(gtx.Now, active, opt.key)
 		hoverFill, hoverAnim := st.filenameSizeMatchAnim.anim.hoverFill(gtx.Now, opt.key)
 		pulseFill, pulseAnim := st.filenameSizeMatchAnim.anim.pulseFill(gtx.Now, opt.key)
+		focusFill := float32(0)
+		if st.focus == settingsKeyboardFocusFilenameSizeMatch && active == opt.key {
+			focusFill = 1
+		}
 		specs = append(specs, slidingTabSpec{
 			Label:      opt.label,
 			Click:      &st.filenameSizeMatchClicks[i],
 			ActiveFill: activeFill,
 			HoverFill:  hoverFill,
 			PulseFill:  pulseFill,
+			FocusFill:  focusFill,
 		})
 		animating = animating || activeAnim || hoverAnim || pulseAnim
 	}

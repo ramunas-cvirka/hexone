@@ -782,7 +782,7 @@ func (st *settingsModalState) removeCurrentFilenamePermissionRule() bool {
 	return true
 }
 
-func (ui *UI) layoutSettingsFilenameColorValueField(th *material.Theme, gtx layout.Context, st *settingsModalState, key string, edit *widget.Editor, picker *widget.Clickable, pickerTarget string, groups []settingsColorSwatchGroup) layout.Dimensions {
+func (ui *UI) layoutSettingsFilenameColorValueField(th *material.Theme, gtx layout.Context, st *settingsModalState, key string, edit *widget.Editor, picker *widget.Clickable, pickerTarget string, groups []settingsColorSwatchGroup, pickerFocusTarget, editorFocusTarget settingsKeyboardFocus) layout.Dimensions {
 	edW := settingsColorHexEditorWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
 	raw := strings.TrimSpace(edit.Text())
 	swatch := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
@@ -790,9 +790,10 @@ func (ui *UI) layoutSettingsFilenameColorValueField(th *material.Theme, gtx layo
 		swatch = c
 	}
 	btnW := settingsColorPickerButtonWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
+	editorFocused := gtx.Focused(edit) || st.focus == editorFocusTarget || st.focusPending == editorFocusTarget
 	dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsColorPickerButton(th, gtx, st, swatch, picker, st.colorPickerOpen && st.colorPickerTarget == pickerTarget, btnW)
+			return ui.layoutSettingsColorPickerButton(th, gtx, st, swatch, picker, st.colorPickerOpen && st.colorPickerTarget == pickerTarget, st.focus == pickerFocusTarget, btnW)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -802,9 +803,11 @@ func (ui *UI) layoutSettingsFilenameColorValueField(th *material.Theme, gtx layo
 				ed.TextSize = scaleModalThemeFontSize(th, 10)
 				ed.Color = txtColor
 				ed.HintColor = hintColor
-				return ui.layoutEditorWithContextMenu(th, gtx, key, edit, true, func(gtx layout.Context) layout.Dimensions {
-					return layoutNeutralEditorBox(gtx, gtx.Focused(edit), true, ed.Layout)
+				dims := ui.layoutEditorWithContextMenu(th, gtx, key, edit, true, func(gtx layout.Context) layout.Dimensions {
+					return layoutNeutralEditorBox(gtx, editorFocused, true, ed.Layout)
 				})
+				st.applyPendingWidgetFocus(gtx, editorFocusTarget, edit)
+				return dims
 			})
 		}),
 	)
@@ -892,9 +895,9 @@ func settingsFilenameIconButtonWidth(th *material.Theme, gtx layout.Context, fac
 	return width
 }
 
-func (ui *UI) layoutSettingsFilenameIconPickerField(th *material.Theme, gtx layout.Context, st *settingsModalState, click *widget.Clickable, pickerTarget, iconKey string) layout.Dimensions {
+func (ui *UI) layoutSettingsFilenameIconPickerField(th *material.Theme, gtx layout.Context, st *settingsModalState, click *widget.Clickable, pickerTarget, iconKey string, focusTarget settingsKeyboardFocus) layout.Dimensions {
 	open := st != nil && st.filenameIconPickerOpen && st.filenameIconPickerTarget == pickerTarget
-	dims := ui.layoutSettingsFilenameIconPickerButton(th, gtx, click, iconKey, open)
+	dims := ui.layoutSettingsFilenameIconPickerButton(th, gtx, click, iconKey, open, st != nil && st.focus == focusTarget)
 	if open {
 		m := op.Record(gtx.Ops)
 		offset := op.Offset(image.Pt(0, dims.Size.Y+gtx.Dp(unit.Dp(4))))
@@ -905,7 +908,7 @@ func (ui *UI) layoutSettingsFilenameIconPickerField(th *material.Theme, gtx layo
 	return dims
 }
 
-func (ui *UI) layoutSettingsFilenameIconPickerButton(th *material.Theme, gtx layout.Context, click *widget.Clickable, iconKey string, open bool) layout.Dimensions {
+func (ui *UI) layoutSettingsFilenameIconPickerButton(th *material.Theme, gtx layout.Context, click *widget.Clickable, iconKey string, open, focused bool) layout.Dimensions {
 	width := settingsFilenameIconButtonWidth(th, gtx, ui.mainTypeface())
 	label := filenameIconLabel(iconKey) + "  ▾"
 	if open {
@@ -918,6 +921,10 @@ func (ui *UI) layoutSettingsFilenameIconPickerButton(th *material.Theme, gtx lay
 			if click.Hovered() || open {
 				bg = color.NRGBA{R: 30, G: 34, B: 44, A: 255}
 				bd = color.NRGBA{R: 130, G: 160, B: 255, A: 70}
+			}
+			if focused {
+				bg = mixNRGBA(bg, color.NRGBA{R: 64, G: 54, B: 36, A: 255}, 0.32)
+				bd = color.NRGBA{R: 214, G: 196, B: 164, A: 190}
 			}
 			return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, bd, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1016,7 +1023,8 @@ func (ui *UI) layoutSettingsFilenameIconPickerRow(th *material.Theme, gtx layout
 		opt := opt
 		click := &st.filenameIconSwatchClicks[start+i]
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsFilenameIconSwatch(th, gtx, click, opt, opt.key == current)
+			focused := st.popupKeyboardMatches(settingsPopupKeyboardFilenameIcon, start+i, settingsPopupKeyboardActionRow)
+			return ui.layoutSettingsFilenameIconSwatch(th, gtx, click, opt, opt.key == current, focused)
 		}))
 		if i < len(options)-1 {
 			children = append(children, layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout))
@@ -1025,7 +1033,7 @@ func (ui *UI) layoutSettingsFilenameIconPickerRow(th *material.Theme, gtx layout
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 }
 
-func (ui *UI) layoutSettingsFilenameIconSwatch(th *material.Theme, gtx layout.Context, click *widget.Clickable, opt filenameIconOption, selected bool) layout.Dimensions {
+func (ui *UI) layoutSettingsFilenameIconSwatch(th *material.Theme, gtx layout.Context, click *widget.Clickable, opt filenameIconOption, selected, focused bool) layout.Dimensions {
 	cellW := gtx.Dp(unit.Dp(64))
 	cellH := gtx.Dp(unit.Dp(46))
 	if cellW < 1 {
@@ -1045,6 +1053,10 @@ func (ui *UI) layoutSettingsFilenameIconSwatch(th *material.Theme, gtx layout.Co
 				} else if click.Hovered() {
 					bg = color.NRGBA{R: 28, G: 32, B: 40, A: 255}
 					border = color.NRGBA{R: 230, G: 236, B: 255, A: 110}
+				}
+				if focused {
+					bg = mixNRGBA(bg, color.NRGBA{R: 64, G: 54, B: 36, A: 255}, 0.25)
+					border = color.NRGBA{R: 214, G: 196, B: 164, A: 220}
 				}
 				return fillRoundedBox(gtx, gtx.Dp(unit.Dp(6)), bg, border, func(gtx layout.Context) layout.Dimensions {
 					return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1099,6 +1111,7 @@ func (ui *UI) layoutSettingsFilenameAgeUnitPicker(th *material.Theme, gtx layout
 	for i, opt := range filenameAgeUnitOptions {
 		keys[i] = opt.key
 		if st.filenameAgeUnitClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusFilenameAgeUnit)
 			st.filenameAgeUnitAnim.anim.setPulse(opt.key, gtx.Now)
 			st.filenameAgeUnitAnim.setValue(&st.filenameAgeUnit, opt.key, gtx.Now)
 			st.errText = ""
@@ -1116,12 +1129,17 @@ func (ui *UI) layoutSettingsFilenameAgeUnitPicker(th *material.Theme, gtx layout
 		activeFill, activeAnim := st.filenameAgeUnitAnim.fill(gtx.Now, st.filenameAgeUnit, opt.key)
 		hoverFill, hoverAnim := st.filenameAgeUnitAnim.anim.hoverFill(gtx.Now, opt.key)
 		pulseFill, pulseAnim := st.filenameAgeUnitAnim.anim.pulseFill(gtx.Now, opt.key)
+		focusFill := float32(0)
+		if st.focus == settingsKeyboardFocusFilenameAgeUnit && st.filenameAgeUnit == opt.key {
+			focusFill = 1
+		}
 		specs = append(specs, slidingTabSpec{
 			Label:      opt.label,
 			Click:      &st.filenameAgeUnitClicks[i],
 			ActiveFill: activeFill,
 			HoverFill:  hoverFill,
 			PulseFill:  pulseFill,
+			FocusFill:  focusFill,
 		})
 		animating = animating || activeAnim || hoverAnim || pulseAnim
 	}
@@ -1141,21 +1159,25 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 	}
 	keys := []string{"age", "permissions", "extensions", "sizes"}
 	if st.filenameRuleModeAgeClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameRuleMode)
 		st.filenameRuleModeAnim.anim.setPulse("age", gtx.Now)
 		st.filenameRuleModeAnim.setValue(&st.filenameRuleMode, "age", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	if st.filenameRuleModePermClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameRuleMode)
 		st.filenameRuleModeAnim.anim.setPulse("permissions", gtx.Now)
 		st.filenameRuleModeAnim.setValue(&st.filenameRuleMode, "permissions", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	if st.filenameRuleModeExtClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameRuleMode)
 		st.filenameRuleModeAnim.anim.setPulse("extensions", gtx.Now)
 		st.filenameRuleModeAnim.setValue(&st.filenameRuleMode, "extensions", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	if st.filenameRuleModeSizeClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameRuleMode)
 		st.filenameRuleModeAnim.anim.setPulse("sizes", gtx.Now)
 		st.filenameRuleModeAnim.setValue(&st.filenameRuleMode, "sizes", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
@@ -1189,6 +1211,22 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 	pulsePerm, pulseAnimPerm := st.filenameRuleModeAnim.anim.pulseFill(gtx.Now, "permissions")
 	pulseExt, pulseAnimExt := st.filenameRuleModeAnim.anim.pulseFill(gtx.Now, "extensions")
 	pulseSize, pulseAnimSize := st.filenameRuleModeAnim.anim.pulseFill(gtx.Now, "sizes")
+	focusAge := float32(0)
+	focusPerm := float32(0)
+	focusExt := float32(0)
+	focusSize := float32(0)
+	if st.focus == settingsKeyboardFocusFilenameRuleMode {
+		switch activeMode {
+		case "permissions":
+			focusPerm = 1
+		case "extensions":
+			focusExt = 1
+		case "sizes":
+			focusSize = 1
+		default:
+			focusAge = 1
+		}
+	}
 	specs := []slidingTabSpec{
 		{
 			Label:      "By Age",
@@ -1196,6 +1234,7 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 			ActiveFill: fillAge,
 			HoverFill:  hoverAge,
 			PulseFill:  pulseAge,
+			FocusFill:  focusAge,
 		},
 		{
 			Label:      "By Permissions",
@@ -1203,6 +1242,7 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 			ActiveFill: fillPerm,
 			HoverFill:  hoverPerm,
 			PulseFill:  pulsePerm,
+			FocusFill:  focusPerm,
 		},
 		{
 			Label:      "By Extension",
@@ -1210,6 +1250,7 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 			ActiveFill: fillExt,
 			HoverFill:  hoverExt,
 			PulseFill:  pulseExt,
+			FocusFill:  focusExt,
 		},
 		{
 			Label:      "By Size",
@@ -1217,6 +1258,7 @@ func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.
 			ActiveFill: fillSize,
 			HoverFill:  hoverSize,
 			PulseFill:  pulseSize,
+			FocusFill:  focusSize,
 		},
 	}
 	if animPos || animAge || animPerm || animExt || animSize ||
@@ -1724,6 +1766,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 					break
 				}
 				if st.colorSwatchClicks[clickIdx].Clicked(gtx) {
+					st.setPopupKeyboardFocus(settingsPopupKeyboardColor, clickIdx, settingsPopupKeyboardActionRow)
 					st.setColorPickerHexValue(st.colorPickerTarget, hex)
 					st.colorPickerOpen = false
 					st.colorPickerTarget = ""
@@ -1739,6 +1782,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				break
 			}
 			if st.filenameIconSwatchClicks[i].Clicked(gtx) {
+				st.setPopupKeyboardFocus(settingsPopupKeyboardFilenameIcon, i, settingsPopupKeyboardActionRow)
 				target := st.filenameIconPickerTarget
 				st.setFilenameIconPickerValue(target, opt.key)
 				st.filenameIconPickerOpen = false
@@ -1749,29 +1793,37 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}
 	}
 	if st.filenameDefaultTextPicker.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameDefaultTextPicker)
 		st.toggleColorPicker("filename-default-text")
 	}
 	if st.filenameAgeTextPicker.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameAgeTextPicker)
 		st.toggleColorPicker("filename-age-text")
 	}
 	if st.filenamePermTextPicker.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenamePermTextPicker)
 		st.toggleColorPicker("filename-perm-text")
 	}
 	if st.filenamePermPickerClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenamePermPicker)
 		st.toggleFilenamePermissionPicker()
 	}
 	if st.filenameExtTextPicker.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameExtTextPicker)
 		st.toggleColorPicker("filename-ext-text")
 	}
 	if st.filenameSizeTextPicker.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameSizeTextPicker)
 		st.toggleColorPicker("filename-size-text")
 	}
 	st.syncFilenameAgeEditors()
 	st.refreshFilenameAgeDraftInfo()
 	if st.filenameAgeIconClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameAgeIconPicker)
 		st.toggleFilenameIconPicker("filename-age-icon")
 	}
 	if st.filenameAgeApplyClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameAgeApply)
 		action, err := st.upsertCurrentFilenameAgeRule()
 		if err != nil {
 			st.errText = err.Error()
@@ -1781,6 +1833,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}
 	}
 	if st.filenameAgeRemoveClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameAgeRemove)
 		if st.removeCurrentFilenameAgeRule() {
 			st.errText = ""
 			st.filenameAgeInfoText = "Pending removal; Save to persist"
@@ -1793,12 +1846,15 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	st.syncFilenameSizeEditors()
 	st.refreshFilenameSizeDraftInfo()
 	if st.filenameDefaultIconClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameDefaultIconPicker)
 		st.toggleFilenameIconPicker("filename-default-icon")
 	}
 	if st.filenamePermIconClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenamePermIconPicker)
 		st.toggleFilenameIconPicker("filename-perm-icon")
 	}
 	if st.filenamePermApplyClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenamePermApply)
 		action, err := st.upsertCurrentFilenamePermissionRule()
 		if err != nil {
 			st.errText = err.Error()
@@ -1808,15 +1864,18 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}
 	}
 	if st.filenamePermRemoveClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenamePermRemove)
 		if st.removeCurrentFilenamePermissionRule() {
 			st.errText = ""
 			st.filenamePermInfoText = "Pending removal; Save to persist"
 		}
 	}
 	if st.filenameExtIconClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameExtIconPicker)
 		st.toggleFilenameIconPicker("filename-ext-icon")
 	}
 	if st.filenameExtApplyClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameExtApply)
 		action, err := st.upsertCurrentFilenameExtensionRule()
 		if err != nil {
 			st.errText = err.Error()
@@ -1826,15 +1885,18 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}
 	}
 	if st.filenameExtRemoveClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameExtRemove)
 		if st.removeCurrentFilenameExtensionRule() {
 			st.errText = ""
 			st.filenameExtInfoText = "Pending removal; Save to persist"
 		}
 	}
 	if st.filenameSizeIconClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameSizeIconPicker)
 		st.toggleFilenameIconPicker("filename-size-icon")
 	}
 	if st.filenameSizeApplyClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameSizeApply)
 		action, err := st.upsertCurrentFilenameSizeRule()
 		if err != nil {
 			st.errText = err.Error()
@@ -1844,6 +1906,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		}
 	}
 	if st.filenameSizeRemoveClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusFilenameSizeRemove)
 		if st.removeCurrentFilenameSizeRule() {
 			st.errText = ""
 			st.filenameSizeInfoText = "Pending removal; Save to persist"
@@ -1898,11 +1961,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-perm-text", &st.filenamePermTextEdit, &st.filenamePermTextPicker, "filename-perm-text", permSwatchGroups)
+							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-perm-text", &st.filenamePermTextEdit, &st.filenamePermTextPicker, "filename-perm-text", permSwatchGroups, settingsKeyboardFocusFilenamePermTextPicker, settingsKeyboardFocusFilenamePermText)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenamePermIconClick, "filename-perm-icon", st.filenamePermIcon)
+							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenamePermIconClick, "filename-perm-icon", st.filenamePermIcon, settingsKeyboardFocusFilenamePermIconPicker)
 						}),
 					)
 				}),
@@ -1910,11 +1973,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenamePermApplyClick, permAction, currentPermExists)
+							return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenamePermApplyClick, permAction, currentPermExists, st.focus == settingsKeyboardFocusFilenamePermApply)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenamePermRemoveClick, "Remove", false)
+							return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenamePermRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenamePermRemove)
 						}),
 					)
 				}),
@@ -1928,20 +1991,22 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 						ed.TextSize = scaleModalThemeFontSize(th, 10)
 						ed.Color = txtColor
 						ed.HintColor = hintColor
-						return ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-ext", &st.filenameExtEdit, true, func(gtx layout.Context) layout.Dimensions {
+						dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-ext", &st.filenameExtEdit, true, func(gtx layout.Context) layout.Dimensions {
 							return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenameExtEdit), true, ed.Layout)
 						})
+						st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusFilenameExt, &st.filenameExtEdit)
+						return dims
 					})
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-ext-text", &st.filenameExtTextEdit, &st.filenameExtTextPicker, "filename-ext-text", extSwatchGroups)
+							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-ext-text", &st.filenameExtTextEdit, &st.filenameExtTextPicker, "filename-ext-text", extSwatchGroups, settingsKeyboardFocusFilenameExtTextPicker, settingsKeyboardFocusFilenameExtText)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameExtIconClick, "filename-ext-icon", st.filenameExtIcon)
+							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameExtIconClick, "filename-ext-icon", st.filenameExtIcon, settingsKeyboardFocusFilenameExtIconPicker)
 						}),
 					)
 				}),
@@ -1949,11 +2014,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameExtApplyClick, extAction, currentExtExists)
+							return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenameExtApplyClick, extAction, currentExtExists, st.focus == settingsKeyboardFocusFilenameExtApply)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameExtRemoveClick, "Remove", false)
+							return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenameExtRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenameExtRemove)
 						}),
 					)
 				}),
@@ -1967,9 +2032,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 						ed.TextSize = scaleModalThemeFontSize(th, 10)
 						ed.Color = txtColor
 						ed.HintColor = hintColor
-						return ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-size", &st.filenameSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
+						dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-size", &st.filenameSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
 							return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenameSizeEdit), true, ed.Layout)
 						})
+						st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusFilenameSize, &st.filenameSizeEdit)
+						return dims
 					})
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
@@ -1980,11 +2047,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-size-text", &st.filenameSizeTextEdit, &st.filenameSizeTextPicker, "filename-size-text", sizeSwatchGroups)
+							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-size-text", &st.filenameSizeTextEdit, &st.filenameSizeTextPicker, "filename-size-text", sizeSwatchGroups, settingsKeyboardFocusFilenameSizeTextPicker, settingsKeyboardFocusFilenameSizeText)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameSizeIconClick, "filename-size-icon", st.filenameSizeIcon)
+							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameSizeIconClick, "filename-size-icon", st.filenameSizeIcon, settingsKeyboardFocusFilenameSizeIconPicker)
 						}),
 					)
 				}),
@@ -1992,11 +2059,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameSizeApplyClick, sizeAction, currentSizeExists)
+							return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenameSizeApplyClick, sizeAction, currentSizeExists, st.focus == settingsKeyboardFocusFilenameSizeApply)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameSizeRemoveClick, "Remove", false)
+							return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenameSizeRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenameSizeRemove)
 						}),
 					)
 				}),
@@ -2012,9 +2079,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 								ed.TextSize = scaleModalThemeFontSize(th, 10)
 								ed.Color = txtColor
 								ed.HintColor = hintColor
-								return ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-age-offset", &st.filenameAgeOffsetEdit, true, func(gtx layout.Context) layout.Dimensions {
+								dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-age-offset", &st.filenameAgeOffsetEdit, true, func(gtx layout.Context) layout.Dimensions {
 									return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenameAgeOffsetEdit), true, ed.Layout)
 								})
+								st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusFilenameAgeOffset, &st.filenameAgeOffsetEdit)
+								return dims
 							})
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
@@ -2027,11 +2096,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-age-text", &st.filenameAgeTextEdit, &st.filenameAgeTextPicker, "filename-age-text", ageSwatchGroups)
+							return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-age-text", &st.filenameAgeTextEdit, &st.filenameAgeTextPicker, "filename-age-text", ageSwatchGroups, settingsKeyboardFocusFilenameAgeTextPicker, settingsKeyboardFocusFilenameAgeText)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameAgeIconClick, "filename-age-icon", st.filenameAgeIcon)
+							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameAgeIconClick, "filename-age-icon", st.filenameAgeIcon, settingsKeyboardFocusFilenameAgeIconPicker)
 						}),
 					)
 				}),
@@ -2039,11 +2108,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameAgeApplyClick, ageAction, currentAgeExists)
+							return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenameAgeApplyClick, ageAction, currentAgeExists, st.focus == settingsKeyboardFocusFilenameAgeApply)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButton(th, gtx, ui.mainTypeface(), &st.filenameAgeRemoveClick, "Remove", false)
+							return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenameAgeRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenameAgeRemove)
 						}),
 					)
 				}),
@@ -2111,11 +2180,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-default", &st.filenameDefaultTextEdit, &st.filenameDefaultTextPicker, "filename-default-text", defaultSwatchGroups)
+					return ui.layoutSettingsFilenameColorValueField(th, gtx, st, "settings-filename-default", &st.filenameDefaultTextEdit, &st.filenameDefaultTextPicker, "filename-default-text", defaultSwatchGroups, settingsKeyboardFocusFilenameDefaultTextPicker, settingsKeyboardFocusFilenameDefaultText)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameDefaultIconClick, "filename-default-icon", st.filenameDefaultIcon)
+					return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameDefaultIconClick, "filename-default-icon", st.filenameDefaultIcon, settingsKeyboardFocusFilenameDefaultIconPicker)
 				}),
 			)
 		}),

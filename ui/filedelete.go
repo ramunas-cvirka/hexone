@@ -52,7 +52,23 @@ type fileDeleteState struct {
 
 	doneCh      chan fileDeleteResult
 	actionsAnim segmentedAnimState
+	keyFocus    dialogKeyboardFocusState
+	focus       fileDeleteDialogFocus
+	actionFocus fileDeleteDialogAction
 }
+
+type fileDeleteDialogFocus uint8
+
+const (
+	fileDeleteDialogFocusActions fileDeleteDialogFocus = iota
+)
+
+type fileDeleteDialogAction uint8
+
+const (
+	fileDeleteDialogActionCancel fileDeleteDialogAction = iota
+	fileDeleteDialogActionConfirm
+)
 
 type fileDeleteTarget struct {
 	Path string
@@ -132,13 +148,16 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 	}
 
 	ui.fileDelete = &fileDeleteState{
-		pane:       idx,
-		row:        row,
-		targets:    targets,
-		targetPath: entry.Path,
-		targetName: entry.DisplayName,
-		targetInfo: info,
-		remote:     remote,
+		pane:        idx,
+		row:         row,
+		targets:     targets,
+		targetPath:  entry.Path,
+		targetName:  entry.DisplayName,
+		targetInfo:  info,
+		remote:      remote,
+		focus:       fileDeleteDialogFocusActions,
+		actionFocus: fileDeleteDialogActionConfirm,
+		keyFocus:    dialogKeyboardFocusState{wantFocus: true},
 	}
 	ui.rep.active = false
 	ui.rep.pane = -1
@@ -190,6 +209,71 @@ func (st *fileDeleteState) targetPreviewLines() []string {
 		labels = append(labels, fileOpPreviewLabel(target.Name, target.Path))
 	}
 	return fileOpPreviewLines(labels)
+}
+
+func (st *fileDeleteState) focusOrder() []fileDeleteDialogFocus {
+	if st == nil {
+		return nil
+	}
+	return []fileDeleteDialogFocus{
+		fileDeleteDialogFocusActions,
+	}
+}
+
+func (st *fileDeleteState) setFocus(target fileDeleteDialogFocus) bool {
+	if st == nil {
+		return false
+	}
+	changed := st.focus != target
+	st.focus = target
+	st.keyFocus.focusKeyboard()
+	return changed
+}
+
+func (st *fileDeleteState) stepFocus(step int) bool {
+	order := st.focusOrder()
+	if len(order) == 0 {
+		return false
+	}
+	current := -1
+	for i, target := range order {
+		if target == st.focus {
+			current = i
+			break
+		}
+	}
+	return st.setFocus(order[dialogWrappedIndex(current, len(order), step)])
+}
+
+func (st *fileDeleteState) stepAction(step int) bool {
+	if st == nil {
+		return false
+	}
+	order := []fileDeleteDialogAction{fileDeleteDialogActionCancel, fileDeleteDialogActionConfirm}
+	current := 0
+	for i, action := range order {
+		if action == st.actionFocus {
+			current = i
+			break
+		}
+	}
+	next := order[dialogWrappedIndex(current, len(order), step)]
+	if next == st.actionFocus {
+		return false
+	}
+	st.actionFocus = next
+	return true
+}
+
+func (st *fileDeleteState) actionVisualState(target fileDeleteDialogAction) dialogActionVisualState {
+	if st == nil || st.running {
+		return dialogActionVisualState{}
+	}
+	if st.focus == fileDeleteDialogFocusActions {
+		active := st.actionFocus == target
+		return dialogActionVisualState{Focused: active, Default: active}
+	}
+	return dialogActionVisualState{Default: target == fileDeleteDialogActionConfirm}
 }
 
 func (ui *UI) submitFileDeleteDialog(now time.Time) {
@@ -495,26 +579,70 @@ func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) lay
 		return layout.Dimensions{}
 	}
 
-	for _, name := range []key.Name{key.NameEscape, key.NameEnter, key.NameReturn} {
-		for {
-			ev, ok := gtx.Event(key.Filter{Name: name})
-			if !ok {
-				break
-			}
-			ke, ok := ev.(key.Event)
-			if !ok || ke.State != key.Press {
+	st.keyFocus.attach(gtx)
+	anyMods := ^key.Modifiers(0)
+
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameEscape, Optional: anyMods},
+			key.Filter{Name: key.NameTab, Optional: anyMods},
+			key.Filter{Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Name: key.NameReturn, Optional: anyMods},
+			key.Filter{Name: key.NameLeftArrow, Optional: anyMods},
+			key.Filter{Name: key.NameRightArrow, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		switch ke.Name {
+		case key.NameEscape:
+			if st.running {
 				continue
 			}
-			switch name {
-			case key.NameEscape:
-				if !st.running {
-					ui.closeFileDeleteDialog()
-				}
-			case key.NameEnter, key.NameReturn:
-				if !st.running {
-					st.actionsAnim.setPulse("confirm", gtx.Now)
-					ui.submitFileDeleteDialog(gtx.Now)
-				}
+			ui.closeFileDeleteDialog()
+			return layout.Dimensions{}
+		case key.NameTab:
+			if st.running {
+				continue
+			}
+			step, ok := dialogTabStep(ke.Modifiers)
+			if !ok {
+				continue
+			}
+			if st.stepFocus(step) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameLeftArrow:
+			if st.running || ke.Modifiers != 0 || st.focus != fileDeleteDialogFocusActions {
+				continue
+			}
+			if st.stepAction(-1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameRightArrow:
+			if st.running || ke.Modifiers != 0 || st.focus != fileDeleteDialogFocusActions {
+				continue
+			}
+			if st.stepAction(1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameEnter, key.NameReturn:
+			if st.running || ke.Modifiers != 0 {
+				continue
+			}
+			switch st.actionFocus {
+			case fileDeleteDialogActionCancel:
+				st.actionsAnim.setPulse("cancel", gtx.Now)
+				ui.closeFileDeleteDialog()
+				return layout.Dimensions{}
+			case fileDeleteDialogActionConfirm:
+				st.actionsAnim.setPulse("confirm", gtx.Now)
+				ui.submitFileDeleteDialog(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 			}
 		}
 	}
@@ -707,6 +835,8 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 					th, gtx,
 					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, st.running,
 					&st.confirmClick, label, hoverConfirm, pulseConfirm, st.running,
+					st.actionVisualState(fileDeleteDialogActionCancel),
+					st.actionVisualState(fileDeleteDialogActionConfirm),
 				)
 			})
 		}),

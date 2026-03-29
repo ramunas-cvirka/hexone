@@ -38,8 +38,9 @@ The current-dir line at the top of each pane is interactive.
 On Windows:
 
 - the drive part of the current-dir line can open the drive picker
-- `Alt+F1` opens the drive picker for the left pane
-- `Alt+F2` opens the drive picker for the right pane
+- `Alt+1` opens the drive picker for the left pane
+- `Alt+2` opens the drive picker for the right pane
+- in the drive picker, use `Up`/`Down` to move, `Enter` to select, and `Esc` to close
 
 ## Sorting
 

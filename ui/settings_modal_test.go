@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -105,6 +106,694 @@ func TestSettingsStepActiveTabSetsPulse(t *testing.T) {
 	}
 	if st.navPulseAt != now {
 		t.Fatalf("navPulseAt=%v want %v", st.navPulseAt, now)
+	}
+}
+
+func TestSettingsKeyboardFocusOrderTracksVisibleControls(t *testing.T) {
+	st := &settingsModalState{
+		activeTab:        "colors",
+		colorScope:       "filenames",
+		filenameRuleMode: "permissions",
+	}
+
+	got := st.focusOrder()
+	want := []settingsKeyboardFocus{
+		settingsKeyboardFocusNav,
+		settingsKeyboardFocusColorsScope,
+		settingsKeyboardFocusFilenameDefaultTextPicker,
+		settingsKeyboardFocusFilenameDefaultText,
+		settingsKeyboardFocusFilenameDefaultIconPicker,
+		settingsKeyboardFocusFilenameRuleMode,
+		settingsKeyboardFocusFilenamePermMask,
+		settingsKeyboardFocusFilenamePermPicker,
+		settingsKeyboardFocusFilenamePermMatch,
+		settingsKeyboardFocusFilenamePermTextPicker,
+		settingsKeyboardFocusFilenamePermText,
+		settingsKeyboardFocusFilenamePermIconPicker,
+		settingsKeyboardFocusFilenamePermApply,
+		settingsKeyboardFocusFilenamePermRemove,
+		settingsKeyboardFocusFooter,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
+	st := &settingsModalState{activeTab: "general"}
+
+	got := st.focusOrder()
+	want := []settingsKeyboardFocus{
+		settingsKeyboardFocusNav,
+		settingsKeyboardFocusGeneralDimInactive,
+		settingsKeyboardFocusGeneralPaneFont,
+		settingsKeyboardFocusGeneralPaneFontSize,
+		settingsKeyboardFocusGeneralViewFont,
+		settingsKeyboardFocusGeneralViewFontSize,
+		settingsKeyboardFocusFooter,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsKeyboardFocusOrderIncludesViewerButtons(t *testing.T) {
+	st := &settingsModalState{activeTab: "viewer"}
+
+	got := st.focusOrder()
+	want := []settingsKeyboardFocus{
+		settingsKeyboardFocusNav,
+		settingsKeyboardFocusViewerMode,
+		settingsKeyboardFocusViewerShell,
+		settingsKeyboardFocusViewerRemoteSearch,
+		settingsKeyboardFocusViewerHideFunctionBar,
+		settingsKeyboardFocusViewerTargetKey,
+		settingsKeyboardFocusViewerTargetBrowse,
+		settingsKeyboardFocusViewerTargetApply,
+		settingsKeyboardFocusViewerTargetCommand,
+		settingsKeyboardFocusViewerRulePattern,
+		settingsKeyboardFocusViewerRuleBrowse,
+		settingsKeyboardFocusViewerRuleApply,
+		settingsKeyboardFocusViewerRuleCommand,
+		settingsKeyboardFocusViewerCommand,
+		settingsKeyboardFocusFooter,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsKeyboardFocusOrderIncludesColorTarget(t *testing.T) {
+	st := &settingsModalState{activeTab: "colors", colorScope: "panes"}
+
+	got := st.focusOrder()
+	want := []settingsKeyboardFocus{
+		settingsKeyboardFocusNav,
+		settingsKeyboardFocusColorsScope,
+		settingsKeyboardFocusColorsCategory,
+		settingsKeyboardFocusColorsBgPicker,
+		settingsKeyboardFocusColorsValue,
+		settingsKeyboardFocusColorsTextPicker,
+		settingsKeyboardFocusColorsTextValue,
+		settingsKeyboardFocusFooter,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsKeyboardFocusOrderSkipsConfigPath(t *testing.T) {
+	st := &settingsModalState{activeTab: "config"}
+
+	got := st.focusOrder()
+	want := []settingsKeyboardFocus{
+		settingsKeyboardFocusNav,
+		settingsKeyboardFocusConfigEditor,
+		settingsKeyboardFocusFooter,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsModalKeyboardUsesUpDownOnlyForNavFocus(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "viewer"
+	st.focus = settingsKeyboardFocusViewerMode
+	st.viewMode = "file"
+	st.footerFocus = settingsFooterActionSave
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	frame(now.Add(time.Millisecond))
+	if st.activeTab != "viewer" {
+		t.Fatalf("activeTab after DownArrow = %q, want viewer", st.activeTab)
+	}
+	if st.viewMode != "file" {
+		t.Fatalf("viewMode after DownArrow = %q, want file", st.viewMode)
+	}
+
+	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+	if st.viewMode != "hex" {
+		t.Fatalf("viewMode after RightArrow = %q, want hex", st.viewMode)
+	}
+}
+
+func TestSettingsModalKeyboardSpaceTogglesFocusedCheckbox(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "general"
+	st.focus = settingsKeyboardFocusGeneralDimInactive
+	st.keyFocus.wantFocus = true
+	st.generalDimInactiveBool.Value = false
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameSpace, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if !st.generalDimInactiveBool.Value {
+		t.Fatal("Space should toggle the focused general checkbox")
+	}
+}
+
+func TestSettingsModalKeyboardTabIncludesEditorTargets(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "general"
+	st.focus = settingsKeyboardFocusNav
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	for i := 0; i < 3; i++ {
+		router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+		frame(now.Add(time.Duration(i+1) * time.Millisecond))
+	}
+
+	if st.focus != settingsKeyboardFocusGeneralPaneFontSize {
+		t.Fatalf("focus after tabbing = %v, want pane font size editor", st.focus)
+	}
+	if st.focusPending != settingsKeyboardFocusNone {
+		t.Fatalf("focusPending = %v, want none after targeting the editor", st.focusPending)
+	}
+}
+
+func TestSettingsModalKeyboardEnterUsesDefaultSaveAction(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "general"
+	st.focus = settingsKeyboardFocusNav
+	st.footerFocus = settingsFooterActionSave
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if ui.settingsModal != nil {
+		t.Fatal("Enter from non-editor focus should trigger the default Save action")
+	}
+}
+
+func TestSettingsModalKeyboardEnterActivatesFocusedViewerBrowse(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "viewer"
+	st.focus = settingsKeyboardFocusViewerTargetBrowse
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if !st.viewTargetPickOpen {
+		t.Fatal("Enter on the focused Browse button should open the target picker")
+	}
+}
+
+func TestSettingsModalKeyboardTabWalksViewerTargetPopupRowsAndRemove(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "viewer"
+	st.focus = settingsKeyboardFocusViewerTargetBrowse
+	st.viewTargetEntries = []viewerCommandTargetEntry{{Key: "/tmp/demo.log", Command: "tail -f {path}"}}
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if !st.popupKeyboardMatches(settingsPopupKeyboardViewerTarget, 0, settingsPopupKeyboardActionRow) {
+		t.Fatalf("popup focus after Enter = kind %v index %d action %v", st.popupFocusKind, st.popupFocusIndex, st.popupFocusAction)
+	}
+
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+
+	if !st.popupKeyboardMatches(settingsPopupKeyboardViewerTarget, 0, settingsPopupKeyboardActionRemove) {
+		t.Fatalf("popup focus after first Tab = kind %v index %d action %v", st.popupFocusKind, st.popupFocusIndex, st.popupFocusAction)
+	}
+}
+
+func TestSettingsModalKeyboardEnterActivatesViewerTargetPopupRemove(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "viewer"
+	st.focus = settingsKeyboardFocusViewerTargetBrowse
+	st.viewTargetEntries = []viewerCommandTargetEntry{{Key: "/tmp/demo.log", Command: "tail -f {path}"}}
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+
+	if len(st.viewTargetEntries) != 0 {
+		t.Fatalf("viewer target entry count after remove = %d, want 0", len(st.viewTargetEntries))
+	}
+	if st.targetInfoText != "Pending removal; Save to persist" {
+		t.Fatalf("targetInfoText = %q, want pending removal", st.targetInfoText)
+	}
+}
+
+func TestSettingsModalKeyboardTabExitsViewerTargetPopupToNextControl(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "viewer"
+	st.focus = settingsKeyboardFocusViewerTargetBrowse
+	st.viewTargetEntries = []viewerCommandTargetEntry{{Key: "/tmp/demo.log", Command: "tail -f {path}"}}
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+
+	if st.viewTargetPickOpen {
+		t.Fatal("second Tab should close the target picker")
+	}
+	if st.focus != settingsKeyboardFocusViewerTargetApply {
+		t.Fatalf("focus after exiting popup = %v, want viewer target apply", st.focus)
+	}
+}
+
+func TestSettingsModalKeyboardReenterViewerTargetPopupKeepsLastRow(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "viewer"
+	st.focus = settingsKeyboardFocusViewerTargetBrowse
+	st.viewTargetEntries = []viewerCommandTargetEntry{
+		{Key: "/tmp/a.log", Command: "a"},
+		{Key: "/tmp/b.log", Command: "b"},
+		{Key: "/tmp/c.log", Command: "c"},
+	}
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame(now.Add(4 * time.Millisecond))
+
+	if st.viewTargetPickOpen {
+		t.Fatal("popup should be closed after tabbing out")
+	}
+
+	st.focus = settingsKeyboardFocusViewerTargetBrowse
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(5 * time.Millisecond))
+
+	if !st.popupKeyboardMatches(settingsPopupKeyboardViewerTarget, 1, settingsPopupKeyboardActionRow) {
+		t.Fatalf("popup focus after re-enter Enter = kind %v index %d action %v", st.popupFocusKind, st.popupFocusIndex, st.popupFocusAction)
+	}
+}
+
+func TestSettingsModalKeyboardColorPickerTabMovesAndEnterAppliesColor(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "colors"
+	st.colorScope = "panes"
+	st.focus = settingsKeyboardFocusColorsBgPicker
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+	colorAt := func(groups []settingsColorSwatchGroup, index int) string {
+		cursor := 0
+		for _, group := range groups {
+			for _, hex := range group.hexes {
+				if cursor == index {
+					return fm.NormalizeHexColor(hex, hex)
+				}
+				cursor++
+			}
+		}
+		return ""
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if !st.colorPickerOpen || st.colorPickerTarget != "background" {
+		t.Fatal("Enter on the background picker should open the color picker")
+	}
+	groups := st.colorPickerSwatchGroups("background")
+	_, startIndex, ok := st.popupKeyboardDefaultFocus(nil, nil, nil, nil, groups, nil)
+	if !ok {
+		t.Fatal("color picker should provide a default popup focus")
+	}
+	if !st.popupKeyboardMatches(settingsPopupKeyboardColor, startIndex, settingsPopupKeyboardActionRow) {
+		t.Fatalf("popup focus after Enter = kind %v index %d action %v", st.popupFocusKind, st.popupFocusIndex, st.popupFocusAction)
+	}
+
+	nextIndex := settingsPopupGridStep(startIndex, 1, 0, settingsColorPopupRowLengths(groups))
+	wantHex := colorAt(groups, nextIndex)
+	if wantHex == "" {
+		t.Fatal("expected a keyboard-reachable color swatch")
+	}
+
+	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+
+	if st.popupFocusIndex != nextIndex {
+		t.Fatalf("popup focus index after RightArrow = %d, want %d", st.popupFocusIndex, nextIndex)
+	}
+
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+
+	if st.colorPickerOpen {
+		t.Fatal("Enter on the focused color swatch should close the color picker")
+	}
+	if got := strings.TrimSpace(st.colorValueEdit.Text()); got != wantHex {
+		t.Fatalf("background color after keyboard selection = %q, want %q", got, wantHex)
+	}
+}
+
+func TestSettingsModalKeyboardColorPickerTabExitsToNextControl(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "colors"
+	st.colorScope = "panes"
+	st.focus = settingsKeyboardFocusColorsBgPicker
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+
+	if st.colorPickerOpen {
+		t.Fatal("first Tab should close the color picker")
+	}
+	if st.focus != settingsKeyboardFocusColorsValue {
+		t.Fatalf("focus after exiting color picker = %v, want background color editor", st.focus)
+	}
+}
+
+func TestSettingsModalKeyboardColorPickerTabExitGivesWidgetFocusToEditor(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "colors"
+	st.colorScope = "panes"
+	st.focus = settingsKeyboardFocusColorsBgPicker
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+	frame(now.Add(3 * time.Millisecond))
+
+	if !gtx.Focused(&st.colorValueEdit) {
+		t.Fatal("background color editor should gain widget focus after exiting the color picker")
+	}
+}
+
+func TestSettingsModalKeyboardFilenameIconPickerMovesAndAppliesSelection(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "colors"
+	st.colorScope = "filenames"
+	st.filenameRuleMode = "age"
+	st.focus = settingsKeyboardFocusFilenameDefaultIconPicker
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if !st.filenameIconPickerOpen || st.filenameIconPickerTarget != "filename-default-icon" {
+		t.Fatal("Enter on the default icon picker should open the icon picker")
+	}
+	_, startIndex, ok := st.popupKeyboardDefaultFocus(nil, nil, nil, nil, nil, filenameIconOptions)
+	if !ok {
+		t.Fatal("icon picker should provide a default popup focus")
+	}
+	if !st.popupKeyboardMatches(settingsPopupKeyboardFilenameIcon, startIndex, settingsPopupKeyboardActionRow) {
+		t.Fatalf("popup focus after Enter = kind %v index %d action %v", st.popupFocusKind, st.popupFocusIndex, st.popupFocusAction)
+	}
+
+	nextIndex := settingsPopupGridStep(startIndex, 0, 1, settingsIconPopupRowLengths(filenameIconOptions))
+	wantIcon := filenameIconOptions[nextIndex].key
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+
+	if st.popupFocusIndex != nextIndex {
+		t.Fatalf("popup focus index after DownArrow = %d, want %d", st.popupFocusIndex, nextIndex)
+	}
+
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+
+	if st.filenameIconPickerOpen {
+		t.Fatal("Enter on the focused icon swatch should close the icon picker")
+	}
+	if got := st.filenameDefaultIcon; got != wantIcon {
+		t.Fatalf("default filename icon after keyboard selection = %q, want %q", got, wantIcon)
+	}
+}
+
+func TestSettingsPopupKeyboardScrollStartsAtLastFullyVisibleRow(t *testing.T) {
+	st := &settingsModalState{
+		viewTargetPickRemember: -1,
+		viewTargetEntries: []viewerCommandTargetEntry{
+			{Key: "/tmp/a.log", Command: "a"},
+			{Key: "/tmp/b.log", Command: "b"},
+			{Key: "/tmp/c.log", Command: "c"},
+			{Key: "/tmp/d.log", Command: "d"},
+			{Key: "/tmp/e.log", Command: "e"},
+		},
+		viewTargetPickOpen: true,
+	}
+	st.viewTargetPickList.Position.First = 0
+	st.viewTargetPickList.Position.Count = 4
+
+	st.setPopupKeyboardFocus(settingsPopupKeyboardViewerTarget, 3, settingsPopupKeyboardActionRow)
+
+	if got := st.viewTargetPickList.Position.First; got != 1 {
+		t.Fatalf("first visible row after focusing almost-hidden row = %d, want 1", got)
 	}
 }
 

@@ -341,6 +341,13 @@ func (ui *UI) setFunctionBarHeldModifier(mod key.Modifiers, down bool) bool {
 	return true
 }
 
+func (ui *UI) SyncPlatformAltHeld(down bool) bool {
+	if ui == nil {
+		return false
+	}
+	return ui.setFunctionBarHeldModifier(key.ModAlt, down)
+}
+
 func (ui *UI) handleFunctionBarModifierKeys(gtx layout.Context) {
 	if ui == nil {
 		return
@@ -386,7 +393,7 @@ func (ui *UI) handleFunctionBarModifierKeys(gtx layout.Context) {
 	}
 }
 
-func (ui *UI) functionBarHeldShortcutModifier() key.Modifiers {
+func (ui *UI) functionBarHeldHintModifier() key.Modifiers {
 	if ui == nil {
 		return 0
 	}
@@ -395,17 +402,21 @@ func (ui *UI) functionBarHeldShortcutModifier() key.Modifiers {
 		return key.ModCommand
 	case ui.functionBarHeldMods.Contain(key.ModCtrl):
 		return key.ModCtrl
+	case ui.functionBarHeldMods.Contain(key.ModAlt):
+		return key.ModAlt
 	default:
 		return 0
 	}
 }
 
 func (ui *UI) functionBarShortcutName() string {
-	switch ui.functionBarHeldShortcutModifier() {
+	switch ui.functionBarHeldHintModifier() {
 	case key.ModCommand:
 		return "Cmd"
 	case key.ModCtrl:
 		return "Ctrl"
+	case key.ModAlt:
+		return "Alt"
 	default:
 		return ""
 	}
@@ -425,7 +436,8 @@ func (ui *UI) functionBarShortcutLabel(keys string) string {
 }
 
 func (ui *UI) functionBarModifierHintSpecs() []functionBarHintSpec {
-	if ui == nil || ui.functionBarHeldShortcutModifier() == 0 || ui.functionBarToolsOpen {
+	mod := ui.functionBarHeldHintModifier()
+	if ui == nil || mod == 0 || ui.functionBarToolsOpen {
 		return nil
 	}
 	if ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
@@ -443,6 +455,17 @@ func (ui *UI) functionBarModifierHintSpecs() []functionBarHintSpec {
 			shortcut: shortcut,
 			label:    label,
 		})
+	}
+
+	if mod == key.ModAlt {
+		if ui.fileViewer != nil {
+			return nil
+		}
+		if ui.Tabs.Value == "tab0" && !ui.pathEditActive() {
+			add("1", "Left Drive")
+			add("2", "Right Drive")
+		}
+		return hints
 	}
 
 	if ui.fileViewer != nil {
