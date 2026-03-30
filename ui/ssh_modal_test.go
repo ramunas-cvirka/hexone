@@ -68,6 +68,21 @@ func TestSSHModalFocusedEditorKeepsPasteShortcut(t *testing.T) {
 	}
 }
 
+func TestSSHModalSecretsAreNotMasked(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSSHModal()
+	if ui.sshModal == nil {
+		t.Fatal("ssh modal should be open")
+	}
+	st := ui.sshModal
+	if st.passEdit.Mask != 0 {
+		t.Fatalf("password mask=%q want none", st.passEdit.Mask)
+	}
+	if st.keyPassEdit.Mask != 0 {
+		t.Fatalf("key passphrase mask=%q want none", st.keyPassEdit.Mask)
+	}
+}
+
 func TestSSHModalArrowKeysStepSelectedSetup(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.SSH.Setups = []fm.SSHSetup{
@@ -101,6 +116,107 @@ func TestSSHModalArrowKeysStepSelectedSetup(t *testing.T) {
 	}
 	if got := st.hostEdit.Text(); got != "one.test" {
 		t.Fatalf("hostEdit=%q want %q", got, "one.test")
+	}
+}
+
+func TestSSHModalTabOrderCoversRemoveFieldsAddAndActions(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.SSH.Setups = []fm.SSHSetup{
+		{Host: "one.test", Port: 22, User: "alice", Password: "secret"},
+	}
+	ui := NewUI(cfg)
+	ui.openSSHModal()
+	if ui.sshModal == nil {
+		t.Fatal("ssh modal should be open")
+	}
+	st := ui.sshModal
+	_, router, _, _, frame := newSSHModalTestLayout(ui)
+
+	pressTab := func(mods key.Modifiers) {
+		router.Queue(key.Event{Name: key.NameTab, Modifiers: mods, State: key.Press})
+		frame()
+	}
+
+	frame()
+	frame()
+
+	if st.focus != sshModalFocusSetupsList {
+		t.Fatalf("initial focus=%v want %v", st.focus, sshModalFocusSetupsList)
+	}
+	pressTab(key.ModShift)
+	if st.focus != sshModalFocusAdd {
+		t.Fatalf("focus after initial shift+tab = %v, want %v", st.focus, sshModalFocusAdd)
+	}
+	pressTab(0)
+	if st.focus != sshModalFocusSetupsList {
+		t.Fatalf("focus after tab back from add = %v, want %v", st.focus, sshModalFocusSetupsList)
+	}
+	if got := st.defaultAction(); got != sshModalActionConnect {
+		t.Fatalf("defaultAction=%v want %v", got, sshModalActionConnect)
+	}
+
+	wantOrder := []sshModalFocus{
+		sshModalFocusRemove,
+		sshModalFocusHost,
+		sshModalFocusPort,
+		sshModalFocusUser,
+		sshModalFocusPassword,
+		sshModalFocusKeyPath,
+		sshModalFocusPassphrase,
+		sshModalFocusActions,
+		sshModalFocusAdd,
+		sshModalFocusSetupsList,
+	}
+	for i, want := range wantOrder {
+		pressTab(0)
+		if st.focus != want {
+			t.Fatalf("focus after tab %d = %v, want %v", i+1, st.focus, want)
+		}
+	}
+
+	pressTab(0)
+	if st.focus != sshModalFocusRemove {
+		t.Fatalf("focus after wrap tab = %v, want %v", st.focus, sshModalFocusRemove)
+	}
+
+	pressTab(key.ModShift)
+	if st.focus != sshModalFocusSetupsList {
+		t.Fatalf("focus after shift+tab = %v, want %v", st.focus, sshModalFocusSetupsList)
+	}
+}
+
+func TestSSHModalArrowFromRemoveReturnsToListNavigation(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.SSH.Setups = []fm.SSHSetup{
+		{Host: "one.test", Port: 22, User: "alice"},
+		{Host: "two.test", Port: 2200, User: "bob"},
+	}
+	ui := NewUI(cfg)
+	ui.openSSHModal()
+	if ui.sshModal == nil {
+		t.Fatal("ssh modal should be open")
+	}
+	st := ui.sshModal
+	_, router, _, _, frame := newSSHModalTestLayout(ui)
+
+	frame()
+	frame()
+
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame()
+
+	if st.focus != sshModalFocusRemove {
+		t.Fatalf("focus=%v want %v before Down", st.focus, sshModalFocusRemove)
+	}
+
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	frame()
+
+	if st.focus != sshModalFocusSetupsList {
+		t.Fatalf("focus=%v want %v after Down", st.focus, sshModalFocusSetupsList)
+	}
+	if st.selected != 1 {
+		t.Fatalf("selected=%d want 1 after Down from remove", st.selected)
 	}
 }
 
@@ -211,5 +327,72 @@ func TestSSHModalSaveKeepsSelectedSetup(t *testing.T) {
 	}
 	if got := sshSetupIdentity(st.setups[st.selected]); got != "bob@two.test:2200" {
 		t.Fatalf("selected identity=%q want %q", got, "bob@two.test:2200")
+	}
+}
+
+func TestSSHModalDirtyDraftDefaultsToSaveAndEnterSaves(t *testing.T) {
+	oldOpen := openSSHClientsFunc
+	t.Cleanup(func() {
+		openSSHClientsFunc = oldOpen
+	})
+
+	openSSHClientsFunc = func(fm.SSHSetup) (sshClientBundle, error) {
+		t.Fatal("dirty Enter should save instead of connecting")
+		return sshClientBundle{}, nil
+	}
+
+	cfg := fm.DefaultConfig()
+	cfg.SSH.Setups = []fm.SSHSetup{
+		{Host: "one.test", Port: 22, User: "alice", Password: "secret"},
+	}
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone-config.yaml")
+	ui.openSSHModal()
+	if ui.sshModal == nil {
+		t.Fatal("ssh modal should be open")
+	}
+	st := ui.sshModal
+	_, router, gtx, _, frame := newSSHModalTestLayout(ui)
+
+	frame()
+	frame()
+
+	if got := st.defaultAction(); got != sshModalActionConnect {
+		t.Fatalf("defaultAction=%v want %v before edit", got, sshModalActionConnect)
+	}
+
+	st.hostEdit.SetText("two.test")
+	if !st.hasUnsavedChanges() {
+		t.Fatal("host edit should mark SSH modal dirty")
+	}
+	if got := st.defaultAction(); got != sshModalActionSave {
+		t.Fatalf("defaultAction=%v want %v after edit", got, sshModalActionSave)
+	}
+
+	gtx.Execute(key.FocusCmd{Tag: &st.hostEdit})
+	frame()
+	frame()
+	if !gtx.Focused(&st.hostEdit) {
+		t.Fatal("host editor did not gain focus")
+	}
+
+	router.Queue(key.Event{Name: key.NameReturn, State: key.Press})
+	frame()
+
+	if ui.sshModal == nil {
+		t.Fatal("ssh modal should remain open after save")
+	}
+	if got := ui.fmCfg.SSH.Setups[0].Host; got != "two.test" {
+		t.Fatalf("saved host=%q want %q", got, "two.test")
+	}
+	if got := st.defaultAction(); got != sshModalActionConnect {
+		t.Fatalf("defaultAction=%v want %v after save", got, sshModalActionConnect)
+	}
+
+	if !st.addSetup() {
+		t.Fatal("addSetup should append a new SSH draft row")
+	}
+	if got := st.defaultAction(); got != sshModalActionSave {
+		t.Fatalf("defaultAction=%v want %v after add", got, sshModalActionSave)
 	}
 }
