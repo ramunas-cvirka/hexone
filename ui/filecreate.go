@@ -531,6 +531,23 @@ func (ui *UI) layoutFileCreateDialog(th *material.Theme, gtx layout.Context) lay
 
 	for {
 		ev, ok := gtx.Event(
+			key.Filter{Focus: &st.nameEdit, Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Focus: &st.nameEdit, Name: key.NameReturn, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press || st.running || ke.Modifiers != 0 {
+			continue
+		}
+		st.actionsAnim.setPulse("confirm", gtx.Now)
+		ui.submitFileCreateDialog(gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	for {
+		ev, ok := gtx.Event(
 			key.Filter{Name: key.NameEscape, Optional: anyMods},
 			key.Filter{Name: key.NameTab, Optional: anyMods},
 			key.Filter{Name: key.NameEnter, Optional: anyMods},
@@ -624,6 +641,7 @@ func (ui *UI) layoutFileCreateDialog(th *material.Theme, gtx layout.Context) lay
 				st.nameEdit.SetText(submit.Text)
 				st.actionsAnim.setPulse("confirm", gtx.Now)
 				ui.submitFileCreateDialog(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			if _, ok := ev.(widget.ChangeEvent); ok {

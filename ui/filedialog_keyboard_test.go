@@ -5,6 +5,8 @@ package ui
 
 import (
 	"image"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -106,6 +108,144 @@ func TestFileCreateDialogKeyboardFocusIgnoresUpDownForHorizontalGroups(t *testin
 	}
 	if st.kind != fileCreateKindFolder {
 		t.Fatalf("active kind after DownArrow = %v, want folder", st.kind)
+	}
+}
+
+func TestFileCreateDialogFocusedNameEnterSubmits(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+	baseDir := t.TempDir()
+
+	st := &fileCreateState{
+		baseDir:     baseDir,
+		kind:        fileCreateKindFolder,
+		kindPrev:    fileCreateKindFolder,
+		kindFocus:   fileCreateKindFolder,
+		focus:       fileCreateDialogFocusName,
+		actionFocus: fileCreateDialogActionConfirm,
+		endpoint:    copyEndpoint{dir: baseDir},
+	}
+	st.nameEdit.SingleLine = true
+	st.nameEdit.Submit = true
+	st.nameEdit.SetText("created-by-enter")
+	st.nameEditWant = true
+	ui.fileCreate = st
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutFileCreateDialog(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	frame(now.Add(time.Millisecond))
+
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+
+	if !st.running || st.doneCh == nil {
+		t.Fatal("Enter on the focused name editor should start folder creation")
+	}
+	if got, want := st.targetPath, filepath.Join(baseDir, "created-by-enter"); got != want {
+		t.Fatalf("targetPath=%q want %q", got, want)
+	}
+}
+
+func TestFileCopyDialogFocusedDestinationEnterSubmits(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+	baseDir := t.TempDir()
+	srcPath := filepath.Join(baseDir, "source.txt")
+	dstPath := filepath.Join(baseDir, "copied.txt")
+	if err := os.WriteFile(srcPath, []byte("copy me"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", srcPath, err)
+	}
+
+	st := &fileCopyState{
+		srcPath:     srcPath,
+		srcEndpoint: copyEndpoint{dir: baseDir},
+		dstEndpoint: copyEndpoint{dir: baseDir},
+		focus:       fileCopyDialogFocusDestination,
+		actionFocus: fileCopyDialogActionConfirm,
+	}
+	st.dstEdit.SingleLine = true
+	st.dstEdit.Submit = true
+	st.dstEdit.SetText(dstPath)
+	st.dstEditWant = true
+	ui.fileCopy = st
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutFileCopyDialog(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	frame(now.Add(time.Millisecond))
+
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+
+	if !st.running || st.doneCh == nil {
+		t.Fatal("Enter on the focused destination editor should start copying")
+	}
+	if got := st.dstPath; got != dstPath {
+		t.Fatalf("dstPath=%q want %q", got, dstPath)
+	}
+}
+
+func TestFileMoveDialogFocusedDestinationEnterSubmits(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+	baseDir := t.TempDir()
+	srcPath := filepath.Join(baseDir, "source.txt")
+	dstPath := filepath.Join(baseDir, "moved.txt")
+	if err := os.WriteFile(srcPath, []byte("move me"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", srcPath, err)
+	}
+
+	st := &fileMoveState{
+		srcPath:     srcPath,
+		srcName:     "source.txt",
+		endpoint:    copyEndpoint{dir: baseDir},
+		focus:       fileMoveDialogFocusDestination,
+		actionFocus: fileMoveDialogActionConfirm,
+	}
+	st.dstEdit.SingleLine = true
+	st.dstEdit.Submit = true
+	st.dstEdit.SetText(dstPath)
+	st.dstEditWant = true
+	ui.fileMove = st
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutFileMoveDialog(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	frame(now.Add(time.Millisecond))
+
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+
+	if !st.running || st.doneCh == nil {
+		t.Fatal("Enter on the focused destination editor should start moving")
+	}
+	if got := st.dstPath; got != dstPath {
+		t.Fatalf("dstPath=%q want %q", got, dstPath)
 	}
 }
 
