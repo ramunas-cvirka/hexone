@@ -22,3 +22,9 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - File name coloring by extension and various other filters
 - Viewing images (PNG,GIF,JPG) inside the viewer (F3)
 - Various UI & navigation tweaks
+
+## v0.3.0 - 2026-04-06
+- Tabbing support everywhere - to walk through controls
+- Smooth scrolling inside the viewer (F3)
+- Function keys bar context-aware (hold ctrl or alt)
+- Added shortcuts: to select all and all of the same type
