@@ -949,6 +949,21 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 	return dims
 }
 
+func (ui *UI) applyFunctionBarCursor(gtx layout.Context) {
+	if ui == nil || !ui.functionBarVisible() {
+		return
+	}
+	if hints := ui.functionBarModifierHintSpecs(); len(hints) > 0 {
+		return
+	}
+	for i := range ui.functionBarClicks {
+		if ui.functionBarClicks[i].Hovered() {
+			pointer.CursorPointer.Add(gtx.Ops)
+			return
+		}
+	}
+}
+
 func (ui *UI) ensureFunctionBarToolClicks(n int) {
 	if ui == nil {
 		return

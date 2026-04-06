@@ -46,6 +46,7 @@ viewer:
     background: '#202020'
     text: '#D2D2D2'
     selection: '#3C3C50'
+    smooth_scrolling: true
     shell: auto
     command: cat {path}
     remote_search_mode: remote

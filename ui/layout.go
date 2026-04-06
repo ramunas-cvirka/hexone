@@ -698,7 +698,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 
 	dims := layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if ui == nil || !ui.functionBarVisible() {
 						return layout.Dimensions{}
@@ -724,6 +724,8 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 					}
 				}),
 			)
+			ui.applyFunctionBarCursor(gtx)
+			return dims
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFunctionBarPopup(th, gtx)

@@ -25,15 +25,22 @@ import (
 )
 
 type streamOutputView struct {
-	lines        []string
-	lineOffsets  []int
-	lineRunes    []int
-	totalBytes   int
-	maxCols      int
-	topLine      int
-	visibleLines int
-	scrollCarry  float32
-	hCol         int
+	lines         []string
+	lineOffsets   []int
+	lineRunes     []int
+	totalBytes    int
+	maxCols       int
+	topLine       int
+	visibleLines  int
+	scrollCarry   float32
+	hCol          int
+	visualTop     float32
+	visualReady   bool
+	visualAt      time.Time
+	displayTop    int
+	displayY      int
+	displayCount  int
+	lastScrollDir int
 
 	pointerTag struct{}
 
@@ -91,19 +98,32 @@ type streamOutputView struct {
 	lastPrimaryPressed  bool
 }
 
+type streamSelectionState struct {
+	active bool
+	anchor int
+	head   int
+}
+
 const (
-	streamAutoScrollTick     = 50 * time.Millisecond
-	streamAutoScrollStopIn   = 180 * time.Millisecond
-	streamCancelGrace        = 320 * time.Millisecond
-	streamAutoScrollNearPx   = 20
-	streamAutoScrollMidPx    = 64
-	streamDoubleClickDur     = 420 * time.Millisecond
-	streamDoubleClickDist    = 6
-	streamTooltipGapDp       = 6
-	streamTooltipInsetXDp    = 6
-	streamTooltipInsetYDp    = 3
-	streamTooltipMinWidthDp  = 72
-	streamTooltipMinHeightDp = 18
+	streamAutoScrollTick      = 50 * time.Millisecond
+	streamAutoScrollStopIn    = 180 * time.Millisecond
+	streamCancelGrace         = 320 * time.Millisecond
+	streamAutoScrollNearPx    = 20
+	streamAutoScrollMidPx     = 64
+	streamDoubleClickDur      = 420 * time.Millisecond
+	streamDoubleClickDist     = 6
+	streamTooltipGapDp        = 6
+	streamTooltipInsetXDp     = 6
+	streamTooltipInsetYDp     = 3
+	streamTooltipMinWidthDp   = 72
+	streamTooltipMinHeightDp  = 18
+	streamSmoothTick          = 16 * time.Millisecond
+	streamSmoothTau           = 28 * time.Millisecond
+	streamSmoothAutoTau       = 12 * time.Millisecond
+	streamSmoothSnapEpsilon   = 0.02
+	streamSmoothJumpLines     = 6
+	streamSmoothAutoJumpLines = 24
+	streamSmoothAutoMaxLag    = 1.25
 )
 
 func (v *streamOutputView) SetContent(raw string) {
@@ -119,6 +139,195 @@ func (v *streamOutputView) SetContent(raw string) {
 		v.topLine = 0
 	}
 	v.clampTop()
+	v.resetVisualTop()
+}
+
+func (v *streamOutputView) maxTopLine() int {
+	maxTop := len(v.lines) - v.visibleLines
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	return maxTop
+}
+
+func (v *streamOutputView) syncVisualTop() {
+	v.visualTop = float32(v.topLine)
+	v.visualReady = true
+	v.visualAt = time.Time{}
+	v.updateDisplayState()
+}
+
+func (v *streamOutputView) resetVisualTop() {
+	v.lastScrollDir = 0
+	v.syncVisualTop()
+}
+
+func (v *streamOutputView) smoothJumpThreshold() float32 {
+	limit := float32(streamSmoothJumpLines)
+	if visible := float32(v.visibleLines) * 0.75; visible > limit {
+		limit = visible
+	}
+	return limit
+}
+
+func (v *streamOutputView) autoScrollSmoothActive() bool {
+	return v.autoScrollActive && v.selectingText
+}
+
+func (v *streamOutputView) smoothJumpLimit() float32 {
+	if v.autoScrollSmoothActive() {
+		return streamSmoothAutoJumpLines
+	}
+	return v.smoothJumpThreshold()
+}
+
+func (v *streamOutputView) smoothTau() time.Duration {
+	if v.autoScrollSmoothActive() {
+		return streamSmoothAutoTau
+	}
+	return streamSmoothTau
+}
+
+func (v *streamOutputView) clampAutoScrollVisualLag(target float32) {
+	if !v.autoScrollSmoothActive() {
+		return
+	}
+	if delta := target - v.visualTop; delta > streamSmoothAutoMaxLag {
+		v.visualTop = target - streamSmoothAutoMaxLag
+	} else if delta < -streamSmoothAutoMaxLag {
+		v.visualTop = target + streamSmoothAutoMaxLag
+	}
+}
+
+func (v *streamOutputView) updateDisplayState() {
+	total := len(v.lines)
+	if total <= 0 {
+		v.displayTop = 0
+		v.displayY = 0
+		v.displayCount = 0
+		return
+	}
+	if v.visibleLines < 1 || v.lineH <= 0 {
+		v.displayTop = v.topLine
+		if v.displayTop < 0 {
+			v.displayTop = 0
+		}
+		if maxTop := v.maxTopLine(); v.displayTop > maxTop {
+			v.displayTop = maxTop
+		}
+		v.displayY = 0
+		v.displayCount = total - v.displayTop
+		if v.displayCount < 1 {
+			v.displayCount = 1
+		}
+		return
+	}
+
+	visualTop := float32(v.topLine)
+	if v.visualReady {
+		visualTop = v.visualTop
+	}
+	maxTop := float32(v.maxTopLine())
+	if visualTop < 0 {
+		visualTop = 0
+	}
+	if visualTop > maxTop {
+		visualTop = maxTop
+	}
+	top := int(math.Floor(float64(visualTop)))
+	frac := visualTop - float32(top)
+	if frac < 0 {
+		frac = 0
+	}
+	if frac > 0 && top >= int(maxTop) {
+		top = int(maxTop)
+		frac = 0
+	}
+
+	offsetY := 0
+	if frac > 0 {
+		offsetY = -int(math.Round(float64(frac * float32(v.lineH))))
+		if offsetY <= -v.lineH {
+			offsetY = 0
+			top++
+		}
+	}
+	if top < 0 {
+		top = 0
+	}
+	if max := v.maxTopLine(); top > max {
+		top = max
+		offsetY = 0
+	}
+
+	count := total - top
+	maxRows := v.visibleLines
+	if offsetY < 0 && top+maxRows < total {
+		maxRows++
+	}
+	if count > maxRows {
+		count = maxRows
+	}
+	if count < 1 {
+		count = 1
+	}
+	v.displayTop = top
+	v.displayY = offsetY
+	v.displayCount = count
+}
+
+func (v *streamOutputView) prepareVisualScroll(now time.Time, smooth bool) bool {
+	target := float32(v.topLine)
+	if !v.visualReady {
+		v.visualTop = target
+		v.visualReady = true
+		v.visualAt = now
+		v.updateDisplayState()
+		return false
+	}
+	autoScrollSmooth := v.autoScrollSmoothActive()
+	if !smooth || v.dragging || v.hDragging || (v.selectingText && !autoScrollSmooth) || v.cancelPending {
+		v.visualTop = target
+		v.visualAt = now
+		v.updateDisplayState()
+		return false
+	}
+	if float32Abs(target-v.visualTop) > v.smoothJumpLimit() {
+		v.visualTop = target
+		v.visualAt = now
+		v.updateDisplayState()
+		return false
+	}
+
+	if v.visualAt.IsZero() {
+		v.visualAt = now
+	}
+	dt := now.Sub(v.visualAt)
+	if dt < 0 {
+		dt = 0
+	}
+	if dt > 120*time.Millisecond {
+		v.visualTop = target
+		v.visualAt = now
+		v.updateDisplayState()
+		return false
+	}
+	if dt == 0 && target != v.visualTop {
+		dt = streamSmoothTick
+	}
+	if dt > 0 {
+		blend := float32(1 - math.Exp(-float64(dt)/float64(v.smoothTau())))
+		v.visualTop += (target - v.visualTop) * clamp01(blend)
+	}
+	v.clampAutoScrollVisualLag(target)
+	v.visualAt = now
+	if float32Abs(target-v.visualTop) < streamSmoothSnapEpsilon {
+		v.visualTop = target
+		v.updateDisplayState()
+		return false
+	}
+	v.updateDisplayState()
+	return true
 }
 
 func (v *streamOutputView) ensureTextMetrics(ui *UI, th *material.Theme, gtx layout.Context) {
@@ -188,6 +397,7 @@ func (v *streamOutputView) Append(chunk string) {
 		v.totalBytes += len(p)
 	}
 	v.clampTop()
+	v.updateDisplayState()
 }
 
 func (v *streamOutputView) nearBottom() bool {
@@ -211,16 +421,14 @@ func (v *streamOutputView) scrollToBottom() {
 		maxTop = 0
 	}
 	v.topLine = maxTop
+	v.syncVisualTop()
 }
 
 func (v *streamOutputView) clampTop() {
 	if v.topLine < 0 {
 		v.topLine = 0
 	}
-	maxTop := len(v.lines) - v.visibleLines
-	if maxTop < 0 {
-		maxTop = 0
-	}
+	maxTop := v.maxTopLine()
 	if v.topLine > maxTop {
 		v.topLine = maxTop
 	}
@@ -229,6 +437,14 @@ func (v *streamOutputView) clampTop() {
 	}
 	if v.dragTopLine > maxTop {
 		v.dragTopLine = maxTop
+	}
+	if v.visualReady {
+		if v.visualTop < 0 {
+			v.visualTop = 0
+		}
+		if v.visualTop > float32(maxTop) {
+			v.visualTop = float32(maxTop)
+		}
 	}
 	v.clampSelection()
 }
@@ -333,6 +549,17 @@ func (v *streamOutputView) hasSelection() bool {
 	return v.selActive && v.selLen > 0
 }
 
+func (v *streamOutputView) selectionState() streamSelectionState {
+	if v == nil || !v.selActive {
+		return streamSelectionState{}
+	}
+	return streamSelectionState{
+		active: true,
+		anchor: v.selAnchor,
+		head:   v.selHead,
+	}
+}
+
 func (v *streamOutputView) clearSelection() {
 	v.selActive = false
 	v.selAnchor = 0
@@ -342,6 +569,26 @@ func (v *streamOutputView) clearSelection() {
 	v.selectDirty = false
 	v.cancelPending = false
 	v.cancelUntil = time.Time{}
+	v.pointerOutside = false
+	v.stopAutoScroll()
+}
+
+func (v *streamOutputView) restoreSelectionState(state streamSelectionState) {
+	if v == nil {
+		return
+	}
+	if !state.active {
+		v.clearSelection()
+		return
+	}
+	v.selActive = true
+	v.selAnchor = v.clampOffset(state.anchor)
+	v.selHead = v.clampOffset(state.head)
+	v.updateSelectionRange()
+	v.selectingText = false
+	v.selectID = 0
+	v.selectDirty = false
+	v.clearCancelGrace()
 	v.pointerOutside = false
 	v.stopAutoScroll()
 }
@@ -393,7 +640,9 @@ func (v *streamOutputView) expireCancelGrace(now time.Time) bool {
 	}
 	v.clearCancelGrace()
 	v.selectingText = false
+	v.selectID = 0
 	v.selectDirty = false
+	v.pointerOutside = false
 	v.stopAutoScroll()
 	return true
 }
@@ -593,6 +842,9 @@ func (v *streamOutputView) lineByteEnd(line int) int {
 }
 
 func (v *streamOutputView) renderedLineCount() int {
+	if v.displayCount > 0 {
+		return v.displayCount
+	}
 	if len(v.lines) == 0 {
 		return 0
 	}
@@ -618,10 +870,11 @@ func (v *streamOutputView) rowFromPointY(y int) (int, bool) {
 	if v.lineH <= 0 {
 		return 0, false
 	}
-	if y < v.textRect.Min.Y {
+	topY := v.textRect.Min.Y + v.displayY
+	if y < topY {
 		return 0, false
 	}
-	relY := y - v.textRect.Min.Y
+	relY := y - topY
 	maxY := rendered * v.lineH
 	if relY < 0 || relY >= maxY {
 		return 0, false
@@ -644,7 +897,7 @@ func (v *streamOutputView) pointOverSelectableText(pos image.Point) bool {
 	if !ok {
 		return false
 	}
-	line := v.topLine + row
+	line := v.displayTop + row
 	if line < 0 || line >= len(v.lines) {
 		return false
 	}
@@ -668,19 +921,20 @@ func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
 	}
 	rendered := v.renderedLineCount()
 	if rendered > 0 {
-		firstLine := v.topLine
+		firstLine := v.displayTop
 		if firstLine < 0 {
 			firstLine = 0
 		}
 		if firstLine >= len(v.lines) {
 			firstLine = len(v.lines) - 1
 		}
-		renderedBottom := v.textRect.Min.Y + rendered*v.lineH
-		if pos.Y < v.textRect.Min.Y {
+		renderedTop := v.textRect.Min.Y + v.displayY
+		renderedBottom := renderedTop + rendered*v.lineH
+		if pos.Y < renderedTop {
 			return v.clampOffset(v.lineByteStart(firstLine))
 		}
 		if pos.Y >= renderedBottom {
-			lastLine := v.topLine + rendered - 1
+			lastLine := v.displayTop + rendered - 1
 			if lastLine < 0 {
 				lastLine = 0
 			}
@@ -698,7 +952,7 @@ func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
 			row = 0
 		}
 	}
-	line := v.topLine + row
+	line := v.displayTop + row
 	if line < 0 {
 		line = 0
 	}
@@ -968,6 +1222,16 @@ func (v *streamOutputView) scrollByLines(lines int) {
 	if lines == 0 {
 		return
 	}
+	dir := 0
+	if lines > 0 {
+		dir = 1
+	} else {
+		dir = -1
+	}
+	if dir != 0 && v.lastScrollDir != 0 && dir != v.lastScrollDir {
+		v.syncVisualTop()
+	}
+	v.lastScrollDir = dir
 	v.topLine += lines
 	v.clampTop()
 }
@@ -1155,21 +1419,23 @@ func (v *streamOutputView) computeScrollbar(size image.Point, viewportH, scrollb
 		thumbH = viewportH
 	}
 
-	topForThumb := v.topLine
-	if v.dragging {
-		topForThumb = v.dragTopLine
-	}
 	v.clampTop()
+	topForThumb := float32(v.topLine)
+	if v.dragging {
+		topForThumb = float32(v.dragTopLine)
+	} else if v.visualReady {
+		topForThumb = v.visualTop
+	}
 	if topForThumb < 0 {
 		topForThumb = 0
 	}
-	if topForThumb > maxTop {
-		topForThumb = maxTop
+	if topForThumb > float32(maxTop) {
+		topForThumb = float32(maxTop)
 	}
 
 	thumbY := 0
 	if maxTop > 0 && viewportH > thumbH {
-		thumbY = int(float32(topForThumb) / float32(maxTop) * float32(viewportH-thumbH))
+		thumbY = int(math.Round(float64(topForThumb / float32(maxTop) * float32(viewportH-thumbH))))
 	}
 	v.thumbRect = image.Rect(trackX+1, thumbY, size.X-1, thumbY+thumbH)
 }
@@ -1394,6 +1660,7 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 	v.clampHCol(textW)
 	v.clampSelection()
 
+	v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg))
 	v.computeScrollbar(size, textH, scrollbarW)
 	v.computeHorizontalScrollbar(size, hbarH)
 	ui.handleStreamOutputEvents(gtx, st)
@@ -1406,8 +1673,19 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 	if v.runAutoScroll(gtx.Now) {
 		st.markUserBrowsing(gtx.Now)
 	}
+	animating := v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg))
+	if v.autoScrollSmoothActive() && v.selActive {
+		beforeStart, beforeLen := v.selStart, v.selLen
+		v.updateSelection(v.textOffsetFromPoint(v.selectPos))
+		if v.selStart != beforeStart || v.selLen != beforeLen {
+			st.markUserBrowsing(gtx.Now)
+		}
+	}
 	v.computeScrollbar(size, textH, scrollbarW)
 	v.computeHorizontalScrollbar(size, hbarH)
+	if animating {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(streamSmoothTick)})
+	}
 	if v.autoScrollActive && !v.autoScrollAt.IsZero() {
 		gtx.Execute(op.InvalidateCmd{At: v.autoScrollAt})
 	}
@@ -1503,6 +1781,7 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 					st.closeContextMenu()
 				}
 				if viewerPointInRect(pos, v.textRect) {
+					v.syncVisualTop()
 					doubleClick := v.registerPrimaryPress(gtx.Now, pos)
 					if doubleClick && v.selectWordAtOffset(v.textOffsetFromPoint(pos), st.wordSelectRE) {
 						st.markUserBrowsing(gtx.Now)
@@ -1532,6 +1811,14 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				st.markUserBrowsing(gtx.Now)
 			}
 			if v.selectingText && pe.PointerID == v.selectID {
+				if !pe.Buttons.Contain(pointer.ButtonPrimary) {
+					wasAutoScroll := v.autoScrollActive
+					v.stopTextSelectionDrag()
+					if wasAutoScroll {
+						v.syncVisualTop()
+					}
+					break
+				}
 				v.selectPos = pos
 				v.selectDirty = true
 				v.updateAutoScroll(pos, gtx.Now)
@@ -1547,6 +1834,7 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				v.dragging = false
 				v.dragGrabY = 0
 				v.clampTop()
+				v.syncVisualTop()
 			}
 			if v.hDragging && pe.PointerID == v.hDragID {
 				v.hDragging = false
@@ -1554,15 +1842,10 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				v.clampHCol(v.textRect.Dx())
 			}
 			if v.selectingText && pe.PointerID == v.selectID {
-				if v.cancelPending {
-					// Release after cancel can be synthetic while pointer is
-					// outside. Let cancel grace decide finalization.
-					v.beginCancelGrace(gtx.Now)
-				} else {
-					v.selectingText = false
-					v.selectDirty = false
-					v.clearCancelGrace()
-					v.stopAutoScroll()
+				wasAutoScroll := v.autoScrollActive
+				v.stopTextSelectionDrag()
+				if wasAutoScroll {
+					v.syncVisualTop()
 				}
 			}
 			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
@@ -1597,6 +1880,14 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				v.pointerOutside = false
 			}
 			if v.selectingText {
+				if pe.PointerID == v.selectID && !pe.Buttons.Contain(pointer.ButtonPrimary) {
+					wasAutoScroll := v.autoScrollActive
+					v.stopTextSelectionDrag()
+					if wasAutoScroll {
+						v.syncVisualTop()
+					}
+					break
+				}
 				v.selectPos = pos
 				v.selectDirty = true
 				v.updateAutoScroll(pos, gtx.Now)
@@ -1609,6 +1900,14 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 		case pointer.Leave:
 			v.pointerOutside = true
 			if v.selectingText {
+				if pe.PointerID == v.selectID && !pe.Buttons.Contain(pointer.ButtonPrimary) {
+					wasAutoScroll := v.autoScrollActive
+					v.stopTextSelectionDrag()
+					if wasAutoScroll {
+						v.syncVisualTop()
+					}
+					break
+				}
 				v.selectPos = pos
 				v.selectDirty = true
 				v.updateAutoScroll(pos, gtx.Now)
@@ -1641,15 +1940,15 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 	textClip := clip.Rect(image.Rect(0, 0, textW, textH)).Push(gtx.Ops)
 	defer textClip.Pop()
 
-	start := v.topLine
+	start := v.displayTop
 	if start < 0 {
 		start = 0
 	}
-	end := start + v.visibleLines
+	end := start + v.renderedLineCount()
 	if end > len(v.lines) {
 		end = len(v.lines)
 	}
-	y := 0
+	y := v.displayY
 	for i := start; i < end; i++ {
 		line := v.lines[i]
 		lineGTX := gtx

@@ -166,6 +166,7 @@ func TestSettingsKeyboardFocusOrderIncludesViewerButtons(t *testing.T) {
 		settingsKeyboardFocusViewerMode,
 		settingsKeyboardFocusViewerShell,
 		settingsKeyboardFocusViewerRemoteSearch,
+		settingsKeyboardFocusViewerSmoothScrolling,
 		settingsKeyboardFocusViewerHideFunctionBar,
 		settingsKeyboardFocusViewerTargetKey,
 		settingsKeyboardFocusViewerTargetBrowse,
@@ -289,6 +290,52 @@ func TestSettingsModalKeyboardSpaceTogglesFocusedCheckbox(t *testing.T) {
 
 	if !st.generalDimInactiveBool.Value {
 		t.Fatal("Space should toggle the focused general checkbox")
+	}
+}
+
+func TestSettingsModalKeyboardSpaceTogglesViewerSmoothScrolling(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "viewer"
+	st.focus = settingsKeyboardFocusViewerSmoothScrolling
+	st.keyFocus.wantFocus = true
+	st.viewSmoothScrollingBool.Value = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameSpace, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if st.viewSmoothScrollingBool.Value {
+		t.Fatal("Space should toggle the focused viewer smooth scrolling checkbox")
+	}
+}
+
+func TestViewerRemoteSearchCommandNoticeTextUsesMultipleLines(t *testing.T) {
+	got := viewerRemoteSearchCommandNoticeText()
+	if !strings.Contains(got, "\n") {
+		t.Fatal("remote search notice should be split across multiple lines")
+	}
+	if !strings.Contains(got, `{range_start}`) {
+		t.Fatal("remote search notice should mention the relative offset placeholder")
+	}
+	if !strings.Contains(got, `{result_select}`) {
+		t.Fatal("remote search notice should include the result selector placeholder")
 	}
 }
 

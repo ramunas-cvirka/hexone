@@ -208,6 +208,7 @@ type settingsModalState struct {
 	paneFontPickerAnim          settingsChoiceAnim
 	viewFontPickerAnim          settingsChoiceAnim
 	generalDimInactiveBool      widget.Bool
+	viewSmoothScrollingBool     widget.Bool
 	viewHideFunctionBarBool     widget.Bool
 	viewerTabList               widget.List
 	viewTargetKeyEdit           widget.Editor
@@ -513,6 +514,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.paneFontPickerAnim = settingsChoiceAnim{}
 	st.viewFontPickerAnim = settingsChoiceAnim{}
 	st.generalDimInactiveBool.Value = cfg.General.DimInactivePanes
+	st.viewSmoothScrollingBool.Value = cfg.Viewer.SmoothScrolling
 	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
 	st.viewerTabList.Position.First = 0
 	st.viewerTabList.Position.Offset = 0
@@ -1491,6 +1493,15 @@ func (st *settingsModalState) viewerCommandTargetNoticeText() string {
 		return "Pending add; Save to persist"
 	}
 	return ""
+}
+
+func viewerRemoteSearchCommandNoticeText() string {
+	return strings.Join([]string{
+		"Used by SSH hex remote search.",
+		`Return a byte offset relative to {range_start}; use "off" to disable.`,
+		"Placeholders: {path} {pattern} {pattern_hex} {pattern_base64}",
+		"{range_start_1based} {range_len} {direction} {match_limit} {result_select}",
+	}, "\n")
 }
 
 func (st *settingsModalState) syncViewerCommandTargetEditors() {
@@ -2871,6 +2882,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.Selection = viewerSelection
 	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
+	ui.fmCfg.Viewer.SmoothScrolling = st.viewSmoothScrollingBool.Value
 	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value
 	ui.fmCfg.Viewer.CommandByTarget = viewerCommandTargetMap(st.viewTargetEntries)
 	ui.fmCfg.Viewer.CommandRules = fm.NormalizeViewerCommandRules(st.viewRuleEntries)
@@ -3253,6 +3265,7 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 									return ui.layoutSettingsModalFooter(th, gtx, st)
 								}),
 							)
+							ui.applySettingsNavCursor(gtx, st)
 							return dims
 						})
 					},
@@ -3277,6 +3290,19 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 	ui.handleSettingsPopupOutsideClick(gtx, st)
 	ui.registerSettingsPopupGlobalPointer(gtx, st)
 	return dims
+}
+
+func (ui *UI) applySettingsNavCursor(gtx layout.Context, st *settingsModalState) {
+	if ui == nil || st == nil {
+		return
+	}
+	if st.tabViewerClick.Hovered() ||
+		st.tabAssocClick.Hovered() ||
+		st.tabColorsClick.Hovered() ||
+		st.tabGeneralClick.Hovered() ||
+		st.tabConfigClick.Hovered() {
+		pointer.CursorPointer.Add(gtx.Ops)
+	}
 }
 
 func (ui *UI) layoutSettingsModalHeader(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
@@ -4114,14 +4140,14 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		)
 	}
 
-	noticeLabel := func(text string) layout.Widget {
+	noticeLabel := func(text string, maxLines int, truncator string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, text)
 			lbl.Font.Typeface = ui.mainTypeface()
 			lbl.TextSize = scaleModalThemeFontSize(th, 9)
 			lbl.Color = color.NRGBA{R: 152, G: 205, B: 152, A: 255}
-			lbl.MaxLines = 2
-			lbl.Truncator = "..."
+			lbl.MaxLines = maxLines
+			lbl.Truncator = truncator
 			return lbl.Layout(gtx)
 		}
 	}
@@ -4169,9 +4195,18 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 					return dims
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, noticeLabel(`Used by SSH hex remote search. Return a byte offset relative to {range_start}. Use "off" to disable. Placeholders: {path} {pattern} {pattern_hex} {pattern_base64} {range_start_1based} {range_len} {direction} {match_limit} {result_select}`))
+					return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, noticeLabel(viewerRemoteSearchCommandNoticeText(), 6, ""))
 				}),
 			)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			before := st.viewSmoothScrollingBool.Value
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.viewSmoothScrollingBool, "Smooth scrolling", scaleModalThemeFontSize(th, 10))
+			if st.viewSmoothScrollingBool.Value != before {
+				st.focus = settingsKeyboardFocusViewerSmoothScrolling
+			}
+			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusViewerSmoothScrolling, &st.viewSmoothScrollingBool)
+			return dims
 		},
 		func(gtx layout.Context) layout.Dimensions {
 			before := st.viewHideFunctionBarBool.Value
@@ -4246,7 +4281,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 						if infoText == "" {
 							return layout.Dimensions{}
 						}
-						return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, noticeLabel(infoText))
+						return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, noticeLabel(infoText, 2, "..."))
 					}),
 				)
 			})
@@ -4315,7 +4350,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 						if infoText == "" {
 							return layout.Dimensions{}
 						}
-						return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, noticeLabel(infoText))
+						return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, noticeLabel(infoText, 2, "..."))
 					}),
 				)
 			})

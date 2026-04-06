@@ -18,6 +18,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -581,7 +582,7 @@ func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dim
 					theme.shellBorder,
 					func(gtx layout.Context) layout.Dimensions {
 						return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return ui.layoutHelpModalHeader(th, gtx, st, theme)
 								}),
@@ -590,6 +591,8 @@ func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dim
 									return ui.layoutHelpModalBody(th, gtx, st, theme)
 								}),
 							)
+							ui.applyHelpModalCursor(gtx, st)
+							return dims
 						})
 					},
 				)
@@ -610,6 +613,22 @@ func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dim
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	})
 	return dims
+}
+
+func (ui *UI) applyHelpModalCursor(gtx layout.Context, st *helpModalState) {
+	if ui == nil || st == nil {
+		return
+	}
+	if st.closeClick.Hovered() {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return
+	}
+	for i := range st.doc.Sections {
+		if i < len(st.sectionClicks) && st.sectionClicks[i].Hovered() {
+			pointer.CursorPointer.Add(gtx.Ops)
+			return
+		}
+	}
 }
 
 func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *helpModalState, theme helpModalTheme) layout.Dimensions {

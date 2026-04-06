@@ -109,6 +109,100 @@ func TestHexViewerComputeScrollbarUsesDragTopWhileDragging(t *testing.T) {
 	}
 }
 
+func TestHexPrepareVisualScrollAnimatesSmallStep(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v := &hexViewerState{
+		fileSize:     4096,
+		bytesPerLine: 16,
+		visibleLines: 4,
+		lineH:        16,
+		topLine:      0,
+	}
+	v.syncVisualTop()
+	v.topLine = 2
+
+	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); !animating {
+		t.Fatal("prepareVisualScroll should animate short hex viewer scroll steps")
+	}
+	if v.visualTop <= 0 || v.visualTop >= 2 {
+		t.Fatalf("visualTop=%v want between 0 and 2", v.visualTop)
+	}
+	if v.displayTop == 2 && v.displayY == 0 {
+		t.Fatalf("display state=%d/%d want interpolated position", v.displayTop, v.displayY)
+	}
+}
+
+func TestHexPrepareVisualScrollSnapsLargeJump(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v := &hexViewerState{
+		fileSize:     4096,
+		bytesPerLine: 16,
+		visibleLines: 4,
+		lineH:        16,
+		topLine:      0,
+	}
+	v.syncVisualTop()
+	v.topLine = 20
+
+	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); animating {
+		t.Fatal("prepareVisualScroll should snap instead of animating large hex jumps")
+	}
+	if v.visualTop != 20 {
+		t.Fatalf("visualTop=%v want 20", v.visualTop)
+	}
+	if v.displayTop != 20 || v.displayY != 0 {
+		t.Fatalf("display state=%d/%d want snapped 20/0", v.displayTop, v.displayY)
+	}
+}
+
+func TestHexPrepareVisualScrollAnimatesDuringSelectionAutoScroll(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v := &hexViewerState{
+		fileSize:         4096,
+		bytesPerLine:     16,
+		visibleLines:     4,
+		lineH:            16,
+		topLine:          0,
+		selecting:        true,
+		autoScrollActive: true,
+	}
+	v.syncVisualTop()
+	v.topLine = 7
+
+	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); !animating {
+		t.Fatal("prepareVisualScroll should keep smoothing active during hex selection autoscroll")
+	}
+	if v.visualTop <= 0 || v.visualTop >= 7 {
+		t.Fatalf("visualTop=%v want between 0 and 7", v.visualTop)
+	}
+	if lag := float64(v.topLine) - v.visualTop; lag > streamSmoothAutoMaxLag+0.01 {
+		t.Fatalf("autoscroll visual lag=%v want <= %v", lag, streamSmoothAutoMaxLag)
+	}
+}
+
+func TestHexStopSelectionDragPreservesExistingSelectionRange(t *testing.T) {
+	v := &hexViewerState{
+		selecting:        true,
+		selectID:         4,
+		dragAnchor:       32,
+		selectionStart:   32,
+		selectionLen:     48,
+		cancelPending:    true,
+		pointerOutside:   true,
+		autoScrollActive: true,
+	}
+
+	v.stopSelectionDrag()
+
+	if v.selecting || v.selectID != 0 || v.cancelPending || v.pointerOutside || v.autoScrollActive {
+		t.Fatalf("selection drag not fully stopped: selecting=%v id=%d cancel=%v outside=%v auto=%v",
+			v.selecting, v.selectID, v.cancelPending, v.pointerOutside, v.autoScrollActive)
+	}
+	if v.selectionStart != 32 || v.selectionLen != 48 {
+		t.Fatalf("selection changed unexpectedly: start=%d len=%d", v.selectionStart, v.selectionLen)
+	}
+}
+
 func TestHexSelectionByteAtPointClampsOutsideViewerArea(t *testing.T) {
 	v := &hexViewerState{
 		fileSize:     512,
@@ -127,6 +221,57 @@ func TestHexSelectionByteAtPointClampsOutsideViewerArea(t *testing.T) {
 	}
 	if want := int64(223); got != want {
 		t.Fatalf("byte offset=%d want %d", got, want)
+	}
+}
+
+func TestHexSelectionByteAtPointClampsBelowRenderedContentToLastLine(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     40,
+		bytesPerLine: 16,
+		topLine:      0,
+		visibleLines: 4,
+		charW:        8,
+		lineH:        16,
+		hexRect:      image.Rect(0, 0, 160, 64),
+		textRect:     image.Rect(200, 0, 328, 64),
+	}
+	v.syncVisualTop()
+
+	got, ok := hexSelectionByteAtPoint(v, image.Pt(420, 90))
+	if !ok {
+		t.Fatal("hexSelectionByteAtPoint should clamp short content to the last rendered line")
+	}
+	if want := int64(39); got != want {
+		t.Fatalf("byte offset=%d want %d", got, want)
+	}
+}
+
+func TestHexByteAtPointUsesDisplayedSmoothScrollState(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     512,
+		bytesPerLine: 16,
+		topLine:      2,
+		visibleLines: 2,
+		charW:        8,
+		lineH:        10,
+		hexRect:      image.Rect(0, 0, 160, 20),
+		textRect:     image.Rect(200, 0, 328, 20),
+	}
+	v.visualTop = 1.5
+	v.visualReady = true
+	v.updateDisplayState()
+
+	if got, want := func() int64 {
+		byteOff, _ := hexByteAtPoint(v, image.Pt(201, 1))
+		return byteOff
+	}(), int64(16); got != want {
+		t.Fatalf("byte offset at top=%d want line 1 start %d", got, want)
+	}
+	if got, want := func() int64 {
+		byteOff, _ := hexByteAtPoint(v, image.Pt(201, 6))
+		return byteOff
+	}(), int64(32); got != want {
+		t.Fatalf("byte offset mid viewport=%d want line 2 start %d", got, want)
 	}
 }
 
@@ -158,5 +303,38 @@ func TestHexViewerRunAutoScrollScrollsAndExtendsSelection(t *testing.T) {
 	}
 	if v.selectionLen <= 1 {
 		t.Fatalf("selectionLen=%d want >1 after autoscroll extension", v.selectionLen)
+	}
+}
+
+func TestHexRunAutoScrollDoesNotSnapVisualTop(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v := &hexViewerState{
+		fileSize:         16000,
+		bytesPerLine:     16,
+		topLine:          1,
+		visibleLines:     4,
+		charW:            8,
+		lineH:            16,
+		hexRect:          image.Rect(0, 0, 160, 64),
+		textRect:         image.Rect(200, 0, 328, 64),
+		selecting:        true,
+		dragAnchor:       16,
+		autoScrollActive: true,
+		autoScrollDir:    1,
+		autoScrollStep:   4,
+		autoScrollAt:     now,
+		selectPos:        image.Pt(208, 90),
+	}
+	v.setSelectionRange(16, 1)
+	v.syncVisualTop()
+
+	if !v.runAutoScroll(now) {
+		t.Fatal("runAutoScroll should advance the hex viewer")
+	}
+	if v.topLine != 5 {
+		t.Fatalf("topLine=%d want 5", v.topLine)
+	}
+	if v.visualTop != 1 {
+		t.Fatalf("visualTop=%v want preserved previous display position 1", v.visualTop)
 	}
 }

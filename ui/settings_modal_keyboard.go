@@ -26,6 +26,7 @@ const (
 	settingsKeyboardFocusViewerMode
 	settingsKeyboardFocusViewerShell
 	settingsKeyboardFocusViewerRemoteSearch
+	settingsKeyboardFocusViewerSmoothScrolling
 	settingsKeyboardFocusViewerHideFunctionBar
 	settingsKeyboardFocusViewerTargetKey
 	settingsKeyboardFocusViewerTargetBrowse
@@ -145,6 +146,7 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 		settingsKeyboardFocusGeneralViewFontSize,
 		settingsKeyboardFocusViewerShell,
 		settingsKeyboardFocusViewerRemoteSearch,
+		settingsKeyboardFocusViewerSmoothScrolling,
 		settingsKeyboardFocusViewerHideFunctionBar,
 		settingsKeyboardFocusViewerTargetKey,
 		settingsKeyboardFocusViewerTargetCommand,
@@ -194,6 +196,8 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 		st.focus = settingsKeyboardFocusViewerShell
 	case gtx.Focused(&st.viewRemoteSearchCommandEdit):
 		st.focus = settingsKeyboardFocusViewerRemoteSearch
+	case gtx.Focused(&st.viewSmoothScrollingBool):
+		st.focus = settingsKeyboardFocusViewerSmoothScrolling
 	case gtx.Focused(&st.viewHideFunctionBarBool):
 		st.focus = settingsKeyboardFocusViewerHideFunctionBar
 	case gtx.Focused(&st.viewTargetKeyEdit):
@@ -281,6 +285,7 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 			settingsKeyboardFocusViewerMode,
 			settingsKeyboardFocusViewerShell,
 			settingsKeyboardFocusViewerRemoteSearch,
+			settingsKeyboardFocusViewerSmoothScrolling,
 			settingsKeyboardFocusViewerHideFunctionBar,
 			settingsKeyboardFocusViewerTargetKey,
 			settingsKeyboardFocusViewerTargetBrowse,
@@ -453,6 +458,9 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 	switch st.focus {
 	case settingsKeyboardFocusGeneralDimInactive:
 		st.generalDimInactiveBool.Value = !st.generalDimInactiveBool.Value
+		return true
+	case settingsKeyboardFocusViewerSmoothScrolling:
+		st.viewSmoothScrollingBool.Value = !st.viewSmoothScrollingBool.Value
 		return true
 	case settingsKeyboardFocusViewerHideFunctionBar:
 		st.viewHideFunctionBarBool.Value = !st.viewHideFunctionBarBool.Value

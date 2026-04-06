@@ -54,14 +54,15 @@ Use this when a folder makes more sense grouped by modification time, extension,
 
 ## Function Key Bar
 
-- `F1` opens Help.
+- `F1` opens or closes Help.
+- `F2` is currently reserved and not implemented yet.
 - `F3` opens the Internal Viewer.
 - `F4` opens the selected file with the system association.
 - `F5` copies.
 - `F6` moves or renames.
 - `F7` creates a file or folder.
 - `F8` deletes.
-- `F9` opens the Tools menu.
+- `F9` opens the Tools menu (`Hex to ASCII`, `Protocol Analyzer`, `Settings`).
 - `F10` exits the app.
 - `F11` hides or shows the function key bar.
 
@@ -77,36 +78,46 @@ Use the `☆` button in a pane header to work with favorites.
 
 To manage SSH sessions:
 
-- press `Ctrl+F` or `Cmd+F` to open `SSH Sessions`
+- press `Ctrl+F` or `Cmd+F` in the file manager to open `SSH Sessions`
 - add a host, port, user, and authentication method
 - save the session, then connect the active pane
 
-Once connected, a remote pane supports normal browsing plus viewer-based inspection and command-driven log viewing.
+Inside the internal viewer, the same shortcut opens Find instead of `SSH Sessions`.
+
+Once connected, a remote pane supports normal browsing plus viewer-based inspection, command-driven log viewing, and remote-assisted hex searching.
 
 ## Internal Viewer
 
-The internal viewer has three modes:
+The internal viewer has three explicit modes, plus automatic image preview inside `file` mode for supported images:
 
-- `file` for normal text content
+- `file` for normal text content and image preview when supported
 - `hex` for raw bytes
 - `command` for shell output based on the selected file
 
 Useful viewer keys:
 
-- `F3` refreshes or reopens the current item
-- `Esc` closes the command editor or the viewer
-- `Ctrl+C` or `Cmd+C` copies the current selection from text or command output
-- `Ctrl+A` or `Cmd+A` selects all visible data in `hex` mode
+- `F3` refreshes the current file or reruns the current command
+- `Tab` moves `file -> hex -> command`; `Shift+Tab` moves backward
+- `Ctrl+F` or `Cmd+F` opens Find in `file`, `hex`, and `command`
+- `Enter` jumps to the next find result; `Shift+Enter` jumps to the previous one
+- `PageUp`, `PageDown`, `Home`, and `End` scroll
+- `Ctrl+C` or `Cmd+C` copies the current selection
+- `Ctrl+A` or `Cmd+A` selects all loaded data in text, `hex`, and command output
+- `Esc` closes Find, closes the command editor, or closes the viewer
+- smooth scrolling is enabled by default and can be turned off in `Settings -> Viewer`
 
 ### File And Hex
 
-- `file` mode is best for quick reading
+- `file` mode is best for quick reading and exposes an encoding picker for `auto`, `utf-8`, `utf-16le`, `utf-16be`, and `cp437`
+- supported images open as an image preview inside `file` mode
 - `hex` mode is better for binary files, mixed data, or damaged content
+- on SSH panes, `hex` Find can use the configured remote search utility command for large files
 
 ### Command Mode
 
 `command` mode runs a shell command against the selected file and captures its output.
 It is not a terminal: there is no PTY, no interactive stdin, and no full-screen pager UI.
+Recent commands are kept in viewer command history for quick reuse.
 These placeholders are available:
 
 - `{path}` or `{fullpath}` for the full selected path
@@ -162,6 +173,13 @@ without it, `grep` may buffer output and make a live command look stuck.
 
 Remote panes support `command` mode too, so the same log-following patterns work over SSH.
 
+### Image Preview
+
+- arrow keys pan the image
+- `PageUp` and `PageDown` move by a larger vertical chunk
+- `Home` goes to the origin and `End` goes to the far edge
+- `Ctrl++` / `Ctrl+-` or `Cmd++` / `Cmd+-` zoom in and out
+
 ## Customization
 
 Most everyday customization is available from Settings.
@@ -169,6 +187,7 @@ The full configuration also lives in `hexone.yaml`.
 
 On Linux, the writable config files live under `~/.config/hexone/`.
 On macOS, they live under `~/Library/Application Support/hexone/`.
+On Windows, they currently live in the current working directory as `hexone.yaml` and related files.
 
 Useful things to adjust:
 
@@ -177,9 +196,13 @@ Useful things to adjust:
 - exact target overrides
 - filename regex rules
 - shell selection
+- remote search utility command for SSH hex find
+- viewer smooth scrolling
+- file encoding defaults
 - auto-refresh interval for non-streaming command mode
 - viewer font size
 - function bar auto-hide while the viewer is open
+- system associations
 
 Example:
 
@@ -188,6 +211,7 @@ viewer:
   mode: command
   shell: auto
   command: cat {path}
+  smooth_scrolling: true
   command_by_target:
     local:/Users/me/logs/app.log: tail -n 200 -f {path}
   command_rules:
@@ -195,8 +219,10 @@ viewer:
       command: tail -n 200 -f {path}
     - pattern: ^docker-compose.*\.ya?ml$
       command: docker compose -f {path} config
+  remote_search_command: tail -c +{range_start_1based} {path} | head -c {range_len} | LC_ALL=C grep -aobF {match_limit} -- {pattern} | {result_select}
   command_auto_refresh: true
   command_refresh_ms: 1500
+  hide_function_bar_when_open: true
 ```
 
 Notes:
@@ -207,8 +233,9 @@ Notes:
 - Priority 3: `command` is the generic fallback
 - `command_rules` switch the viewer into command mode automatically when a filename matches
 - `command_by_target` overrides the chosen command, but by itself it does not force command mode
+- `remote_search_command` is used by SSH hex Find; set it to `off` to disable the remote utility path
 - `command_auto_refresh` matters most for non-streaming command mode
-- Settings -> Viewer exposes the same priority order directly in the UI
+- Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling and viewer auto-hide
 
 ## Protocol Analyzer
 
@@ -216,6 +243,7 @@ The Protocol Analyzer decodes pasted hex using `protocols.yaml`.
 
 On Linux, Hexone first checks `~/.config/hexone/protocols.yaml`. If that file is missing, it uses the embedded default and writes a reference sample to `~/.config/hexone/protocols.sample.yaml`.
 On macOS, it first checks `~/Library/Application Support/hexone/protocols.yaml` and writes the reference sample to `~/Library/Application Support/hexone/protocols.sample.yaml`.
+On Windows, it currently uses `protocols.yaml` in the current working directory and writes `protocols.sample.yaml` there too.
 
 Input tips:
 

@@ -85,6 +85,7 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 			return ui.layoutFileViewer(th, gtx)
 		}),
 	)
+	ui.applyFilePaneHeaderCursor(gtx)
 
 	ui.handleFileManagerKeys(gtx)
 	if ui.flushPendingFileOpen() {
@@ -92,6 +93,21 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 	}
 
 	return dims
+}
+
+func (ui *UI) applyFilePaneHeaderCursor(gtx layout.Context) {
+	if ui == nil || ui.fileViewer != nil || ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
+		return
+	}
+	for _, pane := range ui.filePanes {
+		if pane == nil {
+			continue
+		}
+		if pane.modeClick.Hovered() || pane.sortClick.Hovered() || pane.favoriteClick.Hovered() || pane.disconnectClick.Hovered() {
+			pointer.CursorPointer.Add(gtx.Ops)
+			return
+		}
+	}
 }
 
 func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
