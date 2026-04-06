@@ -469,6 +469,37 @@ func TestDefaultConfigHidesFunctionBarWhenViewerOpen(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigEnablesViewerSmoothScrolling(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if !cfg.Viewer.SmoothScrolling {
+		t.Fatal("viewer smooth_scrolling should default to true")
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "smooth_scrolling: true") {
+		t.Fatalf("serialized config missing viewer smooth_scrolling:\n%s", out)
+	}
+}
+
+func TestLoadConfigDefaultsViewerSmoothScrollingWhenFieldMissing(t *testing.T) {
+	raw := `
+viewer:
+  mode: file
+  shell: auto
+  command: cat {path}
+`
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if !cfg.Viewer.SmoothScrolling {
+		t.Fatal("viewer smooth_scrolling should stay enabled when yaml omits the field")
+	}
+}
+
 func TestDefaultConfigDimsInactivePanes(t *testing.T) {
 	cfg := DefaultConfig()
 

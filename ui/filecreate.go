@@ -67,7 +67,26 @@ type fileCreateState struct {
 	doneCh      chan error
 	actionsAnim segmentedAnimState
 	kindAnim    segmentedAnimState
+	keyFocus    dialogKeyboardFocusState
+	focus       fileCreateDialogFocus
+	kindFocus   fileCreateKind
+	actionFocus fileCreateDialogAction
 }
+
+type fileCreateDialogFocus uint8
+
+const (
+	fileCreateDialogFocusKindTabs fileCreateDialogFocus = iota
+	fileCreateDialogFocusName
+	fileCreateDialogFocusActions
+)
+
+type fileCreateDialogAction uint8
+
+const (
+	fileCreateDialogActionCancel fileCreateDialogAction = iota
+	fileCreateDialogActionConfirm
+)
 
 func (ui *UI) startFileCreateDialog(idx int, now time.Time) {
 	if idx < 0 || idx >= len(ui.filePanes) {
@@ -110,12 +129,15 @@ func (ui *UI) startFileCreateDialog(idx int, now time.Time) {
 	}
 
 	st := &fileCreateState{
-		pane:     idx,
-		baseDir:  baseDir,
-		kind:     fileCreateKindFolder,
-		kindPrev: fileCreateKindFolder,
-		remote:   remote,
-		endpoint: copyEndpoint{pane: idx, remote: remote, dir: strings.TrimSpace(pane.dir)},
+		pane:        idx,
+		baseDir:     baseDir,
+		kind:        fileCreateKindFolder,
+		kindPrev:    fileCreateKindFolder,
+		kindFocus:   fileCreateKindFolder,
+		focus:       fileCreateDialogFocusName,
+		actionFocus: fileCreateDialogActionConfirm,
+		remote:      remote,
+		endpoint:    copyEndpoint{pane: idx, remote: remote, dir: strings.TrimSpace(pane.dir)},
 	}
 	st.nameEdit.SingleLine = true
 	st.nameEdit.Submit = true
@@ -130,11 +152,15 @@ func (ui *UI) startFileCreateDialog(idx int, now time.Time) {
 
 func (st *fileCreateState) setKind(next fileCreateKind, now time.Time) {
 	if st == nil || st.kind == next {
+		if st != nil {
+			st.kindFocus = next
+		}
 		return
 	}
 	st.kindPrev = st.kind
 	st.kindAt = now
 	st.kind = next
+	st.kindFocus = next
 }
 
 func (st *fileCreateState) kindFill(now time.Time, key fileCreateKind) (float32, bool) {
@@ -171,6 +197,117 @@ func (ui *UI) clearFileCreateHotkeyHold() {
 		return
 	}
 	ui.held[fileActionKey(fileActionCreate)] = false
+}
+
+func (st *fileCreateState) focusOrder() []fileCreateDialogFocus {
+	if st == nil {
+		return nil
+	}
+	return []fileCreateDialogFocus{
+		fileCreateDialogFocusKindTabs,
+		fileCreateDialogFocusName,
+		fileCreateDialogFocusActions,
+	}
+}
+
+func (st *fileCreateState) syncEditorFocus(gtx layout.Context) {
+	if st == nil || st.running {
+		return
+	}
+	if gtx.Focused(&st.nameEdit) {
+		st.focus = fileCreateDialogFocusName
+	}
+}
+
+func (st *fileCreateState) setFocus(target fileCreateDialogFocus) bool {
+	if st == nil {
+		return false
+	}
+	changed := st.focus != target
+	st.focus = target
+	if target == fileCreateDialogFocusKindTabs {
+		st.kindFocus = st.kind
+	}
+	switch target {
+	case fileCreateDialogFocusName:
+		st.nameEditWant = true
+	default:
+		st.nameEditWant = false
+		st.keyFocus.focusKeyboard()
+	}
+	return changed
+}
+
+func (st *fileCreateState) stepFocus(step int) bool {
+	order := st.focusOrder()
+	if len(order) == 0 {
+		return false
+	}
+	current := -1
+	for i, target := range order {
+		if target == st.focus {
+			current = i
+			break
+		}
+	}
+	return st.setFocus(order[dialogWrappedIndex(current, len(order), step)])
+}
+
+func (st *fileCreateState) stepKindFocus(step int, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	order := []fileCreateKind{fileCreateKindFolder, fileCreateKindFile}
+	current := 0
+	for i, kind := range order {
+		if kind == st.kindFocus {
+			current = i
+			break
+		}
+	}
+	next := order[dialogWrappedIndex(current, len(order), step)]
+	if next == st.kindFocus {
+		return false
+	}
+	switch next {
+	case fileCreateKindFolder:
+		st.kindAnim.setPulse("folder", now)
+	case fileCreateKindFile:
+		st.kindAnim.setPulse("file", now)
+	}
+	st.setKind(next, now)
+	return true
+}
+
+func (st *fileCreateState) stepAction(step int) bool {
+	if st == nil {
+		return false
+	}
+	order := []fileCreateDialogAction{fileCreateDialogActionCancel, fileCreateDialogActionConfirm}
+	current := 0
+	for i, action := range order {
+		if action == st.actionFocus {
+			current = i
+			break
+		}
+	}
+	next := order[dialogWrappedIndex(current, len(order), step)]
+	if next == st.actionFocus {
+		return false
+	}
+	st.actionFocus = next
+	return true
+}
+
+func (st *fileCreateState) actionVisualState(target fileCreateDialogAction) dialogActionVisualState {
+	if st == nil || st.running {
+		return dialogActionVisualState{}
+	}
+	if st.focus == fileCreateDialogFocusActions {
+		active := st.actionFocus == target
+		return dialogActionVisualState{Focused: active, Default: active}
+	}
+	return dialogActionVisualState{Default: target == fileCreateDialogActionConfirm}
 }
 
 func (st *fileCreateState) refreshPreview() {
@@ -388,26 +525,107 @@ func (ui *UI) layoutFileCreateDialog(th *material.Theme, gtx layout.Context) lay
 		return layout.Dimensions{}
 	}
 
-	for _, name := range []key.Name{key.NameEscape, key.NameEnter, key.NameReturn} {
-		for {
-			ev, ok := gtx.Event(key.Filter{Name: name})
-			if !ok {
-				break
-			}
-			ke, ok := ev.(key.Event)
-			if !ok || ke.State != key.Press {
+	st.keyFocus.attach(gtx)
+	st.syncEditorFocus(gtx)
+	anyMods := ^key.Modifiers(0)
+
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Focus: &st.nameEdit, Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Focus: &st.nameEdit, Name: key.NameReturn, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press || st.running || ke.Modifiers != 0 {
+			continue
+		}
+		st.actionsAnim.setPulse("confirm", gtx.Now)
+		ui.submitFileCreateDialog(gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameEscape, Optional: anyMods},
+			key.Filter{Name: key.NameTab, Optional: anyMods},
+			key.Filter{Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Name: key.NameReturn, Optional: anyMods},
+			key.Filter{Name: key.NameLeftArrow, Optional: anyMods},
+			key.Filter{Name: key.NameRightArrow, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		switch ke.Name {
+		case key.NameEscape:
+			if st.running {
 				continue
 			}
-			switch name {
-			case key.NameEscape:
-				if !st.running {
+			ui.closeFileCreateDialog()
+			return layout.Dimensions{}
+		case key.NameTab:
+			if st.running {
+				continue
+			}
+			step, ok := dialogTabStep(ke.Modifiers)
+			if !ok {
+				continue
+			}
+			if st.stepFocus(step) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameLeftArrow:
+			if st.running || ke.Modifiers != 0 {
+				continue
+			}
+			switch st.focus {
+			case fileCreateDialogFocusKindTabs:
+				if st.stepKindFocus(-1, gtx.Now) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			case fileCreateDialogFocusActions:
+				if st.stepAction(-1) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
+		case key.NameRightArrow:
+			if st.running || ke.Modifiers != 0 {
+				continue
+			}
+			switch st.focus {
+			case fileCreateDialogFocusKindTabs:
+				if st.stepKindFocus(1, gtx.Now) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			case fileCreateDialogFocusActions:
+				if st.stepAction(1) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
+		case key.NameEnter, key.NameReturn:
+			if st.running || ke.Modifiers != 0 {
+				continue
+			}
+			switch st.focus {
+			case fileCreateDialogFocusActions:
+				if st.actionFocus == fileCreateDialogActionCancel {
+					st.actionsAnim.setPulse("cancel", gtx.Now)
 					ui.closeFileCreateDialog()
+					return layout.Dimensions{}
 				}
-			case key.NameEnter, key.NameReturn:
-				if !st.running {
-					st.actionsAnim.setPulse("confirm", gtx.Now)
-					ui.submitFileCreateDialog(gtx.Now)
-				}
+				st.actionsAnim.setPulse("confirm", gtx.Now)
+				ui.submitFileCreateDialog(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
+			case fileCreateDialogFocusKindTabs:
+				st.actionsAnim.setPulse("confirm", gtx.Now)
+				ui.submitFileCreateDialog(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 			}
 		}
 	}
@@ -423,6 +641,7 @@ func (ui *UI) layoutFileCreateDialog(th *material.Theme, gtx layout.Context) lay
 				st.nameEdit.SetText(submit.Text)
 				st.actionsAnim.setPulse("confirm", gtx.Now)
 				ui.submitFileCreateDialog(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			if _, ok := ev.(widget.ChangeEvent); ok {
@@ -433,10 +652,12 @@ func (ui *UI) layoutFileCreateDialog(th *material.Theme, gtx layout.Context) lay
 	}
 
 	if st.kindFolderClick.Clicked(gtx) && !st.running {
+		st.setFocus(fileCreateDialogFocusKindTabs)
 		st.setKind(fileCreateKindFolder, gtx.Now)
 		st.kindAnim.setPulse("folder", gtx.Now)
 	}
 	if st.kindFileClick.Clicked(gtx) && !st.running {
+		st.setFocus(fileCreateDialogFocusKindTabs)
 		st.setKind(fileCreateKindFile, gtx.Now)
 		st.kindAnim.setPulse("file", gtx.Now)
 	}
@@ -635,7 +856,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return ui.layoutEditorWithContextMenu(th, gtx, "filecreate-name", &st.nameEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.nameEdit), true, ed.Layout)
+				return layoutNeutralEditorBox(gtx, st.focus == fileCreateDialogFocusName, true, ed.Layout)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
@@ -674,6 +895,8 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 					th, gtx,
 					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, st.running,
 					&st.confirmClick, confirmLabel, hoverConfirm, pulseConfirm, st.running,
+					st.actionVisualState(fileCreateDialogActionCancel),
+					st.actionVisualState(fileCreateDialogActionConfirm),
 				)
 			})
 		}),
@@ -717,6 +940,16 @@ func (ui *UI) layoutFileCreateKindTabs(th *material.Theme, gtx layout.Context, s
 	if animPos {
 		gtx.Execute(op.InvalidateCmd{})
 	}
+	focusFolder := float32(0)
+	focusFile := float32(0)
+	if !st.running && st.focus == fileCreateDialogFocusKindTabs {
+		switch st.kindFocus {
+		case fileCreateKindFolder:
+			focusFolder = 1
+		case fileCreateKindFile:
+			focusFile = 1
+		}
+	}
 	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleDialogThemeFontSize(th, 10), []slidingTabSpec{
 		{
 			Label:      "Folder",
@@ -724,6 +957,7 @@ func (ui *UI) layoutFileCreateKindTabs(th *material.Theme, gtx layout.Context, s
 			ActiveFill: fillFolder,
 			HoverFill:  hoverFolder,
 			PulseFill:  pulseFolder,
+			FocusFill:  focusFolder,
 		},
 		{
 			Label:      "File",
@@ -731,6 +965,7 @@ func (ui *UI) layoutFileCreateKindTabs(th *material.Theme, gtx layout.Context, s
 			ActiveFill: fillFile,
 			HoverFill:  hoverFile,
 			PulseFill:  pulseFile,
+			FocusFill:  focusFile,
 		},
 	})
 }

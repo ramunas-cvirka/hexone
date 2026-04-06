@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/io/key"
 	"gioui.org/widget"
 )
 
@@ -186,5 +187,181 @@ func TestFunctionBarToolKeyboardSelectionWrapsAndActivates(t *testing.T) {
 	}
 	if ui.settingsModal == nil {
 		t.Fatal("activating the Settings tool should open the settings modal")
+	}
+}
+
+func TestFunctionBarModifierHintTextShowsFileManagerShortcuts(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModCtrl,
+	}
+
+	got, ok := ui.functionBarModifierHintText()
+	if !ok {
+		t.Fatal("expected ctrl hints for the file manager")
+	}
+	want := "Ctrl+A Select All | Ctrl+E Same Ext | Ctrl+F SSH | Ctrl+S Settings"
+	if got != want {
+		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
+	}
+}
+
+func TestFunctionBarModifierHintTextShowsViewerTextShortcuts(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModCtrl,
+		fileViewer: &fileViewerState{
+			mode: "file",
+		},
+	}
+
+	got, ok := ui.functionBarModifierHintText()
+	if !ok {
+		t.Fatal("expected ctrl hints for the viewer")
+	}
+	want := "Ctrl+F Find | Ctrl+C Copy | Ctrl+A Select All | Ctrl+S Settings"
+	if got != want {
+		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
+	}
+}
+
+func TestFunctionBarModifierHintTextShowsViewerImageShortcuts(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModCtrl,
+		fileViewer: &fileViewerState{
+			mode:                 "file",
+			detectedImagePreview: true,
+		},
+	}
+
+	got, ok := ui.functionBarModifierHintText()
+	if !ok {
+		t.Fatal("expected ctrl hints for image previews")
+	}
+	want := "Ctrl+/- Zoom | Ctrl+S Settings"
+	if got != want {
+		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
+	}
+}
+
+func TestFunctionBarModifierHintTextUsesCmdLabelWhenCommandHeld(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab1"},
+		functionBarHeldMods: key.ModCommand,
+	}
+
+	got, ok := ui.functionBarModifierHintText()
+	if !ok {
+		t.Fatal("expected cmd hints when command is held")
+	}
+	want := "Cmd+S Settings"
+	if got != want {
+		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
+	}
+}
+
+func TestFunctionBarModifierHintTextShowsFileManagerAltShortcuts(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModAlt,
+	}
+
+	got, ok := ui.functionBarModifierHintText()
+	if !ok {
+		t.Fatal("expected alt hints for the file manager")
+	}
+	want := "Alt+1 Left Drive | Alt+2 Right Drive"
+	if got != want {
+		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
+	}
+}
+
+func TestFunctionBarHintSlotLabelsUseLeadingFunctionBarSlots(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModCtrl,
+	}
+
+	labels := ui.functionBarHintSlotLabels(10)
+	if len(labels) != 10 {
+		t.Fatalf("slot count=%d want 10", len(labels))
+	}
+	if labels[0] != "Ctrl+A Select All" {
+		t.Fatalf("slot 0=%q want %q", labels[0], "Ctrl+A Select All")
+	}
+	if labels[1] != "Ctrl+E Same Ext" {
+		t.Fatalf("slot 1=%q want %q", labels[1], "Ctrl+E Same Ext")
+	}
+	if labels[2] != "Ctrl+F SSH" {
+		t.Fatalf("slot 2=%q want %q", labels[2], "Ctrl+F SSH")
+	}
+	if labels[3] != "Ctrl+S Settings" {
+		t.Fatalf("slot 3=%q want %q", labels[3], "Ctrl+S Settings")
+	}
+	for i := 4; i < len(labels); i++ {
+		if labels[i] != "" {
+			t.Fatalf("slot %d=%q want empty", i, labels[i])
+		}
+	}
+}
+
+func TestFunctionBarHintSlotLabelsUseLeadingSlotsForAltShortcuts(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModAlt,
+	}
+
+	labels := ui.functionBarHintSlotLabels(10)
+	if len(labels) != 10 {
+		t.Fatalf("slot count=%d want 10", len(labels))
+	}
+	if labels[0] != "Alt+1 Left Drive" {
+		t.Fatalf("slot 0=%q want %q", labels[0], "Alt+1 Left Drive")
+	}
+	if labels[1] != "Alt+2 Right Drive" {
+		t.Fatalf("slot 1=%q want %q", labels[1], "Alt+2 Right Drive")
+	}
+	for i := 2; i < len(labels); i++ {
+		if labels[i] != "" {
+			t.Fatalf("slot %d=%q want empty", i, labels[i])
+		}
+	}
+}
+
+func TestHandleFunctionBarModifierKeysTracksHeldCtrl(t *testing.T) {
+	ui := &UI{}
+
+	gtx, router := testKeyContext()
+	router.Event(key.Filter{Name: key.NameCtrl})
+	router.Queue(key.Event{Name: key.NameCtrl, State: key.Press})
+
+	ui.handleFunctionBarModifierKeys(gtx)
+	if !ui.functionBarHeldMods.Contain(key.ModCtrl) {
+		t.Fatal("ctrl press should mark the function bar modifier as held")
+	}
+
+	router.Event(key.Filter{Name: key.NameCtrl})
+	router.Queue(key.Event{Name: key.NameCtrl, State: key.Release})
+
+	ui.handleFunctionBarModifierKeys(gtx)
+	if ui.functionBarHeldMods.Contain(key.ModCtrl) {
+		t.Fatal("ctrl release should clear the function bar modifier state")
+	}
+}
+
+func TestSyncPlatformAltHeldClearsStuckAltModifier(t *testing.T) {
+	ui := &UI{
+		functionBarHeldMods: key.ModAlt,
+	}
+
+	if !ui.SyncPlatformAltHeld(false) {
+		t.Fatal("SyncPlatformAltHeld should report a change when clearing Alt")
+	}
+	if ui.functionBarHeldMods.Contain(key.ModAlt) {
+		t.Fatal("platform Alt sync should clear the held Alt modifier")
+	}
+	if ui.SyncPlatformAltHeld(false) {
+		t.Fatal("SyncPlatformAltHeld should be a no-op when Alt is already cleared")
 	}
 }

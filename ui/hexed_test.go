@@ -5,11 +5,11 @@ package ui
 
 import "testing"
 
-func TestEncodeHexTextUsesSpacedUppercaseBytes(t *testing.T) {
+func TestEncodeHexTextUsesCompactUppercaseBytes(t *testing.T) {
 	got, n := encodeHexText("Hello")
 
-	if got != "48 65 6C 6C 6F" {
-		t.Fatalf("encodeHexText=%q want %q", got, "48 65 6C 6C 6F")
+	if got != "48656C6C6F" {
+		t.Fatalf("encodeHexText=%q want %q", got, "48656C6C6F")
 	}
 	if n != 5 {
 		t.Fatalf("byteCount=%d want 5", n)
@@ -21,25 +21,25 @@ func TestOnRightTextChangedUpdatesLeftEditor(t *testing.T) {
 
 	ui.onRightTextChanged("Hi")
 
-	if got := ui.LeftEd.Text(); got != "48 69" {
-		t.Fatalf("LeftEd=%q want %q", got, "48 69")
+	if got := ui.LeftEd.Text(); got != "4869" {
+		t.Fatalf("LeftEd=%q want %q", got, "4869")
 	}
 	if got := ui.LeftInfo; got != "2 bytes" {
 		t.Fatalf("LeftInfo=%q want %q", got, "2 bytes")
 	}
-	if got := ui.leftPrev; got != "48 69" {
-		t.Fatalf("leftPrev=%q want %q", got, "48 69")
+	if got := ui.leftPrev; got != "4869" {
+		t.Fatalf("leftPrev=%q want %q", got, "4869")
 	}
 }
 
 func TestOnRightTextChangedUpdatesByteCountWithoutReset(t *testing.T) {
 	ui := NewUI(nil)
-	ui.LeftEd.SetText("48 69")
+	ui.LeftEd.SetText("4869")
 
 	ui.onRightTextChanged("Hi")
 
-	if got := ui.LeftEd.Text(); got != "48 69" {
-		t.Fatalf("LeftEd=%q want unchanged %q", got, "48 69")
+	if got := ui.LeftEd.Text(); got != "4869" {
+		t.Fatalf("LeftEd=%q want unchanged %q", got, "4869")
 	}
 	if got := ui.LeftInfo; got != "2 bytes" {
 		t.Fatalf("LeftInfo=%q want %q", got, "2 bytes")

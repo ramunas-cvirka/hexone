@@ -477,6 +477,64 @@ func TestViewerClipboardContentPreservesCRLFForFileMode(t *testing.T) {
 	}
 }
 
+func TestFileViewerRestoresSeparateStreamSelectionsPerMode(t *testing.T) {
+	st := &fileViewerState{mode: "file"}
+	st.stream.SetContent("alpha\nbeta")
+	st.stream.beginSelection(1)
+	st.stream.updateSelection(4)
+	fileStart, fileLen := st.stream.selStart, st.stream.selLen
+
+	st.prepareStreamSelectionForMode("command")
+	if st.stream.selActive {
+		t.Fatal("command mode should not inherit file selection")
+	}
+
+	st.mode = "command"
+	st.stream.SetContent("cmd output")
+	st.stream.beginSelection(2)
+	st.stream.updateSelection(6)
+	cmdStart, cmdLen := st.stream.selStart, st.stream.selLen
+
+	st.prepareStreamSelectionForMode("file")
+	st.mode = "file"
+	st.stream.SetContent("alpha\nbeta")
+	st.restorePendingStreamSelection()
+	if !st.stream.selActive || st.stream.selStart != fileStart || st.stream.selLen != fileLen {
+		t.Fatalf("file selection restored as active=%v start=%d len=%d, want active start=%d len=%d",
+			st.stream.selActive, st.stream.selStart, st.stream.selLen, fileStart, fileLen)
+	}
+
+	st.prepareStreamSelectionForMode("command")
+	st.mode = "command"
+	st.stream.SetContent("cmd output")
+	st.restorePendingStreamSelection()
+	if !st.stream.selActive || st.stream.selStart != cmdStart || st.stream.selLen != cmdLen {
+		t.Fatalf("command selection restored as active=%v start=%d len=%d, want active start=%d len=%d",
+			st.stream.selActive, st.stream.selStart, st.stream.selLen, cmdStart, cmdLen)
+	}
+}
+
+func TestFileViewerRestoringHexModeClearsSharedStreamSelection(t *testing.T) {
+	st := &fileViewerState{mode: "file"}
+	st.stream.SetContent("alpha\nbeta")
+	st.stream.beginSelection(0)
+	st.stream.updateSelection(5)
+	st.rememberStreamSelection("file")
+
+	st.prepareStreamSelectionForMode("hex")
+
+	if st.stream.selActive || st.stream.selectingText || st.stream.autoScrollActive {
+		t.Fatalf("hex mode should clear shared stream selection state, got active=%v selecting=%v auto=%v",
+			st.stream.selActive, st.stream.selectingText, st.stream.autoScrollActive)
+	}
+
+	st.restoreStreamSelection("file")
+	if !st.stream.selActive || st.stream.selStart != 0 || st.stream.selLen != 5 {
+		t.Fatalf("file selection restored as active=%v start=%d len=%d, want active start=0 len=5",
+			st.stream.selActive, st.stream.selStart, st.stream.selLen)
+	}
+}
+
 func TestViewerEncodingStatusLabelUsesBinaryPreviewLabel(t *testing.T) {
 	st := &fileViewerState{
 		fileEncoding:          fm.ViewerFileEncodingAuto,

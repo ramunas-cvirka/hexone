@@ -161,6 +161,7 @@ type UI struct {
 	functionBarSliderPrevShown  bool
 	functionBarSliderShown      bool
 	functionBarSliderAnimAt     time.Time
+	functionBarHeldMods         key.Modifiers
 	requestedWindowClose        bool
 	filePanes                   []*filePaneState
 	fmCfg                       *fm.Config
@@ -259,6 +260,7 @@ func (ui *UI) resetKeys() {
 	for k := range ui.held {
 		ui.held[k] = false
 	}
+	ui.functionBarHeldMods = 0
 }
 
 func (ui *UI) mainTypeface() font.Typeface {
@@ -682,6 +684,7 @@ func (ui *UI) syncThemeRuntime(th *material.Theme) {
 
 func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.syncThemeRuntime(th)
+	ui.handleFunctionBarModifierKeys(gtx)
 	ui.handleGlobalFunctionKeys(gtx)
 	ui.handleFunctionBarPopupKeys(gtx)
 	ui.handleGlobalEscapeToFileManager(gtx)
@@ -695,7 +698,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 
 	dims := layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if ui == nil || !ui.functionBarVisible() {
 						return layout.Dimensions{}
@@ -721,6 +724,8 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 					}
 				}),
 			)
+			ui.applyFunctionBarCursor(gtx)
+			return dims
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFunctionBarPopup(th, gtx)
@@ -920,13 +925,15 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 	anyMods := ^key.Modifiers(0)
 	filters := []event.Filter{
-		key.Filter{Name: key.NameF1, Optional: anyMods},
-		key.Filter{Name: key.NameF2, Optional: anyMods},
+		key.Filter{Name: key.NameF1},
+		key.Filter{Name: key.NameF2},
 		key.Filter{Name: key.NameF3, Optional: anyMods},
 		key.Filter{Name: key.NameF4, Optional: anyMods},
 		key.Filter{Name: key.NameF9, Optional: anyMods},
 		key.Filter{Name: key.NameF10, Optional: anyMods},
 		key.Filter{Name: key.NameF11, Optional: anyMods},
+		key.Filter{Name: "1", Required: key.ModAlt, Optional: anyMods},
+		key.Filter{Name: "2", Required: key.ModAlt, Optional: anyMods},
 		key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
 		key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
 		key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
@@ -1011,6 +1018,36 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ui.toggleFunctionBarVisibility(gtx.Now) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
+		case "1":
+			if ke.State != key.Press {
+				continue
+			}
+			// Swallow Alt+1 globally to avoid platform dinging even when the
+			// drive picker can't be opened in the current context.
+			if ke.Modifiers != key.ModAlt {
+				continue
+			}
+			if ui == nil || ui.Tabs.Value != "tab0" || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() || ui.pathEditActive() || ui.fileViewer != nil {
+				continue
+			}
+			if ui.openPaneDriveMenu(0) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case "2":
+			if ke.State != key.Press {
+				continue
+			}
+			// Swallow Alt+2 globally to avoid platform dinging even when the
+			// drive picker can't be opened in the current context.
+			if ke.Modifiers != key.ModAlt {
+				continue
+			}
+			if ui == nil || ui.Tabs.Value != "tab0" || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() || ui.pathEditActive() || ui.fileViewer != nil {
+				continue
+			}
+			if ui.openPaneDriveMenu(1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case "F", "f":
 			if ke.State != key.Press {
 				continue
@@ -1079,11 +1116,14 @@ func (ui *UI) consumeUnusedFunctionKeys(gtx layout.Context) {
 			key.Filter{Name: key.NameF10, Optional: anyMods},
 			key.Filter{Name: key.NameF11, Optional: anyMods},
 			key.Filter{Name: key.NameF12, Optional: anyMods},
+			key.Filter{Name: "1", Required: key.ModAlt, Optional: anyMods},
+			key.Filter{Name: "2", Required: key.ModAlt, Optional: anyMods},
 			key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Name: "F", Required: key.ModShortcut, Optional: anyMods},
 			key.Filter{Name: "f", Required: key.ModShortcut, Optional: anyMods},
 			// Also drain any unmatched Ctrl/Cmd shortcuts to prevent macOS beep.
+			key.Filter{Required: key.ModAlt, Optional: anyMods},
 			key.Filter{Required: key.ModCtrl, Optional: anyMods},
 			key.Filter{Required: key.ModShortcut, Optional: anyMods},
 		)

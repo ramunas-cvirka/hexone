@@ -283,6 +283,7 @@ type filePaneState struct {
 	driveMenuRect         image.Rectangle
 	driveSegmentRect      image.Rectangle
 	driveMenuOpenedAt     time.Time
+	driveMenuSelected     int
 	driveMenuHoverID      string
 	driveMenuHoverAnim    segmentedAnimState
 	sortKey               fileSortKey
@@ -384,6 +385,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	pane.ctxMenuRow = -1
 	pane.tableClickRow = -1
 	pane.tableClickCol = -1
+	pane.driveMenuSelected = -1
 	pane.table.TextSize = scaleConfigFontSize(cfg, 13)
 	pane.table.Typeface = font.Typeface(cfg.General.Typeface)
 	pane.table.RowHeight = scaleDp(18)
@@ -847,6 +849,7 @@ func (p *filePaneState) closeDriveMenu() {
 	p.driveMenuOpen = false
 	p.driveMenuRect = image.Rectangle{}
 	p.driveMenuOpenedAt = time.Time{}
+	p.driveMenuSelected = -1
 	p.driveMenuHoverID = ""
 }
 
@@ -879,8 +882,77 @@ func (p *filePaneState) openDriveMenu(pos image.Point, now time.Time) {
 	p.driveMenuPos = pos
 	p.driveMenuRect = image.Rectangle{}
 	p.driveMenuOpenedAt = now
+	p.driveMenuSelected = -1
 	p.driveMenuHoverID = ""
 	p.driveMenuHoverAnim = segmentedAnimState{}
+}
+
+func driveMenuDefaultSelection(p *filePaneState, drives []string) int {
+	if p == nil || len(drives) == 0 {
+		return -1
+	}
+	currentDrive := localDriveRoot(p.displayDir())
+	for i, drive := range drives {
+		if strings.EqualFold(localDriveRoot(drive), currentDrive) || strings.EqualFold(drive, currentDrive) {
+			return i
+		}
+	}
+	return 0
+}
+
+func clampDriveMenuSelection(index int, count int) int {
+	if count <= 0 {
+		return -1
+	}
+	if index < 0 {
+		return -1
+	}
+	if index >= count {
+		return count - 1
+	}
+	return index
+}
+
+func (p *filePaneState) currentDriveMenuSelection(drives []string) int {
+	if p == nil {
+		return -1
+	}
+	if p.driveMenuSelected >= 0 && p.driveMenuSelected < len(drives) {
+		return p.driveMenuSelected
+	}
+	return driveMenuDefaultSelection(p, drives)
+}
+
+func (p *filePaneState) setDriveMenuSelection(index int, drives []string) bool {
+	if p == nil {
+		return false
+	}
+	next := clampDriveMenuSelection(index, len(drives))
+	if next < 0 {
+		next = driveMenuDefaultSelection(p, drives)
+	}
+	if p.driveMenuSelected == next {
+		return false
+	}
+	p.driveMenuSelected = next
+	return true
+}
+
+func (p *filePaneState) moveDriveMenuSelection(delta int, drives []string) bool {
+	if p == nil || delta == 0 || len(drives) == 0 {
+		return false
+	}
+	index := p.currentDriveMenuSelection(drives)
+	if index < 0 {
+		return false
+	}
+	index += delta
+	if index < 0 {
+		index = len(drives) - 1
+	} else if index >= len(drives) {
+		index = 0
+	}
+	return p.setDriveMenuSelection(index, drives)
 }
 
 func (p *filePaneState) contextMenuClick(id string) *widget.Clickable {
@@ -1085,6 +1157,37 @@ func (p *filePaneState) clearMarkedRows() bool {
 	return true
 }
 
+func (p *filePaneState) toggleMarkedRow(row int) bool {
+	if p == nil || p.model == nil {
+		return false
+	}
+	entry := p.model.Entry(row)
+	if entry == nil || entry.Path == "" || entry.Kind == filesys.EntryParent {
+		return false
+	}
+	if p.isMarkedRow(row) {
+		delete(p.markedRows, row)
+		if len(p.markedRows) == 0 {
+			p.markedRows = nil
+		}
+		return true
+	}
+	return p.markRow(row)
+}
+
+func (p *filePaneState) replaceMarkedRows(rows []int) bool {
+	if p == nil {
+		return false
+	}
+	changed := p.clearMarkedRows()
+	for _, row := range rows {
+		if p.markRow(row) {
+			changed = true
+		}
+	}
+	return changed
+}
+
 func (p *filePaneState) markRow(row int) bool {
 	if p == nil || p.model == nil {
 		return false
@@ -1100,6 +1203,21 @@ func (p *filePaneState) markRow(row int) bool {
 		return false
 	}
 	p.markedRows[row] = struct{}{}
+	return true
+}
+
+func (p *filePaneState) markedRowsExactly(rows []int) bool {
+	if p == nil {
+		return len(rows) == 0
+	}
+	if len(rows) != len(p.markedRows) {
+		return false
+	}
+	for _, row := range rows {
+		if !p.isMarkedRow(row) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -1119,6 +1237,72 @@ func (p *filePaneState) replaceMarkedRange(start, end int) bool {
 	return changed
 }
 
+func (p *filePaneState) selectableRowIndexes() []int {
+	if p == nil || p.model == nil {
+		return nil
+	}
+	rows := make([]int, 0, p.model.Len())
+	for row := 0; row < p.model.Len(); row++ {
+		entry := p.model.Entry(row)
+		if entry == nil || entry.Path == "" || entry.Kind == filesys.EntryParent {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (p *filePaneState) matchingRowIndexesForCurrentSelection() []int {
+	if p == nil || p.model == nil {
+		return nil
+	}
+	selected := p.selectedEntry()
+	if selected == nil || selected.Path == "" || selected.Kind == filesys.EntryParent {
+		return nil
+	}
+
+	rows := make([]int, 0, p.model.Len())
+	switch selected.Kind {
+	case filesys.EntryDir:
+		for row := 0; row < p.model.Len(); row++ {
+			entry := p.model.Entry(row)
+			if entry != nil && entry.Kind == filesys.EntryDir && entry.Path != "" {
+				rows = append(rows, row)
+			}
+		}
+	default:
+		wantExt := fileExtension(selected.Name)
+		for row := 0; row < p.model.Len(); row++ {
+			entry := p.model.Entry(row)
+			if entry == nil || entry.Path == "" || entry.Kind == filesys.EntryParent || entry.Kind == filesys.EntryDir {
+				continue
+			}
+			if fileExtension(entry.Name) == wantExt {
+				rows = append(rows, row)
+			}
+		}
+	}
+	return rows
+}
+
+func (p *filePaneState) toggleMarkedRows(rows []int) bool {
+	if len(rows) == 0 {
+		return false
+	}
+	if p.markedRowsExactly(rows) {
+		return p.clearMarkedRows()
+	}
+	return p.replaceMarkedRows(rows)
+}
+
+func (p *filePaneState) toggleMarkAllSelectable() bool {
+	return p.toggleMarkedRows(p.selectableRowIndexes())
+}
+
+func (p *filePaneState) toggleMarkRowsMatchingCurrentSelection() bool {
+	return p.toggleMarkedRows(p.matchingRowIndexesForCurrentSelection())
+}
+
 func (p *filePaneState) markCurrentAndAdvance() bool {
 	if p == nil || p.table == nil || p.model == nil {
 		return false
@@ -1127,7 +1311,7 @@ func (p *filePaneState) markCurrentAndAdvance() bool {
 	if total <= 0 {
 		return false
 	}
-	changed := p.markRow(p.table.Selected)
+	changed := p.toggleMarkedRow(p.table.Selected)
 	if p.table.Selected < total-1 {
 		p.table.SetSelected(p.table.Selected+1, total, true)
 		changed = true
@@ -2344,7 +2528,32 @@ func (ui *UI) openPaneDriveMenu(idx int) bool {
 		X: 0,
 		Y: pane.headerHeight + 4,
 	}, time.Now())
+	pane.setDriveMenuSelection(-1, platform.AvailableLocalDrives())
 	return true
+}
+
+func (ui *UI) openDriveMenuPane() (int, *filePaneState) {
+	if ui == nil {
+		return -1, nil
+	}
+	for idx, pane := range ui.filePanes {
+		if pane != nil && pane.driveMenuOpen {
+			return idx, pane
+		}
+	}
+	return -1, nil
+}
+
+func (ui *UI) activatePaneDriveMenuSelection(idx int, pane *filePaneState, drives []string) bool {
+	if ui == nil || pane == nil || len(drives) == 0 {
+		return false
+	}
+	selected := pane.currentDriveMenuSelection(drives)
+	if selected < 0 || selected >= len(drives) {
+		return false
+	}
+	pane.closeDriveMenu()
+	return ui.requestPaneLoadWithSelection(idx, drives[selected], "", "", 0)
 }
 
 func sendFilePaneLoadResult(ch chan filePaneLoadResult, res filePaneLoadResult) {

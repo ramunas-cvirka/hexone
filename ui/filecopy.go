@@ -60,7 +60,24 @@ type fileCopyState struct {
 	progressCh  chan filesys.CopyProgress
 	doneCh      chan error
 	actionsAnim segmentedAnimState
+	keyFocus    dialogKeyboardFocusState
+	focus       fileCopyDialogFocus
+	actionFocus fileCopyDialogAction
 }
+
+type fileCopyDialogFocus uint8
+
+const (
+	fileCopyDialogFocusDestination fileCopyDialogFocus = iota
+	fileCopyDialogFocusActions
+)
+
+type fileCopyDialogAction uint8
+
+const (
+	fileCopyDialogActionCancel fileCopyDialogAction = iota
+	fileCopyDialogActionConfirm
+)
 
 type fileCopySource struct {
 	Path string
@@ -221,12 +238,109 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	st.dstEdit.SetText(dstDefault)
 	st.dstEdit.SetCaret(st.dstEdit.Len(), st.dstEdit.Len())
 	st.dstEditWant = true
+	st.focus = fileCopyDialogFocusDestination
+	st.actionFocus = fileCopyDialogActionConfirm
 	st.refreshPreview()
 
 	ui.fileCopy = st
 	ui.rep.active = false
 	ui.rep.pane = -1
 	ui.clearFileCopyHotkeyHold()
+}
+
+func (ui *UI) closeFileCopyDialog() {
+	ui.fileCopy = nil
+	ui.clearFileCopyHotkeyHold()
+}
+
+func (st *fileCopyState) destinationEditable() bool {
+	return st != nil && !st.running && !st.dstLocked
+}
+
+func (st *fileCopyState) focusOrder() []fileCopyDialogFocus {
+	if st == nil {
+		return nil
+	}
+	order := make([]fileCopyDialogFocus, 0, 3)
+	if st.destinationEditable() {
+		order = append(order, fileCopyDialogFocusDestination)
+	}
+	order = append(order, fileCopyDialogFocusActions)
+	return order
+}
+
+func (st *fileCopyState) syncEditorFocus(gtx layout.Context) {
+	if st == nil || !st.destinationEditable() {
+		return
+	}
+	if gtx.Focused(&st.dstEdit) {
+		st.focus = fileCopyDialogFocusDestination
+	}
+}
+
+func (st *fileCopyState) setFocus(target fileCopyDialogFocus) bool {
+	if st == nil {
+		return false
+	}
+	if target == fileCopyDialogFocusDestination && !st.destinationEditable() {
+		return false
+	}
+	changed := st.focus != target
+	st.focus = target
+	switch target {
+	case fileCopyDialogFocusDestination:
+		st.dstEditWant = true
+	default:
+		st.dstEditWant = false
+		st.keyFocus.focusKeyboard()
+	}
+	return changed
+}
+
+func (st *fileCopyState) stepFocus(step int) bool {
+	order := st.focusOrder()
+	if len(order) == 0 {
+		return false
+	}
+	current := -1
+	for i, target := range order {
+		if target == st.focus {
+			current = i
+			break
+		}
+	}
+	return st.setFocus(order[dialogWrappedIndex(current, len(order), step)])
+}
+
+func (st *fileCopyState) stepAction(step int) bool {
+	if st == nil {
+		return false
+	}
+	order := []fileCopyDialogAction{fileCopyDialogActionCancel, fileCopyDialogActionConfirm}
+	current := 0
+	for i, action := range order {
+		if action == st.actionFocus {
+			current = i
+			break
+		}
+	}
+	next := order[dialogWrappedIndex(current, len(order), step)]
+	if next == st.actionFocus {
+		return false
+	}
+	st.actionFocus = next
+	return true
+}
+
+func (st *fileCopyState) actionVisualState(target fileCopyDialogAction) dialogActionVisualState {
+	if st == nil || st.running {
+		return dialogActionVisualState{}
+	}
+	if st.focus == fileCopyDialogFocusActions {
+		active := st.actionFocus == target
+		return dialogActionVisualState{Focused: active, Default: active}
+	}
+	return dialogActionVisualState{Default: target == fileCopyDialogActionConfirm}
 }
 
 func (ui *UI) defaultFileCopyDestination(srcIdx int, srcPane *filePaneState, srcEndpoint copyEndpoint) (int, copyEndpoint, string) {
@@ -647,8 +761,35 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 		return layout.Dimensions{}
 	}
 
+	st.keyFocus.attach(gtx)
+	st.syncEditorFocus(gtx)
+	anyMods := ^key.Modifiers(0)
+
 	for {
-		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
+		ev, ok := gtx.Event(
+			key.Filter{Focus: &st.dstEdit, Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Focus: &st.dstEdit, Name: key.NameReturn, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press || st.running || ke.Modifiers != 0 {
+			continue
+		}
+		ui.submitFileCopyDialog(gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameEscape, Optional: anyMods},
+			key.Filter{Name: key.NameTab, Optional: anyMods},
+			key.Filter{Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Name: key.NameReturn, Optional: anyMods},
+			key.Filter{Name: key.NameLeftArrow, Optional: anyMods},
+			key.Filter{Name: key.NameRightArrow, Optional: anyMods},
+		)
 		if !ok {
 			break
 		}
@@ -656,9 +797,55 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 		if !ok || ke.State != key.Press {
 			continue
 		}
-		if !st.running {
-			ui.fileCopy = nil
-			ui.clearFileCopyHotkeyHold()
+		switch ke.Name {
+		case key.NameEscape:
+			if st.running {
+				continue
+			}
+			ui.closeFileCopyDialog()
+			return layout.Dimensions{}
+		case key.NameTab:
+			if st.running {
+				continue
+			}
+			step, ok := dialogTabStep(ke.Modifiers)
+			if !ok {
+				continue
+			}
+			if st.stepFocus(step) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameLeftArrow:
+			if st.running || ke.Modifiers != 0 || st.focus != fileCopyDialogFocusActions {
+				continue
+			}
+			if st.stepAction(-1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameRightArrow:
+			if st.running || ke.Modifiers != 0 || st.focus != fileCopyDialogFocusActions {
+				continue
+			}
+			if st.stepAction(1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameEnter, key.NameReturn:
+			if st.running || ke.Modifiers != 0 {
+				continue
+			}
+			if st.focus != fileCopyDialogFocusActions {
+				continue
+			}
+			switch st.actionFocus {
+			case fileCopyDialogActionCancel:
+				st.actionsAnim.setPulse("cancel", gtx.Now)
+				ui.closeFileCopyDialog()
+				return layout.Dimensions{}
+			case fileCopyDialogActionConfirm:
+				st.actionsAnim.setPulse("confirm", gtx.Now)
+				ui.submitFileCopyDialog(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		}
 	}
 
@@ -682,13 +869,11 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 			}
 		}
 		if st.cancelClick.Clicked(gtx) {
-			ui.fileCopy = nil
-			ui.clearFileCopyHotkeyHold()
+			ui.closeFileCopyDialog()
 			return layout.Dimensions{}
 		}
 		if st.closeClick.Clicked(gtx) {
-			ui.fileCopy = nil
-			ui.clearFileCopyHotkeyHold()
+			ui.closeFileCopyDialog()
 			return layout.Dimensions{}
 		}
 		if st.confirmClick.Clicked(gtx) {
@@ -891,7 +1076,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return ui.layoutEditorWithContextMenu(th, gtx, "filecopy-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.dstEdit), true, ed.Layout)
+				return layoutNeutralEditorBox(gtx, st.focus == fileCopyDialogFocusDestination, true, ed.Layout)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
@@ -936,6 +1121,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 					th, gtx,
 					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, st.running,
 					&st.confirmClick, st.confirmLabel(), hoverConfirm, pulseConfirm, st.running,
+					st.actionVisualState(fileCopyDialogActionCancel),
+					st.actionVisualState(fileCopyDialogActionConfirm),
 				)
 			})
 		}),
@@ -1014,15 +1201,25 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 	)
 }
 
-func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, hoverFill, pulseFill float32, segW, stripH int, roundLeft, roundRight, disabled bool) layout.Dimensions {
+func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, hoverFill, pulseFill float32, segW, stripH int, roundLeft, roundRight, disabled bool, state dialogActionVisualState) layout.Dimensions {
 	if click == nil {
 		return layout.Dimensions{}
 	}
 	hoverFill = clamp01(hoverFill)
 	pulseFill = clamp01(pulseFill)
+	focusFill := float32(0)
+	defaultFill := float32(0)
+	if state.Focused {
+		focusFill = 1
+	}
+	if state.Default {
+		defaultFill = 1
+	}
 	if disabled {
 		hoverFill = 0
 		pulseFill = 0
+		focusFill = 0
+		defaultFill = 0
 	}
 	dims := fixedWidth(gtx, segW, func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
@@ -1033,12 +1230,18 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 
 				hoverDark := color.NRGBA{R: 34, G: 34, B: 34, A: 255}
 				pulseCol := color.NRGBA{R: 48, G: 48, B: 48, A: 255}
+				defaultCol := color.NRGBA{R: 60, G: 54, B: 44, A: 255}
+				focusCol := color.NRGBA{R: 72, G: 66, B: 54, A: 255}
 
 				bg := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
 				bg = mixNRGBA(bg, hoverDark, hoverFill)
 				bg = mixNRGBA(bg, pulseCol, pulseFill*0.3)
+				bg = mixNRGBA(bg, defaultCol, defaultFill*0.62)
+				bg = mixNRGBA(bg, focusCol, focusFill*0.36)
 				fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, hoverFill*0.75)
 				fg = mixNRGBA(fg, color.NRGBA{R: 248, G: 248, B: 248, A: 255}, pulseFill*0.25)
+				fg = mixNRGBA(fg, color.NRGBA{R: 244, G: 234, B: 206, A: 255}, defaultFill*0.32)
+				fg = mixNRGBA(fg, color.NRGBA{R: 250, G: 246, B: 236, A: 255}, focusFill*0.3)
 
 				if disabled {
 					bg = color.NRGBA{R: 24, G: 24, B: 24, A: 170}
@@ -1064,6 +1267,38 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 	})
 	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
 		return dims
+	}
+	if defaultFill > 0 {
+		radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
+		rr := clip.RRect{Rect: image.Rect(0, 0, dims.Size.X, dims.Size.Y)}
+		if roundLeft {
+			rr.NW = radius
+			rr.SW = radius
+		}
+		if roundRight {
+			rr.NE = radius
+			rr.SE = radius
+		}
+		outline := color.NRGBA{R: 200, G: 182, B: 144, A: uint8(88 + 64*defaultFill)}
+		paint.FillShape(gtx.Ops, outline, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1}.Op())
+	}
+	if focusFill > 0 {
+		yPad := gtx.Dp(unit.Dp(3))
+		if yPad*2 >= dims.Size.Y {
+			yPad = 0
+		}
+		w := gtx.Dp(unit.Dp(3))
+		if w < 1 {
+			w = 1
+		}
+		x := gtx.Dp(unit.Dp(2))
+		if x+w > dims.Size.X {
+			x = 0
+		}
+		rect := image.Rect(x, yPad, x+w, dims.Size.Y-yPad)
+		if rect.Dx() > 0 && rect.Dy() > 0 {
+			paint.FillShape(gtx.Ops, color.NRGBA{R: 214, G: 198, B: 166, A: uint8(160 + 64*focusFill)}, clip.UniformRRect(rect, w).Op(gtx.Ops))
+		}
 	}
 	if !disabled {
 		defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
@@ -1094,7 +1329,11 @@ func (ui *UI) dialogActionSegmentMetricsPx(th *material.Theme, gtx layout.Contex
 	return width, height
 }
 
-func (ui *UI) layoutDialogActionPair(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool) layout.Dimensions {
+func (ui *UI) layoutDialogActionPair(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool, leftState, rightState dialogActionVisualState) layout.Dimensions {
+	return ui.layoutDialogActionPairState(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftDisabled, rightClick, rightLabel, rightHover, rightPulse, rightDisabled, leftState, rightState)
+}
+
+func (ui *UI) layoutDialogActionPairState(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool, leftState, rightState dialogActionVisualState) layout.Dimensions {
 	leftW, leftH := ui.dialogActionSegmentMetricsPx(th, gtx, leftLabel)
 	rightW, rightH := ui.dialogActionSegmentMetricsPx(th, gtx, rightLabel)
 	stripH := leftH
@@ -1128,13 +1367,13 @@ func (ui *UI) layoutDialogActionPair(th *material.Theme, gtx layout.Context, lef
 				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled)
+							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled, leftState)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return toolbarSeparator(gtx, stripH)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, false, true, rightDisabled)
+							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, false, true, rightDisabled, rightState)
 						}),
 					)
 				})
@@ -1143,7 +1382,11 @@ func (ui *UI) layoutDialogActionPair(th *material.Theme, gtx layout.Context, lef
 	)
 }
 
-func (ui *UI) layoutDialogActionTriple(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, middleClick *widget.Clickable, middleLabel string, middleHover, middlePulse float32, middleDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool) layout.Dimensions {
+func (ui *UI) layoutDialogActionTriple(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, middleClick *widget.Clickable, middleLabel string, middleHover, middlePulse float32, middleDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool, leftState, middleState, rightState dialogActionVisualState) layout.Dimensions {
+	return ui.layoutDialogActionTripleState(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftDisabled, middleClick, middleLabel, middleHover, middlePulse, middleDisabled, rightClick, rightLabel, rightHover, rightPulse, rightDisabled, leftState, middleState, rightState)
+}
+
+func (ui *UI) layoutDialogActionTripleState(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, middleClick *widget.Clickable, middleLabel string, middleHover, middlePulse float32, middleDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool, leftState, middleState, rightState dialogActionVisualState) layout.Dimensions {
 	leftW, leftH := ui.dialogActionSegmentMetricsPx(th, gtx, leftLabel)
 	middleW, middleH := ui.dialogActionSegmentMetricsPx(th, gtx, middleLabel)
 	rightW, rightH := ui.dialogActionSegmentMetricsPx(th, gtx, rightLabel)
@@ -1186,19 +1429,19 @@ func (ui *UI) layoutDialogActionTriple(th *material.Theme, gtx layout.Context, l
 				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled)
+							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled, leftState)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return toolbarSeparator(gtx, stripH)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, middleClick, middleLabel, middleHover, middlePulse, middleW, stripH, false, false, middleDisabled)
+							return ui.layoutDialogActionSegment(th, gtx, middleClick, middleLabel, middleHover, middlePulse, middleW, stripH, false, false, middleDisabled, middleState)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return toolbarSeparator(gtx, stripH)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, false, true, rightDisabled)
+							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, false, true, rightDisabled, rightState)
 						}),
 					)
 				})

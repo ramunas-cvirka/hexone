@@ -173,6 +173,9 @@ type fileViewerState struct {
 	watchExists      bool
 	watchSize        int64
 	watchModTime     time.Time
+	fileSelection    streamSelectionState
+	commandSelection streamSelectionState
+	pendingSelection string
 	resultCh         chan fileViewerResult
 	historyClicks    map[string]*widget.Clickable
 	tabAnim          segmentedAnimState
@@ -244,6 +247,57 @@ func (st *fileViewerState) closeEncodingMenu() {
 	st.encodingBarRect = image.Rectangle{}
 	st.encodingMenuRect = image.Rectangle{}
 	st.encodingMenuAt = time.Time{}
+}
+
+func (st *fileViewerState) rememberStreamSelection(mode string) {
+	if st == nil {
+		return
+	}
+	switch normalizeViewerMode(mode) {
+	case "file":
+		st.fileSelection = st.stream.selectionState()
+	case "command":
+		st.commandSelection = st.stream.selectionState()
+	}
+}
+
+func (st *fileViewerState) restoreStreamSelection(mode string) {
+	if st == nil {
+		return
+	}
+	switch normalizeViewerMode(mode) {
+	case "file":
+		st.stream.restoreSelectionState(st.fileSelection)
+	case "command":
+		st.stream.restoreSelectionState(st.commandSelection)
+	default:
+		st.stream.clearSelection()
+	}
+}
+
+func (st *fileViewerState) prepareStreamSelectionForMode(mode string) {
+	if st == nil {
+		return
+	}
+	st.rememberStreamSelection(st.mode)
+	mode = normalizeViewerMode(mode)
+	if mode == "file" || mode == "command" {
+		st.pendingSelection = mode
+	} else {
+		st.pendingSelection = ""
+	}
+	st.stream.clearSelection()
+}
+
+func (st *fileViewerState) restorePendingStreamSelection() {
+	if st == nil || st.pendingSelection == "" {
+		return
+	}
+	if normalizeViewerMode(st.mode) != st.pendingSelection {
+		return
+	}
+	st.restoreStreamSelection(st.pendingSelection)
+	st.pendingSelection = ""
 }
 
 func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
@@ -906,6 +960,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.status = "ready"
 		}
 		applyFileViewerContentResult(st, st.pendingContent)
+		st.restorePendingStreamSelection()
 		if !viewerSupportsFind(st) && st.find.open {
 			ui.closeFileViewerFind()
 		}
@@ -937,6 +992,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 					ui.refreshFileViewerFind(gtx.Now, true)
 					st.markUpdated(gtx.Now)
 				}
+				st.restorePendingStreamSelection()
 				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
@@ -1007,6 +1063,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 				st.binaryPreviewCols = 0
 			}
 			applyFileViewerContentResult(st, contentToApply)
+			st.restorePendingStreamSelection()
 			if !viewerSupportsFind(st) && st.find.open {
 				ui.closeFileViewerFind()
 			}
@@ -1267,6 +1324,7 @@ func viewerScrollToStart(st *fileViewerState) bool {
 	}
 	st.stream.topLine = 0
 	st.stream.clampTop()
+	st.stream.syncVisualTop()
 	return true
 }
 
@@ -1310,6 +1368,7 @@ func viewerScrollToEnd(st *fileViewerState) bool {
 	}
 	st.stream.topLine = maxTop
 	st.stream.clampTop()
+	st.stream.syncVisualTop()
 	return true
 }
 
@@ -1484,6 +1543,13 @@ func viewerWordWrap(cfg *fm.Config) bool {
 		return false
 	}
 	return cfg.Viewer.WordWrap
+}
+
+func viewerSmoothScrolling(cfg *fm.Config) bool {
+	if cfg == nil {
+		return true
+	}
+	return cfg.Viewer.SmoothScrolling
 }
 
 func viewerCommandRefreshInterval(cfg *fm.Config) time.Duration {
@@ -1666,6 +1732,7 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 		return
 	}
 	prevTab := st.activeTabKey()
+	st.prepareStreamSelectionForMode(mode)
 	st.mode = mode
 	st.commandEditOn = false
 	st.commandFocus = false
@@ -1754,6 +1821,7 @@ func (ui *UI) applyViewerCommandEdit(now time.Time) {
 	}
 	st.command = cmd
 	prevTab := st.activeTabKey()
+	st.prepareStreamSelectionForMode("command")
 	st.mode = "command"
 	st.commandInfinite = viewerCommandLooksInfinite(st.command)
 	st.commandEditOn = false
@@ -1780,6 +1848,7 @@ func (ui *UI) applyViewerHistoryCommand(cmd string, now time.Time) {
 		return
 	}
 	prevTab := st.activeTabKey()
+	st.prepareStreamSelectionForMode("command")
 	st.mode = "command"
 	st.command = cmd
 	st.commandInfinite = viewerCommandLooksInfinite(cmd)

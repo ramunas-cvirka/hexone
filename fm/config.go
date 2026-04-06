@@ -190,6 +190,7 @@ type ViewerConfig struct {
 	Background              string              `yaml:"background,omitempty"`
 	Text                    string              `yaml:"text,omitempty"`
 	Selection               string              `yaml:"selection,omitempty"`
+	SmoothScrolling         bool                `yaml:"smooth_scrolling"`
 	Shell                   string              `yaml:"shell"`
 	Command                 string              `yaml:"command"`
 	RemoteSearchMode        string              `yaml:"remote_search_mode"`
@@ -236,7 +237,7 @@ type Config struct {
 }
 
 func (c *Config) UnmarshalYAML(node *yaml.Node) error {
-	var raw struct {
+	raw := struct {
 		DateFormats       []string             `yaml:"date_formats"`
 		FavoriteLocations []string             `yaml:"favorite_locations"`
 		NameCompact       NameCompact          `yaml:"name_compact"`
@@ -248,6 +249,10 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Associations      []AssociationProgram `yaml:"associations,omitempty"`
 		Viewer            ViewerConfig         `yaml:"viewer"`
 		SSH               SSHConfig            `yaml:"ssh"`
+	}{
+		Viewer: ViewerConfig{
+			SmoothScrolling: true,
+		},
 	}
 	if err := node.Decode(&raw); err != nil {
 		return err
@@ -324,6 +329,7 @@ func DefaultConfig() *Config {
 			Background:              DefaultFilePaneBackgroundHex,
 			Text:                    DefaultFilePaneTextHex,
 			Selection:               DefaultFilePaneSelectionHex,
+			SmoothScrolling:         true,
 			Shell:                   "auto",
 			Command:                 "cat {path}",
 			RemoteSearchMode:        ViewerRemoteSearchModeRemote,

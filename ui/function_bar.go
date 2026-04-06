@@ -6,6 +6,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"strings"
 	"time"
 
 	"gioui.org/font"
@@ -58,6 +59,11 @@ type functionBarToolSpec struct {
 	label    string
 	shortcut string
 	active   bool
+}
+
+type functionBarHintSpec struct {
+	shortcut string
+	label    string
 }
 
 func registerPopupArea(gtx layout.Context, tag event.Tag, size image.Point) {
@@ -318,6 +324,289 @@ func (ui *UI) functionBarButtonText(spec functionBarButtonSpec) string {
 	return spec.keyLabel + " " + spec.label
 }
 
+func (ui *UI) setFunctionBarHeldModifier(mod key.Modifiers, down bool) bool {
+	if ui == nil || mod == 0 {
+		return false
+	}
+	next := ui.functionBarHeldMods
+	if down {
+		next |= mod
+	} else {
+		next &^= mod
+	}
+	if next == ui.functionBarHeldMods {
+		return false
+	}
+	ui.functionBarHeldMods = next
+	return true
+}
+
+func (ui *UI) SyncPlatformAltHeld(down bool) bool {
+	if ui == nil {
+		return false
+	}
+	return ui.setFunctionBarHeldModifier(key.ModAlt, down)
+}
+
+func (ui *UI) handleFunctionBarModifierKeys(gtx layout.Context) {
+	if ui == nil {
+		return
+	}
+	anyMods := ^key.Modifiers(0)
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameCtrl, Optional: anyMods},
+			key.Filter{Name: key.NameCommand, Optional: anyMods},
+			key.Filter{Name: key.NameAlt, Optional: anyMods},
+			key.Filter{Name: key.NameShift, Optional: anyMods},
+		)
+		if !ok {
+			return
+		}
+		ke, ok := ev.(key.Event)
+		if !ok {
+			continue
+		}
+		var mod key.Modifiers
+		switch ke.Name {
+		case key.NameCtrl:
+			mod = key.ModCtrl
+		case key.NameCommand:
+			mod = key.ModCommand
+		case key.NameAlt:
+			mod = key.ModAlt
+		case key.NameShift:
+			mod = key.ModShift
+		default:
+			continue
+		}
+		var changed bool
+		switch ke.State {
+		case key.Press:
+			changed = ui.setFunctionBarHeldModifier(mod, true)
+		case key.Release:
+			changed = ui.setFunctionBarHeldModifier(mod, false)
+		}
+		if changed {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+}
+
+func (ui *UI) functionBarHeldHintModifier() key.Modifiers {
+	if ui == nil {
+		return 0
+	}
+	switch {
+	case ui.functionBarHeldMods.Contain(key.ModCommand):
+		return key.ModCommand
+	case ui.functionBarHeldMods.Contain(key.ModCtrl):
+		return key.ModCtrl
+	case ui.functionBarHeldMods.Contain(key.ModAlt):
+		return key.ModAlt
+	default:
+		return 0
+	}
+}
+
+func (ui *UI) functionBarShortcutName() string {
+	switch ui.functionBarHeldHintModifier() {
+	case key.ModCommand:
+		return "Cmd"
+	case key.ModCtrl:
+		return "Ctrl"
+	case key.ModAlt:
+		return "Alt"
+	default:
+		return ""
+	}
+}
+
+func (ui *UI) functionBarShortcutLabel(keys string) string {
+	name := ui.functionBarShortcutName()
+	keys = strings.TrimSpace(keys)
+	if name == "" || keys == "" {
+		return ""
+	}
+	sep := "+"
+	if strings.HasPrefix(keys, "+") || strings.HasPrefix(keys, "-") {
+		sep = ""
+	}
+	return name + sep + keys
+}
+
+func (ui *UI) functionBarModifierHintSpecs() []functionBarHintSpec {
+	mod := ui.functionBarHeldHintModifier()
+	if ui == nil || mod == 0 || ui.functionBarToolsOpen {
+		return nil
+	}
+	if ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
+		return nil
+	}
+
+	hints := make([]functionBarHintSpec, 0, 4)
+	add := func(keys, label string) {
+		shortcut := ui.functionBarShortcutLabel(keys)
+		label = strings.TrimSpace(label)
+		if shortcut == "" || label == "" {
+			return
+		}
+		hints = append(hints, functionBarHintSpec{
+			shortcut: shortcut,
+			label:    label,
+		})
+	}
+
+	if mod == key.ModAlt {
+		if ui.fileViewer != nil {
+			return nil
+		}
+		if ui.Tabs.Value == "tab0" && !ui.pathEditActive() {
+			add("1", "Left Drive")
+			add("2", "Right Drive")
+		}
+		return hints
+	}
+
+	if ui.fileViewer != nil {
+		st := ui.fileViewer
+		if st != nil && !st.commandEditOn && !st.historyOpen {
+			if st.detectedImagePreview {
+				add("+/-", "Zoom")
+			} else {
+				if viewerSupportsFind(st) {
+					add("F", "Find")
+				}
+				add("C", "Copy")
+				add("A", "Select All")
+			}
+		}
+		if !ui.pathEditActive() {
+			add("S", "Settings")
+		}
+		return hints
+	}
+
+	if ui.Tabs.Value == "tab0" {
+		if !ui.pathEditActive() {
+			add("A", "Select All")
+			add("E", "Same Ext")
+			add("F", "SSH")
+			add("S", "Settings")
+		}
+		return hints
+	}
+
+	if !ui.pathEditActive() {
+		add("S", "Settings")
+	}
+	return hints
+}
+
+func (ui *UI) functionBarModifierHintText() (string, bool) {
+	hints := ui.functionBarModifierHintSpecs()
+	if len(hints) == 0 {
+		return "", false
+	}
+	parts := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		text := strings.TrimSpace(strings.TrimSpace(hint.shortcut) + " " + strings.TrimSpace(hint.label))
+		if text == "" {
+			continue
+		}
+		parts = append(parts, text)
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return strings.Join(parts, " | "), true
+}
+
+func (ui *UI) functionBarHintLabel(hint functionBarHintSpec) string {
+	switch {
+	case strings.TrimSpace(hint.shortcut) == "":
+		return strings.TrimSpace(hint.label)
+	case strings.TrimSpace(hint.label) == "":
+		return strings.TrimSpace(hint.shortcut)
+	default:
+		return strings.TrimSpace(hint.shortcut) + " " + strings.TrimSpace(hint.label)
+	}
+}
+
+func (ui *UI) functionBarHintSlotLabels(slotCount int) []string {
+	if slotCount < 0 {
+		slotCount = 0
+	}
+	labels := make([]string, slotCount)
+	hints := ui.functionBarModifierHintSpecs()
+	if len(hints) > slotCount {
+		hints = hints[:slotCount]
+	}
+	for i, hint := range hints {
+		labels[i] = ui.functionBarHintLabel(hint)
+	}
+	return labels
+}
+
+func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context, hints []functionBarHintSpec) layout.Dimensions {
+	stripH := gtx.Dp(unit.Dp(functionBarStripDp))
+	if stripH < 1 {
+		stripH = 1
+	}
+	ui.functionBarToolsButtonRect = image.Rectangle{}
+
+	return layout.Inset{
+		Top:   unit.Dp(functionBarTopInsetDp),
+		Left:  unit.Dp(functionBarOuterInsetDp),
+		Right: unit.Dp(functionBarOuterInsetDp),
+	}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		barRadius := 0
+		outerW := gtx.Constraints.Max.X
+		if outerW < 1 {
+			outerW = 1
+		}
+		specs := ui.functionBarButtonSpecs()
+		widths := ui.functionBarWidths(th, gtx, specs)
+		slotLabels := ui.functionBarHintSlotLabels(len(widths))
+		return fixedWidth(gtx, outerW, func(gtx layout.Context) layout.Dimensions {
+			return fillRoundedBox(
+				gtx,
+				barRadius,
+				color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+				color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+				func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+							return fillBgExact(gtx, color.NRGBA{R: 30, G: 34, B: 40, A: 255}, func(gtx layout.Context) layout.Dimensions {
+								children := make([]layout.FlexChild, 0, len(widths))
+								for i := range widths {
+									i := i
+									children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return fixedWidth(gtx, widths[i], func(gtx layout.Context) layout.Dimensions {
+											return fillBgExact(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
+												lbl := material.Body2(th, slotLabels[i])
+												lbl.Font.Typeface = ui.mainTypeface()
+												lbl.Font.Weight = font.Medium
+												lbl.TextSize = ui.functionBarTextSize()
+												lbl.Color = color.NRGBA{R: 228, G: 232, B: 240, A: 255}
+												lbl.MaxLines = 1
+												lbl.Truncator = "…"
+												lbl.Alignment = text.Middle
+												return layoutVCenteredLabel(gtx, lbl)
+											})
+										})
+									}))
+								}
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+							})
+						})
+					})
+				},
+			)
+		})
+	})
+}
+
 func dimColor(c color.NRGBA, alpha uint8) color.NRGBA {
 	c.A = alpha
 	return c
@@ -485,6 +774,9 @@ func (ui *UI) functionBarSliderState(now time.Time) (float32, float32, bool) {
 func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	if ui == nil {
 		return layout.Dimensions{}
+	}
+	if hints := ui.functionBarModifierHintSpecs(); len(hints) > 0 {
+		return ui.layoutFunctionBarHintStrip(th, gtx, hints)
 	}
 
 	specs := ui.functionBarButtonSpecs()
@@ -655,6 +947,21 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	return dims
+}
+
+func (ui *UI) applyFunctionBarCursor(gtx layout.Context) {
+	if ui == nil || !ui.functionBarVisible() {
+		return
+	}
+	if hints := ui.functionBarModifierHintSpecs(); len(hints) > 0 {
+		return
+	}
+	for i := range ui.functionBarClicks {
+		if ui.functionBarClicks[i].Hovered() {
+			pointer.CursorPointer.Add(gtx.Ops)
+			return
+		}
+	}
 }
 
 func (ui *UI) ensureFunctionBarToolClicks(n int) {

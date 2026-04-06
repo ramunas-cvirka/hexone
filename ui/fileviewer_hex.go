@@ -10,6 +10,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -36,13 +37,20 @@ type hexViewerState struct {
 	resultCh chan fileViewerHexResult
 	seq      int
 
-	fileSize     int64
-	bufferStart  int64
-	buffer       []byte
-	bytesPerLine int
-	topLine      int64
-	visibleLines int
-	scrollCarry  float32
+	fileSize      int64
+	bufferStart   int64
+	buffer        []byte
+	bytesPerLine  int
+	topLine       int64
+	visibleLines  int
+	scrollCarry   float32
+	visualTop     float64
+	visualReady   bool
+	visualAt      time.Time
+	displayTop    int64
+	displayY      int
+	displayCount  int
+	lastScrollDir int
 
 	offsetDigits int
 	charW        int
@@ -154,6 +162,32 @@ func (v *hexViewerState) clampTop() {
 	if v.dragTop > maxTop {
 		v.dragTop = maxTop
 	}
+	if v.visualReady {
+		if v.visualTop < 0 {
+			v.visualTop = 0
+		}
+		if v.visualTop > float64(maxTop) {
+			v.visualTop = float64(maxTop)
+		}
+	}
+}
+
+func (v *hexViewerState) syncVisualTop() {
+	if v == nil {
+		return
+	}
+	v.visualTop = float64(v.topLine)
+	v.visualReady = true
+	v.visualAt = time.Time{}
+	v.updateDisplayState()
+}
+
+func (v *hexViewerState) resetVisualTop() {
+	if v == nil {
+		return
+	}
+	v.lastScrollDir = 0
+	v.syncVisualTop()
 }
 
 func (v *hexViewerState) clampByteOffset(off int64) int64 {
@@ -178,6 +212,17 @@ func (v *hexViewerState) clearSelection() {
 	v.selectionLen = 0
 	v.cancelPending = false
 	v.cancelUntil = time.Time{}
+	v.pointerOutside = false
+	v.stopAutoScroll()
+}
+
+func (v *hexViewerState) stopSelectionDrag() {
+	if v == nil {
+		return
+	}
+	v.selecting = false
+	v.selectID = 0
+	v.clearCancelGrace()
 	v.pointerOutside = false
 	v.stopAutoScroll()
 }
@@ -256,6 +301,8 @@ func (v *hexViewerState) expireCancelGrace(now time.Time) bool {
 	}
 	v.clearCancelGrace()
 	v.selecting = false
+	v.selectID = 0
+	v.pointerOutside = false
 	v.stopAutoScroll()
 	return true
 }
@@ -264,7 +311,10 @@ func (v *hexViewerState) renderedLineCount() int {
 	if v == nil {
 		return 0
 	}
-	total := int(v.totalLines() - v.topLine)
+	if v.displayCount > 0 {
+		return v.displayCount
+	}
+	total := v.totalLines() - v.topLine
 	if total < 0 {
 		total = 0
 	}
@@ -274,10 +324,187 @@ func (v *hexViewerState) renderedLineCount() int {
 		}
 		return 0
 	}
-	if total > v.visibleLines {
-		total = v.visibleLines
+	if total > int64(v.visibleLines) {
+		total = int64(v.visibleLines)
 	}
-	return total
+	return int(total)
+}
+
+func (v *hexViewerState) smoothJumpThreshold() float64 {
+	limit := float64(streamSmoothJumpLines)
+	if visible := float64(v.visibleLines) * 0.75; visible > limit {
+		limit = visible
+	}
+	return limit
+}
+
+func (v *hexViewerState) autoScrollSmoothActive() bool {
+	return v != nil && v.autoScrollActive && v.selecting
+}
+
+func (v *hexViewerState) smoothJumpLimit() float64 {
+	if v.autoScrollSmoothActive() {
+		return streamSmoothAutoJumpLines
+	}
+	return v.smoothJumpThreshold()
+}
+
+func (v *hexViewerState) smoothTau() time.Duration {
+	if v.autoScrollSmoothActive() {
+		return streamSmoothAutoTau
+	}
+	return streamSmoothTau
+}
+
+func (v *hexViewerState) clampAutoScrollVisualLag(target float64) {
+	if !v.autoScrollSmoothActive() {
+		return
+	}
+	if delta := target - v.visualTop; delta > streamSmoothAutoMaxLag {
+		v.visualTop = target - streamSmoothAutoMaxLag
+	} else if delta < -streamSmoothAutoMaxLag {
+		v.visualTop = target + streamSmoothAutoMaxLag
+	}
+}
+
+func (v *hexViewerState) updateDisplayState() {
+	if v == nil {
+		return
+	}
+	total := v.totalLines()
+	if total <= 0 {
+		v.displayTop = 0
+		v.displayY = 0
+		v.displayCount = 0
+		return
+	}
+	if v.visibleLines < 1 || v.lineH <= 0 {
+		v.displayTop = v.topLine
+		if v.displayTop < 0 {
+			v.displayTop = 0
+		}
+		if maxTop := v.totalLines() - int64(v.visibleLines); v.displayTop > maxTop && maxTop >= 0 {
+			v.displayTop = maxTop
+		}
+		v.displayY = 0
+		v.displayCount = int(total - v.displayTop)
+		if v.displayCount < 1 {
+			v.displayCount = 1
+		}
+		return
+	}
+
+	visualTop := float64(v.topLine)
+	if v.visualReady {
+		visualTop = v.visualTop
+	}
+	maxTop := float64(v.totalLines() - int64(v.visibleLines))
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	if visualTop < 0 {
+		visualTop = 0
+	}
+	if visualTop > maxTop {
+		visualTop = maxTop
+	}
+	top := int64(math.Floor(visualTop))
+	frac := visualTop - float64(top)
+	if frac < 0 {
+		frac = 0
+	}
+	if frac > 0 && float64(top) >= maxTop {
+		top = int64(maxTop)
+		frac = 0
+	}
+
+	offsetY := 0
+	if frac > 0 {
+		offsetY = -int(math.Round(frac * float64(v.lineH)))
+		if offsetY <= -v.lineH {
+			offsetY = 0
+			top++
+		}
+	}
+	if top < 0 {
+		top = 0
+	}
+	if max := v.totalLines() - int64(v.visibleLines); top > max && max >= 0 {
+		top = max
+		offsetY = 0
+	}
+
+	count := total - top
+	maxRows := v.visibleLines
+	if offsetY < 0 && top+int64(maxRows) < total {
+		maxRows++
+	}
+	if count > int64(maxRows) {
+		count = int64(maxRows)
+	}
+	if count < 1 {
+		count = 1
+	}
+	v.displayTop = top
+	v.displayY = offsetY
+	v.displayCount = int(count)
+}
+
+func (v *hexViewerState) prepareVisualScroll(now time.Time, smooth bool) bool {
+	if v == nil {
+		return false
+	}
+	target := float64(v.topLine)
+	if !v.visualReady {
+		v.visualTop = target
+		v.visualReady = true
+		v.visualAt = now
+		v.updateDisplayState()
+		return false
+	}
+	autoScrollSmooth := v.autoScrollSmoothActive()
+	if !smooth || v.dragging || (v.selecting && !autoScrollSmooth) || v.cancelPending {
+		v.visualTop = target
+		v.visualAt = now
+		v.updateDisplayState()
+		return false
+	}
+	if math.Abs(target-v.visualTop) > v.smoothJumpLimit() {
+		v.visualTop = target
+		v.visualAt = now
+		v.updateDisplayState()
+		return false
+	}
+
+	if v.visualAt.IsZero() {
+		v.visualAt = now
+	}
+	dt := now.Sub(v.visualAt)
+	if dt < 0 {
+		dt = 0
+	}
+	if dt > 120*time.Millisecond {
+		v.visualTop = target
+		v.visualAt = now
+		v.updateDisplayState()
+		return false
+	}
+	if dt == 0 && target != v.visualTop {
+		dt = streamSmoothTick
+	}
+	if dt > 0 {
+		blend := float64(clamp01(float32(1 - math.Exp(-float64(dt)/float64(v.smoothTau())))))
+		v.visualTop += (target - v.visualTop) * blend
+	}
+	v.clampAutoScrollVisualLag(target)
+	v.visualAt = now
+	if math.Abs(target-v.visualTop) < streamSmoothSnapEpsilon {
+		v.visualTop = target
+		v.updateDisplayState()
+		return false
+	}
+	v.updateDisplayState()
+	return true
 }
 
 func (v *hexViewerState) autoScrollParams(pos image.Point) (int, int) {
@@ -524,6 +751,24 @@ func (v *hexViewerState) lineBytes(line int64) ([]byte, int64) {
 	return v.buffer[relStart:relEnd], start
 }
 
+func (v *hexViewerState) scrollByLines(lines int64) {
+	if v == nil || lines == 0 {
+		return
+	}
+	dir := 0
+	if lines > 0 {
+		dir = 1
+	} else {
+		dir = -1
+	}
+	if dir != 0 && v.lastScrollDir != 0 && dir != v.lastScrollDir {
+		v.syncVisualTop()
+	}
+	v.lastScrollDir = dir
+	v.topLine += lines
+	v.clampTop()
+}
+
 func (v *hexViewerState) scrollByDelta(delta float32) {
 	if v == nil || delta == 0 {
 		return
@@ -549,8 +794,7 @@ func (v *hexViewerState) scrollByDelta(delta float32) {
 	if steps == 0 {
 		return
 	}
-	v.topLine += steps
-	v.clampTop()
+	v.scrollByLines(steps)
 }
 
 func (v *hexViewerState) computeLayout(size image.Point) {
@@ -577,6 +821,10 @@ func (v *hexViewerState) computeLayout(size image.Point) {
 		anchor := v.topLine * int64(oldBPL)
 		v.bytesPerLine = newBPL
 		v.topLine = anchor / int64(newBPL)
+		v.visualReady = false
+		v.displayTop = v.topLine
+		v.displayY = 0
+		v.displayCount = 0
 	}
 	v.offsetDigits = offsetDigits
 	v.visibleLines = size.Y / v.lineH
@@ -657,21 +905,117 @@ func (v *hexViewerState) computeScrollbar() {
 	}
 	maxTop := totalLines - int64(v.visibleLines)
 	maxTravel := v.trackRect.Dy() - thumbH
-	topForThumb := v.topLine
 	if v.dragging {
-		topForThumb = v.dragTop
-	}
-	if topForThumb < 0 {
-		topForThumb = 0
-	}
-	if topForThumb > maxTop {
-		topForThumb = maxTop
+		topForThumb := v.dragTop
+		if topForThumb < 0 {
+			topForThumb = 0
+		}
+		if topForThumb > maxTop {
+			topForThumb = maxTop
+		}
+		thumbY := 0
+		if maxTop > 0 && maxTravel > 0 {
+			thumbY = int(float64(topForThumb) * float64(maxTravel) / float64(maxTop))
+		}
+		v.thumbRect = image.Rect(v.trackRect.Min.X+1, v.trackRect.Min.Y+thumbY, v.trackRect.Max.X-1, v.trackRect.Min.Y+thumbY+thumbH)
+		return
 	}
 	thumbY := 0
 	if maxTop > 0 && maxTravel > 0 {
-		thumbY = int(float64(topForThumb) * float64(maxTravel) / float64(maxTop))
+		topForThumb := float64(v.topLine)
+		if v.visualReady {
+			topForThumb = v.visualTop
+		}
+		if topForThumb < 0 {
+			topForThumb = 0
+		}
+		if topForThumb > float64(maxTop) {
+			topForThumb = float64(maxTop)
+		}
+		thumbY = int(topForThumb * float64(maxTravel) / float64(maxTop))
 	}
 	v.thumbRect = image.Rect(v.trackRect.Min.X+1, v.trackRect.Min.Y+thumbY, v.trackRect.Max.X-1, v.trackRect.Min.Y+thumbY+thumbH)
+}
+
+func (v *hexViewerState) rowFromPointY(y int) (int, bool) {
+	if v == nil || v.lineH <= 0 {
+		return 0, false
+	}
+	rendered := v.renderedLineCount()
+	if rendered < 1 {
+		return 0, false
+	}
+	topY := v.hexRect.Min.Y + v.displayY
+	if y < topY {
+		return 0, false
+	}
+	relY := y - topY
+	maxY := rendered * v.lineH
+	if relY < 0 || relY >= maxY {
+		return 0, false
+	}
+	row := relY / v.lineH
+	if row < 0 {
+		row = 0
+	}
+	if row >= rendered {
+		row = rendered - 1
+	}
+	return row, true
+}
+
+func (v *hexViewerState) lineFromPointY(y int) (int64, bool) {
+	if v == nil {
+		return 0, false
+	}
+	total := v.totalLines()
+	if total < 1 {
+		return 0, false
+	}
+
+	line := v.displayTop
+	topY := v.hexRect.Min.Y + v.displayY
+	rendered := v.renderedLineCount()
+	if !v.visualReady && v.displayCount == 0 {
+		line = v.topLine
+		topY = v.hexRect.Min.Y
+		rendered = int(total - v.topLine)
+		if rendered > v.visibleLines {
+			rendered = v.visibleLines
+		}
+	}
+	if rendered < 1 {
+		rendered = 1
+	}
+
+	renderedBottom := topY + rendered*v.lineH
+	switch {
+	case y < topY:
+		// Clamp above the rendered rows to the first visible line.
+	case y >= renderedBottom:
+		line += int64(rendered - 1)
+	default:
+		row := (y - topY) / v.lineH
+		if row < 0 {
+			row = 0
+		}
+		if row >= rendered {
+			row = rendered - 1
+		}
+		line += int64(row)
+	}
+
+	if line < 0 {
+		line = 0
+	}
+	maxLine := total - 1
+	if maxLine < 0 {
+		maxLine = 0
+	}
+	if line > maxLine {
+		line = maxLine
+	}
+	return line, true
 }
 
 func (v *hexViewerState) estimatedTopFromY(y int) int64 {
@@ -838,27 +1182,8 @@ func hexByteAtPoint(v *hexViewerState, pos image.Point) (int64, bool) {
 		return 0, false
 	}
 
-	// Allow below-the-content selection start/drag by clamping row.
-	row := (pos.Y - v.hexRect.Min.Y) / v.lineH
-	if row < 0 {
-		row = 0
-	}
-	if row >= v.visibleLines {
-		row = v.visibleLines - 1
-	}
-	if row < 0 {
-		row = 0
-	}
-
-	line := v.topLine + int64(row)
-	maxLine := v.totalLines() - 1
-	if maxLine < 0 {
-		maxLine = 0
-	}
-	if line > maxLine {
-		line = maxLine
-	}
-	if line < 0 {
+	line, ok := v.lineFromPointY(pos.Y)
+	if !ok {
 		line = 0
 	}
 
@@ -1170,6 +1495,8 @@ func (ui *UI) layoutHexOutputView(th *material.Theme, gtx layout.Context, st *fi
 
 	v.ensureMetrics(ui, th, gtx)
 	v.computeLayout(size)
+	v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg))
+	v.computeScrollbar()
 	ui.handleHexViewerEvents(gtx, st)
 	if v.expireCancelGrace(gtx.Now) {
 		st.markUserBrowsing(gtx.Now)
@@ -1177,6 +1504,19 @@ func (ui *UI) layoutHexOutputView(th *material.Theme, gtx layout.Context, st *fi
 	if v.runAutoScroll(gtx.Now) {
 		st.markUserBrowsing(gtx.Now)
 		ui.startHexViewerLoad(st, false)
+	}
+	animating := v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg))
+	if v.autoScrollSmoothActive() && v.selecting {
+		beforeStart, beforeLen := v.selectionStart, v.selectionLen
+		if byteOff, ok := hexSelectionByteAtPoint(v, v.selectPos); ok {
+			v.setSelectionFromAnchor(v.dragAnchor, byteOff)
+		}
+		if v.selectionStart != beforeStart || v.selectionLen != beforeLen {
+			st.markUserBrowsing(gtx.Now)
+		}
+	}
+	if animating {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(streamSmoothTick)})
 	}
 	if v.autoScrollActive && !v.autoScrollAt.IsZero() {
 		gtx.Execute(op.InvalidateCmd{At: v.autoScrollAt})
@@ -1209,13 +1549,18 @@ func (ui *UI) drawHexOutput(gtx layout.Context, th *material.Theme, st *fileView
 	paint.FillShape(gtx.Ops, sepColor, clip.Rect(image.Rect(v.offsetRect.Max.X+v.columnGap/2, 0, v.offsetRect.Max.X+v.columnGap/2+1, v.offsetRect.Max.Y)).Op())
 	paint.FillShape(gtx.Ops, sepColor, clip.Rect(image.Rect(v.hexRect.Max.X+v.columnGap/2, 0, v.hexRect.Max.X+v.columnGap/2+1, v.hexRect.Max.Y)).Op())
 
-	y := 0
+	y := v.displayY
 	total := v.totalLines()
-	end := v.topLine + int64(v.visibleLines)
+	start := v.displayTop
+	if !v.visualReady && v.displayCount == 0 {
+		start = v.topLine
+		y = 0
+	}
+	end := start + int64(v.renderedLineCount())
 	if end > total {
 		end = total
 	}
-	for line := v.topLine; line < end; line++ {
+	for line := start; line < end; line++ {
 		lineBytes, lineStart := v.lineBytes(line)
 		offsetText := formatHexOffset(lineStart, v.offsetDigits)
 		offset := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
@@ -1524,6 +1869,9 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				if st.menuOpen {
 					st.closeContextMenu()
 				}
+				if viewerPointInRect(pos, v.hexRect) || viewerPointInRect(pos, v.textRect) {
+					v.syncVisualTop()
+				}
 				if byteOff, ok := hexByteAtPoint(v, pos); ok {
 					v.selecting = true
 					v.selectID = pe.PointerID
@@ -1561,6 +1909,14 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				st.markUserBrowsing(gtx.Now)
 			}
 			if v.selecting && pe.PointerID == v.selectID {
+				if !pe.Buttons.Contain(pointer.ButtonPrimary) {
+					wasAutoScroll := v.autoScrollActive
+					v.stopSelectionDrag()
+					if wasAutoScroll {
+						v.syncVisualTop()
+					}
+					break
+				}
 				v.selectPos = pos
 				if byteOff, ok := hexSelectionByteAtPoint(v, pos); ok {
 					v.setSelectionFromAnchor(v.dragAnchor, byteOff)
@@ -1575,15 +1931,14 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				v.dragging = false
 				v.dragGrabY = 0
 				v.clampTop()
+				v.syncVisualTop()
 				st.markUserBrowsing(gtx.Now)
 			}
 			if v.selecting && pe.PointerID == v.selectID {
-				if v.cancelPending {
-					v.beginCancelGrace(gtx.Now)
-				} else {
-					v.selecting = false
-					v.clearCancelGrace()
-					v.stopAutoScroll()
+				wasAutoScroll := v.autoScrollActive
+				v.stopSelectionDrag()
+				if wasAutoScroll {
+					v.syncVisualTop()
 				}
 			}
 			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
@@ -1604,6 +1959,14 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				v.pointerOutside = false
 			}
 			if v.selecting {
+				if pe.PointerID == v.selectID && !pe.Buttons.Contain(pointer.ButtonPrimary) {
+					wasAutoScroll := v.autoScrollActive
+					v.stopSelectionDrag()
+					if wasAutoScroll {
+						v.syncVisualTop()
+					}
+					break
+				}
 				v.selectPos = pos
 				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)
@@ -1612,6 +1975,14 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 		case pointer.Leave:
 			v.pointerOutside = true
 			if v.selecting {
+				if pe.PointerID == v.selectID && !pe.Buttons.Contain(pointer.ButtonPrimary) {
+					wasAutoScroll := v.autoScrollActive
+					v.stopSelectionDrag()
+					if wasAutoScroll {
+						v.syncVisualTop()
+					}
+					break
+				}
 				v.selectPos = pos
 				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)

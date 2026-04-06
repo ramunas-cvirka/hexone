@@ -626,6 +626,9 @@ func (ui *UI) layoutArchiveExtractConflictBody(th *material.Theme, gtx layout.Co
 					&st.overwriteClick, "Overwrite", hoverOverwrite, pulseOverwrite, false,
 					&st.overwriteAllClick, "Overwrite all", hoverOverwriteAll, pulseOverwriteAll, false,
 					&st.abortClick, "Abort", hoverAbort, pulseAbort, false,
+					dialogActionVisualState{},
+					dialogActionVisualState{},
+					dialogActionVisualState{},
 				)
 			})
 		}),

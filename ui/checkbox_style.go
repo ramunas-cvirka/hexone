@@ -12,6 +12,7 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/io/semantic"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -30,8 +31,9 @@ func (ui *UI) layoutThemeCheckbox(th *material.Theme, gtx layout.Context, state 
 		return layout.Dimensions{}
 	}
 	checked := state.Value
-	hovered := state.Hovered() || gtx.Focused(state)
-	boxBg, boxBorder, checkColor, labelColor := ui.themeCheckboxColors(checked, hovered, gtx.Enabled())
+	hovered := state.Hovered()
+	focused := gtx.Focused(state)
+	boxBg, boxBorder, checkColor, labelColor, frameBg, frameBorder := ui.themeCheckboxColors(checked, hovered, focused, gtx.Enabled())
 
 	return state.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		semantic.CheckBox.Add(gtx.Ops)
@@ -57,12 +59,29 @@ func (ui *UI) layoutThemeCheckbox(th *material.Theme, gtx layout.Context, state 
 			)
 		}
 		return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
+			macro := op.Record(gtx.Ops)
+			dims := layout.Flex{Alignment: layout.Middle}.Layout(gtx, children...)
+			call := macro.Stop()
+			if focused && dims.Size.X > 0 && dims.Size.Y > 0 {
+				radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
+				if radius < 1 {
+					radius = 1
+				}
+				rr := clip.UniformRRect(image.Rect(0, 0, dims.Size.X, dims.Size.Y), radius)
+				if frameBg.A != 0 {
+					paint.FillShape(gtx.Ops, frameBg, rr.Op(gtx.Ops))
+				}
+				if frameBorder.A != 0 {
+					paint.FillShape(gtx.Ops, frameBorder, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1}.Op())
+				}
+			}
+			call.Add(gtx.Ops)
+			return dims
 		})
 	})
 }
 
-func (ui *UI) themeCheckboxColors(checked, hovered, enabled bool) (boxBg, boxBorder, checkColor, labelColor color.NRGBA) {
+func (ui *UI) themeCheckboxColors(checked, hovered, focused, enabled bool) (boxBg, boxBorder, checkColor, labelColor, frameBg, frameBorder color.NRGBA) {
 	theme := ui.filePanePopupTheme()
 	boxBg = mixNRGBA(theme.Bg, theme.ButtonBg, 0.7)
 	boxBg.A = 242
@@ -85,6 +104,17 @@ func (ui *UI) themeCheckboxColors(checked, hovered, enabled bool) (boxBg, boxBor
 		boxBorder.A = 176
 		labelColor = mixNRGBA(labelColor, theme.ActiveText, 0.16)
 	}
+	if focused {
+		frameBg = mixNRGBA(theme.Bg, theme.ActiveBg, 0.62)
+		frameBg.A = 28
+		frameBorder = mixNRGBA(theme.Border, theme.ActiveText, 0.48)
+		frameBorder.A = 110
+		boxBg = mixNRGBA(boxBg, theme.ActiveBg, 0.26)
+		boxBg.A = 248
+		boxBorder = mixNRGBA(boxBorder, theme.ActiveText, 0.42)
+		boxBorder.A = 212
+		labelColor = mixNRGBA(labelColor, theme.ActiveText, 0.34)
+	}
 	if !enabled {
 		boxBg = mixNRGBA(boxBg, theme.Bg, 0.46)
 		boxBg.A = 220
@@ -92,8 +122,10 @@ func (ui *UI) themeCheckboxColors(checked, hovered, enabled bool) (boxBg, boxBor
 		boxBorder.A = 118
 		checkColor = theme.DisabledText
 		labelColor = theme.DisabledText
+		frameBg = mixNRGBA(frameBg, theme.Bg, 0.5)
+		frameBorder = mixNRGBA(frameBorder, theme.Bg, 0.5)
 	}
-	return boxBg, boxBorder, checkColor, labelColor
+	return boxBg, boxBorder, checkColor, labelColor, frameBg, frameBorder
 }
 
 func (ui *UI) layoutThemeCheckboxBox(gtx layout.Context, checked bool, bg, border, check color.NRGBA) layout.Dimensions {

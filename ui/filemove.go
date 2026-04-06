@@ -57,7 +57,24 @@ type fileMoveState struct {
 
 	doneCh      chan error
 	actionsAnim segmentedAnimState
+	keyFocus    dialogKeyboardFocusState
+	focus       fileMoveDialogFocus
+	actionFocus fileMoveDialogAction
 }
+
+type fileMoveDialogFocus uint8
+
+const (
+	fileMoveDialogFocusDestination fileMoveDialogFocus = iota
+	fileMoveDialogFocusActions
+)
+
+type fileMoveDialogAction uint8
+
+const (
+	fileMoveDialogActionCancel fileMoveDialogAction = iota
+	fileMoveDialogActionConfirm
+)
 
 type fileMoveSource struct {
 	Path string
@@ -168,6 +185,8 @@ func (ui *UI) startFileMoveDialog(idx int, now time.Time) {
 	st.dstEdit.SetText(targetDefault)
 	st.dstEdit.SetCaret(st.dstEdit.Len(), st.dstEdit.Len())
 	st.dstEditWant = true
+	st.focus = fileMoveDialogFocusDestination
+	st.actionFocus = fileMoveDialogActionConfirm
 	st.refreshPreview()
 
 	ui.fileMove = st
@@ -181,6 +200,96 @@ func (ui *UI) clearFileMoveHotkeyHold() {
 		return
 	}
 	ui.held[fileActionKey(fileActionRenameMove)] = false
+}
+
+func (st *fileMoveState) destinationEditable() bool {
+	return st != nil && !st.running
+}
+
+func (st *fileMoveState) focusOrder() []fileMoveDialogFocus {
+	if st == nil {
+		return nil
+	}
+	order := make([]fileMoveDialogFocus, 0, 3)
+	if st.destinationEditable() {
+		order = append(order, fileMoveDialogFocusDestination)
+	}
+	order = append(order, fileMoveDialogFocusActions)
+	return order
+}
+
+func (st *fileMoveState) syncEditorFocus(gtx layout.Context) {
+	if st == nil || !st.destinationEditable() {
+		return
+	}
+	if gtx.Focused(&st.dstEdit) {
+		st.focus = fileMoveDialogFocusDestination
+	}
+}
+
+func (st *fileMoveState) setFocus(target fileMoveDialogFocus) bool {
+	if st == nil {
+		return false
+	}
+	if target == fileMoveDialogFocusDestination && !st.destinationEditable() {
+		return false
+	}
+	changed := st.focus != target
+	st.focus = target
+	switch target {
+	case fileMoveDialogFocusDestination:
+		st.dstEditWant = true
+	default:
+		st.dstEditWant = false
+		st.keyFocus.focusKeyboard()
+	}
+	return changed
+}
+
+func (st *fileMoveState) stepFocus(step int) bool {
+	order := st.focusOrder()
+	if len(order) == 0 {
+		return false
+	}
+	current := -1
+	for i, target := range order {
+		if target == st.focus {
+			current = i
+			break
+		}
+	}
+	return st.setFocus(order[dialogWrappedIndex(current, len(order), step)])
+}
+
+func (st *fileMoveState) stepAction(step int) bool {
+	if st == nil {
+		return false
+	}
+	order := []fileMoveDialogAction{fileMoveDialogActionCancel, fileMoveDialogActionConfirm}
+	current := 0
+	for i, action := range order {
+		if action == st.actionFocus {
+			current = i
+			break
+		}
+	}
+	next := order[dialogWrappedIndex(current, len(order), step)]
+	if next == st.actionFocus {
+		return false
+	}
+	st.actionFocus = next
+	return true
+}
+
+func (st *fileMoveState) actionVisualState(target fileMoveDialogAction) dialogActionVisualState {
+	if st == nil || st.running {
+		return dialogActionVisualState{}
+	}
+	if st.focus == fileMoveDialogFocusActions {
+		active := st.actionFocus == target
+		return dialogActionVisualState{Focused: active, Default: active}
+	}
+	return dialogActionVisualState{Default: target == fileMoveDialogActionConfirm}
 }
 
 func (st *fileMoveState) multiSource() bool {
@@ -556,26 +665,91 @@ func (ui *UI) layoutFileMoveDialog(th *material.Theme, gtx layout.Context) layou
 		return layout.Dimensions{}
 	}
 
-	for _, name := range []key.Name{key.NameEscape, key.NameEnter, key.NameReturn} {
-		for {
-			ev, ok := gtx.Event(key.Filter{Name: name})
-			if !ok {
-				break
-			}
-			ke, ok := ev.(key.Event)
-			if !ok || ke.State != key.Press {
+	st.keyFocus.attach(gtx)
+	st.syncEditorFocus(gtx)
+	anyMods := ^key.Modifiers(0)
+
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Focus: &st.dstEdit, Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Focus: &st.dstEdit, Name: key.NameReturn, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press || st.running || ke.Modifiers != 0 {
+			continue
+		}
+		st.actionsAnim.setPulse("confirm", gtx.Now)
+		ui.submitFileMoveDialog(gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameEscape, Optional: anyMods},
+			key.Filter{Name: key.NameTab, Optional: anyMods},
+			key.Filter{Name: key.NameEnter, Optional: anyMods},
+			key.Filter{Name: key.NameReturn, Optional: anyMods},
+			key.Filter{Name: key.NameLeftArrow, Optional: anyMods},
+			key.Filter{Name: key.NameRightArrow, Optional: anyMods},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		switch ke.Name {
+		case key.NameEscape:
+			if st.running {
 				continue
 			}
-			switch name {
-			case key.NameEscape:
-				if !st.running {
-					ui.closeFileMoveDialog()
-				}
-			case key.NameEnter, key.NameReturn:
-				if !st.running {
-					st.actionsAnim.setPulse("confirm", gtx.Now)
-					ui.submitFileMoveDialog(gtx.Now)
-				}
+			ui.closeFileMoveDialog()
+			return layout.Dimensions{}
+		case key.NameTab:
+			if st.running {
+				continue
+			}
+			step, ok := dialogTabStep(ke.Modifiers)
+			if !ok {
+				continue
+			}
+			if st.stepFocus(step) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameLeftArrow:
+			if st.running || ke.Modifiers != 0 || st.focus != fileMoveDialogFocusActions {
+				continue
+			}
+			if st.stepAction(-1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameRightArrow:
+			if st.running || ke.Modifiers != 0 || st.focus != fileMoveDialogFocusActions {
+				continue
+			}
+			if st.stepAction(1) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameEnter, key.NameReturn:
+			if st.running || ke.Modifiers != 0 {
+				continue
+			}
+			if st.focus != fileMoveDialogFocusActions {
+				continue
+			}
+			switch st.actionFocus {
+			case fileMoveDialogActionCancel:
+				st.actionsAnim.setPulse("cancel", gtx.Now)
+				ui.closeFileMoveDialog()
+				return layout.Dimensions{}
+			case fileMoveDialogActionConfirm:
+				st.actionsAnim.setPulse("confirm", gtx.Now)
+				ui.submitFileMoveDialog(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 			}
 		}
 	}
@@ -591,6 +765,7 @@ func (ui *UI) layoutFileMoveDialog(th *material.Theme, gtx layout.Context) layou
 				st.dstEdit.SetText(submit.Text)
 				st.actionsAnim.setPulse("confirm", gtx.Now)
 				ui.submitFileMoveDialog(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			if _, ok := ev.(widget.ChangeEvent); ok {
@@ -800,7 +975,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return ui.layoutEditorWithContextMenu(th, gtx, "filemove-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.dstEdit), true, ed.Layout)
+				return layoutNeutralEditorBox(gtx, st.focus == fileMoveDialogFocusDestination, true, ed.Layout)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
@@ -844,6 +1019,8 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 					th, gtx,
 					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, st.running,
 					&st.confirmClick, label, hoverConfirm, pulseConfirm, st.running,
+					st.actionVisualState(fileMoveDialogActionCancel),
+					st.actionVisualState(fileMoveDialogActionConfirm),
 				)
 			})
 		}),

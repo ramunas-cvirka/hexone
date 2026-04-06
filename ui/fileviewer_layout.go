@@ -224,6 +224,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		)
 		ui.handleFileViewerRootPointerEvents(gtx, st)
 		ui.layoutFileViewerContextMenu(th, gtx, st)
+		ui.applyFileViewerHeaderCursor(gtx, st)
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		pass := pointer.PassOp{}.Push(gtx.Ops)
 		event.Op(gtx.Ops, &st.rootPointerTag)
@@ -494,6 +495,21 @@ func (ui *UI) applyFileViewerScrollCursor(gtx layout.Context, st *fileViewerStat
 	}
 	if st.scrollbarHover {
 		defer clip.Rect(st.scrollbarTrack).Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
+	}
+}
+
+func (ui *UI) applyFileViewerHeaderCursor(gtx layout.Context, st *fileViewerState) {
+	if st == nil {
+		return
+	}
+	if st.modeFileClick.Hovered() ||
+		st.modeHexClick.Hovered() ||
+		st.modeCmdClick.Hovered() ||
+		st.historyClick.Hovered() ||
+		st.commandClick.Hovered() ||
+		st.autoRefreshClick.Hovered() ||
+		st.closeClick.Hovered() {
 		pointer.CursorPointer.Add(gtx.Ops)
 	}
 }

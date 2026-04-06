@@ -10,7 +10,7 @@ import (
 
 func encodeHexText(text string) (string, int) {
 	data := []byte(text)
-	return bytesHexSpaced(data), len(data)
+	return bytesHexCompact(data), len(data)
 }
 
 func decodeHex(hexStr string) (string, int, error) {

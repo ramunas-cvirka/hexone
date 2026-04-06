@@ -6,6 +6,7 @@ package ui
 import (
 	"image"
 	"testing"
+	"time"
 
 	"gioui.org/io/input"
 	"gioui.org/layout"
@@ -140,6 +141,25 @@ func TestStopTextSelectionDragPreservesExistingSelectionRange(t *testing.T) {
 	}
 }
 
+func TestStreamExpireCancelGraceClearsSelectionDragState(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v := &streamOutputView{
+		selectingText:  true,
+		selectID:       4,
+		cancelPending:  true,
+		cancelUntil:    now.Add(-time.Millisecond),
+		pointerOutside: true,
+	}
+
+	if !v.expireCancelGrace(now) {
+		t.Fatal("expireCancelGrace should finalize stale text selection drag state")
+	}
+	if v.selectingText || v.selectID != 0 || v.cancelPending || v.pointerOutside || v.autoScrollActive {
+		t.Fatalf("selection drag state not fully cleared: selecting=%v id=%d cancel=%v outside=%v auto=%v",
+			v.selectingText, v.selectID, v.cancelPending, v.pointerOutside, v.autoScrollActive)
+	}
+}
+
 func TestMeasureStreamOutputTooltipBoxTracksContentWidth(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
@@ -182,6 +202,126 @@ func TestMeasureStreamOutputTooltipBoxRespectsAvailableWidth(t *testing.T) {
 	}
 	if box.Y < 18 {
 		t.Fatalf("tooltip height=%d want at least 18", box.Y)
+	}
+}
+
+func TestStreamPrepareVisualScrollAnimatesSmallStep(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v := &streamOutputView{
+		lines:        []string{"0", "1", "2", "3", "4", "5"},
+		visibleLines: 2,
+		lineH:        16,
+		topLine:      0,
+	}
+	v.syncVisualTop()
+	v.topLine = 2
+
+	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); !animating {
+		t.Fatal("prepareVisualScroll should animate short viewer scroll steps")
+	}
+	if v.visualTop <= 0 || v.visualTop >= 2 {
+		t.Fatalf("visualTop=%v want between 0 and 2", v.visualTop)
+	}
+	if v.displayTop == 2 && v.displayY == 0 {
+		t.Fatalf("display state=%d/%d want interpolated position", v.displayTop, v.displayY)
+	}
+}
+
+func TestStreamPrepareVisualScrollSnapsLargeJump(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v := &streamOutputView{
+		lines:        make([]string, 40),
+		visibleLines: 4,
+		lineH:        16,
+		topLine:      0,
+	}
+	v.syncVisualTop()
+	v.topLine = 20
+
+	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); animating {
+		t.Fatal("prepareVisualScroll should snap instead of animating large jumps")
+	}
+	if v.visualTop != 20 {
+		t.Fatalf("visualTop=%v want 20", v.visualTop)
+	}
+	if v.displayTop != 20 || v.displayY != 0 {
+		t.Fatalf("display state=%d/%d want snapped 20/0", v.displayTop, v.displayY)
+	}
+}
+
+func TestStreamPrepareVisualScrollAnimatesDuringSelectionAutoScroll(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v := &streamOutputView{
+		lines:            make([]string, 40),
+		visibleLines:     4,
+		lineH:            16,
+		topLine:          0,
+		selectingText:    true,
+		autoScrollActive: true,
+	}
+	v.syncVisualTop()
+	v.topLine = 7
+
+	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); !animating {
+		t.Fatal("prepareVisualScroll should keep smoothing active during selection autoscroll")
+	}
+	if v.visualTop <= 0 || v.visualTop >= 7 {
+		t.Fatalf("visualTop=%v want between 0 and 7", v.visualTop)
+	}
+	if lag := float32(v.topLine) - v.visualTop; lag > streamSmoothAutoMaxLag+0.01 {
+		t.Fatalf("autoscroll visual lag=%v want <= %v", lag, streamSmoothAutoMaxLag)
+	}
+}
+
+func TestStreamRunAutoScrollDoesNotSnapVisualTop(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	v := &streamOutputView{
+		lines:            []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"},
+		visibleLines:     4,
+		lineH:            16,
+		textRect:         imageRect(0, 0, 120, 64),
+		topLine:          1,
+		selectingText:    true,
+		autoScrollActive: true,
+		autoScrollDir:    1,
+		autoScrollStep:   4,
+		autoScrollAt:     now,
+		selectPos:        image.Pt(40, 90),
+	}
+	v.rebuildLineOffsets()
+	v.syncVisualTop()
+
+	if !v.runAutoScroll(now) {
+		t.Fatal("runAutoScroll should advance the viewer")
+	}
+	if v.topLine != 5 {
+		t.Fatalf("topLine=%d want 5", v.topLine)
+	}
+	if v.visualTop != 1 {
+		t.Fatalf("visualTop=%v want preserved previous display position 1", v.visualTop)
+	}
+}
+
+func TestTextOffsetFromPointUsesDisplayedSmoothScrollState(t *testing.T) {
+	v := &streamOutputView{
+		lines:        []string{"aa", "bb", "cc", "dd"},
+		topLine:      2,
+		visibleLines: 2,
+		lineH:        10,
+		textRect:     imageRect(0, 0, 100, 20),
+		charAdvance:  8,
+		charW:        8,
+	}
+	v.rebuildLineOffsets()
+	v.visualTop = 1.5
+	v.visualReady = true
+	v.updateDisplayState()
+
+	if got, want := v.textOffsetFromPoint(image.Pt(1, 1)), v.lineByteStart(1); got != want {
+		t.Fatalf("text offset at top=%d want line 1 start %d", got, want)
+	}
+	if got, want := v.textOffsetFromPoint(image.Pt(1, 6)), v.lineByteStart(2); got != want {
+		t.Fatalf("text offset mid viewport=%d want line 2 start %d", got, want)
 	}
 }
 
