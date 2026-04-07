@@ -302,6 +302,7 @@ type filePaneState struct {
 	noticeText            string
 	noticeShownAt         time.Time
 	noticeUntil           time.Time
+	volumeBadge           filePaneVolumeBadgeState
 	markedRows            map[int]struct{}
 }
 
@@ -505,6 +506,7 @@ func (p *filePaneState) applyListingWithRestore(listing filesys.Listing, primary
 	p.noticeText = ""
 	p.noticeShownAt = time.Time{}
 	p.noticeUntil = time.Time{}
+	p.invalidateVolumeBadge()
 	p.stopInlineNameEdit()
 	p.clearMarkedRows()
 	if p.table != nil {

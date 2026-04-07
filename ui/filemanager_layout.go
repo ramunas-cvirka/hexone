@@ -490,6 +490,9 @@ func (ui *UI) layoutFilePanes(th *material.Theme, gtx layout.Context) layout.Dim
 			ui.layoutFilePaneSeams(gtx, visible)
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePaneVolumeBadges(th, gtx, visible)
+		}),
 	)
 }
 
@@ -543,55 +546,87 @@ func (ui *UI) layoutFilePaneSeams(gtx layout.Context, visible []visiblePane) {
 	}
 }
 
+func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context, visible []visiblePane) layout.Dimensions {
+	if len(visible) == 0 {
+		return layout.Dimensions{Size: gtx.Constraints.Max}
+	}
+	widths := paneColumnWidths(gtx.Constraints.Max.X, len(visible))
+	x := 0
+	for i, item := range visible {
+		paneWidth := widths[i]
+		if paneWidth <= 0 || item.pane == nil {
+			x += paneWidth
+			continue
+		}
+		paneRect := image.Rect(x, 0, x+paneWidth, gtx.Constraints.Max.Y)
+		x += paneWidth
+
+		m := op.Record(gtx.Ops)
+		paneGtx := gtx
+		paneGtx.Constraints = layout.Constraints{Max: paneRect.Size()}
+		ui.layoutFilePaneVolumeBadge(th, paneGtx, item.idx, item.pane, item.idx == ui.activeFilePane, filePanePaletteFromConfig(ui.fmCfg))
+		call := m.Stop()
+
+		stack := op.Offset(paneRect.Min).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		stack.Pop()
+	}
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
 func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
 	active := idx == ui.activeFilePane
 	palette := filePanePaletteFromConfig(ui.fmCfg)
 	accent := filePaneActiveBorderColor(palette.PaneBg)
 	shade := filePaneInactiveShadeColor(ui.fmCfg, palette.PaneBg)
 
-	return layoutFilePaneChrome(gtx, active, accent, shade, func(gtx layout.Context) layout.Dimensions {
-		return fillFilePaneBox(gtx, palette.PaneBg, func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Stack{}.Layout(gtx,
-					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								dims := ui.layoutFilePaneHeader(th, gtx, idx, pane, active)
-								pane.headerHeight = dims.Size.Y
-								return dims
+	return layout.Stack{}.Layout(gtx,
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			return layoutFilePaneChrome(gtx, active, accent, shade, func(gtx layout.Context) layout.Dimensions {
+				return fillFilePaneBox(gtx, palette.PaneBg, func(gtx layout.Context) layout.Dimensions {
+					return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Stack{}.Layout(gtx,
+							layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										dims := ui.layoutFilePaneHeader(th, gtx, idx, pane, active)
+										pane.headerHeight = dims.Size.Y
+										return dims
+									}),
+									layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										if pane.err == "" {
+											return layout.Dimensions{}
+										}
+										lbl := material.Body2(th, pane.err)
+										lbl.Font.Typeface = ui.mainTypeface()
+										lbl.Color = color.NRGBA{R: 240, G: 90, B: 90, A: 255}
+										lbl.MaxLines = 2
+										return lbl.Layout(gtx)
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										if pane.err == "" {
+											return layout.Dimensions{}
+										}
+										return layout.Spacer{Height: unit.Dp(2)}.Layout(gtx)
+									}),
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										return ui.layoutFilePaneBody(th, gtx, idx, pane)
+									}),
+								)
 							}),
-							layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								if pane.err == "" {
-									return layout.Dimensions{}
-								}
-								lbl := material.Body2(th, pane.err)
-								lbl.Font.Typeface = ui.mainTypeface()
-								lbl.Color = color.NRGBA{R: 240, G: 90, B: 90, A: 255}
-								lbl.MaxLines = 2
-								return lbl.Layout(gtx)
+							layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutFilePaneDriveMenu(th, gtx, idx, pane)
 							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								if pane.err == "" {
-									return layout.Dimensions{}
-								}
-								return layout.Spacer{Height: unit.Dp(2)}.Layout(gtx)
-							}),
-							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutFilePaneBody(th, gtx, idx, pane)
+							layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutFilePaneFavoriteMenu(th, gtx, idx, pane)
 							}),
 						)
-					}),
-					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFilePaneDriveMenu(th, gtx, idx, pane)
-					}),
-					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFilePaneFavoriteMenu(th, gtx, idx, pane)
-					}),
-				)
+					})
+				})
 			})
-		})
-	})
+		}),
+	)
 }
 
 func (ui *UI) layoutFilePaneBody(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
