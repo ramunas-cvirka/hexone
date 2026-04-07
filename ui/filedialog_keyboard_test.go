@@ -249,6 +249,156 @@ func TestFileMoveDialogFocusedDestinationEnterSubmits(t *testing.T) {
 	}
 }
 
+func TestFileCreateDialogFocusedNameArrowKeysMoveCaret(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := &fileCreateState{
+		kind:        fileCreateKindFolder,
+		kindPrev:    fileCreateKindFolder,
+		kindFocus:   fileCreateKindFolder,
+		focus:       fileCreateDialogFocusName,
+		actionFocus: fileCreateDialogActionConfirm,
+	}
+	st.nameEdit.SingleLine = true
+	st.nameEdit.Submit = true
+	st.nameEdit.SetText("demo")
+	st.nameEdit.SetCaret(2, 2)
+	st.nameEditWant = true
+	ui.fileCreate = st
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutFileCreateDialog(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	frame(now.Add(time.Millisecond))
+
+	router.Queue(key.Event{Name: key.NameLeftArrow, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+	if start, end := st.nameEdit.Selection(); start != 1 || end != 1 {
+		t.Fatalf("caret after LeftArrow = (%d, %d), want (1, 1)", start, end)
+	}
+	if st.kind != fileCreateKindFolder || st.kindFocus != fileCreateKindFolder {
+		t.Fatalf("kind changed unexpectedly: kind=%v focus=%v", st.kind, st.kindFocus)
+	}
+
+	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+	if start, end := st.nameEdit.Selection(); start != 2 || end != 2 {
+		t.Fatalf("caret after RightArrow = (%d, %d), want (2, 2)", start, end)
+	}
+	if st.kind != fileCreateKindFolder || st.kindFocus != fileCreateKindFolder {
+		t.Fatalf("kind changed unexpectedly after RightArrow: kind=%v focus=%v", st.kind, st.kindFocus)
+	}
+}
+
+func TestFileCopyDialogFocusedDestinationArrowKeysMoveCaret(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := &fileCopyState{
+		srcPath:     "source.txt",
+		srcEndpoint: copyEndpoint{dir: "."},
+		dstEndpoint: copyEndpoint{dir: "."},
+		focus:       fileCopyDialogFocusDestination,
+		actionFocus: fileCopyDialogActionConfirm,
+	}
+	st.dstEdit.SingleLine = true
+	st.dstEdit.Submit = true
+	st.dstEdit.SetText("copy.txt")
+	st.dstEdit.SetCaret(2, 2)
+	st.dstEditWant = true
+	ui.fileCopy = st
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutFileCopyDialog(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	frame(now.Add(time.Millisecond))
+
+	router.Queue(key.Event{Name: key.NameLeftArrow, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+	if start, end := st.dstEdit.Selection(); start != 1 || end != 1 {
+		t.Fatalf("caret after LeftArrow = (%d, %d), want (1, 1)", start, end)
+	}
+	if st.actionFocus != fileCopyDialogActionConfirm {
+		t.Fatalf("action focus changed unexpectedly: %v", st.actionFocus)
+	}
+
+	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+	if start, end := st.dstEdit.Selection(); start != 2 || end != 2 {
+		t.Fatalf("caret after RightArrow = (%d, %d), want (2, 2)", start, end)
+	}
+	if st.actionFocus != fileCopyDialogActionConfirm {
+		t.Fatalf("action focus changed unexpectedly after RightArrow: %v", st.actionFocus)
+	}
+}
+
+func TestFileMoveDialogFocusedDestinationArrowKeysMoveCaret(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := &fileMoveState{
+		srcPath:     "source.txt",
+		srcName:     "source.txt",
+		endpoint:    copyEndpoint{dir: "."},
+		focus:       fileMoveDialogFocusDestination,
+		actionFocus: fileMoveDialogActionConfirm,
+	}
+	st.dstEdit.SingleLine = true
+	st.dstEdit.Submit = true
+	st.dstEdit.SetText("move.txt")
+	st.dstEdit.SetCaret(2, 2)
+	st.dstEditWant = true
+	ui.fileMove = st
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutFileMoveDialog(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	frame(now.Add(time.Millisecond))
+
+	router.Queue(key.Event{Name: key.NameLeftArrow, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+	if start, end := st.dstEdit.Selection(); start != 1 || end != 1 {
+		t.Fatalf("caret after LeftArrow = (%d, %d), want (1, 1)", start, end)
+	}
+	if st.actionFocus != fileMoveDialogActionConfirm {
+		t.Fatalf("action focus changed unexpectedly: %v", st.actionFocus)
+	}
+
+	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+	if start, end := st.dstEdit.Selection(); start != 2 || end != 2 {
+		t.Fatalf("caret after RightArrow = (%d, %d), want (2, 2)", start, end)
+	}
+	if st.actionFocus != fileMoveDialogActionConfirm {
+		t.Fatalf("action focus changed unexpectedly after RightArrow: %v", st.actionFocus)
+	}
+}
+
 func TestFileCopyDialogKeyboardFocusCyclesToActionGroup(t *testing.T) {
 	st := &fileCopyState{
 		focus:       fileCopyDialogFocusDestination,
