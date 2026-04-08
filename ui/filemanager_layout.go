@@ -51,6 +51,7 @@ type visiblePane struct {
 
 func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.pumpFilePaneLoads(gtx)
+	ui.pumpFilePaneLocalRefresh(gtx)
 	ui.pumpFileViewerState(gtx)
 	ui.pumpFileCopyState(gtx)
 	ui.pumpArchiveExtractState(gtx)
