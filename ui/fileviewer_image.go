@@ -6,6 +6,7 @@ package ui
 import (
 	"image"
 	"math"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
@@ -41,6 +42,10 @@ type imagePreviewView struct {
 	zoom        float32
 	scrollX     int
 	scrollY     int
+	visualX     float32
+	visualY     float32
+	visualReady bool
+	visualAt    time.Time
 	wheelCarryX float32
 	wheelCarryY float32
 
@@ -78,6 +83,10 @@ func (v *imagePreviewView) reset() {
 	v.zoom = 1
 	v.scrollX = 0
 	v.scrollY = 0
+	v.visualX = 0
+	v.visualY = 0
+	v.visualReady = false
+	v.visualAt = time.Time{}
 	v.wheelCarryX = 0
 	v.wheelCarryY = 0
 	v.hoverVTrack = false
@@ -140,6 +149,127 @@ func (v *imagePreviewView) clampScroll(img image.Image) bool {
 	v.scrollX = nextX
 	v.scrollY = nextY
 	return changed
+}
+
+func (v *imagePreviewView) syncVisualScroll() {
+	if v == nil {
+		return
+	}
+	v.visualX = float32(v.scrollX)
+	v.visualY = float32(v.scrollY)
+	v.visualReady = true
+	v.visualAt = time.Time{}
+}
+
+func (v *imagePreviewView) smoothJumpLimit() float32 {
+	if v == nil {
+		return float32(fileViewerImageKeyStepPx * 6)
+	}
+	limit := float32(fileViewerImageKeyStepPx * 6)
+	if view := float32(v.viewportRect.Dx()) * 0.75; view > limit {
+		limit = view
+	}
+	if view := float32(v.viewportRect.Dy()) * 0.75; view > limit {
+		limit = view
+	}
+	return limit
+}
+
+func (v *imagePreviewView) prepareVisualScroll(now time.Time, smooth bool, img image.Image) bool {
+	if v == nil {
+		return false
+	}
+	targetX := float32(v.scrollX)
+	targetY := float32(v.scrollY)
+	if !v.visualReady {
+		v.visualX = targetX
+		v.visualY = targetY
+		v.visualReady = true
+		v.visualAt = now
+		return false
+	}
+	if !smooth || v.vDragging || v.hDragging {
+		v.visualX = targetX
+		v.visualY = targetY
+		v.visualAt = now
+		return false
+	}
+	if float32Abs(targetX-v.visualX) > v.smoothJumpLimit() || float32Abs(targetY-v.visualY) > v.smoothJumpLimit() {
+		v.visualX = targetX
+		v.visualY = targetY
+		v.visualAt = now
+		return false
+	}
+	if v.visualAt.IsZero() {
+		v.visualAt = now
+	}
+	dt := now.Sub(v.visualAt)
+	if dt < 0 {
+		dt = 0
+	}
+	if dt > 120*time.Millisecond {
+		v.visualX = targetX
+		v.visualY = targetY
+		v.visualAt = now
+		return false
+	}
+	if dt == 0 && (targetX != v.visualX || targetY != v.visualY) {
+		dt = streamSmoothTick
+	}
+	if dt > 0 {
+		blend := float32(1 - math.Exp(-float64(dt)/float64(streamSmoothTau)))
+		blend = clamp01(blend)
+		v.visualX += (targetX - v.visualX) * blend
+		v.visualY += (targetY - v.visualY) * blend
+	}
+	v.visualAt = now
+	maxX, maxY := v.maxScroll(img)
+	if v.visualX < 0 {
+		v.visualX = 0
+	}
+	if v.visualY < 0 {
+		v.visualY = 0
+	}
+	if v.visualX > float32(maxX) {
+		v.visualX = float32(maxX)
+	}
+	if v.visualY > float32(maxY) {
+		v.visualY = float32(maxY)
+	}
+	if float32Abs(targetX-v.visualX) < streamSmoothSnapEpsilon && float32Abs(targetY-v.visualY) < streamSmoothSnapEpsilon {
+		v.visualX = targetX
+		v.visualY = targetY
+		return false
+	}
+	return true
+}
+
+func (v *imagePreviewView) displayScroll(img image.Image) (int, int) {
+	if v == nil {
+		return 0, 0
+	}
+	x := v.scrollX
+	y := v.scrollY
+	if v.visualReady {
+		x = int(math.Round(float64(v.visualX)))
+		y = int(math.Round(float64(v.visualY)))
+	}
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	if img != nil {
+		maxX, maxY := v.maxScroll(img)
+		if x > maxX {
+			x = maxX
+		}
+		if y > maxY {
+			y = maxY
+		}
+	}
+	return x, y
 }
 
 func (v *imagePreviewView) scrollByPixels(img image.Image, dx, dy int) bool {
@@ -309,6 +439,17 @@ func (v *imagePreviewView) computeScrollbars(content image.Point, scrollbarPx in
 	if v == nil || scrollbarPx <= 0 {
 		return
 	}
+	displayX, displayY := v.displayScroll(nil)
+	if content.X > 0 || content.Y > 0 {
+		maxX := max(0, content.X-v.viewportRect.Dx())
+		maxY := max(0, content.Y-v.viewportRect.Dy())
+		if displayX > maxX {
+			displayX = maxX
+		}
+		if displayY > maxY {
+			displayY = maxY
+		}
+	}
 	if needV {
 		track := image.Rect(v.viewportRect.Max.X, v.surfaceRect.Min.Y, v.surfaceRect.Max.X, v.viewportRect.Max.Y)
 		if track.Dx() < 1 {
@@ -318,7 +459,7 @@ func (v *imagePreviewView) computeScrollbars(content image.Point, scrollbarPx in
 			track.Max.Y = track.Min.Y + 1
 		}
 		v.vTrackRect = track
-		v.vThumbRect = viewerImagePreviewThumbRect(track, v.viewportRect.Dy(), content.Y, v.scrollY, true)
+		v.vThumbRect = viewerImagePreviewThumbRect(track, v.viewportRect.Dy(), content.Y, displayY, true)
 	}
 	if needH {
 		track := image.Rect(v.surfaceRect.Min.X, v.viewportRect.Max.Y, v.viewportRect.Max.X, v.surfaceRect.Max.Y)
@@ -329,7 +470,7 @@ func (v *imagePreviewView) computeScrollbars(content image.Point, scrollbarPx in
 			track.Max.Y = track.Min.Y + 1
 		}
 		v.hTrackRect = track
-		v.hThumbRect = viewerImagePreviewThumbRect(track, v.viewportRect.Dx(), content.X, v.scrollX, false)
+		v.hThumbRect = viewerImagePreviewThumbRect(track, v.viewportRect.Dx(), content.X, displayX, false)
 	}
 }
 
@@ -495,7 +636,11 @@ func (ui *UI) layoutImageOutputView(_ *material.Theme, gtx layout.Context, st *f
 	}
 	v.computeLayout(size, 0, scrollbarPx, st.imagePreview)
 	ui.handleImagePreviewEvents(gtx, st)
+	animating := v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg), st.imagePreview)
 	v.computeLayout(size, 0, scrollbarPx, st.imagePreview)
+	if animating {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(streamSmoothTick)})
+	}
 	ui.paintImagePreview(gtx, st)
 	ui.paintImagePreviewScrollbars(gtx, st)
 	ui.applyImagePreviewCursor(gtx, st)
@@ -624,7 +769,8 @@ func (ui *UI) paintImagePreview(gtx layout.Context, st *fileViewerState) {
 		return
 	}
 	defer clip.Rect(v.viewportRect).Push(gtx.Ops).Pop()
-	offset := op.Offset(image.Pt(v.viewportRect.Min.X-v.scrollX, v.viewportRect.Min.Y-v.scrollY)).Push(gtx.Ops)
+	displayX, displayY := v.displayScroll(st.imagePreview)
+	offset := op.Offset(image.Pt(v.viewportRect.Min.X-displayX, v.viewportRect.Min.Y-displayY)).Push(gtx.Ops)
 	defer offset.Pop()
 	zoom := v.effectiveZoom()
 	if zoom != 1 {

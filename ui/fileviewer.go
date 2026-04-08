@@ -180,6 +180,7 @@ type fileViewerState struct {
 	historyClicks    map[string]*widget.Clickable
 	tabAnim          segmentedAnimState
 	menuHoverAnim    segmentedAnimState
+	activeTabRect    image.Rectangle
 	encodingBarRect  image.Rectangle
 	encodingMenuRect image.Rectangle
 	encodingMenuAt   time.Time

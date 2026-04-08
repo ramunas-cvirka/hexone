@@ -5067,9 +5067,8 @@ func (ui *UI) layoutSettingsViewerPreview(th *material.Theme, gtx layout.Context
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return previewUI.layoutSettingsViewerPreviewHeader(th, gtx, previewState, theme)
 						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(10), Top: unit.Dp(4), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 										return previewUI.layoutSettingsViewerPreviewContent(th, gtx, st, theme, &previewUI)
@@ -5090,25 +5089,8 @@ func (ui *UI) layoutSettingsViewerPreview(th *material.Theme, gtx layout.Context
 
 func (ui *UI) layoutSettingsViewerPreviewHeader(th *material.Theme, gtx layout.Context, previewState *fileViewerState, theme fileViewerTheme) layout.Dimensions {
 	stripH := ui.viewerHeaderStripHeight(gtx)
-	return fillRoundedBox(
-		gtx,
-		0,
-		theme.HeaderBg,
-		color.NRGBA{},
-		func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileViewerModeTabs(th, gtx, previewState, stripH)
-					}),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH)}
-					}),
-				)
-			})
-		},
-	)
+	_ = theme
+	return ui.layoutFileViewerHeaderRow(th, gtx, previewState, stripH)
 }
 
 func (ui *UI) layoutSettingsViewerPreviewScrollbar(gtx layout.Context, theme fileViewerTheme) layout.Dimensions {

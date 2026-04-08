@@ -20,6 +20,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -153,9 +154,6 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 
 		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutFileViewerHeader(th, gtx, st)
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if st.err == "" {
 					return layout.Dimensions{}
 				}
@@ -172,18 +170,17 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(2), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return fillBgExact(gtx, theme.PanelBg, func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-					return fillRoundedBox(
-						gtx,
-						gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-						theme.PanelBg,
-						theme.PanelBorder,
-						func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutFileViewerHeader(th, gtx, st)
+						}),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							gtx.Constraints.Min.X = gtx.Constraints.Max.X
 							gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-							return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(10), Top: unit.Dp(4), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								gtx.Constraints.Min.X = gtx.Constraints.Max.X
 								gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
 								return layout.Stack{}.Layout(gtx,
@@ -217,7 +214,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 									}),
 								)
 							})
-						},
+						}),
 					)
 				})
 			}),
@@ -623,54 +620,19 @@ func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Con
 func (ui *UI) layoutFileViewerHeader(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
 	history := ui.viewerHistoryCommands(st.command)
 	stripH := ui.viewerHeaderStripHeight(gtx)
-	theme := ui.fileViewerTheme()
-
-	return fillRoundedBox(
-		gtx,
-		0,
-		theme.HeaderBg,
-		color.NRGBA{},
-		func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				row := layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					children := []layout.FlexChild{
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutFileViewerModeTabs(th, gtx, st, stripH)
-						}),
-					}
-					if st.mode == "command" {
-						children = append(children,
-							layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutFileViewerInlineCommand(th, gtx, st, stripH)
-							}),
-						)
-					}
-					children = append(children,
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH)}
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutFileViewerInfoButtons(th, gtx, st, stripH)
-						}),
-					)
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
-				})
-
-				if !st.historyOpen {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, row)
-				}
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					row,
-					layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileViewerHistoryList(th, gtx, st, history)
-					}),
-				)
+	row := layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFileViewerHeaderRow(th, gtx, st, stripH)
+	})
+	if !st.historyOpen {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, row)
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		row,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFileViewerHistoryList(th, gtx, st, history)
 			})
-		},
+		}),
 	)
 }
 
@@ -1487,7 +1449,7 @@ func (ui *UI) layoutFileViewerModeTabs(th *material.Theme, gtx layout.Context, s
 		animPos {
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, ui.viewerTextSize(), []slidingTabSpec{
+	specs := []slidingTabSpec{
 		{
 			Label:      "File",
 			Click:      &st.modeFileClick,
@@ -1516,7 +1478,231 @@ func (ui *UI) layoutFileViewerModeTabs(th *material.Theme, gtx layout.Context, s
 			HoverFill:  hoverHistory,
 			PulseFill:  pulseHistory,
 		},
+	}
+	widths := ui.slidingTabWidths(th, gtx, ui.viewerTextSize(), specs)
+	labelWidths := make([]int, len(specs))
+	starts := make([]int, len(widths))
+	totalW := 0
+	for i, spec := range specs {
+		lbl := material.Body2(th, spec.Label)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Weight = font.Medium
+		lbl.TextSize = ui.viewerTextSize()
+		lbl.MaxLines = 1
+		labelWidths[i] = measureLabelUnconstrained(gtx, lbl).Size.X
+		starts[i] = totalW
+		totalW += widths[i]
+	}
+	if totalW < len(specs) {
+		totalW = len(specs)
+	}
+
+	theme := ui.fileViewerTheme()
+	inactiveText := mixNRGBA(theme.Muted, theme.HeaderText, 0.08)
+	inactiveText.A = 196
+	activeText := mixNRGBA(theme.Text, theme.HeaderText, 0.1)
+	activeText.A = 0xFF
+	hoverBg := mixNRGBA(theme.HeaderBg, theme.Text, 0.14)
+	hoverBg.A = 20
+	pressBg := mixNRGBA(theme.HeaderBg, theme.Text, 0.22)
+	pressBg.A = 34
+	inactiveTabBg := mixNRGBA(theme.HeaderBg, theme.PanelBg, 0.16)
+	inactiveTabBg.A = 26
+	inactiveTabBorder := mixNRGBA(theme.Divider, theme.HeaderText, 0.22)
+	inactiveTabBorder.A = 44
+	activeTabBg := theme.PanelBg
+	activeTabBorder := mixNRGBA(theme.Divider, theme.HeaderText, 0.4)
+	activeTabBorder.A = 86
+	activeTabAccent := mixNRGBA(theme.StatusAccent, theme.Text, 0.34)
+	activeTabAccent.A = 208
+	baseIdx := int(pos)
+	if baseIdx < 0 {
+		baseIdx = 0
+	}
+	if baseIdx > len(widths)-1 {
+		baseIdx = len(widths) - 1
+	}
+	nextIdx := baseIdx + 1
+	if nextIdx > len(widths)-1 {
+		nextIdx = len(widths) - 1
+	}
+	frac := pos - float32(baseIdx)
+	activeTabX := int(float32(starts[baseIdx]) + float32(starts[nextIdx]-starts[baseIdx])*frac)
+	activeTabW := int(float32(widths[baseIdx]) + float32(widths[nextIdx]-widths[baseIdx])*frac)
+	if activeTabW < 1 {
+		activeTabW = 1
+	}
+	st.activeTabRect = image.Rect(activeTabX, 0, activeTabX+activeTabW, stripH)
+
+	return fixedWidth(gtx, totalW, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+			m := op.Record(gtx.Ops)
+			children := make([]layout.FlexChild, 0, len(specs))
+			for i, spec := range specs {
+				i := i
+				spec := spec
+				segW := widths[i]
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, segW, func(gtx layout.Context) layout.Dimensions {
+						return spec.Click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							activeFill := smoothstep01(clamp01(spec.ActiveFill))
+							hoverFill := smoothstep01(clamp01(spec.HoverFill))
+							pulseFill := smoothstep01(clamp01(spec.PulseFill))
+							bg := color.NRGBA{}
+							bg = mixNRGBA(bg, hoverBg, hoverFill*(1-activeFill)*0.72)
+							bg = mixNRGBA(bg, pressBg, pulseFill*(1-activeFill)*0.34)
+							fg := mixNRGBA(inactiveText, activeText, clamp01(activeFill*0.98+hoverFill*0.12))
+							weight := font.Normal
+							if activeFill >= 0.35 {
+								weight = font.Medium
+							}
+							dims := fillSegmentBg(gtx, bg, 0, true, true, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10), Top: unit.Dp(3), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(th, spec.Label)
+									lbl.Font.Typeface = ui.mainTypeface()
+									lbl.Font.Weight = weight
+									lbl.TextSize = ui.viewerTextSize()
+									lbl.Color = fg
+									lbl.MaxLines = 1
+									lbl.Alignment = text.Middle
+									defer clip.Rect(image.Rectangle{Max: image.Pt(segW, stripH)}).Push(gtx.Ops).Pop()
+									pointer.CursorPointer.Add(gtx.Ops)
+									return layoutVCenteredLabel(gtx, lbl)
+								})
+							})
+							return dims
+						})
+					})
+				}))
+			}
+			dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+			call := m.Stop()
+			for i := range specs {
+				rect := image.Rect(starts[i], 0, starts[i]+widths[i], dims.Size.Y)
+				ui.paintFileViewerTabShell(gtx, rect, inactiveTabBg, inactiveTabBorder)
+			}
+			ui.paintFileViewerAttachedTab(gtx, image.Rect(activeTabX, 0, activeTabX+activeTabW, dims.Size.Y), activeTabBg, activeTabBorder, activeTabAccent)
+			call.Add(gtx.Ops)
+			return dims
+		})
 	})
+}
+
+func (ui *UI) layoutFileViewerHeaderRow(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	dims := layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		children := []layout.FlexChild{
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFileViewerModeTabs(th, gtx, st, stripH)
+			}),
+		}
+		if st.mode == "command" {
+			children = append(children,
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutFileViewerInlineCommand(th, gtx, st, stripH)
+				}),
+			)
+		}
+		children = append(children,
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH)}
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFileViewerInfoButtons(th, gtx, st, stripH)
+			}),
+		)
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+	})
+	call := m.Stop()
+	ui.paintFileViewerHeaderDivider(gtx, dims.Size, st)
+	call.Add(gtx.Ops)
+	return dims
+}
+
+func (ui *UI) paintFileViewerAttachedTab(gtx layout.Context, rect image.Rectangle, bg, border, accent color.NRGBA) {
+	if rect.Dx() <= 0 || rect.Dy() <= 0 {
+		return
+	}
+	rr := clip.RRect{Rect: rect}
+	paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+	if border.A != 0 {
+		paint.FillShape(gtx.Ops, border, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1}.Op())
+	}
+	if rect.Dx() > 2 {
+		maskY := rect.Max.Y - 1
+		if maskY < rect.Min.Y {
+			maskY = rect.Min.Y
+		}
+		paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rect(rect.Min.X+1, maskY, rect.Max.X-1, rect.Max.Y)).Op())
+	}
+	accentH := gtx.Dp(unit.Dp(1))
+	if accentH < 1 {
+		accentH = 1
+	}
+	accentRect := image.Rect(rect.Min.X+1, rect.Min.Y, rect.Max.X-1, rect.Min.Y+accentH)
+	if accentRect.Dx() > 0 && accentRect.Dy() > 0 {
+		paint.FillShape(gtx.Ops, accent, clip.Rect(accentRect).Op())
+	}
+}
+
+func (ui *UI) paintFileViewerTabShell(gtx layout.Context, rect image.Rectangle, bg, border color.NRGBA) {
+	if rect.Dx() <= 0 || rect.Dy() <= 0 {
+		return
+	}
+	rr := clip.RRect{Rect: rect}
+	if bg.A != 0 {
+		paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+	}
+	if border.A != 0 {
+		paint.FillShape(gtx.Ops, border, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1}.Op())
+	}
+}
+
+func (ui *UI) paintFileViewerHeaderDivider(gtx layout.Context, size image.Point, st *fileViewerState) {
+	if size.X < 1 || size.Y < 1 {
+		return
+	}
+	theme := ui.fileViewerTheme()
+	paint.FillShape(gtx.Ops, theme.HeaderBg, clip.Rect(image.Rect(0, 0, size.X, size.Y)).Op())
+	inset := gtx.Dp(unit.Dp(8))
+	if inset*2 >= size.X {
+		inset = 0
+	}
+	h := gtx.Dp(unit.Dp(1))
+	if h < 1 {
+		h = 1
+	}
+	y0 := size.Y - h
+	if y0 < 0 {
+		y0 = 0
+	}
+	baseRect := image.Rect(inset, y0, size.X-inset, size.Y)
+	if baseRect.Dx() <= 0 || baseRect.Dy() <= 0 {
+		return
+	}
+	gapMin := baseRect.Max.X
+	gapMax := baseRect.Max.X
+	if st != nil && st.activeTabRect.Dx() > 0 {
+		gapMin = inset + st.activeTabRect.Min.X - 1
+		gapMax = inset + st.activeTabRect.Max.X + 1
+		if gapMin < baseRect.Min.X {
+			gapMin = baseRect.Min.X
+		}
+		if gapMax > baseRect.Max.X {
+			gapMax = baseRect.Max.X
+		}
+		if gapMax < gapMin {
+			gapMax = gapMin
+		}
+	}
+	if gapMin > baseRect.Min.X {
+		paint.FillShape(gtx.Ops, theme.Divider, clip.Rect(image.Rect(baseRect.Min.X, baseRect.Min.Y, gapMin, baseRect.Max.Y)).Op())
+	}
+	if gapMax < baseRect.Max.X {
+		paint.FillShape(gtx.Ops, theme.Divider, clip.Rect(image.Rect(gapMax, baseRect.Min.Y, baseRect.Max.X, baseRect.Max.Y)).Op())
+	}
 }
 
 func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {

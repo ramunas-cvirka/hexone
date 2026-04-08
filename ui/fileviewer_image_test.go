@@ -78,6 +78,34 @@ func TestImagePreviewViewZoomByKeepsTopLeftAnchor(t *testing.T) {
 	}
 }
 
+func TestImagePreviewViewPrepareVisualScrollAnimatesTowardTarget(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 800, 600))
+	now := time.Date(2026, time.April, 8, 8, 0, 0, 0, time.UTC)
+	v := imagePreviewView{
+		zoom:         1,
+		viewportRect: image.Rect(0, 0, 200, 150),
+		scrollX:      120,
+		scrollY:      80,
+	}
+
+	if anim := v.prepareVisualScroll(now, true, img); anim {
+		t.Fatal("first prepareVisualScroll call should initialize without animating")
+	}
+
+	v.scrollX = 180
+	v.scrollY = 140
+	anim := v.prepareVisualScroll(now.Add(16*time.Millisecond), true, img)
+	if !anim {
+		t.Fatal("expected smooth image scroll animation")
+	}
+	if v.visualX <= 120 || v.visualX >= 180 {
+		t.Fatalf("visualX=%f want between 120 and 180", v.visualX)
+	}
+	if v.visualY <= 80 || v.visualY >= 140 {
+		t.Fatalf("visualY=%f want between 80 and 140", v.visualY)
+	}
+}
+
 func TestViewerImageZoomFactorForKey(t *testing.T) {
 	tests := []struct {
 		name string
