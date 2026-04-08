@@ -152,6 +152,8 @@ type fileViewerState struct {
 	pendingBinaryPreview bool
 	pendingLineEnding    string
 	pendingBinaryData    []byte
+	pendingSyntax        viewerSyntaxDocument
+	pendingSyntaxReady   bool
 	wrapEnabled          bool
 	menuOpen             bool
 	menuPos              image.Point
@@ -201,6 +203,8 @@ type fileViewerResult struct {
 	binaryPreview bool
 	lineEnding    string
 	binaryData    []byte
+	syntax        viewerSyntaxDocument
+	syntaxReady   bool
 	partial       bool
 	final         bool
 }
@@ -248,6 +252,15 @@ func (st *fileViewerState) closeEncodingMenu() {
 	st.encodingBarRect = image.Rectangle{}
 	st.encodingMenuRect = image.Rectangle{}
 	st.encodingMenuAt = time.Time{}
+}
+
+func (st *fileViewerState) clearSyntaxState() {
+	if st == nil {
+		return
+	}
+	st.stream.clearSyntax()
+	st.pendingSyntax = viewerSyntaxDocument{}
+	st.pendingSyntaxReady = false
 }
 
 func (st *fileViewerState) rememberStreamSelection(mode string) {
@@ -578,7 +591,7 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 		status:       "loading...",
 		fileEncoding: fm.ViewerFileEncodingAuto,
 		wrapEnabled:  false,
-		resultCh:     make(chan fileViewerResult, 1),
+		resultCh:     make(chan fileViewerResult, 4),
 	}
 	st.mode = "file"
 	st.command = "cat {path}"
@@ -832,6 +845,9 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	if !st.commandEditOn {
 		st.commandEditor.SetText(st.command)
 	}
+	if st.mode != "file" {
+		st.clearSyntaxState()
+	}
 	if st.mode == "hex" {
 		ui.startHexViewerLoad(st, force)
 		return
@@ -884,6 +900,19 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 			final:         true,
 		}
 		sendViewerResult(ch, res)
+		if err == "" && viewerShouldBuildSyntax(cfg.Mode, info, content) {
+			go func(currentSeq int, currentPath, currentContent string) {
+				syntax := viewerBuildSyntaxDocument(ctx, currentPath, currentContent)
+				if !syntax.ready() || ctx.Err() != nil {
+					return
+				}
+				sendViewerResult(ch, fileViewerResult{
+					seq:         currentSeq,
+					syntax:      syntax,
+					syntaxReady: true,
+				})
+			}(seq, path, content)
+		}
 	}()
 
 	_ = now
@@ -961,6 +990,11 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.status = "ready"
 		}
 		applyFileViewerContentResult(st, st.pendingContent)
+		if st.pendingSyntaxReady {
+			st.stream.setSyntax(st.pendingSyntax)
+		}
+		st.pendingSyntax = viewerSyntaxDocument{}
+		st.pendingSyntaxReady = false
 		st.restorePendingStreamSelection()
 		if !viewerSupportsFind(st) && st.find.open {
 			ui.closeFileViewerFind()
@@ -975,6 +1009,16 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		select {
 		case res := <-st.resultCh:
 			if res.seq != st.seq {
+				continue
+			}
+			if res.syntaxReady {
+				if st.pendingUpdate {
+					st.pendingSyntax = res.syntax
+					st.pendingSyntaxReady = res.syntax.ready()
+				} else if res.syntax.ready() && !st.detectedImagePreview && !st.detectedBinaryPreview && normalizeViewerMode(st.mode) == "file" {
+					st.stream.setSyntax(res.syntax)
+					gtx.Execute(op.InvalidateCmd{})
+				}
 				continue
 			}
 			if res.partial && !res.final {
@@ -1024,6 +1068,8 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 				st.pendingBinaryPreview = res.binaryPreview
 				st.pendingLineEnding = res.lineEnding
 				st.pendingBinaryData = append([]byte(nil), res.binaryData...)
+				st.pendingSyntax = viewerSyntaxDocument{}
+				st.pendingSyntaxReady = false
 				st.status = "update pending"
 				ui.scheduleFileViewerWatch(gtx)
 				gtx.Execute(op.InvalidateCmd{})
@@ -1040,6 +1086,8 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.pendingBinaryPreview = false
 			st.pendingLineEnding = ""
 			st.pendingBinaryData = nil
+			st.pendingSyntax = viewerSyntaxDocument{}
+			st.pendingSyntaxReady = false
 			st.detectedEncoding = res.encoding
 			st.detectedEncodingBOM = res.encodingBOM
 			st.detectedImagePreview = res.imagePreview
@@ -1752,6 +1800,9 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 		st.commandInfinite = viewerCommandLooksInfinite(st.command)
 	} else {
 		st.commandInfinite = false
+	}
+	if st.mode != "file" {
+		st.clearSyntaxState()
 	}
 	if ui.fmCfg != nil {
 		ui.fmCfg.Viewer.Mode = st.mode

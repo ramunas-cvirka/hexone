@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	gioui.org v0.9.0
+	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/mholt/archives v0.1.5
 	github.com/pkg/sftp v1.13.10
 	go.yaml.in/yaml/v4 v4.0.0-rc.4
@@ -17,6 +18,7 @@ require (
 	github.com/bodgit/plumbing v1.3.0 // indirect
 	github.com/bodgit/sevenzip v1.6.1 // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
+	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/go-text/typesetting v0.3.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect

@@ -6,6 +6,7 @@ package ui
 import (
 	"fmt"
 	"image"
+	"image/color"
 	"math"
 	"regexp"
 	"sort"
@@ -28,6 +29,7 @@ type streamOutputView struct {
 	lines         []string
 	lineOffsets   []int
 	lineRunes     []int
+	syntax        viewerSyntaxDocument
 	totalBytes    int
 	maxCols       int
 	topLine       int
@@ -130,6 +132,7 @@ func (v *streamOutputView) SetContent(raw string) {
 	oldTotal := len(v.lines)
 	oldTop := v.topLine
 	v.lines = splitStreamLines(raw)
+	v.clearSyntax()
 	v.rebuildLineOffsets()
 	newTotal := len(v.lines)
 	if oldTotal > 1 && newTotal > 1 {
@@ -1998,21 +2001,86 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 				}
 			}
 		}
-		_ = func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, lineDraw)
-			lbl.Font.Typeface = lineFace
-			lbl.Font.Weight = font.Normal
-			lbl.TextSize = lineSize
-			lbl.Color = theme.Text
-			lbl.MaxLines = 1
-			lbl.Truncator = ""
-			return layoutVCenteredLabel(gtx, lbl)
-		}(lineGTX)
+		if spans, ok := v.syntaxLine(i); ok && len(spans) > 0 {
+			ui.drawStreamOutputSyntaxLine(th, lineGTX, v, line, lineDraw, spans, v.hCol, textW, lineFace, lineSize, theme)
+		} else {
+			ui.drawStreamOutputPlainLine(th, lineGTX, lineDraw, lineFace, lineSize, theme.Text)
+		}
 		offset.Pop()
 		y += lineHeight
 		if y >= textH {
 			break
 		}
+	}
+}
+
+func (ui *UI) drawStreamOutputPlainLine(th *material.Theme, gtx layout.Context, text string, face font.Typeface, size unit.Sp, textColor color.NRGBA) {
+	_ = func(gtx layout.Context) layout.Dimensions {
+		lbl := material.Body2(th, text)
+		lbl.Font.Typeface = face
+		lbl.Font.Weight = font.Normal
+		lbl.TextSize = size
+		lbl.Color = textColor
+		lbl.MaxLines = 1
+		lbl.Truncator = ""
+		return layoutVCenteredLabel(gtx, lbl)
+	}(gtx)
+}
+
+func (ui *UI) drawStreamOutputSyntaxLine(th *material.Theme, gtx layout.Context, v *streamOutputView, line, fallback string, spans []viewerSyntaxSpan, hCol, textW int, face font.Typeface, size unit.Sp, theme fileViewerTheme) {
+	if len(spans) == 0 {
+		ui.drawStreamOutputPlainLine(th, gtx, fallback, face, size, theme.Text)
+		return
+	}
+	visibleCols := 0
+	if v != nil {
+		visibleCols = v.visibleCols(textW)
+	}
+	if visibleCols < 1 {
+		visibleCols = 1
+	}
+	maxVisibleCol := hCol + visibleCols + 1
+	drew := false
+	for _, span := range spans {
+		if span.colEnd <= hCol {
+			continue
+		}
+		if span.colStart >= maxVisibleCol {
+			break
+		}
+		visibleFrom := span.colStart
+		if visibleFrom < hCol {
+			visibleFrom = hCol
+		}
+		visibleTo := span.colEnd
+		if visibleTo > maxVisibleCol {
+			visibleTo = maxVisibleCol
+		}
+		if visibleTo <= visibleFrom {
+			continue
+		}
+		segment := line[span.byteStart:span.byteEnd]
+		relFrom := visibleFrom - span.colStart
+		relTo := visibleTo - span.colStart
+		if relFrom > 0 || relTo < span.colEnd-span.colStart {
+			byteFrom := byteIndexAtRune(segment, relFrom)
+			byteTo := byteIndexAtRune(segment, relTo)
+			if byteTo <= byteFrom {
+				continue
+			}
+			segment = segment[byteFrom:byteTo]
+		}
+		x := v.textPad + v.colOffsetPx(visibleFrom-hCol)
+		if x >= textW {
+			break
+		}
+		offset := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+		ui.drawStreamOutputPlainLine(th, gtx, segment, face, size, viewerSyntaxColor(theme, span.role))
+		offset.Pop()
+		drew = true
+	}
+	if !drew {
+		ui.drawStreamOutputPlainLine(th, gtx, fallback, face, size, theme.Text)
 	}
 }
 
