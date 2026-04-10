@@ -263,6 +263,36 @@ func (st *fileViewerState) clearSyntaxState() {
 	st.pendingSyntaxReady = false
 }
 
+func (st *fileViewerState) clearPendingContentState() {
+	if st == nil {
+		return
+	}
+	st.pendingUpdate = false
+	st.pendingContent = ""
+	st.pendingStatus = ""
+	st.pendingErr = ""
+	st.pendingEncoding = ""
+	st.pendingEncodingBOM = false
+	st.pendingImagePreview = false
+	st.pendingImage = nil
+	st.pendingImageData = nil
+	st.pendingImageFormat = ""
+	st.pendingImageSize = image.Point{}
+	st.pendingBinaryPreview = false
+	st.pendingLineEnding = ""
+	st.pendingBinaryData = nil
+	st.clearSyntaxState()
+}
+
+func (st *fileViewerState) clearModeSwitchFeedback() {
+	if st == nil {
+		return
+	}
+	st.err = ""
+	st.status = ""
+	st.clearPendingContentState()
+}
+
 func (st *fileViewerState) rememberStreamSelection(mode string) {
 	if st == nil {
 		return
@@ -845,7 +875,7 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	if !st.commandEditOn {
 		st.commandEditor.SetText(st.command)
 	}
-	if st.mode != "file" {
+	if !viewerModeSupportsSyntax(st.mode) {
 		st.clearSyntaxState()
 	}
 	if st.mode == "hex" {
@@ -1015,7 +1045,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 				if st.pendingUpdate {
 					st.pendingSyntax = res.syntax
 					st.pendingSyntaxReady = res.syntax.ready()
-				} else if res.syntax.ready() && !st.detectedImagePreview && !st.detectedBinaryPreview && normalizeViewerMode(st.mode) == "file" {
+				} else if res.syntax.ready() && !st.detectedImagePreview && !st.detectedBinaryPreview && viewerModeSupportsSyntax(st.mode) {
 					st.stream.setSyntax(res.syntax)
 					gtx.Execute(op.InvalidateCmd{})
 				}
@@ -1034,6 +1064,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 				}
 				if viewerUpdateAction(st, res.content, false, nil, false, nil) != viewerUpdateSame {
 					applyFileViewerContentResult(st, res.content)
+					viewerApplyLiveSyntax(st)
 					ui.refreshFileViewerFind(gtx.Now, true)
 					st.markUpdated(gtx.Now)
 				}
@@ -1804,12 +1835,13 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 	if st.mode != "file" {
 		st.clearSyntaxState()
 	}
+	st.clearModeSwitchFeedback()
 	if ui.fmCfg != nil {
 		ui.fmCfg.Viewer.Mode = st.mode
 		if st.mode == "command" {
 			ui.fmCfg.Viewer.Command = st.command
 		}
-		if err := ui.saveFMConfig(); err != nil {
+		if err := ui.saveFMConfigWithOptions("viewer-mode", false); err != nil {
 			st.err = err.Error()
 			return
 		}
@@ -1827,7 +1859,7 @@ func (ui *UI) toggleFileViewerAutoRefresh(now time.Time) {
 	st.autoRefresh = !st.autoRefresh
 	if ui.fmCfg != nil {
 		ui.fmCfg.Viewer.CommandAutoRefresh = st.autoRefresh
-		if err := ui.saveFMConfig(); err != nil {
+		if err := ui.saveFMConfigWithOptions("viewer-auto-refresh", false); err != nil {
 			st.err = err.Error()
 		}
 	}
@@ -1879,6 +1911,7 @@ func (ui *UI) applyViewerCommandEdit(now time.Time) {
 	st.commandEditOn = false
 	st.commandFocus = false
 	st.setHistoryOpen(false, now)
+	st.clearModeSwitchFeedback()
 	if nextTab := st.activeTabKey(); nextTab != prevTab {
 		st.tabPrev = prevTab
 		st.tabAnimAt = now
@@ -1907,6 +1940,7 @@ func (ui *UI) applyViewerHistoryCommand(cmd string, now time.Time) {
 	st.commandEditOn = false
 	st.commandFocus = false
 	st.setHistoryOpen(false, now)
+	st.clearModeSwitchFeedback()
 	if nextTab := st.activeTabKey(); nextTab != prevTab {
 		st.tabPrev = prevTab
 		st.tabAnimAt = now
@@ -1927,8 +1961,8 @@ func (ui *UI) rememberViewerCommand(st *fileViewerState, cmd string) error {
 	if cmd == "" {
 		return nil
 	}
-	if ui.fmCfg == nil {
-		return nil
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return err
 	}
 	ui.fmCfg.Viewer.Mode = "command"
 	ui.fmCfg.Viewer.Command = cmd
@@ -1954,7 +1988,7 @@ func (ui *UI) rememberViewerCommand(st *fileViewerState, cmd string) error {
 		}
 	}
 	ui.fmCfg.Viewer.CommandHistory = history
-	return ui.saveFMConfig()
+	return ui.saveFMConfigWithOptions("viewer-command", false)
 }
 
 func (ui *UI) viewerConfiguredModeAndCommand(path string, remote *paneSSHSession, fallbackMode, fallbackCommand string) (string, string) {
@@ -2096,7 +2130,7 @@ func (ui *UI) toggleViewerWordWrap() {
 	st.wrapEnabled = !st.wrapEnabled
 	if ui.fmCfg != nil {
 		ui.fmCfg.Viewer.WordWrap = st.wrapEnabled
-		_ = ui.saveFMConfig()
+		_ = ui.saveFMConfigWithOptions("viewer-word-wrap", false)
 	}
 }
 
@@ -2114,7 +2148,7 @@ func (ui *UI) setFileViewerEncoding(encoding string, now time.Time) {
 	st.closeEncodingMenu()
 	if ui.fmCfg != nil {
 		ui.fmCfg.Viewer.FileEncoding = encoding
-		if err := ui.saveFMConfig(); err != nil {
+		if err := ui.saveFMConfigWithOptions("viewer-encoding", false); err != nil {
 			st.err = err.Error()
 			return
 		}

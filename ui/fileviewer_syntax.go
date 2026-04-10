@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	chroma "github.com/alecthomas/chroma/v2"
@@ -79,6 +80,9 @@ func (v *streamOutputView) syntaxLine(line int) ([]viewerSyntaxSpan, bool) {
 func viewerBuildSyntaxDocument(ctx context.Context, path, content string) viewerSyntaxDocument {
 	if strings.TrimSpace(content) == "" || viewerTotalLines(content) > viewerSyntaxMaxLines {
 		return viewerSyntaxDocument{}
+	}
+	if doc := viewerBuildStructuredLogSyntaxDocument(path, content); doc.ready() {
+		return doc
 	}
 	lexer := viewerSyntaxLexer(path, content)
 	if lexer == nil {
@@ -173,11 +177,36 @@ func viewerBuildSyntaxDocument(ctx context.Context, path, content string) viewer
 	return doc
 }
 
+func viewerBuildLiveSyntaxDocument(path, content string) viewerSyntaxDocument {
+	if strings.TrimSpace(content) == "" || viewerTotalLines(content) > viewerSyntaxMaxLines {
+		return viewerSyntaxDocument{}
+	}
+	return viewerBuildStructuredLogSyntaxDocument(path, content)
+}
+
+func viewerApplyLiveSyntax(st *fileViewerState) {
+	if st == nil || !viewerModeSupportsSyntax(st.mode) || st.detectedImagePreview || st.detectedBinaryPreview {
+		return
+	}
+	if syntax := viewerBuildLiveSyntaxDocument(st.path, st.content); syntax.ready() {
+		st.stream.setSyntax(syntax)
+	}
+}
+
 func viewerShouldBuildSyntax(mode string, info viewerReadInfo, content string) bool {
-	return normalizeViewerMode(mode) == "file" &&
+	return viewerModeSupportsSyntax(mode) &&
 		!info.imagePreview &&
 		!info.binaryPreview &&
 		strings.TrimSpace(content) != ""
+}
+
+func viewerModeSupportsSyntax(mode string) bool {
+	switch normalizeViewerMode(mode) {
+	case "file", "command":
+		return true
+	default:
+		return false
+	}
 }
 
 func viewerSyntaxAppendSpan(line *viewerSyntaxLine, span viewerSyntaxSpan) bool {
@@ -271,6 +300,538 @@ func viewerSyntaxRoleForToken(tt chroma.TokenType) viewerSyntaxRole {
 		return viewerSyntaxPunctuation
 	default:
 		return viewerSyntaxText
+	}
+}
+
+func viewerBuildStructuredLogSyntaxDocument(path, content string) viewerSyntaxDocument {
+	if !viewerLooksLikeStructuredLog(path, content) {
+		return viewerSyntaxDocument{}
+	}
+	lines := splitStreamLines(content)
+	doc := viewerSyntaxDocument{lines: make([]viewerSyntaxLine, len(lines))}
+	totalSpans := 0
+	matchedLines := 0
+	for i, line := range lines {
+		spans, ok := viewerBuildStructuredLogSyntaxLine(line)
+		if !ok {
+			continue
+		}
+		doc.lines[i].spans = spans
+		totalSpans += len(spans)
+		if totalSpans > viewerSyntaxMaxSpans {
+			return viewerSyntaxDocument{}
+		}
+		matchedLines++
+	}
+	if matchedLines == 0 {
+		return viewerSyntaxDocument{}
+	}
+	return doc
+}
+
+func viewerLooksLikeStructuredLog(path, content string) bool {
+	strongPath := viewerPathLooksLikeLog(path)
+	strongLines := 0
+	structuredLines := 0
+	sampledLines := 0
+	for _, raw := range splitStreamLines(content) {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		sampledLines++
+		sig := viewerStructuredLogLineSignature(line)
+		if sig.strong() {
+			strongLines++
+		}
+		if sig.structured() {
+			structuredLines++
+		}
+		if sampledLines >= 32 {
+			break
+		}
+	}
+	switch {
+	case strongLines >= 2:
+		return true
+	case strongPath && strongLines >= 1:
+		return true
+	case strongPath && structuredLines >= 2:
+		return true
+	default:
+		return false
+	}
+}
+
+type viewerStructuredLogSignature struct {
+	timestamp bool
+	level     bool
+	bracket   bool
+	fields    bool
+	hex       bool
+}
+
+func (sig viewerStructuredLogSignature) structured() bool {
+	return sig.timestamp && (sig.level || sig.fields || sig.bracket || sig.hex)
+}
+
+func (sig viewerStructuredLogSignature) strong() bool {
+	return sig.timestamp && (sig.level || sig.fields || sig.hex)
+}
+
+func viewerStructuredLogLineSignature(line string) viewerStructuredLogSignature {
+	sig := viewerStructuredLogSignature{}
+	if viewerMatchLogTimestamp(line) == 0 {
+		return sig
+	}
+	sig.timestamp = true
+	rest := line[viewerMatchLogTimestamp(line):]
+	rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
+	if levelLen, _, _ := viewerMatchLogLevel(rest); levelLen > 0 {
+		sig.level = true
+	}
+	sig.bracket = strings.Contains(line, "[") && strings.Contains(line, "]")
+	sig.hex = strings.Contains(line, "HEX:")
+	sig.fields = viewerLogHasKeyValue(line)
+	return sig
+}
+
+func viewerPathLooksLikeLog(path string) bool {
+	name := strings.ToLower(strings.TrimSpace(filepath.Base(path)))
+	switch {
+	case strings.HasSuffix(name, ".log"),
+		strings.Contains(name, ".log."),
+		strings.HasSuffix(name, ".out"),
+		strings.Contains(name, ".out."),
+		strings.HasSuffix(name, ".trace"),
+		strings.Contains(name, "journal"):
+		return true
+	default:
+		return false
+	}
+}
+
+func viewerLogHasKeyValue(line string) bool {
+	for i := 0; i < len(line); i++ {
+		if !viewerLogKeyStart(line[i]) {
+			continue
+		}
+		j := i + 1
+		for j < len(line) && viewerLogKeyChar(line[j]) {
+			j++
+		}
+		if j > i && j < len(line) && (line[j] == ':' || line[j] == '=') {
+			return true
+		}
+		i = j
+	}
+	return false
+}
+
+func viewerBuildStructuredLogSyntaxLine(line string) ([]viewerSyntaxSpan, bool) {
+	prefixLen := viewerMatchLogTimestamp(line)
+	if prefixLen == 0 {
+		return nil, false
+	}
+
+	builder := viewerStructuredLogLineBuilder{
+		line:  line,
+		spans: make([]viewerSyntaxSpan, 0, 16),
+	}
+	builder.emit(prefixLen, viewerSyntaxComment)
+	for builder.pos < len(line) {
+		if n := viewerConsumeSpaces(line[builder.pos:]); n > 0 {
+			builder.emit(n, viewerSyntaxText)
+			if levelLen, punctLen, role := viewerMatchLogLevel(line[builder.pos:]); levelLen > 0 {
+				builder.emit(levelLen, role)
+				if punctLen > 0 {
+					builder.emit(punctLen, viewerSyntaxPunctuation)
+				}
+			}
+			continue
+		}
+		if n := viewerMatchLogTimestamp(line[builder.pos:]); n > 0 {
+			builder.emit(n, viewerSyntaxComment)
+			continue
+		}
+		if n, role := viewerMatchLogBracket(line[builder.pos:]); n > 0 {
+			if n >= 2 {
+				builder.emit(1, viewerSyntaxPunctuation)
+				builder.emit(n-2, role)
+				builder.emit(1, viewerSyntaxPunctuation)
+			} else {
+				builder.emit(n, role)
+			}
+			continue
+		}
+		if n := viewerMatchQuotedString(line[builder.pos:]); n > 0 {
+			builder.emit(n, viewerSyntaxString)
+			continue
+		}
+		if strings.HasPrefix(line[builder.pos:], "--") {
+			builder.emit(2, viewerSyntaxOperator)
+			continue
+		}
+		if keyLen, sepLen := viewerMatchLogKey(line[builder.pos:]); keyLen > 0 {
+			builder.emit(keyLen, viewerSyntaxAttribute)
+			if sepLen > 0 {
+				role := viewerSyntaxPunctuation
+				if line[builder.pos] == '=' {
+					role = viewerSyntaxOperator
+				}
+				builder.emit(sepLen, role)
+			}
+			continue
+		}
+		if n, role := viewerMatchLogValueToken(line[builder.pos:]); n > 0 {
+			builder.emit(n, role)
+			continue
+		}
+		if viewerLogWordStart(line[builder.pos]) {
+			builder.emit(viewerConsumeLogWord(line[builder.pos:]), viewerSyntaxText)
+			continue
+		}
+		if n := viewerConsumePunctuation(line[builder.pos:]); n > 0 {
+			builder.emit(n, viewerSyntaxText)
+			continue
+		}
+		builder.emit(1, viewerSyntaxText)
+	}
+	return builder.spans, true
+}
+
+type viewerStructuredLogLineBuilder struct {
+	line  string
+	pos   int
+	col   int
+	spans []viewerSyntaxSpan
+}
+
+func (b *viewerStructuredLogLineBuilder) emit(n int, role viewerSyntaxRole) {
+	if b == nil || n <= 0 || b.pos >= len(b.line) {
+		return
+	}
+	end := b.pos + n
+	if end > len(b.line) {
+		end = len(b.line)
+	}
+	if end <= b.pos {
+		return
+	}
+	part := b.line[b.pos:end]
+	nextCol := b.col + utf8.RuneCountInString(part)
+	b.spans = viewerAppendStructuredLogSpan(b.spans, viewerSyntaxSpan{
+		role:      role,
+		byteStart: b.pos,
+		byteEnd:   end,
+		colStart:  b.col,
+		colEnd:    nextCol,
+	})
+	b.pos = end
+	b.col = nextCol
+}
+
+func viewerAppendStructuredLogSpan(spans []viewerSyntaxSpan, span viewerSyntaxSpan) []viewerSyntaxSpan {
+	if span.byteEnd <= span.byteStart || span.colEnd <= span.colStart {
+		return spans
+	}
+	if n := len(spans); n > 0 {
+		last := &spans[n-1]
+		if last.role == span.role && last.byteEnd == span.byteStart && last.colEnd == span.colStart {
+			last.byteEnd = span.byteEnd
+			last.colEnd = span.colEnd
+			return spans
+		}
+	}
+	return append(spans, span)
+}
+
+func viewerConsumeSpaces(s string) int {
+	i := 0
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	return i
+}
+
+func viewerMatchLogLevel(s string) (int, int, viewerSyntaxRole) {
+	i := 0
+	for i < len(s) && s[i] >= 'A' && s[i] <= 'Z' {
+		i++
+	}
+	if i == 0 {
+		return 0, 0, viewerSyntaxText
+	}
+	level := s[:i]
+	role, ok := viewerSyntaxRoleForLogLevel(level)
+	if !ok {
+		return 0, 0, viewerSyntaxText
+	}
+	punctLen := 0
+	if i < len(s) && s[i] == ':' {
+		punctLen = 1
+	}
+	return i, punctLen, role
+}
+
+func viewerSyntaxRoleForLogLevel(level string) (viewerSyntaxRole, bool) {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "TRACE":
+		return viewerSyntaxComment, true
+	case "DEBUG":
+		return viewerSyntaxBuiltin, true
+	case "INFO", "NOTICE":
+		return viewerSyntaxKeyword, true
+	case "WARN", "WARNING":
+		return viewerSyntaxPreproc, true
+	case "ERROR", "ERR", "FATAL", "PANIC", "CRITICAL":
+		return viewerSyntaxError, true
+	default:
+		return viewerSyntaxText, false
+	}
+}
+
+func viewerMatchLogTimestamp(s string) int {
+	if len(s) < len("2006-01-02 15:04:05") {
+		return 0
+	}
+	if !viewerIsDigits(s, 0, 4) || len(s) < 5 || s[4] != '-' {
+		return 0
+	}
+	if !viewerIsDigits(s, 5, 2) || len(s) < 8 || s[7] != '-' {
+		return 0
+	}
+	if !viewerIsDigits(s, 8, 2) || len(s) < 11 {
+		return 0
+	}
+	sep := s[10]
+	if sep != ' ' && sep != 'T' {
+		return 0
+	}
+	if !viewerIsDigits(s, 11, 2) || len(s) < 14 || s[13] != ':' {
+		return 0
+	}
+	if !viewerIsDigits(s, 14, 2) || len(s) < 17 || s[16] != ':' {
+		return 0
+	}
+	if !viewerIsDigits(s, 17, 2) {
+		return 0
+	}
+	i := 19
+	if i < len(s) && s[i] == '.' {
+		j := i + 1
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		if j == i+1 {
+			return 0
+		}
+		i = j
+	}
+	if i < len(s) && (s[i] == 'Z' || s[i] == 'z') {
+		i++
+	}
+	if i+6 <= len(s) && (s[i] == '+' || s[i] == '-') && viewerIsDigits(s, i+1, 2) && s[i+3] == ':' && viewerIsDigits(s, i+4, 2) {
+		i += 6
+	}
+	return i
+}
+
+func viewerIsDigits(s string, start, count int) bool {
+	if start < 0 || count <= 0 || start+count > len(s) {
+		return false
+	}
+	for i := start; i < start+count; i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func viewerMatchLogBracket(s string) (int, viewerSyntaxRole) {
+	if s == "" || s[0] != '[' {
+		return 0, viewerSyntaxText
+	}
+	end := strings.IndexByte(s, ']')
+	if end <= 0 {
+		return 0, viewerSyntaxText
+	}
+	content := strings.TrimSpace(s[1:end])
+	role := viewerSyntaxVariable
+	if content != "" && !strings.ContainsAny(content, " :<>") {
+		role = viewerSyntaxTag
+	}
+	return end + 1, role
+}
+
+func viewerMatchQuotedString(s string) int {
+	if s == "" {
+		return 0
+	}
+	quote := s[0]
+	if quote != '"' && quote != '\'' {
+		return 0
+	}
+	escaped := false
+	for i := 1; i < len(s); i++ {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if s[i] == '\\' {
+			escaped = true
+			continue
+		}
+		if s[i] == quote {
+			return i + 1
+		}
+	}
+	return len(s)
+}
+
+func viewerMatchLogKey(s string) (int, int) {
+	if s == "" || !viewerLogKeyStart(s[0]) {
+		return 0, 0
+	}
+	i := 1
+	for i < len(s) && viewerLogKeyChar(s[i]) {
+		i++
+	}
+	if i >= len(s) {
+		return 0, 0
+	}
+	switch s[i] {
+	case ':', '=':
+		return i, 1
+	default:
+		return 0, 0
+	}
+}
+
+func viewerLogKeyStart(b byte) bool {
+	return b == '_' || (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+}
+
+func viewerLogKeyChar(b byte) bool {
+	return viewerLogKeyStart(b) || (b >= '0' && b <= '9') || b == '.' || b == '-'
+}
+
+func viewerMatchLogValueToken(s string) (int, viewerSyntaxRole) {
+	if n := viewerMatchHexBytes(s); n > 0 {
+		return n, viewerSyntaxString
+	}
+	if n := viewerMatchIPPort(s); n > 0 {
+		return n, viewerSyntaxNumber
+	}
+	if n := viewerMatchSignedNumber(s); n > 0 {
+		return n, viewerSyntaxNumber
+	}
+	return 0, viewerSyntaxText
+}
+
+func viewerMatchHexBytes(s string) int {
+	if len(s) < 8 {
+		return 0
+	}
+	i := 0
+	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
+		i = 2
+	}
+	start := i
+	for i < len(s) && ((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f') || (s[i] >= 'A' && s[i] <= 'F')) {
+		i++
+	}
+	n := i - start
+	if n < 8 || n%2 != 0 {
+		return 0
+	}
+	return i
+}
+
+func viewerMatchIPPort(s string) int {
+	i := 0
+	for part := 0; part < 4; part++ {
+		digits := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+			digits++
+		}
+		if digits == 0 {
+			return 0
+		}
+		if part < 3 {
+			if i >= len(s) || s[i] != '.' {
+				return 0
+			}
+			i++
+		}
+	}
+	if i < len(s) && s[i] == ':' {
+		j := i + 1
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		if j > i+1 {
+			i = j
+		}
+	}
+	return i
+}
+
+func viewerMatchSignedNumber(s string) int {
+	if s == "" {
+		return 0
+	}
+	i := 0
+	if s[i] == '+' || s[i] == '-' {
+		i++
+	}
+	startDigits := i
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i < len(s) && s[i] == '.' {
+		i++
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	}
+	if i == startDigits {
+		return 0
+	}
+	return i
+}
+
+func viewerLogWordStart(b byte) bool {
+	return viewerLogKeyStart(b) || (b >= '0' && b <= '9')
+}
+
+func viewerConsumeLogWord(s string) int {
+	i := 0
+	for i < len(s) && viewerLogKeyChar(s[i]) {
+		i++
+	}
+	if i == 0 {
+		for i < len(s) && s[i] != ' ' && s[i] != '\t' && s[i] != '[' && s[i] != ']' && s[i] != '"' && s[i] != '\'' {
+			i++
+		}
+	}
+	if i == 0 {
+		return 1
+	}
+	return i
+}
+
+func viewerConsumePunctuation(s string) int {
+	if s == "" {
+		return 0
+	}
+	switch s[0] {
+	case ',', '.', ';', '(', ')', '{', '}', '/', '\\', '<', '>', '|':
+		return 1
+	default:
+		return 0
 	}
 }
 

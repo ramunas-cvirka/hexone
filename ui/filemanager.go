@@ -1849,8 +1849,8 @@ func (ui *UI) addFavoriteLocation(raw string) (string, bool, error) {
 	if ui == nil {
 		return "", false, nil
 	}
-	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return "", false, err
 	}
 	loc := normalizeFavoriteLocation(raw)
 	if loc == "" {
@@ -1862,7 +1862,7 @@ func (ui *UI) addFavoriteLocation(raw string) (string, bool, error) {
 		}
 	}
 	ui.fmCfg.FavoriteLocations = append(ui.fmCfg.FavoriteLocations, loc)
-	if err := ui.saveFMConfig(); err != nil {
+	if err := ui.saveFMConfigWithOptions("favorites-add", false); err != nil {
 		ui.fmCfg.FavoriteLocations = ui.fmCfg.FavoriteLocations[:len(ui.fmCfg.FavoriteLocations)-1]
 		return loc, false, err
 	}
@@ -1920,7 +1920,7 @@ func (ui *UI) removeFavoriteLocation(raw string) (bool, error) {
 
 	prev := ui.fmCfg.FavoriteLocations
 	ui.fmCfg.FavoriteLocations = next
-	if err := ui.saveFMConfig(); err != nil {
+	if err := ui.saveFMConfigWithOptions("favorites-remove", false); err != nil {
 		ui.fmCfg.FavoriteLocations = prev
 		return false, err
 	}

@@ -5,7 +5,9 @@ package fm
 
 import (
 	"errors"
+	"fmt"
 	resources "hexone"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -33,6 +35,7 @@ const (
 	defaultSizeWidthChars    = 10.5
 	defaultDateWidthChars    = 15.0
 	defaultNameTextReserveDp = defaultApproxCharPx/2 + 2
+	configBackupSuffix       = ".bak"
 )
 
 const (
@@ -234,6 +237,8 @@ type Config struct {
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
 	Viewer            ViewerConfig         `yaml:"viewer"`
 	SSH               SSHConfig            `yaml:"ssh"`
+
+	loadIssue error
 }
 
 func (c *Config) UnmarshalYAML(node *yaml.Node) error {
@@ -358,37 +363,200 @@ func SaveConfig(path string, cfg *Config) error {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
+	if err := cfg.LoadIssue(); err != nil {
+		return fmt.Errorf("refusing to overwrite config because the existing file did not load cleanly: %w", err)
+	}
 	cfg.normalize()
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return writeConfigFileAtomic(path, data, 0o644)
 }
 
 func LoadConfig(path string) *Config {
-	cfg := DefaultConfig()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return cfg
-	}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return cfg
-	}
-
-	cfg.normalize()
+	cfg, _ := loadConfigFile(path)
 	return cfg
 }
 
 func LoadConfigEnsuringFile(path string) (*Config, error) {
-	cfg := LoadConfig(path)
-	if _, err := os.Stat(path); err != nil {
+	cfg, err := loadConfigFile(path)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return cfg, SaveConfig(path, cfg)
 		}
+		return cfg, err
 	}
 	return cfg, nil
+}
+
+func (c *Config) LoadIssue() error {
+	if c == nil {
+		return nil
+	}
+	return c.loadIssue
+}
+
+func (c *Config) setLoadIssue(err error) {
+	if c == nil {
+		return
+	}
+	c.loadIssue = err
+}
+
+func loadConfigFile(path string) (*Config, error) {
+	cfg := DefaultConfig()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, err
+		}
+		loadErr := fmt.Errorf("read config %s: %w", path, err)
+		cfg.setLoadIssue(loadErr)
+		return cfg, loadErr
+	}
+	loaded, err := decodeConfigData(data)
+	if err == nil {
+		return loaded, nil
+	}
+
+	loadErr := fmt.Errorf("parse config %s: %w", path, err)
+	if recovered, ok := loadConfigBackup(path, loadErr); ok {
+		return recovered, recovered.LoadIssue()
+	}
+	cfg.setLoadIssue(loadErr)
+	return cfg, loadErr
+}
+
+func decodeConfigData(data []byte) (*Config, error) {
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, err
+	}
+	cfg.normalize()
+	return cfg, nil
+}
+
+func loadConfigBackup(path string, primaryErr error) (*Config, bool) {
+	backupPath := configBackupPath(path)
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		return nil, false
+	}
+	cfg, err := decodeConfigData(data)
+	if err != nil {
+		return nil, false
+	}
+	cfg.setLoadIssue(fmt.Errorf("%v; loaded recovery backup %s", primaryErr, backupPath))
+	return cfg, true
+}
+
+func configBackupPath(path string) string {
+	return path + configBackupSuffix
+}
+
+func writeConfigFileAtomic(path string, data []byte, defaultMode os.FileMode) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("config path is empty")
+	}
+
+	dir := filepath.Dir(path)
+	if dir == "" {
+		dir = "."
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	mode := defaultMode
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+		if err := copyFile(path, configBackupPath(path), mode); err != nil {
+			return fmt.Errorf("backup config %s: %w", path, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := renameReplace(tmpPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	tmpPath := dst
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = out.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := out.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+func renameReplace(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	if info, statErr := os.Stat(dst); statErr == nil && !info.IsDir() {
+		if removeErr := os.Remove(dst); removeErr != nil {
+			return removeErr
+		}
+		return os.Rename(src, dst)
+	}
+	return os.Rename(src, dst)
 }
 
 func (c *Config) normalize() {

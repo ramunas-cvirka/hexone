@@ -6,7 +6,16 @@ package ui
 import (
 	"context"
 	"testing"
+
+	"gioui.org/io/input"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"hexone/fm"
 )
+
+const viewerStructuredLogSample = "2026-04-09 12:03:37  INFO: [e96bfd45: 5048] -- id: 111111111111762, time: 2026-04-09 09:03:35, lat: 54.90000, lon: 23.90000, speed: 32.39742, course: 90.0\n" +
+	"2026-04-09 12:03:38  INFO: [e96bfd45: 5048 < 127.0.0.1:55977] [tcp] HEX: 68682a0102011111111111176210041c1e776966695f737369643a5465737441502c776966695f727373693a2d35300d0a\n" +
+	"2026-04-09 12:03:38  INFO: [e96bfd45: 5048] -- id: 111111111111762, time: 2026-04-09 09:03:35, lat: 54.90000, lon: 23.90000, speed: 32.39742, course: 90.0, result: wifi_ssid:TestAP,wifi_rssi:-50"
 
 func TestViewerBuildSyntaxDocumentForGoSource(t *testing.T) {
 	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n"
@@ -32,6 +41,68 @@ func TestViewerBuildSyntaxDocumentSkipsPlaintextFallback(t *testing.T) {
 	doc := viewerBuildSyntaxDocument(context.Background(), "/tmp/notes.txt", "just some plain text\nnothing fancy")
 	if doc.ready() {
 		t.Fatal("plain text fallback should not enable syntax highlighting")
+	}
+}
+
+func TestViewerBuildSyntaxDocumentForStructuredLogs(t *testing.T) {
+	doc := viewerBuildSyntaxDocument(context.Background(), "/tmp/app.log", viewerStructuredLogSample)
+	if !doc.ready() {
+		t.Fatal("expected syntax document for structured log content")
+	}
+	if !syntaxLineHasRoleText(viewerStructuredLogSample, doc, 0, viewerSyntaxKeyword, "INFO") {
+		t.Fatal("expected INFO log level highlight on line 0")
+	}
+	if !syntaxLineHasRoleText(viewerStructuredLogSample, doc, 0, viewerSyntaxAttribute, "lat") {
+		t.Fatal("expected key highlight for lat on line 0")
+	}
+	if !syntaxLineHasRoleText(viewerStructuredLogSample, doc, 0, viewerSyntaxNumber, "54.90000") {
+		t.Fatal("expected numeric highlight for lat value on line 0")
+	}
+	if !syntaxLineHasRoleText(viewerStructuredLogSample, doc, 1, viewerSyntaxAttribute, "HEX") {
+		t.Fatal("expected HEX field highlight on line 1")
+	}
+	if !syntaxLineHasRoleText(viewerStructuredLogSample, doc, 1, viewerSyntaxString, "68682a0102011111111111176210041c1e776966695f737369643a5465737441502c776966695f727373693a2d35300d0a") {
+		t.Fatal("expected hex payload highlight on line 1")
+	}
+}
+
+func TestViewerShouldBuildSyntaxAllowsCommandMode(t *testing.T) {
+	if !viewerShouldBuildSyntax("command", viewerReadInfo{}, viewerStructuredLogSample) {
+		t.Fatal("expected command mode to allow syntax highlighting")
+	}
+}
+
+func TestPumpFileViewerStateAppliesSyntaxInCommandMode(t *testing.T) {
+	doc := viewerBuildSyntaxDocument(context.Background(), "/tmp/app.log", viewerStructuredLogSample)
+	if !doc.ready() {
+		t.Fatal("expected syntax document for command mode test")
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{
+		mode:     "command",
+		path:     "/tmp/app.log",
+		resultCh: make(chan fileViewerResult, 1),
+		seq:      1,
+	}
+	ui.fileViewer = st
+	st.resultCh <- fileViewerResult{
+		seq:         1,
+		syntax:      doc,
+		syntaxReady: true,
+	}
+
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+	}
+	ui.pumpFileViewerState(gtx)
+
+	if !st.stream.syntax.ready() {
+		t.Fatal("expected command mode to accept syntax results")
+	}
+	if !syntaxLineHasRoleText(viewerStructuredLogSample, st.stream.syntax, 1, viewerSyntaxAttribute, "HEX") {
+		t.Fatal("expected applied syntax document to preserve HEX highlight")
 	}
 }
 

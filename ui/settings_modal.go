@@ -379,8 +379,8 @@ func (ui *UI) openSettingsModal() {
 		return
 	}
 	ui.closeFunctionBarToolsMenu()
-	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return
 	}
 	st := ui.settingsModal
 	if st == nil {
@@ -2730,8 +2730,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if st == nil {
 		return nil
 	}
-	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return err
 	}
 	if st.activeTab == "config" {
 		next := fm.DefaultConfig()
@@ -2743,7 +2743,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 			return fmt.Errorf("invalid config yaml: %w", err)
 		}
 		ui.fmCfg = next
-		if err := ui.saveFMConfig(); err != nil {
+		if err := ui.saveFMConfigAllowDefaultReset("settings-config-tab"); err != nil {
 			return err
 		}
 		ui.applyConfigRuntime(now)
@@ -2888,7 +2888,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.CommandRules = fm.NormalizeViewerCommandRules(st.viewRuleEntries)
 	ui.fmCfg.Associations = fm.GroupViewerAssociations(st.viewAssocEntries)
 	ui.fmCfg.Viewer.Associations = nil
-	if err := ui.saveFMConfig(); err != nil {
+	if err := ui.saveFMConfigWithOptions("settings-modal", false); err != nil {
 		return err
 	}
 	ui.applyConfigRuntime(now)
@@ -6636,7 +6636,7 @@ func (ui *UI) applyConfigRuntime(now time.Time) {
 		return
 	}
 	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+		return
 	}
 	ui.fileKeys = newFileKeyMap(ui.fmCfg)
 	ui.typeface = font.Typeface(ui.fmCfg.General.Typeface)

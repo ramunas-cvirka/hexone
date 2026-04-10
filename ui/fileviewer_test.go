@@ -535,6 +535,52 @@ func TestFileViewerRestoringHexModeClearsSharedStreamSelection(t *testing.T) {
 	}
 }
 
+func TestSetFileViewerModeClearsStaleErrorsAndPendingState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "small.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = filepath.Join(t.TempDir(), "hexone-test.yaml")
+	st := &fileViewerState{
+		mode:               "file",
+		path:               path,
+		command:            "cat {path}",
+		err:                "file too large: 1.8 MB > 1.0 MB limit",
+		status:             "file: 1887437 bytes",
+		pendingUpdate:      true,
+		pendingContent:     "stale",
+		pendingStatus:      "file: 1887437 bytes",
+		pendingErr:         "file too large: 1.8 MB > 1.0 MB limit",
+		pendingSyntaxReady: true,
+		resultCh:           make(chan fileViewerResult, 4),
+	}
+	ui.fileViewer = st
+
+	ui.setFileViewerMode("command", time.Now())
+
+	if st.err != "" {
+		t.Fatalf("stale err should clear on mode switch, got %q", st.err)
+	}
+	if st.status == "file: 1887437 bytes" {
+		t.Fatalf("stale status should clear on mode switch, got %q", st.status)
+	}
+	if st.pendingUpdate {
+		t.Fatal("pending update should clear on mode switch")
+	}
+	if st.pendingContent != "" || st.pendingErr != "" || st.pendingStatus != "" {
+		t.Fatalf("pending state should clear on mode switch, got content=%q err=%q status=%q",
+			st.pendingContent, st.pendingErr, st.pendingStatus)
+	}
+	if st.pendingSyntaxReady {
+		t.Fatal("pending syntax should clear on mode switch")
+	}
+	if st.mode != "command" {
+		t.Fatalf("mode=%q want command", st.mode)
+	}
+}
+
 func TestViewerEncodingStatusLabelUsesBinaryPreviewLabel(t *testing.T) {
 	st := &fileViewerState{
 		fileEncoding:          fm.ViewerFileEncodingAuto,
