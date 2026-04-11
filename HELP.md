@@ -88,9 +88,9 @@ Once connected, a remote pane supports normal browsing plus viewer-based inspect
 
 ## Internal Viewer
 
-The internal viewer has three explicit modes, plus automatic image preview inside `file` mode for supported images:
+The internal viewer has three explicit modes, plus automatic image-style preview inside `file` mode for supported images and PDFs:
 
-- `file` for normal text content and image preview when supported
+- `file` for normal text content plus image/PDF preview when supported
 - `hex` for raw bytes
 - `command` for shell output based on the selected file
 
@@ -110,6 +110,7 @@ Useful viewer keys:
 
 - `file` mode is best for quick reading and exposes an encoding picker for `auto`, `utf-8`, `utf-16le`, `utf-16be`, and `cp437`
 - supported images open as an image preview inside `file` mode
+- supported PDFs open as a rendered page preview inside `file` mode
 - `hex` mode is better for binary files, mixed data, or damaged content
 - on SSH panes, `hex` Find can use the configured remote search utility command for large files
 
@@ -179,6 +180,13 @@ Remote panes support `command` mode too, so the same log-following patterns work
 - `PageUp` and `PageDown` move by a larger vertical chunk
 - `Home` goes to the origin and `End` goes to the far edge
 - `Ctrl++` / `Ctrl+-` or `Cmd++` / `Cmd+-` zoom in and out
+
+### PDF Preview
+
+- rendered PDF pages use the same pan and zoom controls as image preview
+- `Up` / `Down` and `PageUp` / `PageDown` scroll inside the current page first, then move to the previous or next page at the edge
+- the extra scrollbar on the far right represents the whole PDF and can be dragged to jump between pages quickly
+- `[` moves to the previous page and `]` moves to the next page
 
 ## Customization
 

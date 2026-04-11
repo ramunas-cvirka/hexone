@@ -22,6 +22,22 @@ import (
 	"hexone/fm"
 )
 
+type fakeViewerPDFRenderer struct {
+	available bool
+	requests  []viewerPDFRenderRequest
+	result    viewerPDFRenderResult
+	err       error
+}
+
+func (f *fakeViewerPDFRenderer) Available() bool {
+	return f != nil && f.available
+}
+
+func (f *fakeViewerPDFRenderer) RenderPage(req viewerPDFRenderRequest) (viewerPDFRenderResult, error) {
+	f.requests = append(f.requests, req)
+	return f.result, f.err
+}
+
 func testViewerPreviewImage() image.Image {
 	img := image.NewNRGBA(image.Rect(0, 0, 3, 2))
 	img.Set(0, 0, color.NRGBA{R: 0xCC, G: 0x33, B: 0x22, A: 0xFF})
@@ -297,6 +313,114 @@ func TestDecodeViewerTextManualUTF8StillUsesBinaryPreviewForPDFData(t *testing.T
 	}
 }
 
+func TestReadViewerFileAutoUsesPDFPreviewWhenRendererAvailable(t *testing.T) {
+	prev := viewerPDFPreviewBackend
+	fake := &fakeViewerPDFRenderer{
+		available: true,
+		result: viewerPDFRenderResult{
+			Image:     image.NewNRGBA(image.Rect(0, 0, 120, 180)),
+			Page:      0,
+			PageCount: 4,
+			Size:      image.Pt(120, 180),
+		},
+	}
+	viewerPDFPreviewBackend = fake
+	t.Cleanup(func() {
+		viewerPDFPreviewBackend = prev
+	})
+
+	path := filepath.Join(t.TempDir(), "sample.pdf")
+	data := []byte("%PDF-1.7\r\n1 0 obj\r\n<< /Type /Catalog >>\r\nendobj\r\n")
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	content, _, errText, info := readViewerFile(path, fm.ViewerFileEncodingAuto, 1<<20, time.Time{}, nil)
+
+	if errText != "" {
+		t.Fatalf("readViewerFile err=%q", errText)
+	}
+	if content != "" {
+		t.Fatalf("content=%q want empty pdf preview payload", content)
+	}
+	if !info.imagePreview {
+		t.Fatal("expected PDF preview info")
+	}
+	if info.imageFormat != "pdf" {
+		t.Fatalf("imageFormat=%q want %q", info.imageFormat, "pdf")
+	}
+	if info.imageSize != image.Pt(120, 180) {
+		t.Fatalf("imageSize=%v want %v", info.imageSize, image.Pt(120, 180))
+	}
+	if info.imagePage != 0 || info.imagePageCount != 4 {
+		t.Fatalf("page metadata=(%d,%d) want (0,4)", info.imagePage, info.imagePageCount)
+	}
+	if len(fake.requests) != 1 {
+		t.Fatalf("render requests=%d want 1", len(fake.requests))
+	}
+	if fake.requests[0].Page != 0 {
+		t.Fatalf("rendered page=%d want 0", fake.requests[0].Page)
+	}
+	if fake.requests[0].Width != viewerPDFPreviewTargetWidthPx {
+		t.Fatalf("render width=%d want %d", fake.requests[0].Width, viewerPDFPreviewTargetWidthPx)
+	}
+}
+
+func TestReadViewerFileLocalPDFBypassesSizeLimitUsingPath(t *testing.T) {
+	prev := viewerPDFPreviewBackend
+	fake := &fakeViewerPDFRenderer{
+		available: true,
+		result: viewerPDFRenderResult{
+			Image:     image.NewNRGBA(image.Rect(0, 0, 120, 160)),
+			Page:      0,
+			PageCount: 2,
+			Size:      image.Pt(120, 160),
+		},
+	}
+	viewerPDFPreviewBackend = fake
+	t.Cleanup(func() {
+		viewerPDFPreviewBackend = prev
+	})
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.pdf")
+	if err := os.WriteFile(path, bytes.Repeat([]byte{0}, 2<<20), 0o600); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	content, status, errText, info := readViewerFile(path, fm.ViewerFileEncodingAuto, 1<<20, time.Time{}, nil)
+	if errText != "" {
+		t.Fatalf("readViewerFile err=%q", errText)
+	}
+	if content != "" {
+		t.Fatalf("content=%q want empty pdf preview payload", content)
+	}
+	if status == "" {
+		t.Fatal("expected file size status")
+	}
+	if !info.imagePreview {
+		t.Fatal("expected PDF preview info")
+	}
+	if len(fake.requests) != 1 {
+		t.Fatalf("render requests=%d want 1", len(fake.requests))
+	}
+	if viewerPDFPreviewUsesLocalPath {
+		if fake.requests[0].LocalPath != path {
+			t.Fatalf("LocalPath=%q want %q", fake.requests[0].LocalPath, path)
+		}
+		if len(fake.requests[0].Data) != 0 {
+			t.Fatalf("expected no inline pdf bytes, got %d", len(fake.requests[0].Data))
+		}
+		return
+	}
+	if fake.requests[0].LocalPath != "" {
+		t.Fatalf("expected empty LocalPath, got %q", fake.requests[0].LocalPath)
+	}
+	if len(fake.requests[0].Data) <= 1<<20 {
+		t.Fatalf("expected full pdf bytes beyond size limit, got %d", len(fake.requests[0].Data))
+	}
+}
+
 func TestSanitizeViewerContentReplacesControlRunesWithDots(t *testing.T) {
 	raw := "A\tB" + string([]rune{0x07, unicode.ReplacementChar}) + "C"
 
@@ -453,6 +577,61 @@ func TestViewerUpdateActionTreatsSameImageBytesAsSame(t *testing.T) {
 
 	if got != viewerUpdateSame {
 		t.Fatalf("viewerUpdateAction=%d want %d", got, viewerUpdateSame)
+	}
+}
+
+func TestStepFileViewerPDFPageStartsRender(t *testing.T) {
+	prev := viewerPDFPreviewBackend
+	fake := &fakeViewerPDFRenderer{
+		available: true,
+		result: viewerPDFRenderResult{
+			Image:     image.NewNRGBA(image.Rect(0, 0, 90, 140)),
+			Page:      1,
+			PageCount: 3,
+			Size:      image.Pt(90, 140),
+		},
+	}
+	viewerPDFPreviewBackend = fake
+	t.Cleanup(func() {
+		viewerPDFPreviewBackend = prev
+	})
+
+	ui := NewUI(fm.DefaultConfig())
+	now := time.Date(2026, time.April, 11, 8, 0, 0, 0, time.UTC)
+	st := &fileViewerState{
+		detectedImagePreview:  true,
+		imagePreviewFormat:    "pdf",
+		imagePreviewData:      []byte("%PDF-1.7"),
+		imagePreviewPage:      0,
+		imagePreviewPageCount: 3,
+		previewRenderCh:       make(chan fileViewerPreviewRenderResult, 1),
+		seq:                   7,
+	}
+	ui.fileViewer = st
+
+	if !ui.stepFileViewerPDFPage(now, 1) {
+		t.Fatal("expected pdf page step to start rendering")
+	}
+	if st.status != "rendering page 2/3" {
+		t.Fatalf("status=%q want %q", st.status, "rendering page 2/3")
+	}
+
+	select {
+	case res := <-st.previewRenderCh:
+		if res.seq != st.seq {
+			t.Fatalf("seq=%d want %d", res.seq, st.seq)
+		}
+		if res.page != 1 || res.pageCount != 3 {
+			t.Fatalf("page result=(%d,%d) want (1,3)", res.page, res.pageCount)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for pdf page render result")
+	}
+	if len(fake.requests) != 1 {
+		t.Fatalf("render requests=%d want 1", len(fake.requests))
+	}
+	if fake.requests[0].Page != 1 {
+		t.Fatalf("requested page=%d want 1", fake.requests[0].Page)
 	}
 }
 

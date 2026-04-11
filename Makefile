@@ -1,7 +1,9 @@
-.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource
+.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-linux-pdfium build-macos-pdfium build-windows-pdfium build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource prepare-pdfium-linux prepare-pdfium-macos prepare-pdfium-windows
 
 APP := hexone
 CMD := ./cmd/hexone
+PDFIUM_WORKER_APP := $(APP)-pdfium-worker
+PDFIUM_WORKER_CMD := ./cmd/hexone-pdfium-worker
 DIST_DIR := dist
 VERSION_TOOL := ./packaging/derive_version.sh
 HEADER_GOCACHE := $(abspath .cache/go-build)
@@ -32,6 +34,7 @@ GO_LDFLAGS_COMMON := -X hexone/buildinfo.Version=$(APP_VERSION) -X hexone/buildi
 LINUX_ARCH := amd64
 LINUX_STAGE := $(DIST_DIR)/$(APP)-linux-$(LINUX_ARCH)
 LINUX_BIN := $(LINUX_STAGE)/$(APP)
+LINUX_PDFIUM_WORKER := $(LINUX_STAGE)/$(PDFIUM_WORKER_APP)
 LINUX_LIB_DIR := $(LINUX_STAGE)/lib
 LINUX_ZIP := $(DIST_DIR)/$(APP)_linux_$(LINUX_ARCH).zip
 LINUX_APPDIR := $(DIST_DIR)/$(APP).AppDir
@@ -45,6 +48,7 @@ MACOS_STAGE := $(DIST_DIR)/$(APP)-macos-$(MACOS_ARCH)
 MACOS_APP := $(MACOS_STAGE)/$(APP).app
 MACOS_CONTENTS := $(MACOS_APP)/Contents
 MACOS_BIN := $(MACOS_CONTENTS)/MacOS/$(APP)
+MACOS_PDFIUM_WORKER := $(MACOS_CONTENTS)/MacOS/$(PDFIUM_WORKER_APP)
 MACOS_RESOURCES := $(MACOS_CONTENTS)/Resources
 MACOS_PLIST_TEMPLATE := packaging/macos/Info.plist
 MACOS_DMG_STAGE := $(DIST_DIR)/$(APP)-macos-dmg-$(MACOS_ARCH)
@@ -68,6 +72,7 @@ endif
 WINDOWS_ARCH := amd64
 WINDOWS_STAGE := $(DIST_DIR)/$(APP)-windows-$(WINDOWS_ARCH)-portable
 WINDOWS_BIN := $(WINDOWS_STAGE)/$(APP).exe
+WINDOWS_PDFIUM_WORKER := $(WINDOWS_STAGE)/$(PDFIUM_WORKER_APP).exe
 WINDOWS_ZIP := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_portable.zip
 WINDOWS_RC_TEMPLATE := cmd/hexone/app_icon_windows.rc
 WINDOWS_MANIFEST_TEMPLATE := cmd/hexone/app_windows.manifest
@@ -75,6 +80,22 @@ WINDOWS_MANIFEST_RENDERED := cmd/hexone/hexone_windows.generated.manifest
 WINDOWS_RC_RENDERED := cmd/hexone/hexone_windows.generated.rc
 WINDOWS_SYSO_RENDERED := cmd/hexone/hexone_windows.generated.syso
 WINDOWS_SYSO := cmd/hexone/hexone_windows.syso
+
+PDFIUM_DIR := $(DIST_DIR)/pdfium
+PDFIUM_LINUX_DIR := $(PDFIUM_DIR)/linux_$(LINUX_ARCH)
+PDFIUM_MACOS_DIR := $(PDFIUM_DIR)/macos_$(MACOS_ARCH)
+PDFIUM_WINDOWS_DIR := $(PDFIUM_DIR)/windows_$(WINDOWS_ARCH)
+PDFIUM_LINUX_PKGCONFIG := $(PDFIUM_LINUX_DIR)/lib/pkgconfig
+PDFIUM_MACOS_PKGCONFIG := $(PDFIUM_MACOS_DIR)/lib/pkgconfig
+PDFIUM_WINDOWS_PKGCONFIG := $(PDFIUM_WINDOWS_DIR)/lib/pkgconfig
+PDFIUM_LINUX_LIB := $(PDFIUM_LINUX_DIR)/lib/libpdfium.so
+PDFIUM_MACOS_LIB := $(PDFIUM_MACOS_DIR)/lib/libpdfium.dylib
+PDFIUM_WINDOWS_IMPORT := $(PDFIUM_WINDOWS_DIR)/lib/pdfium.dll.lib
+PDFIUM_WINDOWS_DLL := $(PDFIUM_WINDOWS_DIR)/bin/pdfium.dll
+PDFIUM_PREPARE_SH := packaging/pdfium/prepare_pdfium.sh
+PDFIUM_PREPARE_PS1 := packaging/pdfium/prepare_pdfium.ps1
+PDFIUM_BUILD_WINDOWS_PS1 := packaging/pdfium/build_windows_pdfium.ps1
+MACOS_FRAMEWORKS := $(MACOS_CONTENTS)/Frameworks
 
 ifeq ($(OS),Windows_NT)
 BIN := $(APP).exe
@@ -107,6 +128,20 @@ build: headers $(BUILD_DEPS)
 test: headers
 	go test ./...
 
+ifeq ($(OS),Windows_NT)
+prepare-pdfium-windows: | $(DIST_DIR)
+	@powershell -NoProfile -ExecutionPolicy Bypass -File "$(PDFIUM_PREPARE_PS1)" windows-amd64 "$(subst /,\,$(PDFIUM_WINDOWS_DIR))"
+else
+prepare-pdfium-linux: | $(DIST_DIR)
+	sh "$(PDFIUM_PREPARE_SH)" linux-amd64 "$(PDFIUM_LINUX_DIR)"
+
+prepare-pdfium-macos: | $(DIST_DIR)
+	sh "$(PDFIUM_PREPARE_SH)" macos-arm64 "$(PDFIUM_MACOS_DIR)"
+
+prepare-pdfium-windows: | $(DIST_DIR)
+	sh "$(PDFIUM_PREPARE_SH)" windows-amd64 "$(PDFIUM_WINDOWS_DIR)"
+endif
+
 build-linux: headers | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \
 		echo "build-linux requires a Linux host (CGO-enabled Gio build)."; \
@@ -138,6 +173,46 @@ build-linux: headers | $(DIST_DIR)
 		patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/$$lib"; \
 	done
 
+build-linux-pdfium: headers prepare-pdfium-linux | $(DIST_DIR)
+	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \
+		echo "build-linux-pdfium requires a Linux host (CGO-enabled Gio build)."; \
+		exit 1; \
+	fi
+	@if ! command -v patchelf >/dev/null 2>&1; then \
+		echo "build-linux-pdfium requires patchelf to set the Linux rpath."; \
+		exit 1; \
+	fi
+	rm -rf "$(LINUX_STAGE)"
+	mkdir -p "$(LINUX_STAGE)" "$(LINUX_LIB_DIR)" "$(LINUX_STAGE)/share/applications" "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps"
+	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -tags "nowayland pdfium" -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(LINUX_BIN)" $(CMD)
+	PKG_CONFIG_PATH="$(PDFIUM_LINUX_PKGCONFIG)" GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -tags pdfium -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(LINUX_PDFIUM_WORKER)" $(PDFIUM_WORKER_CMD)
+	patchelf --force-rpath --set-rpath '$$ORIGIN/lib' "$(LINUX_BIN)"
+	@if [ "$$(patchelf --print-rpath "$(LINUX_BIN)")" != '$$ORIGIN/lib' ]; then \
+		echo "failed to set Linux rpath on $(LINUX_BIN)"; \
+		exit 1; \
+	fi
+	patchelf --force-rpath --set-rpath '$$ORIGIN/lib' "$(LINUX_PDFIUM_WORKER)"
+	@if [ "$$(patchelf --print-rpath "$(LINUX_PDFIUM_WORKER)")" != '$$ORIGIN/lib' ]; then \
+		echo "failed to set Linux rpath on $(LINUX_PDFIUM_WORKER)"; \
+		exit 1; \
+	fi
+	chmod +x "$(LINUX_BIN)"
+	chmod +x "$(LINUX_PDFIUM_WORKER)"
+	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' "$(LINUX_DESKTOP_TEMPLATE)" > "$(LINUX_STAGE)/share/applications/hexone.desktop"
+	cp LICENSE NOTICE "$(LINUX_STAGE)/"
+	HEXONE_WRITE_DESKTOP_ICON_PNG="$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/hexone.png" "$(LINUX_BIN)"
+	cp "$(PDFIUM_LINUX_LIB)" "$(LINUX_LIB_DIR)/libpdfium.so"
+	patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/libpdfium.so"
+	for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do \
+		path=$$(ldconfig -p | awk -v lib="$$lib" '$$1 == lib { print $$NF; exit }'); \
+		if [ -z "$$path" ]; then \
+			echo "missing required Linux runtime library: $$lib"; \
+			exit 1; \
+		fi; \
+		cp -L "$$path" "$(LINUX_LIB_DIR)/$$lib"; \
+		patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/$$lib"; \
+	done
+
 build-macos: headers | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "darwin" ]; then \
 		echo "build-macos requires a macOS host (CGO-enabled Gio build)."; \
@@ -153,11 +228,42 @@ build-macos: headers | $(DIST_DIR)
 	codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" $(MACOS_APP_CODESIGN_FLAGS) "$(MACOS_APP)"
 	codesign -v --verbose=2 "$(MACOS_APP)"
 
+build-macos-pdfium: headers prepare-pdfium-macos | $(DIST_DIR)
+	@if [ "$$(go env GOHOSTOS)" != "darwin" ]; then \
+		echo "build-macos-pdfium requires a macOS host (CGO-enabled Gio build)."; \
+		exit 1; \
+	fi
+	rm -rf "$(MACOS_STAGE)"
+	mkdir -p "$(MACOS_CONTENTS)/MacOS" "$(MACOS_RESOURCES)" "$(MACOS_FRAMEWORKS)"
+	GOOS=darwin GOARCH=$(MACOS_ARCH) CGO_ENABLED=1 go build -tags pdfium -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(MACOS_BIN)" $(CMD)
+	PKG_CONFIG_PATH="$(PDFIUM_MACOS_PKGCONFIG)" GOOS=darwin GOARCH=$(MACOS_ARCH) CGO_ENABLED=1 go build -tags pdfium -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(MACOS_PDFIUM_WORKER)" $(PDFIUM_WORKER_CMD)
+	cp "$(PDFIUM_MACOS_LIB)" "$(MACOS_FRAMEWORKS)/libpdfium.dylib"
+	install_name_tool -id "@rpath/libpdfium.dylib" "$(MACOS_FRAMEWORKS)/libpdfium.dylib"
+	@if ! otool -l "$(MACOS_BIN)" | grep -A2 LC_RPATH | grep -q "@executable_path/../Frameworks"; then \
+		install_name_tool -add_rpath "@executable_path/../Frameworks" "$(MACOS_BIN)"; \
+	fi
+	@if ! otool -l "$(MACOS_PDFIUM_WORKER)" | grep -A2 LC_RPATH | grep -q "@executable_path/../Frameworks"; then \
+		install_name_tool -add_rpath "@executable_path/../Frameworks" "$(MACOS_PDFIUM_WORKER)"; \
+	fi
+	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' -e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' "$(MACOS_PLIST_TEMPLATE)" > "$(MACOS_CONTENTS)/Info.plist"
+	cp protocols.yaml "$(MACOS_RESOURCES)/protocols.yaml"
+	cp LICENSE NOTICE "$(MACOS_RESOURCES)/"
+	HEXONE_WRITE_DEFAULT_ICON_ICNS="$(MACOS_RESOURCES)/AppIcon.icns" "$(MACOS_BIN)"
+	codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" $(MACOS_APP_CODESIGN_FLAGS) "$(MACOS_APP)"
+	codesign -v --verbose=2 "$(MACOS_APP)"
+
 ifeq ($(OS),Windows_NT)
 build-windows: headers windows-resource | $(DIST_DIR)
 	@if exist "$(subst /,\,$(WINDOWS_STAGE))" powershell -NoProfile -Command "Remove-Item -LiteralPath '$(subst /,\,$(WINDOWS_STAGE))' -Recurse -Force"
 	@powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '$(subst /,\,$(WINDOWS_STAGE))' | Out-Null"
 	@set GOOS=windows&& set GOARCH=$(WINDOWS_ARCH)&& set CGO_ENABLED=0&& go build -ldflags="$(GO_LDFLAGS_WINDOWS)" -o "$(WINDOWS_BIN)" $(CMD)
+	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'protocols.yaml' -Destination '$(subst /,\,$(WINDOWS_STAGE))\\protocols.yaml' -Force"
+	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'LICENSE','NOTICE' -Destination '$(subst /,\,$(WINDOWS_STAGE))' -Force"
+
+build-windows-pdfium: headers windows-resource | $(DIST_DIR)
+	@if exist "$(subst /,\,$(WINDOWS_STAGE))" powershell -NoProfile -Command "Remove-Item -LiteralPath '$(subst /,\,$(WINDOWS_STAGE))' -Recurse -Force"
+	@powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '$(subst /,\,$(WINDOWS_STAGE))' | Out-Null"
+	@set GOOS=windows&& set GOARCH=$(WINDOWS_ARCH)&& set CGO_ENABLED=0&& go build -tags pdfium -ldflags="$(GO_LDFLAGS_WINDOWS)" -o "$(WINDOWS_BIN)" $(CMD)
 	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'protocols.yaml' -Destination '$(subst /,\,$(WINDOWS_STAGE))\\protocols.yaml' -Force"
 	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'LICENSE','NOTICE' -Destination '$(subst /,\,$(WINDOWS_STAGE))' -Force"
 else
@@ -206,6 +312,52 @@ build-windows: headers | $(DIST_DIR)
 	cp LICENSE NOTICE "$(WINDOWS_STAGE)/"; \
 	cleanup; \
 	trap - EXIT INT TERM
+
+build-windows-pdfium: headers | $(DIST_DIR)
+	rm -rf "$(WINDOWS_STAGE)"
+	mkdir -p "$(WINDOWS_STAGE)"
+	@set -e; \
+	rc_compiler=""; \
+	for candidate in x86_64-w64-mingw32-windres windres; do \
+		if command -v "$$candidate" >/dev/null 2>&1; then \
+			rc_compiler="$$candidate"; \
+			break; \
+		fi; \
+	done; \
+	backup=""; \
+	if [ -f "$(WINDOWS_SYSO)" ]; then \
+		backup="$(DIST_DIR)/hexone_windows.syso.bak"; \
+		cp "$(WINDOWS_SYSO)" "$$backup"; \
+	fi; \
+	cleanup() { \
+		rm -f "$(WINDOWS_MANIFEST_RENDERED)" "$(WINDOWS_RC_RENDERED)" "$(WINDOWS_SYSO_RENDERED)"; \
+		if [ -n "$$backup" ] && [ -f "$$backup" ]; then \
+			mv "$$backup" "$(WINDOWS_SYSO)"; \
+		fi; \
+	}; \
+	trap cleanup EXIT INT TERM; \
+	if [ -n "$$rc_compiler" ]; then \
+		sed -e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
+			"$(WINDOWS_MANIFEST_TEMPLATE)" > "$(WINDOWS_MANIFEST_RENDERED)"; \
+		sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' \
+			-e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
+			-e 's/@HEXONE_FILE_VERSION_COMMAS@/$(APP_FILE_VERSION_COMMAS)/g' \
+			-e 's/@HEXONE_COPYRIGHT_YEAR@/$(APP_COPYRIGHT_YEAR)/g' \
+			-e 's#@HEXONE_MANIFEST_PATH@#hexone_windows.generated.manifest#g' \
+			"$(WINDOWS_RC_TEMPLATE)" > "$(WINDOWS_RC_RENDERED)"; \
+		if "$$rc_compiler" -i "$(WINDOWS_RC_RENDERED)" -o "$(WINDOWS_SYSO_RENDERED)" -O coff; then \
+			cp "$(WINDOWS_SYSO_RENDERED)" "$(WINDOWS_SYSO)"; \
+		else \
+			echo "warning: $$rc_compiler failed; using existing Windows resource without refreshed version metadata."; \
+		fi; \
+	else \
+		echo "warning: no windres found; using existing Windows resource without refreshed version metadata."; \
+	fi; \
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 go build -tags pdfium -ldflags="$(GO_LDFLAGS_WINDOWS)" -o "$(WINDOWS_BIN)" $(CMD); \
+	cp protocols.yaml "$(WINDOWS_STAGE)/protocols.yaml"; \
+	cp LICENSE NOTICE "$(WINDOWS_STAGE)/"; \
+	cleanup; \
+	trap - EXIT INT TERM
 endif
 
 ifeq ($(OS),Windows_NT)
@@ -238,7 +390,7 @@ endif
 
 build-all: build-linux build-macos build-windows
 
-package-linux: build-linux
+package-linux: build-linux-pdfium
 	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \
 		echo "package-linux requires a Linux host."; \
 		exit 1; \
@@ -255,8 +407,11 @@ package-linux: build-linux
 	rm -rf "$(LINUX_APPDIR)"
 	mkdir -p "$(LINUX_APPDIR)/usr/bin" "$(LINUX_APPDIR)/usr/lib" "$(LINUX_APPDIR)/usr/share/applications" "$(LINUX_APPDIR)/usr/share/icons/hicolor/512x512/apps"
 	cp "$(LINUX_BIN)" "$(LINUX_APPDIR)/usr/bin/$(APP)"
+	cp "$(LINUX_PDFIUM_WORKER)" "$(LINUX_APPDIR)/usr/bin/$(PDFIUM_WORKER_APP)"
 	chmod +x "$(LINUX_APPDIR)/usr/bin/$(APP)"
+	chmod +x "$(LINUX_APPDIR)/usr/bin/$(PDFIUM_WORKER_APP)"
 	patchelf --force-rpath --set-rpath '$$ORIGIN/../lib' "$(LINUX_APPDIR)/usr/bin/$(APP)"
+	patchelf --force-rpath --set-rpath '$$ORIGIN/../lib' "$(LINUX_APPDIR)/usr/bin/$(PDFIUM_WORKER_APP)"
 	cp "$(LINUX_LIB_DIR)"/* "$(LINUX_APPDIR)/usr/lib/"
 	sed -e 's/@HEXONE_APP@/$(APP)/g' "$(LINUX_APPRUN_TEMPLATE)" > "$(LINUX_APPDIR)/AppRun"
 	chmod +x "$(LINUX_APPDIR)/AppRun"
@@ -269,11 +424,11 @@ package-linux: build-linux
 	ln -s "$(APP).png" "$(LINUX_APPDIR)/.DirIcon"
 	ARCH="$(LINUX_APPIMAGE_ARCH)" "$(APPIMAGETOOL)" "$(LINUX_APPDIR)" "$(LINUX_APPIMAGE)"
 
-package-linux-zip: build-linux
+package-linux-zip: build-linux-pdfium
 	rm -f "$(LINUX_ZIP)"
 	cd "$(LINUX_STAGE)" && zip -rq "../$(notdir $(LINUX_ZIP))" .
 
-package-macos: build-macos
+package-macos: build-macos-pdfium
 	rm -f "$(MACOS_DMG)"
 	rm -f "$(MACOS_DMG_RW)"
 	rm -rf "$(MACOS_DMG_STAGE)"
@@ -315,11 +470,11 @@ package-macos: build-macos
 	fi
 
 ifeq ($(OS),Windows_NT)
-package-windows: build-windows
+package-windows: build-windows-pdfium
 	@if exist "$(subst /,\,$(WINDOWS_ZIP))" del /q "$(subst /,\,$(WINDOWS_ZIP))"
 	@powershell -NoProfile -Command "Compress-Archive -Path '$(subst /,\,$(WINDOWS_STAGE))\\*' -DestinationPath '$(subst /,\,$(WINDOWS_ZIP))' -Force"
 else
-package-windows: build-windows
+package-windows: build-windows-pdfium
 	rm -f "$(WINDOWS_ZIP)"
 	cd "$(WINDOWS_STAGE)" && zip -rq "../$(notdir $(WINDOWS_ZIP))" .
 endif

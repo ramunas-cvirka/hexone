@@ -686,21 +686,19 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 	theme := ui.fileViewerTheme()
 	title := ui.fileViewerHeaderTitle(st)
 	statusText, statusColor := ui.fileViewerOverlayStatusText(st)
-	updatedText := ""
-	if !st.updatedAt.IsZero() {
-		updatedText = st.updatedAt.Format("15:04:05")
-	}
-	lineEnding := ""
+	detailLabel := ""
+	pageLabel := ""
 	encodingLabel := ""
 	if st.mode == "file" {
 		if st.detectedImagePreview {
-			lineEnding = viewerImageSizeLabel(st)
+			detailLabel = viewerImageZoomLabel(st)
+			pageLabel = viewerPDFPageLabel(st)
 		} else if !st.detectedBinaryPreview {
-			lineEnding = viewerLineEndingLabel(st.detectedLineEnding)
+			detailLabel = viewerLineEndingLabel(st.detectedLineEnding)
 		}
 		encodingLabel = viewerEncodingStatusLabel(st)
 	}
-	if title == "" && statusText == "" && updatedText == "" && lineEnding == "" && encodingLabel == "" {
+	if title == "" && statusText == "" && detailLabel == "" && pageLabel == "" && encodingLabel == "" {
 		return layout.Dimensions{}
 	}
 	return fillRoundedClipBox(
@@ -743,16 +741,16 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 						return ui.layoutFileViewerOverlayText(th, gtx, statusText, statusColor, 0)
 					}))
 				}
-				if updatedText != "" {
-					addSeparator()
-					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileViewerOverlayText(th, gtx, updatedText, theme.Muted, 0)
-					}))
-				}
-				if lineEnding != "" {
+				if detailLabel != "" {
 					addGap(unit.Dp(5))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileViewerOverlayChip(th, gtx, lineEnding, theme.CommandStaticText, false, nil)
+						return ui.layoutFileViewerOverlayChip(th, gtx, detailLabel, theme.CommandStaticText, false, nil)
+					}))
+				}
+				if pageLabel != "" {
+					addGap(unit.Dp(4))
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerOverlayChip(th, gtx, pageLabel, theme.CommandStaticText, false, nil)
 					}))
 				}
 				if encodingLabel != "" {
@@ -1015,16 +1013,18 @@ func viewerImageFormatDisplayName(format string) string {
 		return "JPEG"
 	case "gif":
 		return "GIF"
+	case "pdf":
+		return "PDF"
 	default:
 		return ""
 	}
 }
 
-func viewerImageSizeLabel(st *fileViewerState) string {
-	if st == nil || st.imagePreviewSize.X <= 0 || st.imagePreviewSize.Y <= 0 {
+func viewerImageZoomLabel(st *fileViewerState) string {
+	if st == nil || !st.detectedImagePreview {
 		return ""
 	}
-	return fmt.Sprintf("%dx%d", st.imagePreviewSize.X, st.imagePreviewSize.Y)
+	return fmt.Sprintf("%.0f%%", float64(st.imageView.effectiveZoom()*100))
 }
 
 func viewerLineEndingLabel(kind string) string {
@@ -1141,19 +1141,12 @@ func (ui *UI) fileViewerHeaderDetails(st *fileViewerState) []viewerHeaderDetailP
 	if st == nil {
 		return nil
 	}
-	theme := ui.fileViewerTheme()
 	statusText, statusColor := ui.fileViewerHeaderStatusText(st)
-	parts := make([]viewerHeaderDetailPart, 0, 2)
+	parts := make([]viewerHeaderDetailPart, 0, 1)
 	if statusText != "" {
 		parts = append(parts, viewerHeaderDetailPart{
 			Text:  statusText,
 			Color: statusColor,
-		})
-	}
-	if !st.updatedAt.IsZero() {
-		parts = append(parts, viewerHeaderDetailPart{
-			Text:  "updated at " + st.updatedAt.Format("15:04:05"),
-			Color: theme.Muted,
 		})
 	}
 	return parts

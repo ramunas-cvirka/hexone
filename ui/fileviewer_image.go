@@ -20,13 +20,16 @@ import (
 )
 
 const (
-	fileViewerImageScrollbarDp    = 10
-	fileViewerImageScrollbarMinPx = 8
-	fileViewerImageKeyStepPx      = 48
-	fileViewerImageWheelStepPx    = 28
-	fileViewerImageMinZoom        = float32(0.25)
-	fileViewerImageMaxZoom        = float32(8)
-	fileViewerImageZoomFactor     = float32(1.25)
+	fileViewerImageScrollbarDp     = 10
+	fileViewerImageScrollbarMinPx  = 8
+	fileViewerPDFDocScrollbarDp    = 8
+	fileViewerPDFDocScrollbarMinPx = 6
+	fileViewerPDFDocScrollbarGapDp = 4
+	fileViewerImageKeyStepPx       = 48
+	fileViewerImageWheelStepPx     = 28
+	fileViewerImageMinZoom         = float32(0.25)
+	fileViewerImageMaxZoom         = float32(8)
+	fileViewerImageZoomFactor      = float32(1.25)
 )
 
 type imagePreviewView struct {
@@ -38,6 +41,8 @@ type imagePreviewView struct {
 	vThumbRect   image.Rectangle
 	hTrackRect   image.Rectangle
 	hThumbRect   image.Rectangle
+	pdfTrackRect image.Rectangle
+	pdfThumbRect image.Rectangle
 
 	zoom        float32
 	scrollX     int
@@ -49,10 +54,12 @@ type imagePreviewView struct {
 	wheelCarryX float32
 	wheelCarryY float32
 
-	hoverVTrack bool
-	hoverVThumb bool
-	hoverHTrack bool
-	hoverHThumb bool
+	hoverVTrack   bool
+	hoverVThumb   bool
+	hoverHTrack   bool
+	hoverHThumb   bool
+	hoverPDFTrack bool
+	hoverPDFThumb bool
 
 	vDragging bool
 	vDragID   pointer.ID
@@ -61,6 +68,11 @@ type imagePreviewView struct {
 	hDragging bool
 	hDragID   pointer.ID
 	hDragGrab int
+
+	pdfDragging bool
+	pdfDragID   pointer.ID
+	pdfDragGrab int
+	pdfDragPage int
 }
 
 func (v *imagePreviewView) effectiveZoom() float32 {
@@ -80,6 +92,8 @@ func (v *imagePreviewView) reset() {
 	v.vThumbRect = image.Rectangle{}
 	v.hTrackRect = image.Rectangle{}
 	v.hThumbRect = image.Rectangle{}
+	v.pdfTrackRect = image.Rectangle{}
+	v.pdfThumbRect = image.Rectangle{}
 	v.zoom = 1
 	v.scrollX = 0
 	v.scrollY = 0
@@ -93,12 +107,18 @@ func (v *imagePreviewView) reset() {
 	v.hoverVThumb = false
 	v.hoverHTrack = false
 	v.hoverHThumb = false
+	v.hoverPDFTrack = false
+	v.hoverPDFThumb = false
 	v.vDragging = false
 	v.vDragID = 0
 	v.vDragGrab = 0
 	v.hDragging = false
 	v.hDragID = 0
 	v.hDragGrab = 0
+	v.pdfDragging = false
+	v.pdfDragID = 0
+	v.pdfDragGrab = 0
+	v.pdfDragPage = 0
 }
 
 func (v *imagePreviewView) contentSize(img image.Image) image.Point {
@@ -611,6 +631,8 @@ func (v *imagePreviewView) updateHover(pos image.Point) {
 	v.hoverVThumb = viewerPointInRect(pos, v.vThumbRect)
 	v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
 	v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
+	v.hoverPDFTrack = viewerPointInRect(pos, v.pdfTrackRect)
+	v.hoverPDFThumb = viewerPointInRect(pos, v.pdfThumbRect)
 }
 
 func (v *imagePreviewView) clearHover() {
@@ -621,6 +643,99 @@ func (v *imagePreviewView) clearHover() {
 	v.hoverVThumb = false
 	v.hoverHTrack = false
 	v.hoverHThumb = false
+	v.hoverPDFTrack = false
+	v.hoverPDFThumb = false
+}
+
+func (v *imagePreviewView) clearPDFDocumentScrollbar() {
+	if v == nil {
+		return
+	}
+	v.pdfTrackRect = image.Rectangle{}
+	v.pdfThumbRect = image.Rectangle{}
+	v.hoverPDFTrack = false
+	v.hoverPDFThumb = false
+}
+
+func (v *imagePreviewView) pdfDocumentThumbGrabY(pos image.Point) int {
+	if v == nil || v.pdfThumbRect.Dy() <= 0 {
+		return 0
+	}
+	grab := pos.Y - v.pdfThumbRect.Min.Y
+	if grab < 0 {
+		grab = 0
+	}
+	if grab > v.pdfThumbRect.Dy() {
+		grab = v.pdfThumbRect.Dy()
+	}
+	return grab
+}
+
+func (v *imagePreviewView) pdfDocumentPageFromVerticalDrag(posY, grab, pageCount int) (int, bool) {
+	if v == nil || pageCount <= 1 || v.pdfTrackRect.Dy() <= 0 || v.pdfThumbRect.Dy() <= 0 {
+		return 0, false
+	}
+	maxTravel := v.pdfTrackRect.Dy() - v.pdfThumbRect.Dy()
+	if maxTravel <= 0 {
+		return 0, false
+	}
+	travel := posY - v.pdfTrackRect.Min.Y - grab
+	if travel < 0 {
+		travel = 0
+	}
+	if travel > maxTravel {
+		travel = maxTravel
+	}
+	page := int(math.Round(float64(float32(travel) / float32(maxTravel) * float32(pageCount-1))))
+	if page < 0 {
+		page = 0
+	}
+	if page >= pageCount {
+		page = pageCount - 1
+	}
+	return page, true
+}
+
+func viewerPDFDocumentScrollbarVisible(st *fileViewerState) bool {
+	return viewerPDFPreviewActive(st) && st.imagePreviewPageCount > 1
+}
+
+func viewerPDFDocumentThumbPage(st *fileViewerState) int {
+	if st == nil {
+		return 0
+	}
+	page := st.imagePreviewPage
+	if st.imageView.pdfDragging {
+		page = st.imageView.pdfDragPage
+	} else if st.previewRenderActive {
+		page = st.previewRenderPage
+	}
+	if page < 0 {
+		page = 0
+	}
+	if page >= st.imagePreviewPageCount {
+		page = st.imagePreviewPageCount - 1
+	}
+	return page
+}
+
+func (v *imagePreviewView) setPDFDocumentScrollbar(track image.Rectangle, page, pageCount int) {
+	if v == nil {
+		return
+	}
+	v.pdfTrackRect = image.Rectangle{}
+	v.pdfThumbRect = image.Rectangle{}
+	if pageCount <= 1 || track.Dx() <= 0 || track.Dy() <= 0 {
+		return
+	}
+	if page < 0 {
+		page = 0
+	}
+	if page >= pageCount {
+		page = pageCount - 1
+	}
+	v.pdfTrackRect = track
+	v.pdfThumbRect = viewerImagePreviewThumbRect(track, 1, pageCount, page, true)
 }
 
 func (ui *UI) layoutImageOutputView(_ *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
@@ -634,10 +749,36 @@ func (ui *UI) layoutImageOutputView(_ *material.Theme, gtx layout.Context, st *f
 	if scrollbarPx < fileViewerImageScrollbarMinPx {
 		scrollbarPx = fileViewerImageScrollbarMinPx
 	}
-	v.computeLayout(size, 0, scrollbarPx, st.imagePreview)
+	layoutSize := size
+	pdfDocGapPx := 0
+	pdfDocScrollbarPx := 0
+	if viewerPDFDocumentScrollbarVisible(st) {
+		pdfDocScrollbarPx = gtx.Dp(unit.Dp(fileViewerPDFDocScrollbarDp))
+		if pdfDocScrollbarPx < fileViewerPDFDocScrollbarMinPx {
+			pdfDocScrollbarPx = fileViewerPDFDocScrollbarMinPx
+		}
+		pdfDocGapPx = gtx.Dp(unit.Dp(fileViewerPDFDocScrollbarGapDp))
+		if reserve := pdfDocGapPx + pdfDocScrollbarPx; reserve > 0 && reserve < layoutSize.X {
+			layoutSize.X -= reserve
+		} else {
+			pdfDocGapPx = 0
+			pdfDocScrollbarPx = 0
+		}
+	}
+	v.computeLayout(layoutSize, 0, scrollbarPx, st.imagePreview)
+	ui.layoutPDFDocumentScrollbarGeometry(st, size, layoutSize, pdfDocGapPx, pdfDocScrollbarPx)
+	if st.pendingImageScrollToEnd {
+		if v.scrollToEnd(st.imagePreview) {
+			v.syncVisualScroll()
+		}
+		st.pendingImageScrollToEnd = false
+		v.computeLayout(layoutSize, 0, scrollbarPx, st.imagePreview)
+		ui.layoutPDFDocumentScrollbarGeometry(st, size, layoutSize, pdfDocGapPx, pdfDocScrollbarPx)
+	}
 	ui.handleImagePreviewEvents(gtx, st)
 	animating := v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg), st.imagePreview)
-	v.computeLayout(size, 0, scrollbarPx, st.imagePreview)
+	v.computeLayout(layoutSize, 0, scrollbarPx, st.imagePreview)
+	ui.layoutPDFDocumentScrollbarGeometry(st, size, layoutSize, pdfDocGapPx, pdfDocScrollbarPx)
 	if animating {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(streamSmoothTick)})
 	}
@@ -649,6 +790,29 @@ func (ui *UI) layoutImageOutputView(_ *material.Theme, gtx layout.Context, st *f
 	event.Op(gtx.Ops, &v.pointerTag)
 	pass.Pop()
 	return layout.Dimensions{Size: size}
+}
+
+func (ui *UI) layoutPDFDocumentScrollbarGeometry(st *fileViewerState, size, layoutSize image.Point, gapPx, scrollbarPx int) {
+	if st == nil {
+		return
+	}
+	v := &st.imageView
+	if !viewerPDFDocumentScrollbarVisible(st) || scrollbarPx <= 0 {
+		v.clearPDFDocumentScrollbar()
+		return
+	}
+	track := image.Rect(layoutSize.X+gapPx, 0, layoutSize.X+gapPx+scrollbarPx, size.Y)
+	if track.Min.X < 0 {
+		track.Min.X = 0
+	}
+	if track.Max.X > size.X {
+		track.Max.X = size.X
+	}
+	if track.Dx() <= 0 || track.Dy() <= 0 {
+		v.clearPDFDocumentScrollbar()
+		return
+	}
+	v.setPDFDocumentScrollbar(track, viewerPDFDocumentThumbPage(st), st.imagePreviewPageCount)
 }
 
 func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) {
@@ -702,6 +866,19 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 				st.closeContextMenu()
 			}
 			switch {
+			case viewerPointInRect(pos, v.pdfTrackRect):
+				v.pdfDragging = true
+				v.pdfDragID = pe.PointerID
+				v.pdfDragGrab = v.pdfDocumentThumbGrabY(pos)
+				v.pdfDragPage = st.imagePreviewPage
+				gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
+				if page, ok := v.pdfDocumentPageFromVerticalDrag(pos.Y, v.pdfDragGrab, st.imagePreviewPageCount); ok {
+					if page != v.pdfDragPage {
+						v.pdfDragPage = page
+						st.markUserBrowsing(gtx.Now)
+						gtx.Execute(op.InvalidateCmd{})
+					}
+				}
 			case viewerPointInRect(pos, v.vTrackRect):
 				v.vDragging = true
 				v.vDragID = pe.PointerID
@@ -722,6 +899,12 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 			v.updateHover(pos)
 		case pointer.Drag:
 			changed := false
+			if v.pdfDragging && pe.PointerID == v.pdfDragID {
+				if page, ok := v.pdfDocumentPageFromVerticalDrag(pos.Y, v.pdfDragGrab, st.imagePreviewPageCount); ok && page != v.pdfDragPage {
+					v.pdfDragPage = page
+					changed = true
+				}
+			}
 			if v.vDragging && pe.PointerID == v.vDragID {
 				changed = v.setScrollFromVerticalDrag(st.imagePreview, pos.Y, v.vDragGrab) || changed
 			}
@@ -730,9 +913,21 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 			}
 			if changed {
 				st.markUserBrowsing(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 			}
 			v.updateHover(pos)
 		case pointer.Release:
+			if v.pdfDragging && pe.PointerID == v.pdfDragID {
+				targetPage := v.pdfDragPage
+				v.pdfDragging = false
+				v.pdfDragGrab = 0
+				v.pdfDragPage = st.imagePreviewPage
+				if targetPage >= 0 && targetPage < st.imagePreviewPageCount && targetPage != st.imagePreviewPage {
+					ui.startFileViewerPDFPageRender(gtx.Now, targetPage, false)
+					st.markUserBrowsing(gtx.Now)
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			}
 			if v.vDragging && pe.PointerID == v.vDragID {
 				v.vDragging = false
 				v.vDragGrab = 0
@@ -743,6 +938,11 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 			}
 			v.updateHover(pos)
 		case pointer.Cancel:
+			if v.pdfDragging && pe.PointerID == v.pdfDragID {
+				v.pdfDragging = false
+				v.pdfDragGrab = 0
+				v.pdfDragPage = st.imagePreviewPage
+			}
 			if v.vDragging && pe.PointerID == v.vDragID {
 				v.vDragging = false
 				v.vDragGrab = 0
@@ -804,6 +1004,7 @@ func (ui *UI) paintImagePreviewScrollbars(gtx layout.Context, st *fileViewerStat
 	}
 	draw(v.vTrackRect, v.vThumbRect, v.hoverVTrack, v.hoverVThumb, v.vDragging)
 	draw(v.hTrackRect, v.hThumbRect, v.hoverHTrack, v.hoverHThumb, v.hDragging)
+	draw(v.pdfTrackRect, v.pdfThumbRect, v.hoverPDFTrack, v.hoverPDFThumb, v.pdfDragging)
 }
 
 func (ui *UI) applyImagePreviewCursor(gtx layout.Context, st *fileViewerState) {
@@ -811,6 +1012,11 @@ func (ui *UI) applyImagePreviewCursor(gtx layout.Context, st *fileViewerState) {
 		return
 	}
 	v := &st.imageView
+	if v.pdfDragging {
+		defer clip.Rect(v.pdfTrackRect).Push(gtx.Ops).Pop()
+		pointer.CursorGrabbing.Add(gtx.Ops)
+		return
+	}
 	if v.vDragging {
 		defer clip.Rect(v.vTrackRect).Push(gtx.Ops).Pop()
 		pointer.CursorGrabbing.Add(gtx.Ops)
@@ -822,6 +1028,9 @@ func (ui *UI) applyImagePreviewCursor(gtx layout.Context, st *fileViewerState) {
 		return
 	}
 	switch {
+	case v.hoverPDFTrack || v.hoverPDFThumb:
+		defer clip.Rect(v.pdfTrackRect).Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
 	case v.hoverVTrack || v.hoverVThumb:
 		defer clip.Rect(v.vTrackRect).Push(gtx.Ops).Pop()
 		pointer.CursorPointer.Add(gtx.Ops)
