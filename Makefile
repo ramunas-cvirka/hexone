@@ -1,9 +1,7 @@
-.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-linux-pdfium build-macos-pdfium build-windows-pdfium build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource prepare-pdfium-linux prepare-pdfium-macos prepare-pdfium-windows
+.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-linux-pdfium build-macos-pdfium build-windows-pdfium build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource
 
 APP := hexone
 CMD := ./cmd/hexone
-PDFIUM_WORKER_APP := $(APP)-pdfium-worker
-PDFIUM_WORKER_CMD := ./cmd/hexone-pdfium-worker
 DIST_DIR := dist
 VERSION_TOOL := ./packaging/derive_version.sh
 HEADER_GOCACHE := $(abspath .cache/go-build)
@@ -34,7 +32,6 @@ GO_LDFLAGS_COMMON := -X hexone/buildinfo.Version=$(APP_VERSION) -X hexone/buildi
 LINUX_ARCH := amd64
 LINUX_STAGE := $(DIST_DIR)/$(APP)-linux-$(LINUX_ARCH)
 LINUX_BIN := $(LINUX_STAGE)/$(APP)
-LINUX_PDFIUM_WORKER := $(LINUX_STAGE)/$(PDFIUM_WORKER_APP)
 LINUX_LIB_DIR := $(LINUX_STAGE)/lib
 LINUX_ZIP := $(DIST_DIR)/$(APP)_linux_$(LINUX_ARCH).zip
 LINUX_APPDIR := $(DIST_DIR)/$(APP).AppDir
@@ -48,7 +45,6 @@ MACOS_STAGE := $(DIST_DIR)/$(APP)-macos-$(MACOS_ARCH)
 MACOS_APP := $(MACOS_STAGE)/$(APP).app
 MACOS_CONTENTS := $(MACOS_APP)/Contents
 MACOS_BIN := $(MACOS_CONTENTS)/MacOS/$(APP)
-MACOS_PDFIUM_WORKER := $(MACOS_CONTENTS)/MacOS/$(PDFIUM_WORKER_APP)
 MACOS_RESOURCES := $(MACOS_CONTENTS)/Resources
 MACOS_PLIST_TEMPLATE := packaging/macos/Info.plist
 MACOS_DMG_STAGE := $(DIST_DIR)/$(APP)-macos-dmg-$(MACOS_ARCH)
@@ -72,7 +68,6 @@ endif
 WINDOWS_ARCH := amd64
 WINDOWS_STAGE := $(DIST_DIR)/$(APP)-windows-$(WINDOWS_ARCH)-portable
 WINDOWS_BIN := $(WINDOWS_STAGE)/$(APP).exe
-WINDOWS_PDFIUM_WORKER := $(WINDOWS_STAGE)/$(PDFIUM_WORKER_APP).exe
 WINDOWS_ZIP := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_portable.zip
 WINDOWS_RC_TEMPLATE := cmd/hexone/app_icon_windows.rc
 WINDOWS_MANIFEST_TEMPLATE := cmd/hexone/app_windows.manifest
@@ -80,22 +75,6 @@ WINDOWS_MANIFEST_RENDERED := cmd/hexone/hexone_windows.generated.manifest
 WINDOWS_RC_RENDERED := cmd/hexone/hexone_windows.generated.rc
 WINDOWS_SYSO_RENDERED := cmd/hexone/hexone_windows.generated.syso
 WINDOWS_SYSO := cmd/hexone/hexone_windows.syso
-
-PDFIUM_DIR := $(DIST_DIR)/pdfium
-PDFIUM_LINUX_DIR := $(PDFIUM_DIR)/linux_$(LINUX_ARCH)
-PDFIUM_MACOS_DIR := $(PDFIUM_DIR)/macos_$(MACOS_ARCH)
-PDFIUM_WINDOWS_DIR := $(PDFIUM_DIR)/windows_$(WINDOWS_ARCH)
-PDFIUM_LINUX_PKGCONFIG := $(PDFIUM_LINUX_DIR)/lib/pkgconfig
-PDFIUM_MACOS_PKGCONFIG := $(PDFIUM_MACOS_DIR)/lib/pkgconfig
-PDFIUM_WINDOWS_PKGCONFIG := $(PDFIUM_WINDOWS_DIR)/lib/pkgconfig
-PDFIUM_LINUX_LIB := $(PDFIUM_LINUX_DIR)/lib/libpdfium.so
-PDFIUM_MACOS_LIB := $(PDFIUM_MACOS_DIR)/lib/libpdfium.dylib
-PDFIUM_WINDOWS_IMPORT := $(PDFIUM_WINDOWS_DIR)/lib/pdfium.dll.lib
-PDFIUM_WINDOWS_DLL := $(PDFIUM_WINDOWS_DIR)/bin/pdfium.dll
-PDFIUM_PREPARE_SH := packaging/pdfium/prepare_pdfium.sh
-PDFIUM_PREPARE_PS1 := packaging/pdfium/prepare_pdfium.ps1
-PDFIUM_BUILD_WINDOWS_PS1 := packaging/pdfium/build_windows_pdfium.ps1
-MACOS_FRAMEWORKS := $(MACOS_CONTENTS)/Frameworks
 
 ifeq ($(OS),Windows_NT)
 BIN := $(APP).exe
@@ -128,20 +107,6 @@ build: headers $(BUILD_DEPS)
 test: headers
 	go test ./...
 
-ifeq ($(OS),Windows_NT)
-prepare-pdfium-windows: | $(DIST_DIR)
-	@powershell -NoProfile -ExecutionPolicy Bypass -File "$(PDFIUM_PREPARE_PS1)" windows-amd64 "$(subst /,\,$(PDFIUM_WINDOWS_DIR))"
-else
-prepare-pdfium-linux: | $(DIST_DIR)
-	sh "$(PDFIUM_PREPARE_SH)" linux-amd64 "$(PDFIUM_LINUX_DIR)"
-
-prepare-pdfium-macos: | $(DIST_DIR)
-	sh "$(PDFIUM_PREPARE_SH)" macos-arm64 "$(PDFIUM_MACOS_DIR)"
-
-prepare-pdfium-windows: | $(DIST_DIR)
-	sh "$(PDFIUM_PREPARE_SH)" windows-amd64 "$(PDFIUM_WINDOWS_DIR)"
-endif
-
 build-linux: headers | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \
 		echo "build-linux requires a Linux host (CGO-enabled Gio build)."; \
@@ -173,7 +138,7 @@ build-linux: headers | $(DIST_DIR)
 		patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/$$lib"; \
 	done
 
-build-linux-pdfium: headers prepare-pdfium-linux | $(DIST_DIR)
+build-linux-pdfium: headers | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \
 		echo "build-linux-pdfium requires a Linux host (CGO-enabled Gio build)."; \
 		exit 1; \
@@ -185,24 +150,15 @@ build-linux-pdfium: headers prepare-pdfium-linux | $(DIST_DIR)
 	rm -rf "$(LINUX_STAGE)"
 	mkdir -p "$(LINUX_STAGE)" "$(LINUX_LIB_DIR)" "$(LINUX_STAGE)/share/applications" "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps"
 	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -tags "nowayland pdfium" -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(LINUX_BIN)" $(CMD)
-	PKG_CONFIG_PATH="$(PDFIUM_LINUX_PKGCONFIG)" GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -tags pdfium -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(LINUX_PDFIUM_WORKER)" $(PDFIUM_WORKER_CMD)
 	patchelf --force-rpath --set-rpath '$$ORIGIN/lib' "$(LINUX_BIN)"
 	@if [ "$$(patchelf --print-rpath "$(LINUX_BIN)")" != '$$ORIGIN/lib' ]; then \
 		echo "failed to set Linux rpath on $(LINUX_BIN)"; \
 		exit 1; \
 	fi
-	patchelf --force-rpath --set-rpath '$$ORIGIN/lib' "$(LINUX_PDFIUM_WORKER)"
-	@if [ "$$(patchelf --print-rpath "$(LINUX_PDFIUM_WORKER)")" != '$$ORIGIN/lib' ]; then \
-		echo "failed to set Linux rpath on $(LINUX_PDFIUM_WORKER)"; \
-		exit 1; \
-	fi
 	chmod +x "$(LINUX_BIN)"
-	chmod +x "$(LINUX_PDFIUM_WORKER)"
 	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' "$(LINUX_DESKTOP_TEMPLATE)" > "$(LINUX_STAGE)/share/applications/hexone.desktop"
 	cp LICENSE NOTICE "$(LINUX_STAGE)/"
 	HEXONE_WRITE_DESKTOP_ICON_PNG="$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/hexone.png" "$(LINUX_BIN)"
-	cp "$(PDFIUM_LINUX_LIB)" "$(LINUX_LIB_DIR)/libpdfium.so"
-	patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/libpdfium.so"
 	for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do \
 		path=$$(ldconfig -p | awk -v lib="$$lib" '$$1 == lib { print $$NF; exit }'); \
 		if [ -z "$$path" ]; then \
@@ -228,23 +184,14 @@ build-macos: headers | $(DIST_DIR)
 	codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" $(MACOS_APP_CODESIGN_FLAGS) "$(MACOS_APP)"
 	codesign -v --verbose=2 "$(MACOS_APP)"
 
-build-macos-pdfium: headers prepare-pdfium-macos | $(DIST_DIR)
+build-macos-pdfium: headers | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "darwin" ]; then \
 		echo "build-macos-pdfium requires a macOS host (CGO-enabled Gio build)."; \
 		exit 1; \
 	fi
 	rm -rf "$(MACOS_STAGE)"
-	mkdir -p "$(MACOS_CONTENTS)/MacOS" "$(MACOS_RESOURCES)" "$(MACOS_FRAMEWORKS)"
+	mkdir -p "$(MACOS_CONTENTS)/MacOS" "$(MACOS_RESOURCES)"
 	GOOS=darwin GOARCH=$(MACOS_ARCH) CGO_ENABLED=1 go build -tags pdfium -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(MACOS_BIN)" $(CMD)
-	PKG_CONFIG_PATH="$(PDFIUM_MACOS_PKGCONFIG)" GOOS=darwin GOARCH=$(MACOS_ARCH) CGO_ENABLED=1 go build -tags pdfium -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(MACOS_PDFIUM_WORKER)" $(PDFIUM_WORKER_CMD)
-	cp "$(PDFIUM_MACOS_LIB)" "$(MACOS_FRAMEWORKS)/libpdfium.dylib"
-	install_name_tool -id "@rpath/libpdfium.dylib" "$(MACOS_FRAMEWORKS)/libpdfium.dylib"
-	@if ! otool -l "$(MACOS_BIN)" | grep -A2 LC_RPATH | grep -q "@executable_path/../Frameworks"; then \
-		install_name_tool -add_rpath "@executable_path/../Frameworks" "$(MACOS_BIN)"; \
-	fi
-	@if ! otool -l "$(MACOS_PDFIUM_WORKER)" | grep -A2 LC_RPATH | grep -q "@executable_path/../Frameworks"; then \
-		install_name_tool -add_rpath "@executable_path/../Frameworks" "$(MACOS_PDFIUM_WORKER)"; \
-	fi
 	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' -e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' "$(MACOS_PLIST_TEMPLATE)" > "$(MACOS_CONTENTS)/Info.plist"
 	cp protocols.yaml "$(MACOS_RESOURCES)/protocols.yaml"
 	cp LICENSE NOTICE "$(MACOS_RESOURCES)/"
@@ -407,11 +354,8 @@ package-linux: build-linux-pdfium
 	rm -rf "$(LINUX_APPDIR)"
 	mkdir -p "$(LINUX_APPDIR)/usr/bin" "$(LINUX_APPDIR)/usr/lib" "$(LINUX_APPDIR)/usr/share/applications" "$(LINUX_APPDIR)/usr/share/icons/hicolor/512x512/apps"
 	cp "$(LINUX_BIN)" "$(LINUX_APPDIR)/usr/bin/$(APP)"
-	cp "$(LINUX_PDFIUM_WORKER)" "$(LINUX_APPDIR)/usr/bin/$(PDFIUM_WORKER_APP)"
 	chmod +x "$(LINUX_APPDIR)/usr/bin/$(APP)"
-	chmod +x "$(LINUX_APPDIR)/usr/bin/$(PDFIUM_WORKER_APP)"
 	patchelf --force-rpath --set-rpath '$$ORIGIN/../lib' "$(LINUX_APPDIR)/usr/bin/$(APP)"
-	patchelf --force-rpath --set-rpath '$$ORIGIN/../lib' "$(LINUX_APPDIR)/usr/bin/$(PDFIUM_WORKER_APP)"
 	cp "$(LINUX_LIB_DIR)"/* "$(LINUX_APPDIR)/usr/lib/"
 	sed -e 's/@HEXONE_APP@/$(APP)/g' "$(LINUX_APPRUN_TEMPLATE)" > "$(LINUX_APPDIR)/AppRun"
 	chmod +x "$(LINUX_APPDIR)/AppRun"

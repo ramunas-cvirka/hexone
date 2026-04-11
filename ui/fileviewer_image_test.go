@@ -21,7 +21,7 @@ func TestImagePreviewViewComputeLayoutAddsScrollbarsWhenNeeded(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 240))
 	var v imagePreviewView
 
-	v.computeLayout(image.Pt(160, 120), 0, 10, img)
+	v.computeLayout(image.Pt(160, 120), 0, 10, 10, img)
 
 	if got := v.viewportRect.Min; got != image.Pt(0, 0) {
 		t.Fatalf("viewport min=%v want origin", got)
@@ -207,8 +207,8 @@ func TestLayoutImageOutputViewAddsPDFDocumentScrollbar(t *testing.T) {
 	if st.imageView.pdfTrackRect.Dx() <= 0 || st.imageView.pdfThumbRect.Dy() <= 0 {
 		t.Fatal("expected pdf document scrollbar to be laid out")
 	}
-	if st.imageView.pdfTrackRect.Min.X <= st.imageView.surfaceRect.Max.X {
-		t.Fatalf("pdf doc scrollbar should live in its own gutter, track=%v surface=%v", st.imageView.pdfTrackRect, st.imageView.surfaceRect)
+	if st.imageView.pdfTrackRect.Min.X != st.imageView.surfaceRect.Max.X {
+		t.Fatalf("pdf doc scrollbar should be the single vertical gutter, track=%v surface=%v", st.imageView.pdfTrackRect, st.imageView.surfaceRect)
 	}
 }
 

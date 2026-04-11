@@ -185,7 +185,8 @@ Remote panes support `command` mode too, so the same log-following patterns work
 
 - rendered PDF pages use the same pan and zoom controls as image preview
 - `Up` / `Down` and `PageUp` / `PageDown` scroll inside the current page first, then move to the previous or next page at the edge
-- the extra scrollbar on the far right represents the whole PDF and can be dragged to jump between pages quickly
+- the vertical scrollbar represents the whole PDF and can be dragged to jump between pages quickly
+- mouse-wheel scrolling crosses page boundaries at the top and bottom, just like the keyboard controls
 - `[` moves to the previous page and `]` moves to the next page
 
 ## Customization

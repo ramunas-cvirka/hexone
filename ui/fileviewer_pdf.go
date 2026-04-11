@@ -83,7 +83,7 @@ func viewerPDFPageLabel(st *fileViewerState) string {
 		return ""
 	}
 	pageCount := st.imagePreviewPageCount
-	page := st.imagePreviewPage + 1
+	page := viewerPDFDisplayedPage(st) + 1
 	if page < 1 {
 		page = 1
 	}
@@ -91,4 +91,23 @@ func viewerPDFPageLabel(st *fileViewerState) string {
 		page = pageCount
 	}
 	return "Page " + strconv.Itoa(page) + "/" + strconv.Itoa(pageCount)
+}
+
+func viewerPDFDisplayedPage(st *fileViewerState) int {
+	if st == nil {
+		return 0
+	}
+	page := st.imagePreviewPage
+	if st.imageView.pdfDragging {
+		page = st.imageView.pdfDragPage
+	} else if st.previewRenderActive {
+		page = st.previewRenderPage
+	}
+	if page < 0 {
+		return 0
+	}
+	if page >= st.imagePreviewPageCount {
+		return st.imagePreviewPageCount - 1
+	}
+	return page
 }

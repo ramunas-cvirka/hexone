@@ -404,15 +404,6 @@ func TestReadViewerFileLocalPDFBypassesSizeLimitUsingPath(t *testing.T) {
 	if len(fake.requests) != 1 {
 		t.Fatalf("render requests=%d want 1", len(fake.requests))
 	}
-	if viewerPDFPreviewUsesLocalPath {
-		if fake.requests[0].LocalPath != path {
-			t.Fatalf("LocalPath=%q want %q", fake.requests[0].LocalPath, path)
-		}
-		if len(fake.requests[0].Data) != 0 {
-			t.Fatalf("expected no inline pdf bytes, got %d", len(fake.requests[0].Data))
-		}
-		return
-	}
 	if fake.requests[0].LocalPath != "" {
 		t.Fatalf("expected empty LocalPath, got %q", fake.requests[0].LocalPath)
 	}
@@ -632,6 +623,68 @@ func TestStepFileViewerPDFPageStartsRender(t *testing.T) {
 	}
 	if fake.requests[0].Page != 1 {
 		t.Fatalf("requested page=%d want 1", fake.requests[0].Page)
+	}
+}
+
+func TestStartFileViewerPDFPageRenderUsesCachedPage(t *testing.T) {
+	prev := viewerPDFPreviewBackend
+	fake := &fakeViewerPDFRenderer{available: true}
+	viewerPDFPreviewBackend = fake
+	t.Cleanup(func() {
+		viewerPDFPreviewBackend = prev
+	})
+
+	ui := NewUI(fm.DefaultConfig())
+	now := time.Date(2026, time.April, 11, 9, 0, 0, 0, time.UTC)
+	cachedImage := image.NewNRGBA(image.Rect(0, 0, 95, 145))
+	st := &fileViewerState{
+		detectedImagePreview:  true,
+		imagePreview:          image.NewNRGBA(image.Rect(0, 0, 90, 140)),
+		imagePreviewFormat:    "pdf",
+		imagePreviewData:      []byte("%PDF-1.7"),
+		imagePreviewSize:      image.Pt(90, 140),
+		imagePreviewPage:      0,
+		imagePreviewPageCount: 3,
+		previewRenderCh:       make(chan fileViewerPreviewRenderResult, 1),
+		pdfPageCache: map[int]viewerPDFRenderResult{
+			1: {
+				Image:     cachedImage,
+				Page:      1,
+				PageCount: 3,
+				Size:      image.Pt(95, 145),
+			},
+		},
+	}
+	st.imageView.zoom = 1.5
+	ui.fileViewer = st
+
+	ui.startFileViewerPDFPageRender(now, 1, false)
+
+	if st.previewRenderActive {
+		t.Fatal("cached page should not keep previewRenderActive")
+	}
+	if got := st.imagePreviewPage; got != 1 {
+		t.Fatalf("imagePreviewPage=%d want 1", got)
+	}
+	if st.imagePreview != cachedImage {
+		t.Fatal("cached page image was not applied")
+	}
+	if got := st.imagePreviewSize; got != image.Pt(95, 145) {
+		t.Fatalf("imagePreviewSize=%v want %v", got, image.Pt(95, 145))
+	}
+	if got := st.status; got != "ready" {
+		t.Fatalf("status=%q want %q", got, "ready")
+	}
+	if got := st.imageView.zoom; got != 1.5 {
+		t.Fatalf("zoom=%f want %f", got, 1.5)
+	}
+	select {
+	case res := <-st.previewRenderCh:
+		t.Fatalf("unexpected render result from cached page: %+v", res)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if len(fake.requests) != 0 {
+		t.Fatalf("render requests=%d want 0", len(fake.requests))
 	}
 }
 

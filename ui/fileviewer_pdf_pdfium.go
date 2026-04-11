@@ -9,36 +9,22 @@ import (
 	"fmt"
 	"image"
 	"io"
-	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
-	"github.com/klippa-app/go-pdfium/multi_threaded"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 )
 
-const (
-	viewerPDFiumWorkerEnv          = "HEXONE_PDFIUM_WORKER"
-	viewerPDFiumWorkerBaseName     = "hexone-pdfium-worker"
-	viewerPDFiumWorkerStartTimeout = 15 * time.Second
-	viewerPDFiumWorkerPoolTimeout  = 30 * time.Second
-)
+const viewerPDFiumPoolTimeout = 30 * time.Second
 
 func init() {
 	viewerPDFPreviewBackend = &viewerPDFiumRenderer{}
-	viewerPDFPreviewUsesLocalPath = runtime.GOOS != "windows"
+	viewerPDFPreviewUsesLocalPath = false
 }
 
 type viewerPDFiumRenderer struct {
-	resolveOnce sync.Once
-	workerPath  string
-	resolveErr  error
-
 	initOnce sync.Once
 	pool     pdfium.Pool
 	poolErr  error
@@ -61,7 +47,7 @@ func (r *viewerPDFiumRenderer) RenderPage(req viewerPDFRenderRequest) (viewerPDF
 	if err != nil {
 		return viewerPDFRenderResult{}, err
 	}
-	instance, err := pool.GetInstance(viewerPDFiumWorkerPoolTimeout)
+	instance, err := pool.GetInstance(viewerPDFiumPoolTimeout)
 	if err != nil {
 		return viewerPDFRenderResult{}, err
 	}
@@ -119,29 +105,12 @@ func (r *viewerPDFiumRenderer) RenderPage(req viewerPDFRenderRequest) (viewerPDF
 
 func (r *viewerPDFiumRenderer) poolInstance() (pdfium.Pool, error) {
 	r.initOnce.Do(func() {
-		if runtime.GOOS == "windows" {
-			r.pool, r.poolErr = webassembly.Init(webassembly.Config{
-				MaxIdle:      1,
-				MaxTotal:     1,
-				ReuseWorkers: true,
-				Stdout:       io.Discard,
-				Stderr:       io.Discard,
-			})
-			return
-		}
-
-		workerPath, err := r.worker()
-		if err != nil {
-			r.poolErr = err
-			return
-		}
-		r.pool = multi_threaded.Init(multi_threaded.Config{
-			MaxIdle:  1,
-			MaxTotal: 1,
-			Command: multi_threaded.Command{
-				BinPath:      workerPath,
-				StartTimeout: viewerPDFiumWorkerStartTimeout,
-			},
+		r.pool, r.poolErr = webassembly.Init(webassembly.Config{
+			MaxIdle:      1,
+			MaxTotal:     1,
+			ReuseWorkers: true,
+			Stdout:       io.Discard,
+			Stderr:       io.Discard,
 		})
 	})
 	if r.poolErr != nil {
@@ -151,44 +120,4 @@ func (r *viewerPDFiumRenderer) poolInstance() (pdfium.Pool, error) {
 		return nil, fmt.Errorf("pdf preview backend is unavailable")
 	}
 	return r.pool, nil
-}
-
-func (r *viewerPDFiumRenderer) worker() (string, error) {
-	r.resolveOnce.Do(func() {
-		r.workerPath, r.resolveErr = viewerResolvePDFiumWorker()
-	})
-	return r.workerPath, r.resolveErr
-}
-
-func viewerResolvePDFiumWorker() (string, error) {
-	if override := strings.TrimSpace(os.Getenv(viewerPDFiumWorkerEnv)); override != "" {
-		return viewerExistingPDFiumWorkerPath(override)
-	}
-
-	executablePath, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("locate executable: %w", err)
-	}
-
-	workerName := viewerPDFiumWorkerBaseName
-	if runtime.GOOS == "windows" {
-		workerName += ".exe"
-	}
-
-	return viewerExistingPDFiumWorkerPath(filepath.Join(filepath.Dir(executablePath), workerName))
-}
-
-func viewerExistingPDFiumWorkerPath(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("resolve pdf preview worker %q: %w", path, err)
-	}
-	info, err := os.Stat(absolute)
-	if err != nil {
-		return "", fmt.Errorf("pdf preview worker is missing: %s", absolute)
-	}
-	if info.IsDir() {
-		return "", fmt.Errorf("pdf preview worker path is a directory: %s", absolute)
-	}
-	return absolute, nil
 }
