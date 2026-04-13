@@ -92,11 +92,18 @@ func (r *viewerPDFiumRenderer) RenderPage(req viewerPDFRenderRequest) (viewerPDF
 	if err != nil {
 		return viewerPDFRenderResult{}, err
 	}
-	defer rendered.Cleanup()
+	// The WebAssembly backend's image Pix slice points directly into WASM
+	// linear memory. Cleanup() calls FPDFBitmap_Destroy which can free or
+	// reuse that memory. Copy pixels into a Go-owned image before cleanup
+	// so the returned image remains valid after this function returns.
+	src := rendered.Result.Image
+	img := image.NewRGBA(src.Bounds())
+	copy(img.Pix, src.Pix)
+	rendered.Cleanup()
 
 	size := image.Pt(rendered.Result.Width, rendered.Result.Height)
 	return viewerPDFRenderResult{
-		Image:     rendered.Result.Image,
+		Image:     img,
 		Page:      req.Page,
 		PageCount: pageCount.PageCount,
 		Size:      size,

@@ -778,6 +778,18 @@ func (ui *UI) layoutImageOutputView(_ *material.Theme, gtx layout.Context, st *f
 		ui.layoutPDFDocumentScrollbarGeometry(st, size, layoutSize, pdfDocScrollbarPx)
 	}
 	ui.handleImagePreviewEvents(gtx, st)
+	// A cache-hit page transition inside handleImagePreviewEvents may have
+	// reset the image view and set pendingImageScrollToEnd. Recompute the
+	// layout with the new image so viewportRect is valid, then apply the
+	// scroll-to-end before preparing the visual scroll position.
+	if st.pendingImageScrollToEnd {
+		v.computeLayout(layoutSize, 0, verticalScrollbarPx, scrollbarPx, st.imagePreview)
+		ui.layoutPDFDocumentScrollbarGeometry(st, size, layoutSize, pdfDocScrollbarPx)
+		if v.scrollToEnd(st.imagePreview) {
+			v.syncVisualScroll()
+		}
+		st.pendingImageScrollToEnd = false
+	}
 	animating := v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg), st.imagePreview)
 	v.computeLayout(layoutSize, 0, verticalScrollbarPx, scrollbarPx, st.imagePreview)
 	ui.layoutPDFDocumentScrollbarGeometry(st, size, layoutSize, pdfDocScrollbarPx)
