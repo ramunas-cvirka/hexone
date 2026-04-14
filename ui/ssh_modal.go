@@ -105,8 +105,8 @@ func (ui *UI) openSSHModal() {
 		return
 	}
 	ui.closeFunctionBarToolsMenu()
-	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return
 	}
 
 	st := ui.sshModal
@@ -725,8 +725,8 @@ func (ui *UI) saveSSHModal() error {
 	if st == nil {
 		return nil
 	}
-	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return err
 	}
 	if st.selected >= 0 && st.selected < len(st.setups) {
 		st.syncSelectedFromEditors()
@@ -742,7 +742,7 @@ func (ui *UI) saveSSHModal() error {
 		return err
 	}
 	ui.fmCfg.SSH.Setups = setups
-	if err := ui.saveFMConfig(); err != nil {
+	if err := ui.saveFMConfigWithOptions("ssh-modal", false); err != nil {
 		return err
 	}
 	st.loadFromConfigWithSelected(ui.fmCfg, selected)

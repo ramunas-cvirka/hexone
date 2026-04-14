@@ -28,3 +28,10 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Smooth scrolling inside the viewer (F3)
 - Function keys bar context-aware (hold ctrl or alt)
 - Added shortcuts: to select all and all of the same type
+
+## v0.4.0 - 2026-04-14
+- PDF viewing — open and page through PDFs directly in the viewer with a scrollbar and keyboard navigation
+- Syntax highlighting — code and log files are now highlighted in File mode
+- File list auto-refreshes when the current directory changes on disk
+- Free and total disk space shown at the bottom of each pane
+- Various fixes & tweaks

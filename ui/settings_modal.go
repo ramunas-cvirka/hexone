@@ -379,8 +379,8 @@ func (ui *UI) openSettingsModal() {
 		return
 	}
 	ui.closeFunctionBarToolsMenu()
-	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return
 	}
 	st := ui.settingsModal
 	if st == nil {
@@ -2730,8 +2730,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if st == nil {
 		return nil
 	}
-	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return err
 	}
 	if st.activeTab == "config" {
 		next := fm.DefaultConfig()
@@ -2743,7 +2743,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 			return fmt.Errorf("invalid config yaml: %w", err)
 		}
 		ui.fmCfg = next
-		if err := ui.saveFMConfig(); err != nil {
+		if err := ui.saveFMConfigAllowDefaultReset("settings-config-tab"); err != nil {
 			return err
 		}
 		ui.applyConfigRuntime(now)
@@ -2888,7 +2888,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.CommandRules = fm.NormalizeViewerCommandRules(st.viewRuleEntries)
 	ui.fmCfg.Associations = fm.GroupViewerAssociations(st.viewAssocEntries)
 	ui.fmCfg.Viewer.Associations = nil
-	if err := ui.saveFMConfig(); err != nil {
+	if err := ui.saveFMConfigWithOptions("settings-modal", false); err != nil {
 		return err
 	}
 	ui.applyConfigRuntime(now)
@@ -5067,9 +5067,8 @@ func (ui *UI) layoutSettingsViewerPreview(th *material.Theme, gtx layout.Context
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return previewUI.layoutSettingsViewerPreviewHeader(th, gtx, previewState, theme)
 						}),
-						layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(10), Top: unit.Dp(4), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 										return previewUI.layoutSettingsViewerPreviewContent(th, gtx, st, theme, &previewUI)
@@ -5090,25 +5089,8 @@ func (ui *UI) layoutSettingsViewerPreview(th *material.Theme, gtx layout.Context
 
 func (ui *UI) layoutSettingsViewerPreviewHeader(th *material.Theme, gtx layout.Context, previewState *fileViewerState, theme fileViewerTheme) layout.Dimensions {
 	stripH := ui.viewerHeaderStripHeight(gtx)
-	return fillRoundedBox(
-		gtx,
-		0,
-		theme.HeaderBg,
-		color.NRGBA{},
-		func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileViewerModeTabs(th, gtx, previewState, stripH)
-					}),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH)}
-					}),
-				)
-			})
-		},
-	)
+	_ = theme
+	return ui.layoutFileViewerHeaderRow(th, gtx, previewState, stripH)
 }
 
 func (ui *UI) layoutSettingsViewerPreviewScrollbar(gtx layout.Context, theme fileViewerTheme) layout.Dimensions {
@@ -6654,7 +6636,7 @@ func (ui *UI) applyConfigRuntime(now time.Time) {
 		return
 	}
 	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+		return
 	}
 	ui.fileKeys = newFileKeyMap(ui.fmCfg)
 	ui.typeface = font.Typeface(ui.fmCfg.General.Typeface)

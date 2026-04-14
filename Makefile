@@ -1,4 +1,4 @@
-.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource
+.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-linux-pdfium build-macos-pdfium build-windows-pdfium build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource
 
 APP := hexone
 CMD := ./cmd/hexone
@@ -138,6 +138,37 @@ build-linux: headers | $(DIST_DIR)
 		patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/$$lib"; \
 	done
 
+build-linux-pdfium: headers | $(DIST_DIR)
+	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \
+		echo "build-linux-pdfium requires a Linux host (CGO-enabled Gio build)."; \
+		exit 1; \
+	fi
+	@if ! command -v patchelf >/dev/null 2>&1; then \
+		echo "build-linux-pdfium requires patchelf to set the Linux rpath."; \
+		exit 1; \
+	fi
+	rm -rf "$(LINUX_STAGE)"
+	mkdir -p "$(LINUX_STAGE)" "$(LINUX_LIB_DIR)" "$(LINUX_STAGE)/share/applications" "$(LINUX_STAGE)/share/icons/hicolor/512x512/apps"
+	GOOS=linux GOARCH=$(LINUX_ARCH) CGO_ENABLED=1 go build -tags "nowayland pdfium" -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(LINUX_BIN)" $(CMD)
+	patchelf --force-rpath --set-rpath '$$ORIGIN/lib' "$(LINUX_BIN)"
+	@if [ "$$(patchelf --print-rpath "$(LINUX_BIN)")" != '$$ORIGIN/lib' ]; then \
+		echo "failed to set Linux rpath on $(LINUX_BIN)"; \
+		exit 1; \
+	fi
+	chmod +x "$(LINUX_BIN)"
+	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' "$(LINUX_DESKTOP_TEMPLATE)" > "$(LINUX_STAGE)/share/applications/hexone.desktop"
+	cp LICENSE NOTICE "$(LINUX_STAGE)/"
+	HEXONE_WRITE_DESKTOP_ICON_PNG="$(LINUX_STAGE)/share/icons/hicolor/512x512/apps/hexone.png" "$(LINUX_BIN)"
+	for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do \
+		path=$$(ldconfig -p | awk -v lib="$$lib" '$$1 == lib { print $$NF; exit }'); \
+		if [ -z "$$path" ]; then \
+			echo "missing required Linux runtime library: $$lib"; \
+			exit 1; \
+		fi; \
+		cp -L "$$path" "$(LINUX_LIB_DIR)/$$lib"; \
+		patchelf --force-rpath --set-rpath '$$ORIGIN' "$(LINUX_LIB_DIR)/$$lib"; \
+	done
+
 build-macos: headers | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "darwin" ]; then \
 		echo "build-macos requires a macOS host (CGO-enabled Gio build)."; \
@@ -153,11 +184,33 @@ build-macos: headers | $(DIST_DIR)
 	codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" $(MACOS_APP_CODESIGN_FLAGS) "$(MACOS_APP)"
 	codesign -v --verbose=2 "$(MACOS_APP)"
 
+build-macos-pdfium: headers | $(DIST_DIR)
+	@if [ "$$(go env GOHOSTOS)" != "darwin" ]; then \
+		echo "build-macos-pdfium requires a macOS host (CGO-enabled Gio build)."; \
+		exit 1; \
+	fi
+	rm -rf "$(MACOS_STAGE)"
+	mkdir -p "$(MACOS_CONTENTS)/MacOS" "$(MACOS_RESOURCES)"
+	GOOS=darwin GOARCH=$(MACOS_ARCH) CGO_ENABLED=1 go build -tags pdfium -ldflags="$(GO_LDFLAGS_COMMON)" -o "$(MACOS_BIN)" $(CMD)
+	sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' -e 's/@HEXONE_SEMVER@/$(APP_SEMVER)/g' -e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' "$(MACOS_PLIST_TEMPLATE)" > "$(MACOS_CONTENTS)/Info.plist"
+	cp protocols.yaml "$(MACOS_RESOURCES)/protocols.yaml"
+	cp LICENSE NOTICE "$(MACOS_RESOURCES)/"
+	HEXONE_WRITE_DEFAULT_ICON_ICNS="$(MACOS_RESOURCES)/AppIcon.icns" "$(MACOS_BIN)"
+	codesign --force --sign "$(MACOS_CODESIGN_IDENTITY)" $(MACOS_APP_CODESIGN_FLAGS) "$(MACOS_APP)"
+	codesign -v --verbose=2 "$(MACOS_APP)"
+
 ifeq ($(OS),Windows_NT)
 build-windows: headers windows-resource | $(DIST_DIR)
 	@if exist "$(subst /,\,$(WINDOWS_STAGE))" powershell -NoProfile -Command "Remove-Item -LiteralPath '$(subst /,\,$(WINDOWS_STAGE))' -Recurse -Force"
 	@powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '$(subst /,\,$(WINDOWS_STAGE))' | Out-Null"
 	@set GOOS=windows&& set GOARCH=$(WINDOWS_ARCH)&& set CGO_ENABLED=0&& go build -ldflags="$(GO_LDFLAGS_WINDOWS)" -o "$(WINDOWS_BIN)" $(CMD)
+	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'protocols.yaml' -Destination '$(subst /,\,$(WINDOWS_STAGE))\\protocols.yaml' -Force"
+	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'LICENSE','NOTICE' -Destination '$(subst /,\,$(WINDOWS_STAGE))' -Force"
+
+build-windows-pdfium: headers windows-resource | $(DIST_DIR)
+	@if exist "$(subst /,\,$(WINDOWS_STAGE))" powershell -NoProfile -Command "Remove-Item -LiteralPath '$(subst /,\,$(WINDOWS_STAGE))' -Recurse -Force"
+	@powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path '$(subst /,\,$(WINDOWS_STAGE))' | Out-Null"
+	@set GOOS=windows&& set GOARCH=$(WINDOWS_ARCH)&& set CGO_ENABLED=0&& go build -tags pdfium -ldflags="$(GO_LDFLAGS_WINDOWS)" -o "$(WINDOWS_BIN)" $(CMD)
 	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'protocols.yaml' -Destination '$(subst /,\,$(WINDOWS_STAGE))\\protocols.yaml' -Force"
 	@powershell -NoProfile -Command "Copy-Item -LiteralPath 'LICENSE','NOTICE' -Destination '$(subst /,\,$(WINDOWS_STAGE))' -Force"
 else
@@ -206,6 +259,52 @@ build-windows: headers | $(DIST_DIR)
 	cp LICENSE NOTICE "$(WINDOWS_STAGE)/"; \
 	cleanup; \
 	trap - EXIT INT TERM
+
+build-windows-pdfium: headers | $(DIST_DIR)
+	rm -rf "$(WINDOWS_STAGE)"
+	mkdir -p "$(WINDOWS_STAGE)"
+	@set -e; \
+	rc_compiler=""; \
+	for candidate in x86_64-w64-mingw32-windres windres; do \
+		if command -v "$$candidate" >/dev/null 2>&1; then \
+			rc_compiler="$$candidate"; \
+			break; \
+		fi; \
+	done; \
+	backup=""; \
+	if [ -f "$(WINDOWS_SYSO)" ]; then \
+		backup="$(DIST_DIR)/hexone_windows.syso.bak"; \
+		cp "$(WINDOWS_SYSO)" "$$backup"; \
+	fi; \
+	cleanup() { \
+		rm -f "$(WINDOWS_MANIFEST_RENDERED)" "$(WINDOWS_RC_RENDERED)" "$(WINDOWS_SYSO_RENDERED)"; \
+		if [ -n "$$backup" ] && [ -f "$$backup" ]; then \
+			mv "$$backup" "$(WINDOWS_SYSO)"; \
+		fi; \
+	}; \
+	trap cleanup EXIT INT TERM; \
+	if [ -n "$$rc_compiler" ]; then \
+		sed -e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
+			"$(WINDOWS_MANIFEST_TEMPLATE)" > "$(WINDOWS_MANIFEST_RENDERED)"; \
+		sed -e 's/@HEXONE_VERSION@/$(APP_VERSION)/g' \
+			-e 's/@HEXONE_FILE_VERSION@/$(APP_FILE_VERSION)/g' \
+			-e 's/@HEXONE_FILE_VERSION_COMMAS@/$(APP_FILE_VERSION_COMMAS)/g' \
+			-e 's/@HEXONE_COPYRIGHT_YEAR@/$(APP_COPYRIGHT_YEAR)/g' \
+			-e 's#@HEXONE_MANIFEST_PATH@#hexone_windows.generated.manifest#g' \
+			"$(WINDOWS_RC_TEMPLATE)" > "$(WINDOWS_RC_RENDERED)"; \
+		if "$$rc_compiler" -i "$(WINDOWS_RC_RENDERED)" -o "$(WINDOWS_SYSO_RENDERED)" -O coff; then \
+			cp "$(WINDOWS_SYSO_RENDERED)" "$(WINDOWS_SYSO)"; \
+		else \
+			echo "warning: $$rc_compiler failed; using existing Windows resource without refreshed version metadata."; \
+		fi; \
+	else \
+		echo "warning: no windres found; using existing Windows resource without refreshed version metadata."; \
+	fi; \
+	GOOS=windows GOARCH=$(WINDOWS_ARCH) CGO_ENABLED=0 go build -tags pdfium -ldflags="$(GO_LDFLAGS_WINDOWS)" -o "$(WINDOWS_BIN)" $(CMD); \
+	cp protocols.yaml "$(WINDOWS_STAGE)/protocols.yaml"; \
+	cp LICENSE NOTICE "$(WINDOWS_STAGE)/"; \
+	cleanup; \
+	trap - EXIT INT TERM
 endif
 
 ifeq ($(OS),Windows_NT)
@@ -238,7 +337,7 @@ endif
 
 build-all: build-linux build-macos build-windows
 
-package-linux: build-linux
+package-linux: build-linux-pdfium
 	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \
 		echo "package-linux requires a Linux host."; \
 		exit 1; \
@@ -269,11 +368,11 @@ package-linux: build-linux
 	ln -s "$(APP).png" "$(LINUX_APPDIR)/.DirIcon"
 	ARCH="$(LINUX_APPIMAGE_ARCH)" "$(APPIMAGETOOL)" "$(LINUX_APPDIR)" "$(LINUX_APPIMAGE)"
 
-package-linux-zip: build-linux
+package-linux-zip: build-linux-pdfium
 	rm -f "$(LINUX_ZIP)"
 	cd "$(LINUX_STAGE)" && zip -rq "../$(notdir $(LINUX_ZIP))" .
 
-package-macos: build-macos
+package-macos: build-macos-pdfium
 	rm -f "$(MACOS_DMG)"
 	rm -f "$(MACOS_DMG_RW)"
 	rm -rf "$(MACOS_DMG_STAGE)"
@@ -315,11 +414,11 @@ package-macos: build-macos
 	fi
 
 ifeq ($(OS),Windows_NT)
-package-windows: build-windows
+package-windows: build-windows-pdfium
 	@if exist "$(subst /,\,$(WINDOWS_ZIP))" del /q "$(subst /,\,$(WINDOWS_ZIP))"
 	@powershell -NoProfile -Command "Compress-Archive -Path '$(subst /,\,$(WINDOWS_STAGE))\\*' -DestinationPath '$(subst /,\,$(WINDOWS_ZIP))' -Force"
 else
-package-windows: build-windows
+package-windows: build-windows-pdfium
 	rm -f "$(WINDOWS_ZIP)"
 	cd "$(WINDOWS_STAGE)" && zip -rq "../$(notdir $(WINDOWS_ZIP))" .
 endif

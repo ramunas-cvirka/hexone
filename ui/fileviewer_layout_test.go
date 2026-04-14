@@ -224,11 +224,8 @@ func TestFileViewerHeaderDetailsDropPlainFileSizeStatus(t *testing.T) {
 	}
 
 	parts := ui.fileViewerHeaderDetails(st)
-	if len(parts) != 1 {
-		t.Fatalf("detail parts=%d want 1", len(parts))
-	}
-	if got := parts[0].Text; got != "updated at 11:04:22" {
-		t.Fatalf("detail text=%q want %q", got, "updated at 11:04:22")
+	if len(parts) != 0 {
+		t.Fatalf("detail parts=%d want 0", len(parts))
 	}
 }
 
@@ -240,14 +237,35 @@ func TestFileViewerHeaderDetailsKeepStreamingStatus(t *testing.T) {
 	}
 
 	parts := ui.fileViewerHeaderDetails(st)
-	if len(parts) != 2 {
-		t.Fatalf("detail parts=%d want 2", len(parts))
+	if len(parts) != 1 {
+		t.Fatalf("detail parts=%d want 1", len(parts))
 	}
 	if got := parts[0].Text; got != "streaming" {
 		t.Fatalf("status part=%q want %q", got, "streaming")
 	}
-	if got := parts[1].Text; got != "updated at 11:04:22" {
-		t.Fatalf("updated part=%q want %q", got, "updated at 11:04:22")
+}
+
+func TestViewerImageZoomLabelUsesCurrentZoom(t *testing.T) {
+	st := &fileViewerState{detectedImagePreview: true}
+	st.imageView.zoom = 1.25
+
+	if got := viewerImageZoomLabel(st); got != "125%" {
+		t.Fatalf("zoom label=%q want %q", got, "125%")
+	}
+}
+
+func TestViewerPDFPageLabelUsesDraggedTargetPage(t *testing.T) {
+	st := &fileViewerState{
+		detectedImagePreview:  true,
+		imagePreviewFormat:    "pdf",
+		imagePreviewPage:      1,
+		imagePreviewPageCount: 9,
+	}
+	st.imageView.pdfDragging = true
+	st.imageView.pdfDragPage = 6
+
+	if got := viewerPDFPageLabel(st); got != "Page 7/9" {
+		t.Fatalf("page label=%q want %q", got, "Page 7/9")
 	}
 }
 

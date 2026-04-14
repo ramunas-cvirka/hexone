@@ -105,7 +105,7 @@ func run(window *app.Window) error {
 
 	cfg, err := fm.LoadConfigEnsuringFile(cfgPath)
 	if err != nil {
-		log.Printf("save default config: %v", err)
+		log.Printf("load config: %v", err)
 	}
 	session := fm.LoadSession(sessionPath)
 	window.Option(app.Title(appicon.AppTitle))
