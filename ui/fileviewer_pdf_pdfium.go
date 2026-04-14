@@ -113,8 +113,8 @@ func (r *viewerPDFiumRenderer) RenderPage(req viewerPDFRenderRequest) (viewerPDF
 func (r *viewerPDFiumRenderer) poolInstance() (pdfium.Pool, error) {
 	r.initOnce.Do(func() {
 		r.pool, r.poolErr = webassembly.Init(webassembly.Config{
-			MaxIdle:      1,
-			MaxTotal:     1,
+			MaxIdle:      2,
+			MaxTotal:     3,
 			ReuseWorkers: true,
 			Stdout:       io.Discard,
 			Stderr:       io.Discard,

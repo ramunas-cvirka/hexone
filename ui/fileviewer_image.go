@@ -17,6 +17,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
+	xdraw "golang.org/x/image/draw"
 )
 
 const (
@@ -71,6 +72,12 @@ type imagePreviewView struct {
 	pdfDragID   pointer.ID
 	pdfDragGrab int
 	pdfDragPage int
+
+	// downscale cache: when zoom < 1 the image is pre-downsampled in
+	// software for better contrast than GPU bilinear filtering.
+	downscaleSource image.Image
+	downscaleZoom   float32
+	downscaled      image.Image
 }
 
 func (v *imagePreviewView) effectiveZoom() float32 {
@@ -117,6 +124,9 @@ func (v *imagePreviewView) reset() {
 	v.pdfDragID = 0
 	v.pdfDragGrab = 0
 	v.pdfDragPage = 0
+	v.downscaleSource = nil
+	v.downscaleZoom = 0
+	v.downscaled = nil
 }
 
 func (v *imagePreviewView) contentSize(img image.Image) image.Point {
@@ -1029,10 +1039,29 @@ func (ui *UI) paintImagePreview(gtx layout.Context, st *fileViewerState) {
 	offset := op.Offset(image.Pt(v.viewportRect.Min.X-displayX, v.viewportRect.Min.Y-displayY)).Push(gtx.Ops)
 	defer offset.Pop()
 	zoom := v.effectiveZoom()
-	if zoom != 1 {
+	img := image.Image(st.imagePreview)
+	if zoom < 1 {
+		// GPU bilinear filtering loses contrast when downscaling (it only
+		// samples 4 nearby pixels). Pre-downsample in software with
+		// CatmullRom, which uses a 4x4 kernel with negative lobes that
+		// preserve edge sharpness — important for PDF text.
+		src := img
+		if v.downscaleSource != src || v.downscaleZoom != zoom {
+			b := src.Bounds()
+			w := max(1, int(math.Round(float64(float32(b.Dx())*zoom))))
+			h := max(1, int(math.Round(float64(float32(b.Dy())*zoom))))
+			dst := image.NewRGBA(image.Rect(0, 0, w, h))
+			xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Src, nil)
+			v.downscaled = dst
+			v.downscaleSource = src
+			v.downscaleZoom = zoom
+		}
+		img = v.downscaled
+		// Image is already at the correct size; no GPU scaling needed.
+	} else if zoom != 1 {
 		defer op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(zoom, zoom))).Push(gtx.Ops).Pop()
 	}
-	paint.NewImageOp(st.imagePreview).Add(gtx.Ops)
+	paint.NewImageOp(img).Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 }
 

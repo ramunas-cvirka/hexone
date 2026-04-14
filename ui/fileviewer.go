@@ -1130,7 +1130,7 @@ func storeFileViewerPDFPageCache(st *fileViewerState, rendered viewerPDFRenderRe
 		return
 	}
 	if st.pdfPageCache == nil {
-		st.pdfPageCache = make(map[int]viewerPDFRenderResult, 3)
+		st.pdfPageCache = make(map[int]viewerPDFRenderResult, 5)
 	}
 	st.pdfPageCache[rendered.Page] = rendered
 }
@@ -1140,7 +1140,7 @@ func pruneFileViewerPDFPageCache(st *fileViewerState, center int) {
 		return
 	}
 	for page := range st.pdfPageCache {
-		if page < center-1 || page > center+1 {
+		if page < center-2 || page > center+2 {
 			delete(st.pdfPageCache, page)
 		}
 	}
@@ -1181,7 +1181,7 @@ func (ui *UI) scheduleFileViewerPDFNeighborPreloads() {
 	}
 	center := st.imagePreviewPage
 	pruneFileViewerPDFPageCache(st, center)
-	for _, page := range []int{center - 1, center + 1} {
+	for _, page := range []int{center - 2, center - 1, center + 1, center + 2} {
 		ui.startFileViewerPDFPagePreload(page)
 	}
 }
@@ -1200,7 +1200,7 @@ func (ui *UI) startFileViewerPDFPagePreload(page int) {
 		}
 	}
 	if st.pdfPreloadPages == nil {
-		st.pdfPreloadPages = make(map[int]struct{}, 2)
+		st.pdfPreloadPages = make(map[int]struct{}, 4)
 	}
 	if _, ok := st.pdfPreloadPages[page]; ok {
 		return
@@ -1211,7 +1211,7 @@ func (ui *UI) startFileViewerPDFPagePreload(page int) {
 	if viewerPDFPreviewUsesLocalPath && st.remote == nil && !filesys.ArchiveMemberPath(st.path) {
 		localPath = st.path
 	}
-	data := append([]byte(nil), st.imagePreviewData...)
+	data := st.imagePreviewData
 	seq := st.seq
 	ch := st.previewCacheCh
 	go func() {
@@ -1284,7 +1284,7 @@ func (ui *UI) startFileViewerPDFPageRender(now time.Time, page int, scrollToEnd 
 	if viewerPDFPreviewUsesLocalPath && st.remote == nil && !filesys.ArchiveMemberPath(st.path) {
 		localPath = st.path
 	}
-	data := append([]byte(nil), st.imagePreviewData...)
+	data := st.imagePreviewData
 	seq := st.seq
 	ch := st.previewRenderCh
 	go func() {
@@ -1580,7 +1580,7 @@ previewCaches:
 			if res.seq != st.seq || res.err != "" || !viewerPDFPreviewActive(st) {
 				continue
 			}
-			if res.page < st.imagePreviewPage-1 || res.page > st.imagePreviewPage+1 {
+			if res.page < st.imagePreviewPage-2 || res.page > st.imagePreviewPage+2 {
 				continue
 			}
 			storeFileViewerPDFPageCache(st, res.result)
@@ -2754,7 +2754,7 @@ func decodeViewerPDFPreview(localPath string, data []byte, page int) (viewerRead
 	if localPath != "" {
 		req.LocalPath = localPath
 	} else {
-		req.Data = append([]byte(nil), data...)
+		req.Data = data
 	}
 	rendered, err := viewerPDFPreviewBackend.RenderPage(req)
 	if err != nil {
