@@ -7,6 +7,7 @@ import (
 	"hexone/filesys"
 	"image"
 	"image/color"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -378,6 +379,7 @@ func TestSettingsModalKeyboardTabIncludesEditorTargets(t *testing.T) {
 
 func TestSettingsModalKeyboardEnterUsesDefaultSaveAction(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
 	ui.openSettingsModal()
 	th := material.NewTheme()
 	now := time.Now()
