@@ -2606,7 +2606,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 	if maxBytes < 1 {
 		maxBytes = viewerDefaultMaxLoadBytes
 	}
-	unlimitedPDFPreview := viewerCanPreviewPDFPath(path)
+	unlimitedPreview := viewerCanPreviewPDFPath(path) || viewerPathLooksImage(path)
 
 	var (
 		size    int64 = -1
@@ -2626,7 +2626,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 				return "", "", "viewer supports files only", viewerReadInfo{}
 			}
 			size = info.Size()
-			if size > int64(maxBytes) && !unlimitedPDFPreview {
+			if size > int64(maxBytes) && !unlimitedPreview {
 				return "", fmt.Sprintf("%s: %d bytes", prefix, size),
 					fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
 			}
@@ -2647,7 +2647,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 				}
 				return "", fmt.Sprintf("file: %d bytes", size), "", info
 			}
-			if size > int64(maxBytes) && !unlimitedPDFPreview {
+			if size > int64(maxBytes) && !unlimitedPreview {
 				return "", fmt.Sprintf("file: %d bytes", size),
 					fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
 			}
@@ -2666,7 +2666,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 			return "", "", "viewer supports files only", viewerReadInfo{}
 		}
 		size = info.Size()
-		if size > int64(maxBytes) && !unlimitedPDFPreview {
+		if size > int64(maxBytes) && !unlimitedPreview {
 			return "", fmt.Sprintf("remote file: %d bytes", size),
 				fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
 		}
@@ -2682,7 +2682,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 		data []byte
 		err  error
 	)
-	if unlimitedPDFPreview {
+	if unlimitedPreview {
 		data, err = io.ReadAll(reader)
 	} else {
 		data, err = io.ReadAll(io.LimitReader(reader, int64(maxBytes)))
@@ -3331,6 +3331,18 @@ func viewerMediaTypeLooksText(mediaType string) bool {
 	default:
 		return false
 	}
+}
+
+func viewerPathLooksImage(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == "" {
+		ext = strings.ToLower(pathpkg.Ext(path))
+	}
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif":
+		return true
+	}
+	return false
 }
 
 func viewerLooksPreviewableImage(path string, data []byte) bool {
