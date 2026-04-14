@@ -4,34 +4,38 @@ Copyright 2026 Ramunas Cvirka
 This product includes software developed by the following projects:
 
 - The Go Programming Language (https://go.dev)
-  Copyright (c) 2009 The Go Authors. 
+  Copyright (c) 2009 The Go Authors.
   Licensed under the BSD-3-Clause License.
 
 - Gio (https://gioui.org)
-  Copyright (c) 2019 Elias Naur. 
+  Copyright (c) 2019 Elias Naur.
   Licensed under the MIT License and the Apache License 2.0.
 
+- Chroma syntax highlighting via github.com/alecthomas/chroma (https://github.com/alecthomas/chroma)
+  Copyright (c) 2017 Alec Thomas.
+  Licensed under the MIT License.
+
 - SFTP support via pkg/sftp (https://github.com/pkg/sftp)
-  Copyright (c) 2014-2024 The sftp authors. 
+  Copyright (c) 2014-2024 The sftp authors.
   Licensed under the BSD-2-Clause License.
 
 - Archive support via mholt/archives (https://github.com/mholt/archives)
   Copyright (c) Matthew Holt and contributors.
   Licensed under the MIT License.
 
-- YAML parsing via go.yaml.in/yaml/v4 (https://go.yaml.in/yaml/v4)
-  Copyright (c) 2011-2026 Canonical Ltd. 
+- PDF rendering via go-pdfium (https://github.com/klippa-app/go-pdfium)
+  Copyright (c) 2022 Klippa App BV.
+  Licensed under the MIT License.
+
+- WebAssembly runtime via wazero (https://github.com/tetratelabs/wazero)
+  Copyright (c) 2021 Tetrate and contributors.
   Licensed under the Apache License 2.0.
 
-- SSH and Cryptography via golang.org/x/crypto (https://golang.org/x/crypto)
-  Copyright (c) 2009 The Go Authors. 
-  Licensed under the BSD-3-Clause License.
+- YAML parsing via go.yaml.in/yaml/v4 (https://go.yaml.in/yaml/v4)
+  Copyright (c) 2011-2026 Canonical Ltd.
+  Licensed under the Apache License 2.0.
 
-- Terminal and System support via golang.org/x/sys and golang.org/x/text
-  Copyright (c) 2009 The Go Authors. 
-  Licensed under the BSD-3-Clause License.
-
-- Text Typesetting via github.com/go-text/typesetting
+- Text typesetting via github.com/go-text/typesetting (https://github.com/go-text/typesetting)
   Copyright (c) 2021 The go-text authors.
   Licensed under the MIT License.
 

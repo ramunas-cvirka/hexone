@@ -125,6 +125,9 @@ jobs:
         with:
           go-version: '1.26'
 
+      - name: Install macOS PDFium build dependencies
+        run: brew install pkg-config
+
       - name: Build macOS app disk image
         run: make package-macos
 

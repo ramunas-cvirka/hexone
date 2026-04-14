@@ -13,6 +13,7 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -47,6 +48,7 @@ const (
 	fileSortDate
 	filePaneApproxCharPx  = 8
 	filePaneNameTailRunes = 3
+	filePaneDirWatchPoll  = 900 * time.Millisecond
 )
 
 func (m *filePaneModel) Len() int {
@@ -248,6 +250,9 @@ type filePaneState struct {
 	sortMenuOpenedAt      time.Time
 	sortMenuHoverID       string
 	sortMenuHoverAnim     segmentedAnimState
+	sortMenuRect          image.Rectangle
+	sortPointerTag        uiEventTag
+	sortMenuClick         widget.Clickable
 	favoritePointerTag    uiEventTag
 	favoriteMenuClick     widget.Clickable
 	favoriteOptionClicks  []widget.Clickable
@@ -293,16 +298,28 @@ type filePaneState struct {
 	localDirBeforeRemote  string
 	dir                   string
 	loading               bool
+	loadQuiet             bool
 	loadingDir            string
 	loadingStartedAt      time.Time
 	loadSeq               int
 	loadResultCh          chan filePaneLoadResult
+	dirWatch              filePaneDirWatchState
 	navScrollByDir        map[string]layout.Position
 	err                   string
 	noticeText            string
 	noticeShownAt         time.Time
 	noticeUntil           time.Time
+	volumeBadge           filePaneVolumeBadgeState
 	markedRows            map[int]struct{}
+}
+
+type filePaneDirWatchState struct {
+	nextCheck time.Time
+	dir       string
+	modTime   time.Time
+	size      int64
+	errText   string
+	ready     bool
 }
 
 type filePaneLoadResult struct {
@@ -317,6 +334,19 @@ type filePaneLoadResult struct {
 	restoreAnchor string
 	noticeText    string
 	noticeDur     time.Duration
+	background    bool
+}
+
+type filePaneApplyOptions struct {
+	primaryPath         string
+	secondaryPath       string
+	fallbackRow         int
+	restorePos          layout.Position
+	restoreScroll       bool
+	restoreAnchor       string
+	preserveMarks       bool
+	preserveNotice      bool
+	preserveInteraction bool
 }
 
 func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
@@ -487,41 +517,97 @@ func (p *filePaneState) load(dir string) error {
 }
 
 func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int) {
-	p.applyListingWithRestore(listing, primaryPath, secondaryPath, fallbackRow, layout.Position{}, false, "")
+	p.applyListingWithOptions(listing, filePaneApplyOptions{
+		primaryPath:   primaryPath,
+		secondaryPath: secondaryPath,
+		fallbackRow:   fallbackRow,
+	})
 }
 
 func (p *filePaneState) applyListingWithRestore(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor string) {
+	p.applyListingWithOptions(listing, filePaneApplyOptions{
+		primaryPath:   primaryPath,
+		secondaryPath: secondaryPath,
+		fallbackRow:   fallbackRow,
+		restorePos:    restorePos,
+		restoreScroll: restoreScroll,
+		restoreAnchor: restoreAnchor,
+	})
+}
+
+func (p *filePaneState) applyListingRefresh(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreAnchor string) {
+	p.applyListingWithOptions(listing, filePaneApplyOptions{
+		primaryPath:         primaryPath,
+		secondaryPath:       secondaryPath,
+		fallbackRow:         fallbackRow,
+		restorePos:          restorePos,
+		restoreScroll:       true,
+		restoreAnchor:       restoreAnchor,
+		preserveMarks:       true,
+		preserveNotice:      true,
+		preserveInteraction: true,
+	})
+}
+
+func (p *filePaneState) applyListingWithOptions(listing filesys.Listing, opts filePaneApplyOptions) {
 	if p == nil {
 		return
+	}
+	markedPaths := []string(nil)
+	if opts.preserveMarks {
+		markedPaths = append(markedPaths, p.markedPaths()...)
+	}
+	noticeText := ""
+	noticeShownAt := time.Time{}
+	noticeUntil := time.Time{}
+	if opts.preserveNotice {
+		noticeText = p.noticeText
+		noticeShownAt = p.noticeShownAt
+		noticeUntil = p.noticeUntil
 	}
 	p.dir = listing.Dir
 	if p.remote == nil && p.dir != "" {
 		p.localDirBeforeRemote = p.dir
 	}
 	p.loading = false
+	p.loadQuiet = false
 	p.loadingDir = ""
 	p.loadingStartedAt = time.Time{}
 	p.err = ""
 	p.noticeText = ""
 	p.noticeShownAt = time.Time{}
 	p.noticeUntil = time.Time{}
-	p.stopInlineNameEdit()
-	p.clearMarkedRows()
-	if p.table != nil {
-		p.table.ResetPointerState()
+	p.invalidateVolumeBadge()
+	if !opts.preserveInteraction {
+		p.stopInlineNameEdit()
+		if p.table != nil {
+			p.table.ResetPointerState()
+		}
+		p.clearTableClickState()
+		p.clearPathClickState()
+		p.clearPendingPathNavigate()
 	}
-	p.clearTableClickState()
-	p.clearPathClickState()
-	p.clearPendingPathNavigate()
+	if !opts.preserveMarks {
+		p.clearMarkedRows()
+	}
 	p.model.entries = listing.Entries
 	p.applySort("")
 	p.table.Selected = 0
-	if restoreScroll {
-		p.table.List.Position = restorePaneListPosition(p.model.entries, restorePos, restoreAnchor)
+	if opts.restoreScroll {
+		p.table.List.Position = restorePaneListPosition(p.model.entries, opts.restorePos, opts.restoreAnchor)
 	} else {
 		p.table.List.Position = layout.Position{}
 	}
-	p.applySelection(primaryPath, secondaryPath, fallbackRow, !restoreScroll)
+	p.applySelection(opts.primaryPath, opts.secondaryPath, opts.fallbackRow, !opts.restoreScroll)
+	if opts.preserveMarks {
+		p.restoreMarkedPaths(markedPaths)
+	}
+	if opts.preserveNotice && noticeText != "" {
+		p.noticeText = noticeText
+		p.noticeShownAt = noticeShownAt
+		p.noticeUntil = noticeUntil
+	}
+	p.resetDirWatch()
 }
 
 func sanitizePaneListPosition(pos layout.Position) layout.Position {
@@ -830,6 +916,7 @@ func (p *filePaneState) closeSortMenu() {
 	p.sortMenuOpenedAt = time.Time{}
 	p.sortMenuHoverID = ""
 	p.sortMenuHoverAnim = segmentedAnimState{}
+	p.sortMenuRect = image.Rectangle{}
 }
 
 func (p *filePaneState) openSortMenu(now time.Time) {
@@ -840,6 +927,7 @@ func (p *filePaneState) openSortMenu(now time.Time) {
 	p.sortMenuOpenedAt = now
 	p.sortMenuHoverID = ""
 	p.sortMenuHoverAnim = segmentedAnimState{}
+	p.sortMenuRect = image.Rectangle{}
 }
 
 func (p *filePaneState) closeDriveMenu() {
@@ -1466,10 +1554,52 @@ func (p *filePaneState) displayDir() string {
 }
 
 func (p *filePaneState) loadingHintVisible(now time.Time) bool {
-	if p == nil || !p.loading || p.remoteConnected() || p.loadingStartedAt.IsZero() {
+	if p == nil || !p.loading || p.loadQuiet || p.remoteConnected() || p.loadingStartedAt.IsZero() {
 		return false
 	}
 	return !now.Before(p.loadingStartedAt.Add(filePaneLoadingHintDelay))
+}
+
+func (p *filePaneState) resetDirWatch() {
+	if p == nil {
+		return
+	}
+	p.dirWatch = filePaneDirWatchState{}
+}
+
+func (p *filePaneState) dirWatchEligible() bool {
+	if p == nil || p.remoteConnected() || p.archiveBrowsing() || p.loading || p.pathEditing || p.inlineNameEditing || p.ctxMenuOpen {
+		return false
+	}
+	return strings.TrimSpace(p.dir) != ""
+}
+
+func (p *filePaneState) dirWatchChanged() bool {
+	if p == nil {
+		return false
+	}
+	target := filepath.Clean(p.dir)
+	info, err := os.Stat(target)
+	errText := ""
+	modTime := time.Time{}
+	size := int64(0)
+	if err != nil {
+		errText = err.Error()
+	} else {
+		modTime = info.ModTime()
+		size = info.Size()
+	}
+	changed := p.dirWatch.ready &&
+		(p.dirWatch.dir != target ||
+			!p.dirWatch.modTime.Equal(modTime) ||
+			p.dirWatch.size != size ||
+			p.dirWatch.errText != errText)
+	p.dirWatch.dir = target
+	p.dirWatch.modTime = modTime
+	p.dirWatch.size = size
+	p.dirWatch.errText = errText
+	p.dirWatch.ready = true
+	return changed
 }
 
 func (p *filePaneState) pathBaseName(raw string) string {
@@ -1724,8 +1854,8 @@ func (ui *UI) addFavoriteLocation(raw string) (string, bool, error) {
 	if ui == nil {
 		return "", false, nil
 	}
-	if ui.fmCfg == nil {
-		ui.fmCfg = fm.DefaultConfig()
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return "", false, err
 	}
 	loc := normalizeFavoriteLocation(raw)
 	if loc == "" {
@@ -1737,7 +1867,7 @@ func (ui *UI) addFavoriteLocation(raw string) (string, bool, error) {
 		}
 	}
 	ui.fmCfg.FavoriteLocations = append(ui.fmCfg.FavoriteLocations, loc)
-	if err := ui.saveFMConfig(); err != nil {
+	if err := ui.saveFMConfigWithOptions("favorites-add", false); err != nil {
 		ui.fmCfg.FavoriteLocations = ui.fmCfg.FavoriteLocations[:len(ui.fmCfg.FavoriteLocations)-1]
 		return loc, false, err
 	}
@@ -1795,7 +1925,7 @@ func (ui *UI) removeFavoriteLocation(raw string) (bool, error) {
 
 	prev := ui.fmCfg.FavoriteLocations
 	ui.fmCfg.FavoriteLocations = next
-	if err := ui.saveFMConfig(); err != nil {
+	if err := ui.saveFMConfigWithOptions("favorites-remove", false); err != nil {
 		ui.fmCfg.FavoriteLocations = prev
 		return false, err
 	}
@@ -2579,6 +2709,46 @@ func startLocalPaneLoad(pane *filePaneState, dir, primaryPath, secondaryPath str
 }
 
 func startLocalPaneLoadWithRestore(pane *filePaneState, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
+	return startLocalPaneLoadRequest(pane, dir, filePaneLoadResult{
+		primaryPath:   primaryPath,
+		secondaryPath: secondaryPath,
+		fallbackRow:   fallbackRow,
+		restorePos:    restorePos,
+		restoreScroll: restoreScroll,
+		restoreAnchor: restoreAnchor,
+		noticeText:    noticeText,
+		noticeDur:     noticeDur,
+	}, false)
+}
+
+func startLocalPaneBackgroundRefresh(pane *filePaneState) bool {
+	if pane == nil {
+		return false
+	}
+	if !pane.dirWatchEligible() {
+		return false
+	}
+	selectedPath := ""
+	if sel := pane.selectedEntry(); sel != nil {
+		selectedPath = sel.Path
+	}
+	fallbackRow := 0
+	restorePos := layout.Position{}
+	if pane.table != nil {
+		fallbackRow = pane.table.Selected
+		restorePos = sanitizePaneListPosition(pane.table.List.Position)
+	}
+	return startLocalPaneLoadRequest(pane, pane.dir, filePaneLoadResult{
+		primaryPath:   selectedPath,
+		fallbackRow:   fallbackRow,
+		restorePos:    restorePos,
+		restoreScroll: true,
+		restoreAnchor: pane.visibleAnchorPath(),
+		background:    true,
+	}, true)
+}
+
+func startLocalPaneLoadRequest(pane *filePaneState, dir string, req filePaneLoadResult, quiet bool) bool {
 	if pane == nil {
 		return false
 	}
@@ -2586,28 +2756,20 @@ func startLocalPaneLoadWithRestore(pane *filePaneState, dir, primaryPath, second
 	pane.loadSeq++
 	seq := pane.loadSeq
 	pane.loading = true
+	pane.loadQuiet = quiet
 	pane.loadingDir = target
 	pane.loadingStartedAt = time.Now()
 	pane.err = ""
 	pane.clearPendingPathNavigate()
 
 	ch := pane.loadResultCh
-	go func(targetDir, wantPrimary, wantSecondary string, wantRow, currentSeq int, wantRestore layout.Position, wantRestoreScroll bool, wantRestoreAnchor, wantNotice string, wantNoticeDur time.Duration) {
+	go func(targetDir string, currentSeq int, out filePaneLoadResult) {
 		listing, err := filesys.ReadDir(targetDir)
-		sendFilePaneLoadResult(ch, filePaneLoadResult{
-			seq:           currentSeq,
-			listing:       listing,
-			err:           err,
-			primaryPath:   wantPrimary,
-			secondaryPath: wantSecondary,
-			fallbackRow:   wantRow,
-			restorePos:    wantRestore,
-			restoreScroll: wantRestoreScroll,
-			restoreAnchor: wantRestoreAnchor,
-			noticeText:    wantNotice,
-			noticeDur:     wantNoticeDur,
-		})
-	}(target, primaryPath, secondaryPath, fallbackRow, seq, restorePos, restoreScroll, restoreAnchor, noticeText, noticeDur)
+		out.seq = currentSeq
+		out.listing = listing
+		out.err = err
+		sendFilePaneLoadResult(ch, out)
+	}(target, seq, req)
 	return true
 }
 
@@ -2679,13 +2841,19 @@ func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {
 				}
 				if res.err != nil {
 					pane.loading = false
+					pane.loadQuiet = false
 					pane.loadingDir = ""
 					pane.loadingStartedAt = time.Time{}
+					pane.resetDirWatch()
 					pane.setNotice(res.err.Error(), gtx.Now)
 					gtx.Execute(op.InvalidateCmd{})
 					continue
 				}
-				pane.applyListingWithRestore(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreScroll, res.restoreAnchor)
+				if res.background {
+					pane.applyListingRefresh(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreAnchor)
+				} else {
+					pane.applyListingWithRestore(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreScroll, res.restoreAnchor)
+				}
 				if res.noticeText != "" {
 					pane.setNoticeFor(res.noticeText, gtx.Now, res.noticeDur)
 				}
@@ -2701,6 +2869,38 @@ func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {
 	}
 	if anyLoading {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(50 * time.Millisecond)})
+	}
+}
+
+func (ui *UI) pumpFilePaneLocalRefresh(gtx layout.Context) {
+	if ui == nil {
+		return
+	}
+	nextCheck := time.Time{}
+	for _, pane := range ui.filePanes {
+		if pane == nil {
+			continue
+		}
+		if !pane.dirWatchEligible() {
+			pane.resetDirWatch()
+			continue
+		}
+		if pane.dirWatch.nextCheck.IsZero() {
+			pane.dirWatch.nextCheck = gtx.Now
+		}
+		if !gtx.Now.Before(pane.dirWatch.nextCheck) {
+			pane.dirWatch.nextCheck = gtx.Now.Add(filePaneDirWatchPoll)
+			if pane.dirWatchChanged() && startLocalPaneBackgroundRefresh(pane) {
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
+		}
+		if nextCheck.IsZero() || pane.dirWatch.nextCheck.Before(nextCheck) {
+			nextCheck = pane.dirWatch.nextCheck
+		}
+	}
+	if !nextCheck.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: nextCheck})
 	}
 }
 

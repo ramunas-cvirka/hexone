@@ -12,5 +12,6 @@
 /.fleet/
 /.cache/
 /.gocache/
+/.claude/
 /third_party/gioui/
 *.code-workspace

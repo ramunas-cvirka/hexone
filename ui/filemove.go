@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -687,14 +688,19 @@ func (ui *UI) layoutFileMoveDialog(th *material.Theme, gtx layout.Context) layou
 	}
 
 	for {
-		ev, ok := gtx.Event(
+		filters := []event.Filter{
 			key.Filter{Name: key.NameEscape, Optional: anyMods},
 			key.Filter{Name: key.NameTab, Optional: anyMods},
-			key.Filter{Name: key.NameEnter, Optional: anyMods},
-			key.Filter{Name: key.NameReturn, Optional: anyMods},
-			key.Filter{Name: key.NameLeftArrow, Optional: anyMods},
-			key.Filter{Name: key.NameRightArrow, Optional: anyMods},
-		)
+		}
+		if st.focus == fileMoveDialogFocusActions {
+			filters = append(filters,
+				key.Filter{Name: key.NameEnter, Optional: anyMods},
+				key.Filter{Name: key.NameReturn, Optional: anyMods},
+				key.Filter{Name: key.NameLeftArrow, Optional: anyMods},
+				key.Filter{Name: key.NameRightArrow, Optional: anyMods},
+			)
+		}
+		ev, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}

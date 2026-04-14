@@ -1,74 +1,90 @@
 # Hexone
 
-Hexone is a keyboard-first desktop file manager with a built-in text/hex/command viewer.
+A fast, keyboard-driven file manager with a built-in viewer — browse, inspect, and compare files without leaving the app.
 
 <p align="center">
-  <img src="assets/main.png" alt="Hexone main view" />
+  <img src="assets/main.png" alt="Hexone file manager" />
 </p>
+
+## What it does
+
+Hexone keeps you in flow. Select a file and press `F3` — the viewer opens instantly on the right. Switch files, the viewer follows. Navigate with the keyboard. Copy, move, rename, delete — all without touching the mouse.
+
+The viewer handles text, syntax-highlighted code, hex dumps, images, PDFs, and binary files. It can also run a custom command and show the output, so you can pipe any tool's result into the same panel.
 
 <p align="center">
   <img src="assets/viewer.png" alt="Hexone viewer" />
 </p>
 
-## Features
+## Highlights
 
-- One viewer for text, hex, and command output against the selected file
-- SSH browsing is supported
-- The viewer is meant to be more practical for very large logs, where opening multi-GB files naively is not useful
-- Keyboard-first workflow without leaving the app for common inspection tasks
-- Favorites are supported
+**Browse**
+- Dual-pane layout — one pane for source, one for destination, or use both independently
+- `brief` and `full` listing modes
+- Sort by name, date, extension, or size — flip direction with a single click
+- Favorites for instant access to frequent locations
+- Drive picker on Windows
 
-## Also Included
+**View**
+- Text with syntax highlighting, hex dump, image preview, and PDF preview in one viewer
+- Large file friendly — opening a multi-GB log won't stall the app
+- Built-in search with `Ctrl+F`
 
-- A few smaller tools I use in daily work are included too, such as hex-to-ASCII and a protocol analyzer based on `protocols.yaml`
+**Work remotely**
+- SSH / SFTP browsing — navigate a remote server the same way as local files
+- Viewer works over SSH too
 
-## Downloads
+**Extras**
+- Hex-to-ASCII converter
+- Protocol analyzer driven by a `protocols.yaml` file you can customize
 
-Use the packages from the Releases page.
+## Install
 
-> [!CAUTION]
-> **Applies to: macOS**
->
-> If the first launch gets blocked and macOS suggests moving Hexone to Trash, do not do that. First try opening Hexone once, then open `System Settings -> Privacy & Security`, scroll down to `Security`, and click `Open Anyway` for Hexone. On current macOS versions that button is typically available for about an hour after the blocked launch attempt. Avoiding that warning for outside-the-App-Store distribution generally means paid Apple code-signing/distribution, which is not a practical fit for this free project.
+Download a package from the [Releases](../../releases) page for macOS, Linux, or Windows — no installer needed, just run it.
 
-> [!CAUTION]
-> **Applies to: Windows**
->
-> SmartScreen is reputation-based and is aggressive toward new unsigned `.exe` files. If you see the blue `Windows protected your PC` dialog, use `More info -> Run anyway` if you trust the download. Removing that warning cleanly usually means either EV code signing or shipping through the Microsoft Store / MSIX path. Unsigned builds can build reputation over time, but each new release starts over with a new file hash.
+> [!NOTE]
+> **macOS** — if the first launch is blocked, go to `System Settings → Privacy & Security`, scroll to Security, and click **Open Anyway**. This is standard macOS gatekeeper behaviour for apps distributed outside the App Store.
 
-If you want to build it yourself instead:
+> [!NOTE]
+> **Windows** — if SmartScreen shows a blue warning, click **More info → Run anyway**. This happens with new unsigned executables; it is not specific to Hexone.
 
-Requirements:
+## Keyboard quick-reference
 
-- Go 1.26
+| Key | Action |
+|-----|--------|
+| `F1` | Help |
+| `F3` | Open viewer |
+| `F4` | Open with system default app |
+| `F5` | Copy |
+| `F6` | Move / Rename |
+| `F7` | New folder |
+| `F8` | Delete |
+| `Tab` | Switch pane |
+| `Enter` | Open file or directory |
+| `Ctrl+F` | Find in viewer |
+| `Esc` | Close popup / cancel |
 
-Commands:
+Full keyboard reference is in [HELP.md](HELP.md).
+
+## Build from source
+
+Requires Go 1.26.
 
 ```sh
 make build
 make run
 ```
 
-Optional packaging:
+## Config files
 
-```sh
-make package-linux
-make package-linux-zip
-make package-macos
-make package-windows
-```
+Hexone keeps its settings in:
 
-- `package-linux` builds an AppImage and needs a Linux host, `patchelf`, and `appimagetool`
-- `package-linux-zip` keeps the older portable ZIP layout
-- `package-macos` needs macOS
+- **Linux** — `~/.config/hexone/`
+- **macOS** — `~/Library/Application Support/hexone/`
+- **Windows** — same folder as the executable
 
-Hexone stores `hexone.yaml`, `hexone.session.yaml`, `protocols.yaml`, and `protocols.sample.yaml` in these locations:
+The main config file is `hexone.yaml`. It is created with defaults on first run.
 
-- Linux: `~/.config/hexone/`
-- macOS: `~/Library/Application Support/hexone/`
-- Windows: currently in the current working directory as `hexone.yaml`, `hexone.session.yaml`, `protocols.yaml`, and `protocols.sample.yaml`
-- Other platforms: the same local-file fallback as Windows
+## License
 
-The protocol analyzer checks `protocols.yaml` in that location first, falls back to the embedded default if it is missing, and writes `protocols.sample.yaml` on first run.
-
-More usage details are in [HELP.md](HELP.md).
+Apache 2.0 — see [LICENSE](LICENSE).

@@ -92,7 +92,7 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 	headerBg.A = 0xFF
 
 	panelBorder := filePaneActiveBorderColor(baseBg)
-	panelBorder.A = 38
+	panelBorder.A = 0
 
 	headerText := bestContrastColor(headerBg, baseText, popup.Text, palette.CurrentDirFg, palette.SelectedFg)
 	headerText.A = 0xFF
@@ -113,8 +113,8 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 	statusError := mixNRGBA(errorText, color.NRGBA{R: 255, G: 170, B: 170, A: 255}, 0.18)
 	statusError.A = 0xFF
 
-	divider := mixNRGBA(headerText, headerBg, 0.78)
-	divider.A = 28
+	divider := mixNRGBA(headerText, baseBg, 0.8)
+	divider.A = 36
 
 	selectionText := bestContrastColor(selectionBase, popup.ActiveText, popup.HoverText, baseText)
 	selection := mixNRGBA(baseBg, selectionBase, 0.88)

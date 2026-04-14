@@ -1,0 +1,107 @@
+date_formats:
+    - Jan 02 2006 15:04
+    - Jan 02 15:04
+    - Jan 02 2006
+    - Jan 02
+    - 01-02
+favorite_locations:
+    - /Users/ramunas/Downloads/@protocol_doc
+    - /Users/ramunas/go/src/gpstrack-go
+    - ssh://root@157.180.68.247:22/opt/gpstrack/log
+name_compact:
+    keep_start_chars: 6
+    marker: ..
+columns:
+    full_chars: 20
+    brief_chars: 16
+    full_drop_priority:
+        - date
+        - size
+        - permissions
+        - name
+    show_permissions: true
+    permission_format: auto
+sort:
+    default_key: name
+    descending: false
+    directories_first: true
+general:
+    typeface: Fira Code
+    font_size_sp: 15
+    dim_inactive_panes: true
+colors:
+    file_pane_background: '#202020'
+    file_pane_text: '#D2D2D2'
+    hover: '#2D2D2D'
+    hover_text: '#E8E8E8'
+    selection: '#3C3C50'
+    selection_text: '#F4F4F4'
+    selected_files: '#4A4A4A'
+    selected_files_text: '#F4F4F4'
+    focused_selected: '#58586C'
+    focused_selected_text: '#F4F4F4'
+    current_dir_background: '#363636'
+    current_dir_text: '#F0F0F0'
+    filenames:
+        text: '#D2D2D2'
+        permission_rules:
+            - permissions: "0520"
+              match: none
+              text: '#4C3FA8'
+        extension_rules:
+            - extension: .go
+              text: '#D08A98'
+associations:
+    - app_path: c:\portable_appz\mpc_be\mpc-be64.exe
+      extensions: mkv
+    - app_path: c:\portable_appz\xmplay\xmplay.exe
+      extensions: mp3, mp4, mp5, mp6
+viewer:
+    mode: file
+    file_encoding: auto
+    typeface: Fira Code
+    background: '#202020'
+    text: '#D2D2D2'
+    selection: '#3C3C50'
+    smooth_scrolling: true
+    shell: auto
+    command: cat {path} | grep 1234
+    remote_search_mode: remote
+    remote_search_command: tail -c +{range_start_1based} {path} | head -c {range_len} | LC_ALL=C grep -aobF {match_limit} -- {pattern} | {result_select}
+    command_by_target:
+        local:c:\go\pkg\windows_386\sync.a: tail -f {path} | grep --line-buffered 4a17100a
+        local:c:\toolz\calculators\32-bit asm calculator\conv32.ini: cat {path}
+        local:c:\users\desktop.ini: cat {path}
+        local:c:\users\ramuc\go\src\faag\main.go: tail {path}
+        local:c:\users\ramuc\go\src\hexone\hexone.session.yaml: tail -f {path} | grep --line-buffered 4a17100a
+        local:c:\users\ramuc\go\src\hexone\readme.md: tail -f {path} | grep --line-buffered 4a17100a
+        ssh:root@157.180.68.247:22:/opt/gpstrack/log/gpstrack.log: cat {path} | grep 1234
+    command_history:
+        - cat {path} | grep 1234
+        - cat {path} grep 1234
+        - tail -f {path} | grep --line-buffered 4a17100a
+        - cat {path}
+        - tail {path}
+    word_select_regex: '[a-zA-Z0-9]+'
+    font_size_sp: 13
+    word_wrap: false
+    max_read_mb: 6
+    command_auto_refresh: true
+    command_refresh_ms: 2500
+    hide_function_bar_when_open: true
+ssh:
+    setups:
+        - name: root@157.180.68.247:22
+          host: 157.180.68.247
+          port: 22
+          user: root
+          password: ""
+          key_path: C:\Users\ramuc\.ssh\id_ed25519
+          key_passphrase: ""
+        - name: root@abab.com:22
+          host: abab.com
+          port: 22
+          user: root
+          password: 123e
+          key_path: ""
+          key_passphrase: ""

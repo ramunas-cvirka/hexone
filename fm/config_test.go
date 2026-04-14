@@ -503,12 +503,12 @@ viewer:
 func TestDefaultConfigDimsInactivePanes(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.General.DimInactivePanes {
-		t.Fatal("general dim_inactive_panes should default to false")
+	if !cfg.General.DimInactivePanes {
+		t.Fatal("general dim_inactive_panes should default to true")
 	}
 
 	out := string(mustMarshalConfig(t, cfg))
-	if !strings.Contains(out, "dim_inactive_panes: false") {
+	if !strings.Contains(out, "dim_inactive_panes: true") {
 		t.Fatalf("serialized config missing general dim_inactive_panes:\n%s", out)
 	}
 }
@@ -530,6 +530,97 @@ func TestLoadConfigEnsuringFileCreatesDefaultWhenMissing(t *testing.T) {
 	saved := LoadConfig(path)
 	if saved.Viewer.HideFunctionBarWhenOpen != cfg.Viewer.HideFunctionBarWhenOpen {
 		t.Fatal("saved config should round-trip defaults")
+	}
+}
+
+func TestLoadConfigEnsuringFilePreservesInvalidExistingConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := "viewer:\n  mode: [broken\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+
+	cfg, err := LoadConfigEnsuringFile(path)
+	if err == nil {
+		t.Fatal("expected invalid existing config to report an error")
+	}
+	if cfg == nil {
+		t.Fatal("expected config value even when load fails")
+	}
+	if cfg.LoadIssue() == nil {
+		t.Fatal("expected config to retain load issue metadata")
+	}
+
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("os.ReadFile: %v", readErr)
+	}
+	if string(data) != original {
+		t.Fatalf("invalid config should remain untouched, got:\n%s", string(data))
+	}
+}
+
+func TestSaveConfigCreatesBackupWhenReplacingExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+
+	first := DefaultConfig()
+	first.FavoriteLocations = []string{"/tmp/alpha"}
+	if err := SaveConfig(path, first); err != nil {
+		t.Fatalf("SaveConfig(first): %v", err)
+	}
+
+	second := DefaultConfig()
+	second.FavoriteLocations = []string{"/tmp/bravo"}
+	if err := SaveConfig(path, second); err != nil {
+		t.Fatalf("SaveConfig(second): %v", err)
+	}
+
+	backup := LoadConfig(configBackupPath(path))
+	if got, want := strings.Join(backup.FavoriteLocations, ","), "/tmp/alpha"; got != want {
+		t.Fatalf("backup favorites=%q want %q", got, want)
+	}
+
+	current := LoadConfig(path)
+	if got, want := strings.Join(current.FavoriteLocations, ","), "/tmp/bravo"; got != want {
+		t.Fatalf("current favorites=%q want %q", got, want)
+	}
+}
+
+func TestLoadConfigEnsuringFileFallsBackToBackupWhenPrimaryInvalid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+
+	first := DefaultConfig()
+	first.FavoriteLocations = []string{"/tmp/alpha"}
+	if err := SaveConfig(path, first); err != nil {
+		t.Fatalf("SaveConfig(first): %v", err)
+	}
+
+	second := DefaultConfig()
+	second.FavoriteLocations = []string{"/tmp/bravo"}
+	if err := SaveConfig(path, second); err != nil {
+		t.Fatalf("SaveConfig(second): %v", err)
+	}
+
+	corrupt := "viewer:\n  command_by_target: [broken\n"
+	if err := os.WriteFile(path, []byte(corrupt), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(corrupt): %v", err)
+	}
+
+	cfg, err := LoadConfigEnsuringFile(path)
+	if err == nil {
+		t.Fatal("expected load to report primary config parse failure")
+	}
+	if cfg == nil {
+		t.Fatal("expected recovered config when backup exists")
+	}
+	if cfg.LoadIssue() == nil {
+		t.Fatal("expected recovered config to retain load issue metadata")
+	}
+	if got, want := strings.Join(cfg.FavoriteLocations, ","), "/tmp/alpha"; got != want {
+		t.Fatalf("recovered favorites=%q want %q", got, want)
+	}
+	if !strings.Contains(err.Error(), configBackupPath(path)) {
+		t.Fatalf("load error should mention recovery backup, got %q", err)
 	}
 }
 
