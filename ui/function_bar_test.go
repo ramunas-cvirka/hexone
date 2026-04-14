@@ -167,7 +167,8 @@ func TestFunctionBarToolsOpenSeedsKeyboardSelectionFromActiveTool(t *testing.T) 
 func TestFunctionBarToolKeyboardSelectionWrapsAndActivates(t *testing.T) {
 	now := time.Date(2026, time.March, 11, 10, 5, 0, 0, time.UTC)
 	ui := &UI{
-		Tabs: widget.Enum{Value: "tab0"},
+		Tabs:  widget.Enum{Value: "tab0"},
+		fmCfg: fm.DefaultConfig(),
 	}
 
 	if !ui.performFunctionBarAction(functionBarActionTools, now) {

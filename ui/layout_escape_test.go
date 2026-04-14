@@ -11,6 +11,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/widget"
+	"hexone/fm"
 )
 
 func testKeyContext() (layout.Context, *input.Router) {
@@ -61,7 +62,8 @@ func TestGlobalEscapeClosesFunctionBarToolsInTab0(t *testing.T) {
 
 func TestGlobalShortcutOpensSettings(t *testing.T) {
 	ui := &UI{
-		Tabs: widget.Enum{Value: "tab0"},
+		Tabs:  widget.Enum{Value: "tab0"},
+		fmCfg: fm.DefaultConfig(),
 	}
 
 	gtx, router := testKeyContext()
