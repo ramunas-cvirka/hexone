@@ -46,8 +46,8 @@ On Windows:
 
 Each pane also has a sort badge in the header.
 
-- Left click the sort badge to flip ascending or descending order.
-- Right click the sort badge to choose what to sort by.
+- Left click the sort badge to open the sort menu and choose what to sort by.
+- Right click the sort badge to flip ascending or descending order directly.
 - Current sort choices are `Name`, `Date`, `Ext`, and `Size`.
 
 Use this when a folder makes more sense grouped by modification time, extension, or size instead of name.

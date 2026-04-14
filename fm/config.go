@@ -310,7 +310,7 @@ func DefaultConfig() *Config {
 		General: GeneralConfig{
 			Typeface:         resources.BundledFontFamilyFiraCode,
 			FontSizeSp:       14,
-			DimInactivePanes: false,
+			DimInactivePanes: true,
 		},
 		Colors: ColorsConfig{
 			FilePaneBackground:  DefaultFilePaneBackgroundHex,

@@ -1496,7 +1496,7 @@ func (ui *UI) layoutFileViewerModeTabs(th *material.Theme, gtx layout.Context, s
 	activeText := mixNRGBA(theme.Text, theme.HeaderText, 0.1)
 	activeText.A = 0xFF
 	hoverBg := mixNRGBA(theme.HeaderBg, theme.Text, 0.14)
-	hoverBg.A = 20
+	hoverBg.A = 58
 	pressBg := mixNRGBA(theme.HeaderBg, theme.Text, 0.22)
 	pressBg.A = 34
 	inactiveTabBg := mixNRGBA(theme.HeaderBg, theme.PanelBg, 0.16)
@@ -1542,9 +1542,9 @@ func (ui *UI) layoutFileViewerModeTabs(th *material.Theme, gtx layout.Context, s
 							hoverFill := smoothstep01(clamp01(spec.HoverFill))
 							pulseFill := smoothstep01(clamp01(spec.PulseFill))
 							bg := color.NRGBA{}
-							bg = mixNRGBA(bg, hoverBg, hoverFill*(1-activeFill)*0.72)
+							bg = mixNRGBA(bg, hoverBg, hoverFill*(1-activeFill))
 							bg = mixNRGBA(bg, pressBg, pulseFill*(1-activeFill)*0.34)
-							fg := mixNRGBA(inactiveText, activeText, clamp01(activeFill*0.98+hoverFill*0.12))
+							fg := mixNRGBA(inactiveText, activeText, clamp01(activeFill*0.98+hoverFill*0.30))
 							weight := font.Normal
 							if activeFill >= 0.35 {
 								weight = font.Medium

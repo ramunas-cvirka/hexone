@@ -620,6 +620,9 @@ func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pa
 								return ui.layoutFilePaneDriveMenu(th, gtx, idx, pane)
 							}),
 							layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutFilePaneSortMenu(th, gtx, idx, pane)
+							}),
+							layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 								return ui.layoutFilePaneFavoriteMenu(th, gtx, idx, pane)
 							}),
 						)
@@ -1424,46 +1427,12 @@ func (ui *UI) layoutFilePaneInlineNameEditor(th *material.Theme, gtx layout.Cont
 }
 
 func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
-	sortOptions := []struct {
-		key   fileSortKey
-		label string
-	}{
-		{key: fileSortName, label: "Name"},
-		{key: fileSortDate, label: "Date"},
-		{key: fileSortExt, label: "Ext"},
-		{key: fileSortSize, label: "Size"},
-	}
-	for i, opt := range sortOptions {
-		opt := opt
-		if pane.sortOptionBtns[i].Clicked(gtx) {
-			ui.choosePaneSort(idx, opt.key)
-		}
-	}
-
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if pane.pathEditing {
 				return ui.layoutFilePanePathEditor(th, gtx, idx, pane, active)
 			}
-			if !pane.sortMenuOpen {
-				return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
-			}
-			m := op.Record(gtx.Ops)
-			sortDims := ui.layoutFilePaneSortOptionsStrip(th, gtx, pane, sortOptions)
-			sortCall := m.Stop()
-			fillH := sortDims.Size.Y
-			if fillH < 1 {
-				fillH = gtx.Dp(unit.Dp(22))
-			}
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					sortCall.Add(gtx.Ops)
-					return sortDims
-				}),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutFilePanePathFill(gtx, fillH)
-				}),
-			)
+			return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1845,81 +1814,245 @@ func (ui *UI) layoutFilePanePathEditor(th *material.Theme, gtx layout.Context, i
 	})
 }
 
-func (ui *UI) layoutFilePaneSortOptionsStrip(th *material.Theme, gtx layout.Context, pane *filePaneState, sortOptions []struct {
+func filePaneSortOptions() []struct {
 	key   fileSortKey
 	label string
-}) layout.Dimensions {
-	if pane == nil || len(sortOptions) == 0 {
+} {
+	return []struct {
+		key   fileSortKey
+		label string
+	}{
+		{key: fileSortName, label: "Name"},
+		{key: fileSortDate, label: "Date"},
+		{key: fileSortExt, label: "Ext"},
+		{key: fileSortSize, label: "Size"},
+	}
+}
+
+const filePaneSortMenuWidthDp = 100
+
+func filePaneSortMenuWidth(gtx layout.Context) int {
+	w := gtx.Dp(unit.Dp(filePaneSortMenuWidthDp))
+	if w > gtx.Constraints.Max.X {
+		w = gtx.Constraints.Max.X
+	}
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+func filePaneSortMenuTitleHeight(gtx layout.Context) int {
+	h := gtx.Dp(unit.Dp(17))
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+func filePaneSortMenuRowHeight(gtx layout.Context) int {
+	h := gtx.Dp(unit.Dp(18))
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+func filePaneSortMenuCardSize(gtx layout.Context, nOpts int) image.Point {
+	h := filePaneSortMenuTitleHeight(gtx) + nOpts*filePaneSortMenuRowHeight(gtx)
+	return image.Pt(filePaneSortMenuWidth(gtx), h)
+}
+
+func filePaneSortMenuBaseRect(gtx layout.Context, pane *filePaneState, size image.Point, slideY int) image.Rectangle {
+	// Position the popup below the sort badge. The sort badge sits in the control
+	// strip just to the left of the favorites badge (right-aligned). We approximate
+	// the favorites badge area to land the menu directly under the sort badge.
+	const favoriteBadgeAreaDp = 30
+	anchor := image.Point{
+		X: gtx.Constraints.Max.X - gtx.Dp(unit.Dp(favoriteBadgeAreaDp)) - size.X,
+		Y: pane.headerHeight + gtx.Dp(unit.Dp(4)) + slideY,
+	}
+	anchor = clampFilePaneMenuPoint(anchor, size, gtx.Constraints.Max)
+	return image.Rectangle{Min: anchor, Max: anchor.Add(size)}
+}
+
+func (ui *UI) layoutFilePaneSortMenu(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
+	if pane == nil || !pane.sortMenuOpen {
 		return layout.Dimensions{}
 	}
-	gtx.Constraints.Min.X = 0
-	theme := ui.filePanePopupTheme()
-	alpha, _, animating := popupOpenProgress(gtx.Now, pane.sortMenuOpenedAt)
+	sortOptions := filePaneSortOptions()
+
+	// Poll sort option button clicks.
+	for i, opt := range sortOptions {
+		if i < len(pane.sortOptionBtns) && pane.sortOptionBtns[i].Clicked(gtx) {
+			ui.choosePaneSort(idx, opt.key)
+		}
+	}
+
+	alpha, slideY, animating := popupOpenProgress(gtx.Now, pane.sortMenuOpenedAt)
 	if animating {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
 	}
+	size := filePaneSortMenuCardSize(gtx, len(sortOptions))
+	menuRect := filePaneSortMenuBaseRect(gtx, pane, size, slideY)
+
+	// Click-outside to close.
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &pane.sortPointerTag,
+			Kinds:  pointer.Press,
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok || pe.Kind != pointer.Press {
+			continue
+		}
+		if !pe.Buttons.Contain(pointer.ButtonPrimary) {
+			continue
+		}
+		pos := pe.Position.Round()
+		inMenu := menuRect.Dx() > 0 && menuRect.Dy() > 0 &&
+			pos.X >= menuRect.Min.X && pos.X < menuRect.Max.X &&
+			pos.Y >= menuRect.Min.Y && pos.Y < menuRect.Max.Y
+		overSortBadge := pane.sortClick.Pressed() || pane.sortClick.Hovered()
+		if !inMenu && !overSortBadge {
+			pane.closeSortMenu()
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
+	if !pane.sortMenuOpen {
+		return layout.Dimensions{}
+	}
+
+	pane.sortMenuRect = menuRect
+
+	m := op.Record(gtx.Ops)
+	ui.layoutFilePaneSortMenuCard(th, gtx, pane, sortOptions, alpha)
+	call := m.Stop()
+
+	bodyClip := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
+	offset := op.Offset(menuRect.Min).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	offset.Pop()
+	bodyClip.Pop()
+
+	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &pane.sortPointerTag)
+	pass.Pop()
+
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+func (ui *UI) layoutFilePaneSortMenuCard(th *material.Theme, gtx layout.Context, pane *filePaneState, sortOptions []struct {
+	key   fileSortKey
+	label string
+}, alpha float32) layout.Dimensions {
+	if pane == nil {
+		return layout.Dimensions{}
+	}
+	width := filePaneSortMenuWidth(gtx)
+	theme := ui.filePanePopupTheme()
+
 	hoverID := filePaneSortOptionHoveredID(pane, sortOptions)
 	if hoverID != pane.sortMenuHoverID {
 		pane.sortMenuHoverID = hoverID
 		pane.sortMenuHoverAnim.setHover(hoverID, gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	stripH := gtx.Dp(unit.Dp(22))
-	if stripH < 1 {
-		stripH = 1
-	}
-	return fillRoundedClipBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-		scaleColorAlpha(theme.Bg, alpha),
-		scaleColorAlpha(theme.Border, alpha),
-		func(gtx layout.Context) layout.Dimensions {
-			return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-				children := make([]layout.FlexChild, 0, len(sortOptions)*2-1)
-				for i, opt := range sortOptions {
-					if i > 0 {
-						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutFilePaneControlDividerColor(gtx, stripH, scaleColorAlpha(theme.Divider, alpha))
-						}))
-					}
-					i := i
-					opt := opt
-					activeOpt := pane.sortKey == opt.key
+
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		return pane.sortMenuClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return fillRoundedClipBox(
+				gtx,
+				gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+				scaleColorAlpha(theme.Bg, alpha),
+				scaleColorAlpha(theme.Border, alpha),
+				func(gtx layout.Context) layout.Dimensions {
+					children := make([]layout.FlexChild, 0, len(sortOptions)+1)
+					// Title row.
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						hoverFill, hoverAnim := pane.sortMenuHoverAnim.hoverFill(gtx.Now, filePaneSortOptionID(opt.key))
-						if hoverAnim {
-							gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
-						}
-						return pane.sortOptionBtns[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							pointer.CursorPointer.Add(gtx.Ops)
+						titleH := filePaneSortMenuTitleHeight(gtx)
+						return fixedHeight(gtx, titleH, func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Caption(th, "Sort by")
+								lbl.Font.Typeface = ui.mainTypeface()
+								lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
+								lbl.Color = scaleColorAlpha(theme.Title, alpha)
+								lbl.MaxLines = 1
+								lbl.Font.Weight = font.Medium
+								lbl.Truncator = "…"
+								return layoutVCenteredLabel(gtx, lbl)
+							})
+						})
+					}))
+					// Sort option rows.
+					for i, opt := range sortOptions {
+						i, opt := i, opt
+						active := pane.sortKey == opt.key
+						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							rowH := filePaneSortMenuRowHeight(gtx)
+							hoverFill, hoverAnim := pane.sortMenuHoverAnim.hoverFill(gtx.Now, filePaneSortOptionID(opt.key))
+							if hoverAnim {
+								gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+							}
 							hoverT := smoothstep01(clamp01(hoverFill))
 							bg := color.NRGBA{}
 							fg := scaleColorAlpha(theme.Text, alpha)
-							if activeOpt {
+							labelWeight := font.Normal
+							if active {
 								bg = scaleColorAlpha(theme.ActiveBg, alpha)
 								fg = scaleColorAlpha(theme.ActiveText, alpha)
+								labelWeight = font.Medium
 							} else if hoverT > 0 {
 								bg = scaleColorAlpha(theme.HoverBg, alpha*hoverT)
 								fg = scaleColorAlpha(mixNRGBA(theme.Text, theme.HoverText, hoverT), alpha)
 							}
-							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body2(th, opt.label)
-									lbl.Font.Typeface = ui.mainTypeface()
-									lbl.Font.Weight = font.Medium
-									lbl.TextSize = ui.functionBarTextSize()
-									lbl.Color = fg
-									lbl.MaxLines = 1
-									return layoutVCenteredLabel(gtx, lbl)
+							return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+									return pane.sortOptionBtns[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										pointer.CursorPointer.Add(gtx.Ops)
+										return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+												layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+													lbl := material.Body2(th, opt.label)
+													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.Font.Weight = labelWeight
+													lbl.TextSize = ui.functionBarTextSize()
+													lbl.Color = fg
+													lbl.MaxLines = 1
+													return layoutVCenteredLabel(gtx, lbl)
+												}),
+												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+													if !active {
+														return layout.Dimensions{}
+													}
+													arrow := "↑"
+													if pane.sortDesc {
+														arrow = "↓"
+													}
+													lbl := material.Body2(th, arrow)
+													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.TextSize = ui.functionBarTextSize()
+													lbl.Color = fg
+													lbl.MaxLines = 1
+													return layoutVCenteredLabel(gtx, lbl)
+												}),
+											)
+										})
+									})
 								})
 							})
-						})
-					}))
-				}
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
-			})
-		},
-	)
+						}))
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+				},
+			)
+		})
+	})
 }
 
 func layoutFilePaneControlDivider(gtx layout.Context, h int) layout.Dimensions {
@@ -1956,6 +2089,7 @@ func (ui *UI) processFilePaneSortBadgeInput(gtx layout.Context, idx int, pane *f
 	if pane == nil {
 		return
 	}
+	// Right-click: toggle sort direction (power-user shortcut).
 	for {
 		ev, ok := gtx.Event(pointer.Filter{
 			Target: &pane.sortClick,
@@ -1973,26 +2107,29 @@ func (ui *UI) processFilePaneSortBadgeInput(gtx layout.Context, idx int, pane *f
 			pane.clearPendingPathNavigate()
 			pane.stopPathEdit()
 			pane.closeDriveMenu()
-			next := !pane.sortMenuOpen
-			ui.closeSortMenusExcept(idx)
-			ui.closeDriveMenusExcept(idx)
-			ui.closeFavoriteMenusExcept(idx)
-			pane.closeContextMenu()
-			if next {
-				pane.openSortMenu(gtx.Now)
-				pane.closeFavoriteMenu()
-			} else {
-				pane.closeSortMenu()
-			}
+			pane.closeFavoriteMenu()
+			pane.closeSortMenu()
+			ui.togglePaneSortDirection(idx)
 		}
 	}
-
+	// Left-click: open/close sort menu.
 	if pane.sortClick.Clicked(gtx) {
+		ui.setActiveFilePane(idx)
 		pane.clearPendingPathNavigate()
 		pane.stopPathEdit()
 		pane.closeDriveMenu()
 		pane.closeFavoriteMenu()
-		ui.togglePaneSortDirection(idx)
+		next := !pane.sortMenuOpen
+		ui.closeSortMenusExcept(idx)
+		ui.closeDriveMenusExcept(idx)
+		ui.closeFavoriteMenusExcept(idx)
+		pane.closeContextMenu()
+		if next {
+			pane.openSortMenu(gtx.Now)
+		} else {
+			pane.closeSortMenu()
+		}
+		gtx.Execute(op.InvalidateCmd{})
 	}
 }
 

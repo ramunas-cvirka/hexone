@@ -503,12 +503,12 @@ viewer:
 func TestDefaultConfigDimsInactivePanes(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.General.DimInactivePanes {
-		t.Fatal("general dim_inactive_panes should default to false")
+	if !cfg.General.DimInactivePanes {
+		t.Fatal("general dim_inactive_panes should default to true")
 	}
 
 	out := string(mustMarshalConfig(t, cfg))
-	if !strings.Contains(out, "dim_inactive_panes: false") {
+	if !strings.Contains(out, "dim_inactive_panes: true") {
 		t.Fatalf("serialized config missing general dim_inactive_panes:\n%s", out)
 	}
 }

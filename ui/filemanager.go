@@ -250,6 +250,9 @@ type filePaneState struct {
 	sortMenuOpenedAt      time.Time
 	sortMenuHoverID       string
 	sortMenuHoverAnim     segmentedAnimState
+	sortMenuRect          image.Rectangle
+	sortPointerTag        uiEventTag
+	sortMenuClick         widget.Clickable
 	favoritePointerTag    uiEventTag
 	favoriteMenuClick     widget.Clickable
 	favoriteOptionClicks  []widget.Clickable
@@ -913,6 +916,7 @@ func (p *filePaneState) closeSortMenu() {
 	p.sortMenuOpenedAt = time.Time{}
 	p.sortMenuHoverID = ""
 	p.sortMenuHoverAnim = segmentedAnimState{}
+	p.sortMenuRect = image.Rectangle{}
 }
 
 func (p *filePaneState) openSortMenu(now time.Time) {
@@ -923,6 +927,7 @@ func (p *filePaneState) openSortMenu(now time.Time) {
 	p.sortMenuOpenedAt = now
 	p.sortMenuHoverID = ""
 	p.sortMenuHoverAnim = segmentedAnimState{}
+	p.sortMenuRect = image.Rectangle{}
 }
 
 func (p *filePaneState) closeDriveMenu() {
