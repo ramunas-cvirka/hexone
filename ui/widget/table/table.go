@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -124,6 +126,14 @@ type Table struct {
 	BriefColumnWidth unit.Dp
 	BriefGap         unit.Dp
 
+	ScrollbarWidth      unit.Dp
+	ScrollbarMinThumb   unit.Dp
+	ScrollbarTrack      color.NRGBA
+	ScrollbarTrackHover color.NRGBA
+	ScrollbarThumb      color.NRGBA
+	ScrollbarThumbHover color.NRGBA
+	ScrollbarThumbDrag  color.NRGBA
+
 	viewRows         int
 	briefRowsPerCol  int
 	briefVisibleCols int
@@ -142,26 +152,52 @@ type Table struct {
 	briefColPx          int
 	briefGapPx          int
 	briefLastColExtraPx int
+	scrollbarTag        struct{}
+	scrollbarVisible    bool
+	scrollbarAxis       layout.Axis
+	scrollbarTrack      image.Rectangle
+	scrollbarThumb      image.Rectangle
+	scrollbarHover      bool
+	scrollbarDragging   bool
+	scrollbarDragID     pointer.ID
+	scrollbarDragGrab   int
 }
 
 const doubleClickWindow = 400 * time.Millisecond
 
 func New(cols []Column) *Table {
 	t := &Table{
-		Columns:          cols,
-		Selected:         0,
-		Mode:             ModeFull,
-		TextSize:         unit.Sp(15),
-		Typeface:         "",
-		RowHeight:        unit.Dp(24),
-		RowPadY:          unit.Dp(2),
-		Bg:               color.NRGBA{R: 32, G: 32, B: 32, A: 255},
-		HoverBg:          color.NRGBA{R: 45, G: 45, B: 45, A: 255},
-		MarkedBg:         color.NRGBA{R: 52, G: 64, B: 92, A: 255},
-		SelectedBg:       color.NRGBA{R: 60, G: 60, B: 80, A: 255},
-		MarkedSelBg:      color.NRGBA{R: 76, G: 92, B: 136, A: 255},
-		BriefColumnWidth: unit.Dp(220),
-		BriefGap:         unit.Dp(12),
+		Columns:           cols,
+		Selected:          0,
+		Mode:              ModeFull,
+		TextSize:          unit.Sp(15),
+		Typeface:          "",
+		RowHeight:         unit.Dp(24),
+		RowPadY:           unit.Dp(2),
+		Bg:                color.NRGBA{R: 32, G: 32, B: 32, A: 255},
+		HoverBg:           color.NRGBA{R: 45, G: 45, B: 45, A: 255},
+		MarkedBg:          color.NRGBA{R: 52, G: 64, B: 92, A: 255},
+		SelectedBg:        color.NRGBA{R: 60, G: 60, B: 80, A: 255},
+		MarkedSelBg:       color.NRGBA{R: 76, G: 92, B: 136, A: 255},
+		BriefColumnWidth:  unit.Dp(220),
+		BriefGap:          unit.Dp(12),
+		ScrollbarWidth:    unit.Dp(10),
+		ScrollbarMinThumb: unit.Dp(22),
+		ScrollbarTrack: color.NRGBA{
+			R: 255, G: 255, B: 255, A: 42,
+		},
+		ScrollbarTrackHover: color.NRGBA{
+			R: 255, G: 255, B: 255, A: 76,
+		},
+		ScrollbarThumb: color.NRGBA{
+			R: 190, G: 202, B: 224, A: 214,
+		},
+		ScrollbarThumbHover: color.NRGBA{
+			R: 214, G: 226, B: 246, A: 234,
+		},
+		ScrollbarThumbDrag: color.NRGBA{
+			R: 232, G: 240, B: 255, A: 248,
+		},
 	}
 	t.List.Axis = layout.Vertical
 	return t
@@ -203,6 +239,10 @@ func (t *Table) ResetPointerState() {
 	}
 	t.lastClickRow = -1
 	t.lastClickAt = time.Time{}
+	t.scrollbarHover = false
+	t.scrollbarDragging = false
+	t.scrollbarDragID = 0
+	t.scrollbarDragGrab = 0
 }
 
 func (t *Table) ensureClicks(n int) {
@@ -342,6 +382,33 @@ func (t *Table) ensureVisible(n int) {
 
 func fillRect(gtx layout.Context, c color.NRGBA, size image.Point) {
 	paint.FillShape(gtx.Ops, c, clip.Rect(image.Rectangle{Max: size}).Op())
+}
+
+func pointInRect(pos image.Point, rect image.Rectangle) bool {
+	return pos.X >= rect.Min.X && pos.X < rect.Max.X && pos.Y >= rect.Min.Y && pos.Y < rect.Max.Y
+}
+
+func scrollbarRadius(rect image.Rectangle) int {
+	r := rect.Dx()
+	if rect.Dy() < r {
+		r = rect.Dy()
+	}
+	r /= 2
+	if r < 1 {
+		r = 1
+	}
+	return r
+}
+
+func fillRoundedRect(gtx layout.Context, rect image.Rectangle, radius int, c color.NRGBA) {
+	if c.A == 0 || rect.Dx() <= 0 || rect.Dy() <= 0 {
+		return
+	}
+	if radius <= 0 {
+		paint.FillShape(gtx.Ops, c, clip.Rect(rect).Op())
+		return
+	}
+	paint.FillShape(gtx.Ops, c, clip.UniformRRect(rect, radius).Op(gtx.Ops))
 }
 
 func layoutCellLabel(gtx layout.Context, th *material.Theme, face font.Typeface, size unit.Sp, txt string, st CellStyle, align text.Alignment, hideIfTruncated bool) layout.Dimensions {
@@ -978,10 +1045,350 @@ func (t *Table) CellRect(row, col, n int) (image.Rectangle, bool) {
 	return image.Rect(x, rowRect.Min.Y, x+w, rowRect.Max.Y), true
 }
 
+func (t *Table) HitScrollbar(pos image.Point) bool {
+	return t != nil && t.scrollbarVisible && pointInRect(pos, t.scrollbarTrack)
+}
+
+func (t *Table) handleScrollbarEvents(gtx layout.Context, n int) bool {
+	if t == nil {
+		return false
+	}
+	if !t.scrollbarVisible && !t.scrollbarDragging {
+		t.scrollbarHover = false
+		return false
+	}
+
+	changed := false
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &t.scrollbarTag,
+			Kinds:  pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel | pointer.Move | pointer.Enter | pointer.Leave,
+		})
+		if !ok {
+			break
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		pos := pe.Position.Round()
+		switch pe.Kind {
+		case pointer.Press:
+			if !pe.Buttons.Contain(pointer.ButtonPrimary) || !t.HitScrollbar(pos) {
+				continue
+			}
+			t.scrollbarDragging = true
+			t.scrollbarDragID = pe.PointerID
+			t.scrollbarDragGrab = t.scrollbarThumbGrab(pos)
+			gtx.Execute(pointer.GrabCmd{Tag: &t.scrollbarTag, ID: pe.PointerID})
+			if t.setScrollFromScrollbarPos(pos, n) {
+				changed = true
+			}
+			if t.updateScrollbarHover(pos) {
+				changed = true
+			}
+		case pointer.Drag:
+			if t.scrollbarDragging && pe.PointerID == t.scrollbarDragID {
+				if t.setScrollFromScrollbarPos(pos, n) {
+					changed = true
+				}
+			}
+			if t.updateScrollbarHover(pos) {
+				changed = true
+			}
+		case pointer.Release, pointer.Cancel:
+			if t.scrollbarDragging && pe.PointerID == t.scrollbarDragID {
+				t.scrollbarDragging = false
+				t.scrollbarDragGrab = 0
+			}
+			if t.updateScrollbarHover(pos) {
+				changed = true
+			}
+		case pointer.Move, pointer.Enter:
+			if t.updateScrollbarHover(pos) {
+				changed = true
+			}
+		case pointer.Leave:
+			if !t.scrollbarDragging {
+				if t.scrollbarHover {
+					changed = true
+				}
+				t.scrollbarHover = false
+			}
+		}
+	}
+	return changed
+}
+
+func (t *Table) updateScrollbarHover(pos image.Point) bool {
+	if t == nil || !t.scrollbarVisible {
+		if t != nil && !t.scrollbarDragging {
+			changed := t.scrollbarHover
+			t.scrollbarHover = false
+			return changed
+		}
+		return false
+	}
+	old := t.scrollbarHover
+	t.scrollbarHover = pointInRect(pos, t.scrollbarTrack)
+	return old != t.scrollbarHover
+}
+
+func (t *Table) scrollbarThumbGrab(pos image.Point) int {
+	if t == nil || t.scrollbarThumb.Empty() {
+		return 0
+	}
+	if pointInRect(pos, t.scrollbarThumb) {
+		if t.scrollbarAxis == layout.Horizontal {
+			return pos.X - t.scrollbarThumb.Min.X
+		}
+		return pos.Y - t.scrollbarThumb.Min.Y
+	}
+	if t.scrollbarAxis == layout.Horizontal {
+		return t.scrollbarThumb.Dx() / 2
+	}
+	return t.scrollbarThumb.Dy() / 2
+}
+
+func (t *Table) setScrollFromScrollbarPos(pos image.Point, n int) bool {
+	items, visible, maxFirst := t.scrollbarMetrics(n)
+	if items <= 0 || visible <= 0 || maxFirst <= 0 || t.scrollbarTrack.Empty() || t.scrollbarThumb.Empty() {
+		return false
+	}
+
+	trackLen := t.scrollbarTrack.Dy()
+	thumbLen := t.scrollbarThumb.Dy()
+	coord := pos.Y
+	trackStart := t.scrollbarTrack.Min.Y
+	if t.scrollbarAxis == layout.Horizontal {
+		trackLen = t.scrollbarTrack.Dx()
+		thumbLen = t.scrollbarThumb.Dx()
+		coord = pos.X
+		trackStart = t.scrollbarTrack.Min.X
+	}
+	travel := trackLen - thumbLen
+	if travel <= 0 {
+		return false
+	}
+
+	drag := coord - trackStart - t.scrollbarDragGrab
+	if drag < 0 {
+		drag = 0
+	}
+	if drag > travel {
+		drag = travel
+	}
+	first := int(float32(drag)/float32(travel)*float32(maxFirst) + 0.5)
+	if first < 0 {
+		first = 0
+	}
+	if first > maxFirst {
+		first = maxFirst
+	}
+
+	if t.List.Position.First == first && t.List.Position.Offset == 0 {
+		return false
+	}
+	t.List.Position.First = first
+	t.List.Position.Offset = 0
+	return true
+}
+
+func (t *Table) scrollbarMetrics(n int) (items, visible, maxFirst int) {
+	if t == nil || n <= 0 {
+		return 0, 0, 0
+	}
+	if t.Mode == ModeBrief {
+		items = t.listItemCount(n)
+		visible = t.briefVisibleCols
+	} else {
+		items = n
+		visible = t.viewRows
+	}
+	if visible < 1 {
+		visible = 1
+	}
+	if visible > items {
+		visible = items
+	}
+	maxFirst = items - visible
+	if maxFirst < 0 {
+		maxFirst = 0
+	}
+	return items, visible, maxFirst
+}
+
+func (t *Table) scrollbarThicknessPx(gtx layout.Context, minor int) int {
+	if t == nil || minor < 6 {
+		return 0
+	}
+	w := gtx.Dp(t.ScrollbarWidth)
+	if w < 6 {
+		w = 6
+	}
+	if w >= minor {
+		w = minor - 1
+	}
+	if w < 1 {
+		return 0
+	}
+	return w
+}
+
+func (t *Table) resetScrollbarGeometry() {
+	if t == nil {
+		return
+	}
+	t.scrollbarVisible = false
+	t.scrollbarTrack = image.Rectangle{}
+	t.scrollbarThumb = image.Rectangle{}
+}
+
+func (t *Table) setScrollbarGeometry(gtx layout.Context, axis layout.Axis, track image.Rectangle, n int) {
+	if t == nil {
+		return
+	}
+	t.resetScrollbarGeometry()
+	if track.Empty() {
+		return
+	}
+	t.scrollbarAxis = axis
+	items, visible, maxFirst := t.scrollbarMetrics(n)
+	if items <= 0 || visible <= 0 || maxFirst <= 0 {
+		return
+	}
+	if t.List.Position.First > maxFirst {
+		t.List.Position.First = maxFirst
+		t.List.Position.Offset = 0
+	}
+	if t.List.Position.First < 0 {
+		t.List.Position.First = 0
+		t.List.Position.Offset = 0
+	}
+
+	trackLen := track.Dy()
+	minorLen := track.Dx()
+	if axis == layout.Horizontal {
+		trackLen = track.Dx()
+		minorLen = track.Dy()
+	}
+	if trackLen <= 0 || minorLen <= 0 {
+		return
+	}
+
+	minThumb := gtx.Dp(t.ScrollbarMinThumb)
+	if minThumb < 14 {
+		minThumb = 14
+	}
+	if minThumb > trackLen {
+		minThumb = trackLen
+	}
+	thumbLen := int(float32(trackLen) * float32(visible) / float32(items))
+	if thumbLen < minThumb {
+		thumbLen = minThumb
+	}
+	if thumbLen > trackLen {
+		thumbLen = trackLen
+	}
+
+	travel := trackLen - thumbLen
+	thumbPos := 0
+	if travel > 0 && maxFirst > 0 {
+		thumbPos = int(float32(t.List.Position.First)/float32(maxFirst)*float32(travel) + 0.5)
+	}
+	if thumbPos < 0 {
+		thumbPos = 0
+	}
+	if thumbPos > travel {
+		thumbPos = travel
+	}
+
+	pad := minorLen / 4
+	if pad < 1 {
+		pad = 1
+	}
+	if pad*2 >= minorLen {
+		pad = 0
+	}
+	thumb := track
+	if axis == layout.Horizontal {
+		thumb.Min.X = track.Min.X + thumbPos
+		thumb.Max.X = thumb.Min.X + thumbLen
+		thumb.Min.Y += pad
+		thumb.Max.Y -= pad
+	} else {
+		thumb.Min.X += pad
+		thumb.Max.X -= pad
+		thumb.Min.Y = track.Min.Y + thumbPos
+		thumb.Max.Y = thumb.Min.Y + thumbLen
+	}
+	if thumb.Empty() {
+		return
+	}
+
+	t.scrollbarVisible = true
+	t.scrollbarTrack = track
+	t.scrollbarThumb = thumb
+}
+
+func (t *Table) paintScrollbar(gtx layout.Context) {
+	if t == nil || !t.scrollbarVisible {
+		return
+	}
+	trackColor := t.ScrollbarTrack
+	thumbColor := t.ScrollbarThumb
+	if t.scrollbarHover {
+		trackColor = t.ScrollbarTrackHover
+		thumbColor = t.ScrollbarThumbHover
+	}
+	if t.scrollbarDragging {
+		thumbColor = t.ScrollbarThumbDrag
+	}
+
+	trackRadius := scrollbarRadius(t.scrollbarTrack)
+	thumbRadius := scrollbarRadius(t.scrollbarThumb)
+	fillRoundedRect(gtx, t.scrollbarTrack, trackRadius, trackColor)
+	fillRoundedRect(gtx, t.scrollbarThumb, thumbRadius, thumbColor)
+}
+
+func (t *Table) applyScrollbarCursor(gtx layout.Context) {
+	if t == nil || (!t.scrollbarVisible && !t.scrollbarDragging) {
+		return
+	}
+	if t.scrollbarDragging {
+		pointer.CursorGrabbing.Add(gtx.Ops)
+		return
+	}
+	if !t.scrollbarVisible || t.scrollbarTrack.Empty() {
+		return
+	}
+	defer clip.Rect(t.scrollbarTrack).Push(gtx.Ops).Pop()
+	pointer.CursorPointer.Add(gtx.Ops)
+}
+
+func (t *Table) ApplyScrollbarCursor(gtx layout.Context) {
+	t.applyScrollbarCursor(gtx)
+}
+
+func (t *Table) registerScrollbarInput(gtx layout.Context, size image.Point) {
+	if t == nil || (!t.scrollbarVisible && !t.scrollbarDragging) || size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
+	if t.scrollbarVisible {
+		defer clip.Rect(t.scrollbarTrack).Push(gtx.Ops).Pop()
+	}
+	event.Op(gtx.Ops, &t.scrollbarTag)
+}
+
 func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.Dimensions {
 	n := 0
 	if m != nil {
 		n = m.Len()
+	}
+
+	if t.handleScrollbarEvents(gtx, n) {
+		gtx.Execute(op.InvalidateCmd{})
 	}
 
 	insetPx := gtx.Dp(unit.Dp(2))
@@ -992,6 +1399,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 	t.briefColPx = 0
 	t.briefGapPx = 0
 	t.briefLastColExtraPx = 0
+	t.resetScrollbarGeometry()
 
 	t.ensureClicks(n)
 	t.clampSelection(n)
@@ -1000,7 +1408,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 	fillRect(gtx, t.Bg, gtx.Constraints.Max)
 
 	outer := layout.UniformInset(unit.Dp(2))
-	return outer.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	dims := outer.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		// IMPORTANT: clip so table doesn't steal clicks outside (tabs etc.)
 		clipArea := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
 		defer clipArea.Pop()
@@ -1017,20 +1425,79 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 			t.List.Axis = layout.Vertical
 		}
 
-		t.viewRows = gtx.Constraints.Max.Y / rowHpx
+		innerW := gtx.Constraints.Max.X
+		innerH := gtx.Constraints.Max.Y
+		if innerW < 1 {
+			innerW = 1
+		}
+		if innerH < 1 {
+			innerH = 1
+		}
+
+		if t.Mode == ModeBrief {
+			briefViewportW := innerW
+			contentH := innerH
+			scrollbarH := t.scrollbarThicknessPx(gtx, innerH)
+
+			t.viewRows = contentH / rowHpx
+			if t.viewRows < 1 {
+				t.viewRows = 1
+			}
+			t.briefRowsPerCol = t.viewRows
+			t.briefVisibleCols = 1
+			t.computeBriefLayout(gtx, n, briefViewportW)
+			itemCount := t.listItemCount(n)
+			needScrollbar := itemCount > t.briefVisibleCols && scrollbarH > 0 && contentH > scrollbarH
+			if needScrollbar {
+				contentH = innerH - scrollbarH
+				if contentH < 1 {
+					contentH = 1
+				}
+				t.viewRows = contentH / rowHpx
+				if t.viewRows < 1 {
+					t.viewRows = 1
+				}
+				t.briefRowsPerCol = t.viewRows
+				t.computeBriefLayout(gtx, n, briefViewportW)
+				itemCount = t.listItemCount(n)
+			}
+			t.hitSize = image.Pt(briefViewportW, contentH)
+			t.clampListPos(itemCount)
+
+			// If selection changed by click in previous frame, ensure visible now (after Count exists).
+			if t.pendingEnsure {
+				t.pendingEnsure = false
+				t.ensureVisible(n)
+			}
+			if needScrollbar && itemCount > t.briefVisibleCols {
+				track := image.Rect(t.hitOffset.X, t.hitOffset.Y+contentH, t.hitOffset.X+briefViewportW, t.hitOffset.Y+contentH+scrollbarH)
+				t.setScrollbarGeometry(gtx, layout.Horizontal, track, n)
+			}
+
+			listGtx := gtx
+			listGtx.Constraints.Min.X = briefViewportW
+			listGtx.Constraints.Max.X = briefViewportW
+			listGtx.Constraints.Min.Y = contentH
+			listGtx.Constraints.Max.Y = contentH
+			_ = t.layoutBrief(th, listGtx, m, n, rowHpx, itemCount)
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		}
+
+		contentW := innerW
+		scrollbarW := t.scrollbarThicknessPx(gtx, innerW)
+		t.viewRows = innerH / rowHpx
 		if t.viewRows < 1 {
 			t.viewRows = 1
 		}
+		needScrollbar := n > t.viewRows && scrollbarW > 0 && contentW > scrollbarW
+		if needScrollbar {
+			contentW = innerW - scrollbarW
+			if contentW < 1 {
+				contentW = 1
+			}
+		}
 		t.briefRowsPerCol = t.viewRows
 		t.briefVisibleCols = 1
-		briefViewportW := gtx.Constraints.Max.X
-		if t.Mode == ModeBrief {
-			if briefViewportW < 1 {
-				briefViewportW = gtx.Constraints.Max.X
-			}
-			t.computeBriefLayout(gtx, n, briefViewportW)
-			t.hitSize = image.Pt(briefViewportW, gtx.Constraints.Max.Y)
-		}
 
 		itemCount := t.listItemCount(n)
 		t.clampListPos(itemCount)
@@ -1041,26 +1508,25 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 			t.ensureVisible(n)
 		}
 
-		if t.Mode == ModeBrief {
-			listGtx := gtx
-			listGtx.Constraints.Min.X = briefViewportW
-			listGtx.Constraints.Max.X = briefViewportW
-			return t.layoutBrief(th, listGtx, m, n, rowHpx, itemCount)
-		}
-
 		listH := t.viewRows * rowHpx
-		if listH > gtx.Constraints.Max.Y {
-			listH = gtx.Constraints.Max.Y
+		if listH > innerH {
+			listH = innerH
 		}
 		if listH < 1 {
-			listH = gtx.Constraints.Max.Y
+			listH = innerH
 		}
-		t.hitSize = image.Pt(gtx.Constraints.Max.X, listH)
-		spareH := gtx.Constraints.Max.Y - listH
+		t.hitSize = image.Pt(contentW, listH)
+		spareH := innerH - listH
+		if needScrollbar {
+			track := image.Rect(t.hitOffset.X+contentW, t.hitOffset.Y, t.hitOffset.X+contentW+scrollbarW, t.hitOffset.Y+innerH)
+			t.setScrollbarGeometry(gtx, layout.Vertical, track, n)
+		}
 
-		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		_ = layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				listGtx := gtx
+				listGtx.Constraints.Min.X = contentW
+				listGtx.Constraints.Max.X = contentW
 				listGtx.Constraints.Min.Y = listH
 				listGtx.Constraints.Max.Y = listH
 				return t.layoutFull(th, listGtx, m, n, rowHpx)
@@ -1069,10 +1535,18 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 				if spareH <= 0 {
 					return layout.Dimensions{}
 				}
-				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, spareH)}
+				return layout.Dimensions{Size: image.Pt(contentW, spareH)}
 			}),
 		)
+		return layout.Dimensions{Size: gtx.Constraints.Max}
 	})
+	if !t.scrollbarVisible && !t.scrollbarDragging {
+		t.scrollbarHover = false
+	}
+	t.paintScrollbar(gtx)
+	t.applyScrollbarCursor(gtx)
+	t.registerScrollbarInput(gtx, dims.Size)
+	return dims
 }
 
 func (t *Table) rowColors(row int, hovered, marked bool) (color.NRGBA, *color.NRGBA) {

@@ -102,6 +102,7 @@ func (p *filePaneState) filePaneVolumeLookupPath() string {
 		if raw == "" {
 			raw = "/"
 		}
+		raw = strings.ReplaceAll(raw, `\`, `/`)
 		clean := path.Clean(raw)
 		if clean == "." {
 			return "/"

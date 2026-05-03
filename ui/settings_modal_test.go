@@ -1770,6 +1770,40 @@ func TestSettingsColorsPreviewHostHeightUsesSharedValue(t *testing.T) {
 	}
 }
 
+func TestSettingsPreviewScrollbarGeometryCentersThumb(t *testing.T) {
+	track, thumb := settingsPreviewScrollbarGeometry(8, 88, 22)
+
+	if track != image.Rect(0, 0, 8, 88) {
+		t.Fatalf("track=%v want %v", track, image.Rect(0, 0, 8, 88))
+	}
+	if thumb != image.Rect(1, 33, 7, 55) {
+		t.Fatalf("thumb=%v want %v", thumb, image.Rect(1, 33, 7, 55))
+	}
+}
+
+func TestSettingsPanePreviewScrollbarFillsAvailableHeight(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	palette := filePanePaletteFromConfig(ui.fmCfg)
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(32, 118),
+		},
+	}
+
+	dims := ui.layoutSettingsPanePreviewScrollbar(gtx, palette)
+	if dims.Size.X != 8 {
+		t.Fatalf("pane preview scrollbar width=%d want 8", dims.Size.X)
+	}
+	if dims.Size.Y != 118 {
+		t.Fatalf("pane preview scrollbar height=%d want available height 118", dims.Size.Y)
+	}
+}
+
 func TestMeasureTypefaceLineHeightDoesNotPaintSampleGlyphs(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()

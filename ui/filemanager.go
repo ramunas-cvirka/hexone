@@ -432,6 +432,13 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	pane.table.MarkedSelBg = palette.MarkedSelBg
 	pane.table.MarkedSelFg = &palette.MarkedSelFg
 	pane.table.SelectedFg = &palette.SelectedFg
+	pane.table.ScrollbarWidth = scaleDp(10)
+	pane.table.ScrollbarMinThumb = scaleDp(22)
+	pane.table.ScrollbarTrack = palette.ScrollTrack
+	pane.table.ScrollbarTrackHover = palette.ScrollTrackH
+	pane.table.ScrollbarThumb = palette.ScrollThumb
+	pane.table.ScrollbarThumbHover = palette.ScrollThumbH
+	pane.table.ScrollbarThumbDrag = palette.ScrollThumbD
 	pane.model.baseTextColor = palette.PaneFg
 	pane.table.IsMarked = func(row int) bool {
 		return pane.isMarkedRow(row)

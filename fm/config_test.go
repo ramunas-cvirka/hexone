@@ -658,6 +658,8 @@ func TestNormalizeColors(t *testing.T) {
 	cfg.Colors.FocusedSelectedText = "focusedtext"
 	cfg.Colors.CurrentDirBg = "currdir"
 	cfg.Colors.CurrentDirText = "currtext"
+	cfg.Colors.ScrollbarThumb = "scrollthumb"
+	cfg.Colors.ScrollbarTrack = "scrolltrack"
 
 	cfg.normalize()
 
@@ -696,6 +698,12 @@ func TestNormalizeColors(t *testing.T) {
 	}
 	if cfg.Colors.CurrentDirText != DefaultCurrentDirTextHex {
 		t.Fatalf("CurrentDirText=%q, want %q", cfg.Colors.CurrentDirText, DefaultCurrentDirTextHex)
+	}
+	if cfg.Colors.ScrollbarThumb != "" {
+		t.Fatalf("ScrollbarThumb=%q, want empty optional color", cfg.Colors.ScrollbarThumb)
+	}
+	if cfg.Colors.ScrollbarTrack != "" {
+		t.Fatalf("ScrollbarTrack=%q, want empty optional color", cfg.Colors.ScrollbarTrack)
 	}
 }
 

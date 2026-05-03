@@ -452,6 +452,44 @@ func (v *streamOutputView) clampTop() {
 	v.clampSelection()
 }
 
+func (v *streamOutputView) applyVerticalScrollbarDrag(top int) {
+	if v == nil {
+		return
+	}
+	v.dragTopLine = top
+	v.topLine = top
+	v.clampTop()
+	v.syncVisualTop()
+}
+
+func (v *streamOutputView) updateScrollbarHover(pos image.Point) bool {
+	if v == nil {
+		return false
+	}
+	oldTrack, oldThumb := v.hoverTrack, v.hoverThumb
+	oldHTrack, oldHThumb := v.hoverHTrack, v.hoverHThumb
+	v.hoverTrack = viewerPointInRect(pos, v.trackRect)
+	v.hoverThumb = viewerPointInRect(pos, v.thumbRect)
+	v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
+	v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
+	return oldTrack != v.hoverTrack ||
+		oldThumb != v.hoverThumb ||
+		oldHTrack != v.hoverHTrack ||
+		oldHThumb != v.hoverHThumb
+}
+
+func (v *streamOutputView) clearScrollbarHover() bool {
+	if v == nil {
+		return false
+	}
+	changed := v.hoverTrack || v.hoverThumb || v.hoverHTrack || v.hoverHThumb
+	v.hoverTrack = false
+	v.hoverThumb = false
+	v.hoverHTrack = false
+	v.hoverHThumb = false
+	return changed
+}
+
 func (v *streamOutputView) clampSelection() {
 	if !v.selActive {
 		return
@@ -1414,14 +1452,6 @@ func (v *streamOutputView) computeScrollbar(size image.Point, viewportH, scrollb
 	}
 	v.trackRect = image.Rect(trackX, 0, size.X, viewportH)
 
-	thumbH := int(float32(viewportH) * float32(visible) / float32(total))
-	if thumbH < 18 {
-		thumbH = 18
-	}
-	if thumbH > viewportH {
-		thumbH = viewportH
-	}
-
 	v.clampTop()
 	topForThumb := float32(v.topLine)
 	if v.dragging {
@@ -1436,11 +1466,7 @@ func (v *streamOutputView) computeScrollbar(size image.Point, viewportH, scrollb
 		topForThumb = float32(maxTop)
 	}
 
-	thumbY := 0
-	if maxTop > 0 && viewportH > thumbH {
-		thumbY = int(math.Round(float64(topForThumb / float32(maxTop) * float32(viewportH-thumbH))))
-	}
-	v.thumbRect = image.Rect(trackX+1, thumbY, size.X-1, thumbY+thumbH)
+	v.thumbRect = viewerScrollbarThumbForScroll(v.trackRect, visible, total, float64(topForThumb), true)
 }
 
 func (v *streamOutputView) estimatedTopFromY(y int) int {
@@ -1528,13 +1554,6 @@ func (v *streamOutputView) computeHorizontalScrollbar(size image.Point, barH int
 	if total < 1 {
 		total = 1
 	}
-	thumbW := int(float32(textW) * float32(visible) / float32(total))
-	if thumbW < 18 {
-		thumbW = 18
-	}
-	if thumbW > textW {
-		thumbW = textW
-	}
 	left := v.hCol
 	if v.hDragging {
 		left = v.hDragCol
@@ -1545,11 +1564,7 @@ func (v *streamOutputView) computeHorizontalScrollbar(size image.Point, barH int
 	if left > maxH {
 		left = maxH
 	}
-	thumbX := 0
-	if maxH > 0 && textW > thumbW {
-		thumbX = int(float32(left) / float32(maxH) * float32(textW-thumbW))
-	}
-	v.hThumbRect = image.Rect(thumbX, y0+1, thumbX+thumbW, y1-1)
+	v.hThumbRect = viewerScrollbarThumbForScroll(v.hTrackRect, visible, total, float64(left), false)
 }
 
 func (v *streamOutputView) estimatedHColFromX(x int) int {
@@ -1623,13 +1638,7 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 	v.ensureTextMetrics(ui, th, gtx)
 	lineHeight := v.lineH
 
-	scrollbarW := gtx.Dp(unit.Dp(10))
-	if scrollbarW < 8 {
-		scrollbarW = 8
-	}
-	if scrollbarW > size.X {
-		scrollbarW = size.X
-	}
+	scrollbarW := viewerScrollbarThickness(gtx, size.X)
 	textW := size.X - scrollbarW
 	if textW < 1 {
 		textW = size.X
@@ -1641,10 +1650,7 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 	}
 	hbarH := 0
 	if !v.wrapEnabled && v.maxHCol(textW) > 0 {
-		hbarH = gtx.Dp(unit.Dp(10))
-		if hbarH < 8 {
-			hbarH = 8
-		}
+		hbarH = viewerScrollbarThickness(gtx, size.Y)
 		if hbarH > size.Y/2 {
 			hbarH = size.Y / 2
 		}
@@ -1762,8 +1768,9 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				v.dragging = true
 				v.dragID = pe.PointerID
 				v.dragGrabY = v.verticalThumbGrabY(pos)
-				v.dragTopLine = v.estimatedTopFromDragY(pos.Y, v.dragGrabY)
+				v.applyVerticalScrollbarDrag(v.estimatedTopFromDragY(pos.Y, v.dragGrabY))
 				gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
+				gtx.Execute(op.InvalidateCmd{})
 				st.markUserBrowsing(gtx.Now)
 				continue
 			}
@@ -1776,6 +1783,7 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				v.hCol = v.hDragCol
 				v.clampHCol(v.textRect.Dx())
 				gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
+				gtx.Execute(op.InvalidateCmd{})
 				st.markUserBrowsing(gtx.Now)
 				continue
 			}
@@ -1804,14 +1812,16 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 			}
 		case pointer.Drag:
 			if v.dragging && pe.PointerID == v.dragID {
-				v.dragTopLine = v.estimatedTopFromDragY(pos.Y, v.dragGrabY)
+				v.applyVerticalScrollbarDrag(v.estimatedTopFromDragY(pos.Y, v.dragGrabY))
 				st.markUserBrowsing(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 			}
 			if v.hDragging && pe.PointerID == v.hDragID {
 				v.hDragCol = v.estimatedHColFromDragX(pos.X, v.hDragGrabX)
 				v.hCol = v.hDragCol
 				v.clampHCol(v.textRect.Dx())
 				st.markUserBrowsing(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 			}
 			if v.selectingText && pe.PointerID == v.selectID {
 				if !pe.Buttons.Contain(pointer.ButtonPrimary) {
@@ -1827,13 +1837,11 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)
 			}
-			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
-			v.hoverThumb = viewerPointInRect(pos, v.thumbRect)
-			v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
-			v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
+			if v.updateScrollbarHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Release:
 			if v.dragging && pe.PointerID == v.dragID {
-				v.topLine = v.dragTopLine
 				v.dragging = false
 				v.dragGrabY = 0
 				v.clampTop()
@@ -1851,10 +1859,9 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 					v.syncVisualTop()
 				}
 			}
-			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
-			v.hoverThumb = viewerPointInRect(pos, v.thumbRect)
-			v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
-			v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
+			if v.updateScrollbarHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Cancel:
 			v.pointerOutside = true
 			if v.selectingText && pe.PointerID == v.selectID {
@@ -1874,10 +1881,9 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				v.hDragGrabX = 0
 				v.clampHCol(v.textRect.Dx())
 			}
-			v.hoverTrack = false
-			v.hoverThumb = false
-			v.hoverHTrack = false
-			v.hoverHThumb = false
+			if v.clearScrollbarHover() {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Move, pointer.Enter:
 			if pe.Kind == pointer.Enter {
 				v.pointerOutside = false
@@ -1896,10 +1902,9 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)
 			}
-			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
-			v.hoverThumb = viewerPointInRect(pos, v.thumbRect)
-			v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
-			v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
+			if v.updateScrollbarHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Leave:
 			v.pointerOutside = true
 			if v.selectingText {
@@ -1916,10 +1921,9 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)
 			}
-			v.hoverTrack = false
-			v.hoverThumb = false
-			v.hoverHTrack = false
-			v.hoverHThumb = false
+			if v.clearScrollbarHover() {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		}
 	}
 }
@@ -2092,23 +2096,8 @@ func (ui *UI) drawStreamOutputScrollbar(gtx layout.Context, st *fileViewerState)
 	theme := ui.fileViewerTheme()
 	track := v.trackRect
 	thumb := v.thumbRect
-	if track.Dx() <= 0 || track.Dy() <= 0 {
-		return
-	}
-	trackColor := theme.ScrollTrack
-	if v.hoverTrack || v.hoverThumb || v.dragging {
-		trackColor = theme.ScrollTrackHover
-	}
-	thumbColor := theme.ScrollThumb
-	if v.hoverThumb || v.dragging {
-		thumbColor = theme.ScrollThumbHover
-	}
-	if v.dragging {
-		thumbColor = theme.ScrollThumbDrag
-	}
-	paint.FillShape(gtx.Ops, trackColor, clip.Rect(track).Op())
-	if thumb.Dx() > 0 && thumb.Dy() > 0 {
-		paint.FillShape(gtx.Ops, thumbColor, clip.Rect(thumb).Op())
+	if track.Dx() > 0 && track.Dy() > 0 {
+		paintViewerScrollbar(gtx, theme, track, thumb, v.hoverTrack, v.hoverThumb, v.dragging)
 	}
 
 	hTrack := v.hTrackRect
@@ -2116,21 +2105,7 @@ func (ui *UI) drawStreamOutputScrollbar(gtx layout.Context, st *fileViewerState)
 	if hTrack.Dx() <= 0 || hTrack.Dy() <= 0 {
 		return
 	}
-	hTrackColor := theme.ScrollTrack
-	if v.hoverHTrack || v.hoverHThumb || v.hDragging {
-		hTrackColor = theme.ScrollTrackHover
-	}
-	hThumbColor := theme.ScrollThumb
-	if v.hoverHThumb || v.hDragging {
-		hThumbColor = theme.ScrollThumbHover
-	}
-	if v.hDragging {
-		hThumbColor = theme.ScrollThumbDrag
-	}
-	paint.FillShape(gtx.Ops, hTrackColor, clip.Rect(hTrack).Op())
-	if hThumb.Dx() > 0 && hThumb.Dy() > 0 {
-		paint.FillShape(gtx.Ops, hThumbColor, clip.Rect(hThumb).Op())
-	}
+	paintViewerScrollbar(gtx, theme, hTrack, hThumb, v.hoverHTrack, v.hoverHThumb, v.hDragging)
 }
 
 func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st *fileViewerState) {
@@ -2216,6 +2191,22 @@ func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st
 func (ui *UI) measureStreamOutputTooltipBox(th *material.Theme, gtx layout.Context, msg string, maxBoxW int) image.Point {
 	lbl := ui.streamOutputTooltipLabel(th, msg)
 	textDims := measureLabelUnconstrained(gtx, lbl).Size
+	fontPx := gtx.Sp(scaleThemeFontSize(th, 9))
+	if fontPx < 8 {
+		fontPx = 8
+	}
+	charW := int(float32(fontPx)*0.58 + 0.5)
+	if charW < 4 {
+		charW = 4
+	}
+	estimatedW := utf8.RuneCountInString(msg) * charW
+	if textDims.X < estimatedW {
+		textDims.X = estimatedW
+	}
+	estimatedH := fontPx + gtx.Dp(unit.Dp(2))
+	if textDims.Y < estimatedH {
+		textDims.Y = estimatedH
+	}
 	boxW := textDims.X + gtx.Dp(unit.Dp(streamTooltipInsetXDp*2))
 	boxH := textDims.Y + gtx.Dp(unit.Dp(streamTooltipInsetYDp*2))
 	if minW := gtx.Dp(unit.Dp(streamTooltipMinWidthDp)); boxW < minW {
@@ -2245,12 +2236,10 @@ func (ui *UI) applyStreamOutputCursor(gtx layout.Context, st *fileViewerState) {
 	}
 	v := &st.stream
 	if v.dragging {
-		defer clip.Rect(v.trackRect).Push(gtx.Ops).Pop()
 		pointer.CursorGrabbing.Add(gtx.Ops)
 		return
 	}
 	if v.hDragging {
-		defer clip.Rect(v.hTrackRect).Push(gtx.Ops).Pop()
 		pointer.CursorGrabbing.Add(gtx.Ops)
 		return
 	}

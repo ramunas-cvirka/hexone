@@ -1945,12 +1945,18 @@ func (st *fileViewerState) userIsBrowsing(now time.Time) bool {
 	return now.Before(st.userBrowseUntil)
 }
 
-func (st *fileViewerState) updateScrollbarHover(pos image.Point) {
+func (st *fileViewerState) updateScrollbarHover(pos image.Point) bool {
 	if st == nil || !st.scrollbarVisible {
+		if st == nil {
+			return false
+		}
+		changed := st.scrollbarHover
 		st.scrollbarHover = false
-		return
+		return changed
 	}
+	old := st.scrollbarHover
 	st.scrollbarHover = viewerPointInRect(pos, st.scrollbarTrack)
+	return old != st.scrollbarHover
 }
 
 func (st *fileViewerState) captureWatchState() {

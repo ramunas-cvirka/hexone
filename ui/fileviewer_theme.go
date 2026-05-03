@@ -124,19 +124,13 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 	strongSelection = mixNRGBA(strongSelection, selectionText, 0.14)
 	strongSelection.A = 214
 
-	scrollAccentText := bestContrastColor(baseBg, popup.ActiveText, popup.HoverText, headerText, baseText)
-	scrollAccent := mixNRGBA(popup.ActiveBg, scrollAccentText, 0.18)
-	scrollAccent.A = 0xFF
-	scrollTrack := mixNRGBA(baseBg, scrollAccent, 0.22)
-	scrollTrack.A = 54
-	scrollTrackHover := mixNRGBA(baseBg, scrollAccent, 0.34)
-	scrollTrackHover.A = 88
-	scrollThumb := mixNRGBA(scrollAccent, scrollAccentText, 0.16)
-	scrollThumb.A = 212
-	scrollThumbHover := mixNRGBA(scrollAccent, scrollAccentText, 0.28)
-	scrollThumbHover.A = 232
-	scrollThumbDrag := mixNRGBA(scrollAccent, scrollAccentText, 0.42)
-	scrollThumbDrag.A = 248
+	scrollThumbOverride := ""
+	scrollTrackOverride := ""
+	if cfg != nil {
+		scrollThumbOverride = cfg.Colors.ScrollbarThumb
+		scrollTrackOverride = cfg.Colors.ScrollbarTrack
+	}
+	scrollTrack, scrollTrackHover, scrollThumb, scrollThumbHover, scrollThumbDrag := filePaneScrollbarColors(baseBg, baseText, headerText, popup.HoverText, selectionText, scrollThumbOverride, scrollTrackOverride)
 
 	tooltipBg := mixNRGBA(baseBg, popup.Bg, 0.44)
 	tooltipBg.A = 246

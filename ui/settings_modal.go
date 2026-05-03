@@ -111,6 +111,8 @@ type settingsModalState struct {
 	colorFocusedSelectedText    string
 	colorCurrentDir             string
 	colorCurrentDirText         string
+	colorScrollbarThumb         string
+	colorScrollbarTrack         string
 	colorViewerBackground       string
 	colorViewerText             string
 	colorViewerSelection        string
@@ -305,6 +307,7 @@ var settingsPaneColorOptions = []settingsColorOption{
 	{key: "selected_files", label: "Selected Files"},
 	{key: "focused_selected", label: "Focused + Selected Files"},
 	{key: "current_dir", label: "Current Dir"},
+	{key: "scrollbar", label: "Scrollbar"},
 }
 
 var settingsViewerColorOptions = []settingsColorOption{
@@ -469,7 +472,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	}
 	st.viewMode = mode
 	switch st.colorCategory {
-	case "normal", "hover", "selection", "selected_files", "focused_selected", "current_dir":
+	case "normal", "hover", "selection", "selected_files", "focused_selected", "current_dir", "scrollbar":
 	default:
 		st.colorCategory = "selection"
 	}
@@ -490,6 +493,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorFocusedSelectedText = cfg.Colors.FocusedSelectedText
 	st.colorCurrentDir = cfg.Colors.CurrentDirBg
 	st.colorCurrentDirText = cfg.Colors.CurrentDirText
+	st.colorScrollbarThumb = cfg.Colors.ScrollbarThumb
+	st.colorScrollbarTrack = cfg.Colors.ScrollbarTrack
 	st.colorViewerBackground = cfg.Viewer.Background
 	st.colorViewerText = cfg.Viewer.Text
 	st.colorViewerSelection = cfg.Viewer.Selection
@@ -605,6 +610,8 @@ func (st *settingsModalState) colorValue(key string) string {
 		return st.colorFocusedSelected
 	case "current_dir":
 		return st.colorCurrentDir
+	case "scrollbar":
+		return st.colorScrollbarThumb
 	case "hover":
 		return st.colorHover
 	case "selected_files":
@@ -634,6 +641,8 @@ func (st *settingsModalState) setColorValue(key, value string) {
 		st.colorFocusedSelected = value
 	case "current_dir":
 		st.colorCurrentDir = value
+	case "scrollbar":
+		st.colorScrollbarThumb = value
 	case "hover":
 		st.colorHover = value
 	case "selected_files":
@@ -657,6 +666,8 @@ func (st *settingsModalState) colorTextValue(key string) string {
 		return st.colorFocusedSelectedText
 	case "current_dir":
 		return st.colorCurrentDirText
+	case "scrollbar":
+		return st.colorScrollbarTrack
 	case "hover":
 		return st.colorHoverText
 	case "selected_files":
@@ -681,6 +692,8 @@ func (st *settingsModalState) setColorTextValue(key, value string) {
 		st.colorFocusedSelectedText = value
 	case "current_dir":
 		st.colorCurrentDirText = value
+	case "scrollbar":
+		st.colorScrollbarTrack = value
 	case "hover":
 		st.colorHoverText = value
 	case "selected_files":
@@ -1142,7 +1155,6 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		currentDirFallback = cfg.Colors.CurrentDirBg
 		currentDirTextFallback = cfg.Colors.CurrentDirText
 	}
-
 	bgRaw := strings.TrimSpace(st.colorPaneBackground)
 	paneTextRaw := strings.TrimSpace(st.colorPaneText)
 	hoverRaw := strings.TrimSpace(st.colorHover)
@@ -1155,6 +1167,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	focusedSelectedTextRaw := strings.TrimSpace(st.colorFocusedSelectedText)
 	currentDirRaw := strings.TrimSpace(st.colorCurrentDir)
 	currentDirTextRaw := strings.TrimSpace(st.colorCurrentDirText)
+	scrollbarThumbRaw := strings.TrimSpace(st.colorScrollbarThumb)
+	scrollbarTrackRaw := strings.TrimSpace(st.colorScrollbarTrack)
 
 	errText := ""
 	for _, field := range []struct {
@@ -1173,6 +1187,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		{label: "Focused + selected files text", value: focusedSelectedTextRaw},
 		{label: "Current dir background", value: currentDirRaw},
 		{label: "Current dir text", value: currentDirTextRaw},
+		{label: "Scrollbar thumb", value: scrollbarThumbRaw},
+		{label: "Scrollbar track", value: scrollbarTrackRaw},
 	} {
 		if field.value == "" {
 			continue
@@ -1196,6 +1212,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	draft.Colors.FocusedSelectedText = fm.NormalizeHexColor(focusedSelectedTextRaw, focusedSelectedTextFallback)
 	draft.Colors.CurrentDirBg = fm.NormalizeHexColor(currentDirRaw, currentDirFallback)
 	draft.Colors.CurrentDirText = fm.NormalizeHexColor(currentDirTextRaw, currentDirTextFallback)
+	draft.Colors.ScrollbarThumb = fm.NormalizeOptionalHexColor(scrollbarThumbRaw)
+	draft.Colors.ScrollbarTrack = fm.NormalizeOptionalHexColor(scrollbarTrackRaw)
 	return filePanePaletteFromConfig(draft), errText
 }
 
@@ -1213,6 +1231,8 @@ func filePanePaletteToConfigColors(palette filePanePalette) fm.ColorsConfig {
 		FocusedSelectedText: fm.FormatHexColor(palette.MarkedSelFg),
 		CurrentDirBg:        fm.FormatHexColor(palette.CurrentDirBg),
 		CurrentDirText:      fm.FormatHexColor(palette.CurrentDirFg),
+		ScrollbarThumb:      fm.FormatHexColor(palette.ScrollThumb),
+		ScrollbarTrack:      fm.FormatHexColor(palette.ScrollTrack),
 	}
 }
 
@@ -2810,6 +2830,20 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 		return fmt.Errorf("current dir text color must use #RRGGBB")
 	} else {
 		ui.fmCfg.Colors.CurrentDirText = fm.FormatHexColor(c)
+	}
+	if raw := strings.TrimSpace(st.colorScrollbarThumb); raw == "" {
+		ui.fmCfg.Colors.ScrollbarThumb = ""
+	} else if c, ok := fm.ParseHexColor(raw); !ok {
+		return fmt.Errorf("scrollbar thumb color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.ScrollbarThumb = fm.FormatHexColor(c)
+	}
+	if raw := strings.TrimSpace(st.colorScrollbarTrack); raw == "" {
+		ui.fmCfg.Colors.ScrollbarTrack = ""
+	} else if c, ok := fm.ParseHexColor(raw); !ok {
+		return fmt.Errorf("scrollbar track color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.ScrollbarTrack = fm.FormatHexColor(c)
 	}
 	filenameColors, filenameErr := st.draftFilenameColors()
 	if filenameErr != "" {
@@ -5106,14 +5140,55 @@ func (ui *UI) layoutSettingsViewerPreviewScrollbar(gtx layout.Context, theme fil
 	if thumbH < 18 {
 		thumbH = 18
 	}
-	thumbY := (trackH - thumbH) / 2
+	track, thumb := settingsPreviewScrollbarGeometry(trackW, trackH, thumbH)
 	return fixedWidth(gtx, trackW, func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
-			paint.FillShape(gtx.Ops, theme.ScrollTrackHover, clip.Rect(image.Rect(0, 0, trackW, trackH)).Op())
-			paint.FillShape(gtx.Ops, theme.ScrollThumbHover, clip.Rect(image.Rect(1, thumbY, trackW-1, thumbY+thumbH)).Op())
+			paintSettingsPreviewRoundedRect(gtx, track, theme.ScrollTrackHover)
+			paintSettingsPreviewRoundedRect(gtx, thumb, theme.ScrollThumbHover)
 			return layout.Dimensions{Size: image.Pt(trackW, trackH)}
 		})
 	})
+}
+
+func settingsPreviewScrollbarGeometry(trackW, trackH, thumbH int) (track, thumb image.Rectangle) {
+	if trackW < 1 {
+		trackW = 1
+	}
+	if trackH < 1 {
+		trackH = 1
+	}
+	if thumbH < 1 {
+		thumbH = 1
+	}
+	if thumbH > trackH {
+		thumbH = trackH
+	}
+	inset := 1
+	if trackW <= 2 {
+		inset = 0
+	}
+	thumbY := (trackH - thumbH) / 2
+	track = image.Rect(0, 0, trackW, trackH)
+	thumb = image.Rect(inset, thumbY, trackW-inset, thumbY+thumbH)
+	if thumb.Empty() {
+		thumb = track
+	}
+	return track, thumb
+}
+
+func paintSettingsPreviewRoundedRect(gtx layout.Context, rect image.Rectangle, fill color.NRGBA) {
+	if fill.A == 0 || rect.Empty() {
+		return
+	}
+	radius := rect.Dx()
+	if rect.Dy() < radius {
+		radius = rect.Dy()
+	}
+	radius /= 2
+	if radius < 1 {
+		radius = 1
+	}
+	paint.FillShape(gtx.Ops, fill, clip.UniformRRect(rect, radius).Op(gtx.Ops))
 }
 
 func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
@@ -5220,6 +5295,12 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		currentText = parsed
 	}
 	showTextField := st.colorScope != "viewer" || settingsViewerCategoryHasText(st.colorCategory)
+	bgFieldLabel := "Background"
+	textFieldLabel := "Text"
+	if st.colorScope == "panes" && st.colorCategory == "scrollbar" {
+		bgFieldLabel = "Thumb"
+		textFieldLabel = "Track"
+	}
 
 	rowLabel := func(txt string, enabled bool) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, enabled)
@@ -5243,14 +5324,14 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			children := []layout.FlexChild{
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsColorValueField(th, gtx, st, "Background", currentBg, &st.colorValueEdit, &st.colorBgPickerClick, "background", bgSwatchGroups, settingsKeyboardFocusColorsBgPicker, settingsKeyboardFocusColorsValue)
+					return ui.layoutSettingsColorValueField(th, gtx, st, bgFieldLabel, currentBg, &st.colorValueEdit, &st.colorBgPickerClick, "background", bgSwatchGroups, settingsKeyboardFocusColorsBgPicker, settingsKeyboardFocusColorsValue)
 				}),
 			}
 			if showTextField {
 				children = append(children,
 					layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorValueField(th, gtx, st, "Text", currentText, &st.colorTextValueEdit, &st.colorTextPickerClick, "text", textSwatchGroups, settingsKeyboardFocusColorsTextPicker, settingsKeyboardFocusColorsTextValue)
+						return ui.layoutSettingsColorValueField(th, gtx, st, textFieldLabel, currentText, &st.colorTextValueEdit, &st.colorTextPickerClick, "text", textSwatchGroups, settingsKeyboardFocusColorsTextPicker, settingsKeyboardFocusColorsTextValue)
 					}),
 				)
 			}
@@ -5264,6 +5345,8 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 			note := "Use the same category for both background and text. Hover and Focused + Selected Files are tuned separately."
 			if st.colorScope == "viewer" {
 				note = "Viewer background/text and selection are saved separately from pane colors. Selection only needs a background override."
+			} else if st.colorCategory == "scrollbar" {
+				note = "Leave scrollbar fields empty to derive contrast from the active pane palette."
 			}
 			lbl := material.Caption(th, note)
 			lbl.Font.Typeface = ui.mainTypeface()
@@ -5828,33 +5911,72 @@ func (ui *UI) layoutSettingsColorPreview(th *material.Theme, gtx layout.Context,
 						return lbl.Layout(gtx)
 					}),
 					layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.PaneBg, palette.PaneFg, "Normal", "alpha.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.HoverBg, palette.HoverFg, "Hover", "beta.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.SelectedBg, palette.SelectedFg, "Focused", "gamma.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedBg, palette.MarkedFg, "Selected Files", "delta.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedSelBg, palette.MarkedSelFg, "Focused + Selected Files", "omega.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewCurrentDir(th, gtx, palette)
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutSettingsColorPreviewRows(th, gtx, palette)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutSettingsPanePreviewScrollbar(gtx, palette)
+							}),
+						)
 					}),
 				)
 			})
 		},
 	)
+}
+
+func (ui *UI) layoutSettingsColorPreviewRows(th *material.Theme, gtx layout.Context, palette filePanePalette) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.PaneBg, palette.PaneFg, "Normal", "alpha.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.HoverBg, palette.HoverFg, "Hover", "beta.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.SelectedBg, palette.SelectedFg, "Focused", "gamma.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedBg, palette.MarkedFg, "Selected Files", "delta.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedSelBg, palette.MarkedSelFg, "Focused + Selected Files", "omega.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewCurrentDir(th, gtx, palette)
+		}),
+	)
+}
+
+func (ui *UI) layoutSettingsPanePreviewScrollbar(gtx layout.Context, palette filePanePalette) layout.Dimensions {
+	trackW := gtx.Dp(unit.Dp(8))
+	trackH := gtx.Constraints.Max.Y
+	if trackW < 6 {
+		trackW = 6
+	}
+	if trackH < 1 {
+		trackH = gtx.Dp(unit.Dp(88))
+	}
+	thumbH := trackH / 3
+	if minThumb := gtx.Dp(unit.Dp(22)); thumbH < minThumb {
+		thumbH = minThumb
+	}
+	track, thumb := settingsPreviewScrollbarGeometry(trackW, trackH, thumbH)
+	return fixedWidth(gtx, trackW, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
+			paintSettingsPreviewRoundedRect(gtx, track, palette.ScrollTrackH)
+			paintSettingsPreviewRoundedRect(gtx, thumb, palette.ScrollThumbH)
+			return layout.Dimensions{Size: image.Pt(trackW, trackH)}
+		})
+	})
 }
 
 func (ui *UI) layoutSettingsColorPreviewCurrentDir(th *material.Theme, gtx layout.Context, palette filePanePalette) layout.Dimensions {
@@ -5962,6 +6084,7 @@ func settingsColorPreviewStateWidth(th *material.Theme, gtx layout.Context, cfg 
 		"Selected Files",
 		"Focused + Selected Files",
 		"Current Dir",
+		"Scrollbar",
 	}
 	maxW := 0
 	for _, txt := range labels {
@@ -6012,6 +6135,11 @@ func settingsPreviewColorForCategory(palette filePanePalette, key, part string) 
 			return palette.CurrentDirFg
 		}
 		return palette.CurrentDirBg
+	case "scrollbar":
+		if part == "text" {
+			return palette.ScrollTrack
+		}
+		return palette.ScrollThumb
 	default:
 		if part == "text" {
 			return palette.SelectedFg

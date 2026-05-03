@@ -1263,6 +1263,10 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 				pane.stopPathEdit()
 				pathEditClosed = true
 			}
+			if pe.Buttons.Contain(pointer.ButtonPrimary) && pane.table.HitScrollbar(pos) {
+				pane.clearPendingInlineNameEdit()
+				continue
+			}
 			row := pane.table.HitRow(pos, total)
 			col := pane.table.HitColumn(pos)
 			if pe.Buttons.Contain(pointer.ButtonPrimary) && row >= 0 && col >= 0 {
@@ -1345,6 +1349,7 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 	pass := pointer.PassOp{}.Push(gtx.Ops)
 	event.Op(gtx.Ops, &pane.tablePointerTag)
 	pass.Pop()
+	pane.table.ApplyScrollbarCursor(gtx)
 	return dims
 }
 

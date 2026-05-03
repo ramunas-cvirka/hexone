@@ -81,7 +81,14 @@ func (ui *UI) saveFMConfigWithOptions(reason string, allowDefaultReset bool) err
 	if err != nil {
 		return err
 	}
-	if !allowDefaultReset && configLooksLikeCriticalStateReset(existing, ui.fmCfg) {
+	rebasedRuntimeSave := false
+	if !allowDefaultReset {
+		if rebased, ok := rebaseRuntimeConfigSave(reason, existing, ui.fmCfg); ok {
+			ui.fmCfg = rebased
+			rebasedRuntimeSave = true
+		}
+	}
+	if !allowDefaultReset && !rebasedRuntimeSave && configLooksLikeCriticalStateReset(existing, ui.fmCfg) {
 		return fmt.Errorf("refusing to overwrite existing customized config with runtime defaults; restore from %s and use the Config tab for an explicit full reset", path+uiConfigBackupSuffix)
 	}
 	if strings.TrimSpace(reason) == "" {
@@ -127,4 +134,101 @@ func configHasCriticalUserState(cfg *fm.Config) bool {
 		return true
 	}
 	return strings.TrimSpace(cfg.Viewer.Command) != strings.TrimSpace(defaultCfg.Viewer.Command)
+}
+
+func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Config, bool) {
+	if existing == nil || next == nil {
+		return nil, false
+	}
+	reason = strings.ToLower(strings.TrimSpace(reason))
+	if reason == "" {
+		reason = "runtime"
+	}
+	rebased := cloneFMConfigForRuntimeSave(existing)
+	switch reason {
+	case "viewer-mode":
+		rebased.Viewer.Mode = next.Viewer.Mode
+		if normalizeViewerMode(next.Viewer.Mode) == "command" {
+			rebased.Viewer.Command = next.Viewer.Command
+		}
+	case "viewer-auto-refresh":
+		rebased.Viewer.CommandAutoRefresh = next.Viewer.CommandAutoRefresh
+	case "viewer-word-wrap":
+		rebased.Viewer.WordWrap = next.Viewer.WordWrap
+	case "viewer-encoding":
+		rebased.Viewer.FileEncoding = next.Viewer.FileEncoding
+	case "viewer-command":
+		rebased.Viewer.Mode = next.Viewer.Mode
+		rebased.Viewer.Command = next.Viewer.Command
+		rebased.Viewer.CommandByTarget = cloneStringMap(next.Viewer.CommandByTarget)
+		rebased.Viewer.CommandHistory = cloneStringSlice(next.Viewer.CommandHistory)
+	case "favorites-add", "favorites-remove":
+		rebased.FavoriteLocations = cloneStringSlice(next.FavoriteLocations)
+	case "ssh-modal":
+		rebased.SSH.Setups = cloneSSHSetups(next.SSH.Setups)
+	default:
+		return nil, false
+	}
+	return rebased, true
+}
+
+func cloneFMConfigForRuntimeSave(cfg *fm.Config) *fm.Config {
+	if cfg == nil {
+		return nil
+	}
+	out := *cfg
+	out.DateFormats = cloneStringSlice(cfg.DateFormats)
+	out.FavoriteLocations = cloneStringSlice(cfg.FavoriteLocations)
+	out.Columns.FullDropPriority = cloneStringSlice(cfg.Columns.FullDropPriority)
+	out.Associations = cloneAssociationPrograms(cfg.Associations)
+	out.Viewer.Associations = cloneViewerAssociations(cfg.Viewer.Associations)
+	out.Viewer.AssociatedExtensions = cloneStringSlice(cfg.Viewer.AssociatedExtensions)
+	out.Viewer.CommandRules = cloneViewerCommandRules(cfg.Viewer.CommandRules)
+	out.Viewer.CommandByTarget = cloneStringMap(cfg.Viewer.CommandByTarget)
+	out.Viewer.CommandHistory = cloneStringSlice(cfg.Viewer.CommandHistory)
+	out.SSH.Setups = cloneSSHSetups(cfg.SSH.Setups)
+	return &out
+}
+
+func cloneStringSlice(src []string) []string {
+	if src == nil {
+		return nil
+	}
+	return append([]string(nil), src...)
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func cloneViewerCommandRules(src []fm.ViewerCommandRule) []fm.ViewerCommandRule {
+	if src == nil {
+		return nil
+	}
+	return append([]fm.ViewerCommandRule(nil), src...)
+}
+
+func cloneViewerAssociations(src []fm.ViewerAssociation) []fm.ViewerAssociation {
+	if src == nil {
+		return nil
+	}
+	return append([]fm.ViewerAssociation(nil), src...)
+}
+
+func cloneAssociationPrograms(src []fm.AssociationProgram) []fm.AssociationProgram {
+	if src == nil {
+		return nil
+	}
+	dst := append([]fm.AssociationProgram(nil), src...)
+	for i := range dst {
+		dst[i].Extensions = cloneStringSlice(dst[i].Extensions)
+	}
+	return dst
 }

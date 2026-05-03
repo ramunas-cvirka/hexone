@@ -22,6 +22,11 @@ type filePanePalette struct {
 	MarkedSelFg  color.NRGBA
 	CurrentDirBg color.NRGBA
 	CurrentDirFg color.NRGBA
+	ScrollTrack  color.NRGBA
+	ScrollTrackH color.NRGBA
+	ScrollThumb  color.NRGBA
+	ScrollThumbH color.NRGBA
+	ScrollThumbD color.NRGBA
 }
 
 func filePanePaletteFromConfig(cfg *fm.Config) filePanePalette {
@@ -37,6 +42,8 @@ func filePanePaletteFromConfig(cfg *fm.Config) filePanePalette {
 	markedSelFg := parseConfigColorHexFallback("", fm.DefaultFilePaneFocusedSelectedTextHex)
 	currentDirBg := parseConfigColorHexFallback("", fm.DefaultCurrentDirBackgroundHex)
 	currentDirFg := parseConfigColorHexFallback("", fm.DefaultCurrentDirTextHex)
+	scrollThumbOverride := ""
+	scrollTrackOverride := ""
 	if cfg != nil {
 		bg = parseConfigColorHexFallback(cfg.Colors.FilePaneBackground, fm.DefaultFilePaneBackgroundHex)
 		fg = parseConfigColorHexFallback(cfg.Colors.FilePaneText, fm.DefaultFilePaneTextHex)
@@ -50,7 +57,10 @@ func filePanePaletteFromConfig(cfg *fm.Config) filePanePalette {
 		markedSelFg = parseConfigColorHexFallback(cfg.Colors.FocusedSelectedText, fm.DefaultFilePaneFocusedSelectedTextHex)
 		currentDirBg = parseConfigColorHexFallback(cfg.Colors.CurrentDirBg, fm.DefaultCurrentDirBackgroundHex)
 		currentDirFg = parseConfigColorHexFallback(cfg.Colors.CurrentDirText, fm.DefaultCurrentDirTextHex)
+		scrollThumbOverride = cfg.Colors.ScrollbarThumb
+		scrollTrackOverride = cfg.Colors.ScrollbarTrack
 	}
+	scrollTrack, scrollTrackHover, scrollThumb, scrollThumbHover, scrollThumbDrag := filePaneScrollbarColors(bg, fg, hoverFg, selectedFg, currentDirFg, scrollThumbOverride, scrollTrackOverride)
 	return filePanePalette{
 		PaneBg:       bg,
 		PaneFg:       fg,
@@ -64,6 +74,11 @@ func filePanePaletteFromConfig(cfg *fm.Config) filePanePalette {
 		MarkedSelFg:  markedSelFg,
 		CurrentDirBg: currentDirBg,
 		CurrentDirFg: currentDirFg,
+		ScrollTrack:  scrollTrack,
+		ScrollTrackH: scrollTrackHover,
+		ScrollThumb:  scrollThumb,
+		ScrollThumbH: scrollThumbHover,
+		ScrollThumbD: scrollThumbDrag,
 	}
 }
 
@@ -136,6 +151,31 @@ func filePaneInactiveShadeColor(cfg *fm.Config, bg color.NRGBA) color.NRGBA {
 		alpha = 54
 	}
 	return color.NRGBA{R: grayTone, G: grayTone, B: grayTone, A: alpha}
+}
+
+func filePaneScrollbarColors(bg, fg, hoverFg, selectedFg, currentDirFg color.NRGBA, thumbOverride, trackOverride string) (track, trackHover, thumb, thumbHover, thumbDrag color.NRGBA) {
+	accent := bestContrastColor(bg, fg, hoverFg, selectedFg, currentDirFg)
+	thumb = mixNRGBA(accent, bg, 0.16)
+	thumb.A = 214
+	if c, ok := fm.ParseHexColor(thumbOverride); ok {
+		thumb = c
+	}
+
+	track = mixNRGBA(bg, thumb, 0.20)
+	track.A = 58
+	if c, ok := fm.ParseHexColor(trackOverride); ok {
+		track = c
+	}
+
+	thumbHover = mixNRGBA(thumb, accent, 0.16)
+	thumbHover.A = 234
+	thumbDrag = mixNRGBA(thumb, accent, 0.30)
+	thumbDrag.A = 248
+	trackHover = mixNRGBA(track, thumb, 0.20)
+	if trackHover.A < 82 {
+		trackHover.A = 82
+	}
+	return track, trackHover, thumb, thumbHover, thumbDrag
 }
 
 func contrastScore(bg, fg color.NRGBA) float64 {
