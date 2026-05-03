@@ -878,6 +878,123 @@ func TestViewerCommandTokenNameNormalizesExeAndPaths(t *testing.T) {
 	}
 }
 
+func TestViewerCommandBufferRollsStreamingOutputByLines(t *testing.T) {
+	canceled := false
+	buf := newViewerCommandBuffer(20, func() { canceled = true }, true)
+
+	if _, err := buf.Write([]byte("line01\nline02\nline03\nline04\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	out := string(buf.Bytes())
+
+	if canceled {
+		t.Fatal("rolling streaming buffer should not cancel the command at the size limit")
+	}
+	if len(out) > 20 {
+		t.Fatalf("rolling output length=%d want <= 20", len(out))
+	}
+	if strings.Contains(out, "line01") || strings.Contains(out, "line02") {
+		t.Fatalf("rolling output kept trimmed head: %q", out)
+	}
+	if !strings.Contains(out, "line03") || !strings.Contains(out, "line04") {
+		t.Fatalf("rolling output should keep newest complete lines, got %q", out)
+	}
+	if !buf.Truncated() {
+		t.Fatal("rolling buffer should report truncated history after dropping old lines")
+	}
+}
+
+func TestViewerCommandBufferFiniteOutputCancelsAtLimit(t *testing.T) {
+	canceled := false
+	buf := newViewerCommandBuffer(8, func() { canceled = true }, false)
+
+	if _, err := buf.Write([]byte("0123456789")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if !canceled {
+		t.Fatal("finite command buffer should cancel when it reaches the size limit")
+	}
+	if got := string(buf.Bytes()); got != "01234567" {
+		t.Fatalf("finite output=%q want capped prefix", got)
+	}
+	if !buf.Truncated() {
+		t.Fatal("finite buffer should report truncation")
+	}
+}
+
+func TestEmitViewerCommandProgressTracksRollingChangesAtSameLength(t *testing.T) {
+	buf := newViewerCommandBuffer(12, nil, true)
+	var sent []string
+	progress := func(content, status string) {
+		sent = append(sent, content+"|"+status)
+	}
+
+	if _, err := buf.Write([]byte("aa\nbb\ncc\n")); err != nil {
+		t.Fatalf("Write first: %v", err)
+	}
+	version := emitViewerCommandProgress(progress, buf, "command", viewerShellSpec{}, time.Now(), true, true, viewerCommandUnsentVersion)
+	if _, err := buf.Write([]byte("dd\nee\n")); err != nil {
+		t.Fatalf("Write second: %v", err)
+	}
+	version = emitViewerCommandProgress(progress, buf, "command", viewerShellSpec{}, time.Now(), true, true, version)
+
+	if len(sent) != 2 {
+		t.Fatalf("progress sends=%d want 2 (%#v)", len(sent), sent)
+	}
+	if sent[0] == sent[1] {
+		t.Fatalf("rolling progress did not change content: %#v", sent)
+	}
+	if strings.Contains(sent[1], "[truncated]") {
+		t.Fatalf("rolling progress should use status, not an inline marker: %q", sent[1])
+	}
+	_ = version
+}
+
+func TestApplyFileViewerContentResultKeepsBottomAfterRollingTrim(t *testing.T) {
+	st := &fileViewerState{
+		mode:            "command",
+		commandInfinite: true,
+		content:         "a\nb\nc\n",
+	}
+	st.stream.SetContent(st.content)
+	st.stream.visibleLines = 2
+	st.stream.scrollToBottom()
+
+	applyFileViewerContentResult(st, "b\nc\nd\n")
+
+	if got, want := st.content, "b\nc\nd\n"; got != want {
+		t.Fatalf("content=%q want %q", got, want)
+	}
+	if got, want := st.stream.topLine, st.stream.maxTopLine(); got != want {
+		t.Fatalf("topLine=%d want bottom %d", got, want)
+	}
+}
+
+func TestApplyFileViewerContentResultPreservesViewportAfterRollingTrim(t *testing.T) {
+	st := &fileViewerState{
+		mode:            "command",
+		commandInfinite: true,
+		content:         "a\nb\nc\nd\n",
+	}
+	st.stream.SetContent(st.content)
+	st.stream.visibleLines = 2
+	st.stream.topLine = 1
+	st.stream.syncVisualTop()
+
+	applyFileViewerContentResult(st, "b\nc\nd\ne\n")
+
+	if got, want := st.stream.topLine, 0; got != want {
+		t.Fatalf("topLine=%d want shifted %d", got, want)
+	}
+	if got, want := st.stream.lines[st.stream.topLine], "b"; got != want {
+		t.Fatalf("top visible line=%q want %q", got, want)
+	}
+	if got, want := st.stream.visualTop, float32(0); got != want {
+		t.Fatalf("visualTop=%v want %v", got, want)
+	}
+}
+
 func TestFileViewerEmptyPanelMessageUsesNoOutputForSettledEmptyCommand(t *testing.T) {
 	st := &fileViewerState{
 		mode:      "command",

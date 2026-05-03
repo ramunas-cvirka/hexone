@@ -145,6 +145,41 @@ func (v *streamOutputView) SetContent(raw string) {
 	v.resetVisualTop()
 }
 
+func (v *streamOutputView) SetContentAfterTrim(raw, removedPrefix string, followBottom bool) {
+	if v == nil {
+		return
+	}
+	oldTop := v.topLine
+	oldDragTop := v.dragTopLine
+	oldVisual := v.visualTop
+	visualReady := v.visualReady
+	removedLines := strings.Count(removedPrefix, "\n")
+	removedBytes := len(removedPrefix)
+
+	v.lines = splitStreamLines(raw)
+	v.clearSyntax()
+	v.rebuildLineOffsets()
+	v.shiftSelectionAfterPrefixTrim(removedBytes)
+	if followBottom {
+		v.scrollToBottom()
+		return
+	}
+
+	v.topLine = oldTop - removedLines
+	v.dragTopLine = oldDragTop - removedLines
+	if visualReady {
+		v.visualTop = oldVisual - float32(removedLines)
+		v.visualReady = true
+		v.visualAt = time.Time{}
+	}
+	v.clampTop()
+	if !visualReady {
+		v.resetVisualTop()
+	} else {
+		v.updateDisplayState()
+	}
+}
+
 func (v *streamOutputView) maxTopLine() int {
 	maxTop := len(v.lines) - v.visibleLines
 	if maxTop < 0 {
@@ -496,6 +531,21 @@ func (v *streamOutputView) clampSelection() {
 	}
 	v.selAnchor = v.clampOffset(v.selAnchor)
 	v.selHead = v.clampOffset(v.selHead)
+	v.updateSelectionRange()
+}
+
+func (v *streamOutputView) shiftSelectionAfterPrefixTrim(removedBytes int) {
+	if removedBytes <= 0 || !v.selActive {
+		return
+	}
+	shift := func(offset int) int {
+		if offset <= removedBytes {
+			return 0
+		}
+		return offset - removedBytes
+	}
+	v.selAnchor = shift(v.selAnchor)
+	v.selHead = shift(v.selHead)
 	v.updateSelectionRange()
 }
 

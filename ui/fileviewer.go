@@ -1656,6 +1656,15 @@ func applyFileViewerContentResult(st *fileViewerState, next string) {
 		}
 		return
 	}
+	if commandMode && st.commandInfinite && prev != "" {
+		if overlap := viewerTrimmedCommandOverlap(prev, next); viewerTrimmedCommandOverlapUsable(prev, next, overlap) {
+			removedPrefix := prev[:len(prev)-overlap]
+			followBottom := st.stream.nearBottom() && !st.stream.hasSelection()
+			st.content = next
+			st.stream.SetContentAfterTrim(next, removedPrefix, followBottom)
+			return
+		}
+	}
 
 	st.content = next
 	st.stream.SetContent(next)
@@ -1690,7 +1699,53 @@ func viewerUpdateAction(st *fileViewerState, next string, nextImagePreview bool,
 	if st.mode == "command" && prev != "" && strings.HasPrefix(next, prev) {
 		return viewerUpdateAppend
 	}
+	if st.mode == "command" && st.commandInfinite && prev != "" {
+		if overlap := viewerTrimmedCommandOverlap(prev, next); viewerTrimmedCommandOverlapUsable(prev, next, overlap) {
+			return viewerUpdateAppend
+		}
+	}
 	return viewerUpdateReplace
+}
+
+func viewerTrimmedCommandOverlapUsable(prev, next string, overlap int) bool {
+	if overlap <= 0 || overlap >= len(prev) {
+		return false
+	}
+	minOverlap := 64
+	if len(prev) < minOverlap || len(next) < minOverlap {
+		minOverlap = 1
+	}
+	return overlap >= minOverlap
+}
+
+func viewerTrimmedCommandOverlap(prev, next string) int {
+	if prev == "" || next == "" {
+		return 0
+	}
+	lps := make([]int, len(next))
+	for i, j := 1, 0; i < len(next); i++ {
+		for j > 0 && next[i] != next[j] {
+			j = lps[j-1]
+		}
+		if next[i] == next[j] {
+			j++
+			lps[i] = j
+		}
+	}
+
+	j := 0
+	for i := 0; i < len(prev); i++ {
+		for j > 0 && prev[i] != next[j] {
+			j = lps[j-1]
+		}
+		if prev[i] == next[j] {
+			j++
+		}
+		if j == len(next) && i+1 < len(prev) {
+			j = lps[j-1]
+		}
+	}
+	return j
 }
 
 func viewerSelectionNearEnd(start, end, total int) bool {
@@ -2812,7 +2867,7 @@ func readViewerLocalCommand(ctx context.Context, path, cmdline string, shell vie
 	cmd := exec.CommandContext(runCtx, shell.program, args...)
 	configureViewerCommandProcess(cmd)
 	cmd.Dir = filepath.Clean(filepath.Dir(path))
-	buf := newViewerCommandBuffer(maxBytes, cancel)
+	buf := newViewerCommandBuffer(maxBytes, cancel, infinite)
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 	if err := cmd.Start(); err != nil {
@@ -2824,8 +2879,7 @@ func readViewerLocalCommand(ctx context.Context, path, cmdline string, shell vie
 		waitCh <- cmd.Wait()
 	}()
 
-	lastSent := -1
-	lastTruncated := false
+	lastSentVersion := viewerCommandUnsentVersion
 	ticker := time.NewTicker(viewerCommandStreamTick)
 	defer ticker.Stop()
 
@@ -2836,27 +2890,26 @@ loop:
 		case err = <-waitCh:
 			break loop
 		case <-ticker.C:
-			lastSent, lastTruncated = emitViewerCommandProgress(onProgress, buf, "command", shell, started, infinite, true, lastSent, lastTruncated)
+			lastSentVersion = emitViewerCommandProgress(onProgress, buf, "command", shell, started, infinite, true, lastSentVersion)
 		case <-runCtx.Done():
 			err = <-waitCh
 			break loop
 		}
 	}
 
-	out := buf.Bytes()
-	truncated := buf.Truncated()
-	_, _ = emitViewerCommandProgress(onProgress, buf, "command", shell, started, infinite, false, lastSent, lastTruncated)
-	content := string(bytes.ToValidUTF8(out, []byte("\xef\xbf\xbd")))
+	snap := buf.Snapshot()
+	_ = emitViewerCommandProgress(onProgress, buf, "command", shell, started, infinite, false, lastSentVersion)
+	content := string(bytes.ToValidUTF8(snap.data, []byte("\xef\xbf\xbd")))
 	content = sanitizeViewerContent(content)
-	if truncated {
+	if snap.truncated && !snap.rolling {
 		content += "\n\n[truncated]"
 	}
-	status := viewerCommandStatus("command", shell, started, truncated, infinite, false)
+	status := viewerCommandStatus("command", shell, started, snap.truncated, infinite, false)
 	if err != nil {
 		if runCtx.Err() == context.DeadlineExceeded {
 			return content, status, "viewer command timed out"
 		}
-		if runCtx.Err() == context.Canceled && truncated {
+		if runCtx.Err() == context.Canceled && snap.truncated && !snap.rolling {
 			return content, status, ""
 		}
 		if runCtx.Err() == context.Canceled && errors.Is(ctx.Err(), context.Canceled) {
@@ -2912,7 +2965,7 @@ func readViewerRemoteCommand(ctx context.Context, remote *paneSSHSession, cmdlin
 		}
 	}
 
-	buf := newViewerCommandBuffer(maxBytes, cancel)
+	buf := newViewerCommandBuffer(maxBytes, cancel, infinite)
 	if err := session.Start(fullCmd); err != nil {
 		return "", "", err.Error()
 	}
@@ -2935,8 +2988,7 @@ func readViewerRemoteCommand(ctx context.Context, remote *paneSSHSession, cmdlin
 	}()
 
 	var waitErr error
-	lastSent := -1
-	lastTruncated := false
+	lastSentVersion := viewerCommandUnsentVersion
 	ticker := time.NewTicker(viewerCommandStreamTick)
 	defer ticker.Stop()
 
@@ -2946,7 +2998,7 @@ loop:
 		case waitErr = <-waitCh:
 			break loop
 		case <-ticker.C:
-			lastSent, lastTruncated = emitViewerCommandProgress(onProgress, buf, "remote command", shell, started, infinite, true, lastSent, lastTruncated)
+			lastSentVersion = emitViewerCommandProgress(onProgress, buf, "remote command", shell, started, infinite, true, lastSentVersion)
 		case <-runCtx.Done():
 			_ = session.Close()
 			waitErr = <-waitCh
@@ -2954,22 +3006,21 @@ loop:
 		}
 	}
 
-	out := buf.Bytes()
-	truncated := buf.Truncated()
-	_, _ = emitViewerCommandProgress(onProgress, buf, "remote command", shell, started, infinite, false, lastSent, lastTruncated)
-	content := string(bytes.ToValidUTF8(out, []byte("\xef\xbf\xbd")))
+	snap := buf.Snapshot()
+	_ = emitViewerCommandProgress(onProgress, buf, "remote command", shell, started, infinite, false, lastSentVersion)
+	content := string(bytes.ToValidUTF8(snap.data, []byte("\xef\xbf\xbd")))
 	content = sanitizeViewerContent(content)
-	if truncated {
+	if snap.truncated && !snap.rolling {
 		content += "\n\n[truncated]"
 	}
 
-	status := viewerCommandStatus("remote command", shell, started, truncated, infinite, false)
+	status := viewerCommandStatus("remote command", shell, started, snap.truncated, infinite, false)
 
 	if waitErr != nil {
 		if runCtx.Err() == context.DeadlineExceeded {
 			return content, status, "viewer command timed out"
 		}
-		if runCtx.Err() == context.Canceled && truncated {
+		if runCtx.Err() == context.Canceled && snap.truncated && !snap.rolling {
 			return content, status, ""
 		}
 		if runCtx.Err() == context.Canceled && errors.Is(ctx.Err(), context.Canceled) {
@@ -3050,23 +3101,22 @@ func viewerCommandTokenName(token string) string {
 	return strings.ToLower(token)
 }
 
-func emitViewerCommandProgress(onProgress func(string, string), buf *viewerCommandBuffer, kind string, shell viewerShellSpec, started time.Time, infinite, running bool, lastLen int, lastTruncated bool) (int, bool) {
+func emitViewerCommandProgress(onProgress func(string, string), buf *viewerCommandBuffer, kind string, shell viewerShellSpec, started time.Time, infinite, running bool, lastVersion uint64) uint64 {
 	if onProgress == nil || buf == nil {
-		return lastLen, lastTruncated
+		return lastVersion
 	}
-	out := buf.Bytes()
-	truncated := buf.Truncated()
-	if len(out) == lastLen && truncated == lastTruncated {
-		return lastLen, lastTruncated
+	snap := buf.Snapshot()
+	if snap.version == lastVersion {
+		return lastVersion
 	}
-	content := string(bytes.ToValidUTF8(out, []byte("\xef\xbf\xbd")))
+	content := string(bytes.ToValidUTF8(snap.data, []byte("\xef\xbf\xbd")))
 	content = sanitizeViewerContent(content)
-	if truncated {
+	if snap.truncated && !snap.rolling {
 		content += "\n\n[truncated]"
 	}
-	status := viewerCommandStatus(kind, shell, started, truncated, infinite, running)
+	status := viewerCommandStatus(kind, shell, started, snap.truncated, infinite, running)
 	onProgress(content, status)
-	return len(out), truncated
+	return snap.version
 }
 
 func viewerCommandStatus(kind string, shell viewerShellSpec, started time.Time, truncated, infinite, running bool) string {
@@ -3091,16 +3141,32 @@ type viewerCommandBuffer struct {
 	cancel     context.CancelFunc
 	cancelOnce sync.Once
 	truncated  bool
+	rolling    bool
+	version    uint64
 }
 
-func newViewerCommandBuffer(maxBytes int, cancel context.CancelFunc) *viewerCommandBuffer {
+type viewerCommandSnapshot struct {
+	data      []byte
+	truncated bool
+	rolling   bool
+	version   uint64
+}
+
+const (
+	viewerCommandUnsentVersion       = ^uint64(0)
+	viewerCommandRollingTrimDivisor  = 16
+	viewerCommandRollingMinTrimBytes = 1
+)
+
+func newViewerCommandBuffer(maxBytes int, cancel context.CancelFunc, rolling bool) *viewerCommandBuffer {
 	if maxBytes < 1 {
 		maxBytes = 1
 	}
 	return &viewerCommandBuffer{
-		data:   make([]byte, 0, maxBytes),
-		max:    maxBytes,
-		cancel: cancel,
+		data:    make([]byte, 0, maxBytes),
+		max:     maxBytes,
+		cancel:  cancel,
+		rolling: rolling,
 	}
 }
 
@@ -3110,18 +3176,28 @@ func (b *viewerCommandBuffer) Write(p []byte) (int, error) {
 	}
 	triggerCancel := false
 	b.mu.Lock()
-	remain := b.max - len(b.data)
-	if remain > 0 {
-		if len(p) <= remain {
-			b.data = append(b.data, p...)
+	oldLen := len(b.data)
+	oldTruncated := b.truncated
+	if b.rolling {
+		b.data = append(b.data, p...)
+		b.trimRollingLocked()
+	} else {
+		remain := b.max - len(b.data)
+		if remain > 0 {
+			if len(p) <= remain {
+				b.data = append(b.data, p...)
+			} else {
+				b.data = append(b.data, p[:remain]...)
+				b.truncated = true
+				triggerCancel = true
+			}
 		} else {
-			b.data = append(b.data, p[:remain]...)
 			b.truncated = true
 			triggerCancel = true
 		}
-	} else {
-		b.truncated = true
-		triggerCancel = true
+	}
+	if len(b.data) != oldLen || b.truncated != oldTruncated || b.rolling {
+		b.version++
 	}
 	b.mu.Unlock()
 
@@ -3131,18 +3207,56 @@ func (b *viewerCommandBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (b *viewerCommandBuffer) Bytes() []byte {
+func (b *viewerCommandBuffer) trimRollingLocked() {
+	if b == nil || !b.rolling || len(b.data) <= b.max {
+		return
+	}
+	target := b.max - b.max/viewerCommandRollingTrimDivisor
+	if target < viewerCommandRollingMinTrimBytes {
+		target = viewerCommandRollingMinTrimBytes
+	}
+	if target > b.max {
+		target = b.max
+	}
+	if len(b.data) <= target {
+		return
+	}
+	drop := len(b.data) - target
+	if drop < len(b.data) {
+		if newline := bytes.IndexByte(b.data[drop:], '\n'); newline >= 0 {
+			drop += newline + 1
+		}
+	}
+	if drop < 1 {
+		drop = 1
+	}
+	if drop > len(b.data) {
+		drop = len(b.data)
+	}
+	copy(b.data, b.data[drop:])
+	b.data = b.data[:len(b.data)-drop]
+	b.truncated = true
+}
+
+func (b *viewerCommandBuffer) Snapshot() viewerCommandSnapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	out := make([]byte, len(b.data))
 	copy(out, b.data)
-	return out
+	return viewerCommandSnapshot{
+		data:      out,
+		truncated: b.truncated,
+		rolling:   b.rolling,
+		version:   b.version,
+	}
+}
+
+func (b *viewerCommandBuffer) Bytes() []byte {
+	return b.Snapshot().data
 }
 
 func (b *viewerCommandBuffer) Truncated() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.truncated
+	return b.Snapshot().truncated
 }
 
 type viewerShellSpec struct {
