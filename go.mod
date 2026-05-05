@@ -7,6 +7,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.23.1
 	github.com/klippa-app/go-pdfium v1.18.1
 	github.com/mholt/archives v0.1.5
+	github.com/nwaples/rardecode/v2 v2.2.0
 	github.com/pkg/sftp v1.13.10
 	go.yaml.in/yaml/v4 v4.0.0-rc.4
 	golang.org/x/crypto v0.50.0
@@ -37,7 +38,6 @@ require (
 	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/minio/minlz v1.0.1 // indirect
-	github.com/nwaples/rardecode/v2 v2.2.0 // indirect
 	github.com/oklog/run v1.1.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/sorairolake/lzip-go v0.3.8 // indirect

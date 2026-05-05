@@ -13,6 +13,9 @@ import (
 	"hexone/ui/platform"
 
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
+	"gioui.org/widget/material"
 )
 
 func TestFormatFilePaneVolumeBadgeLabel(t *testing.T) {
@@ -168,5 +171,98 @@ func TestFilePaneVolumeBadgeSourcePaneUsesActivePane(t *testing.T) {
 
 	if got := ui.filePaneVolumeBadgeSourcePane(1, right, true); got != nil {
 		t.Fatalf("active pane badge source = %p, want nil", got)
+	}
+}
+
+func TestFilePaneVolumeBadgeSourcePaneKeepsMirroringExtractingPane(t *testing.T) {
+	ui := NewUI(nil)
+	left := newFilePaneState(t.TempDir(), nil)
+	right := newFilePaneState(t.TempDir(), nil)
+	ui.filePanes = []*filePaneState{left, right}
+	ui.activeFilePane = 0
+
+	now := time.Unix(1700000000, 0)
+	ui.archiveExtract = &archiveExtractState{
+		pane:        0,
+		archivePath: "bundle.zip",
+		startedAt:   now.Add(-time.Second),
+		progress: filesys.CopyProgress{
+			BytesDone:   50 << 20,
+			BytesTotal:  100 << 20,
+			CurrentPath: filepath.Join("bundle.zip", "movie.mkv"),
+		},
+	}
+
+	if got := ui.filePaneVolumeBadgeSourcePane(1, right, false); got != left {
+		t.Fatalf("badge source mirrored from extracting active pane = %p, want left pane %p", got, left)
+	}
+
+	if got := ui.filePaneVolumeBadgeSourcePane(0, left, true); got != nil {
+		t.Fatalf("active extracting pane badge source = %p, want nil", got)
+	}
+}
+
+func TestLayoutFilePaneStatusBarUsesFullPaneWidth(t *testing.T) {
+	oldLookup := localVolumeUsageFunc
+	defer func() {
+		localVolumeUsageFunc = oldLookup
+	}()
+
+	dir := t.TempDir()
+	localVolumeUsageFunc = func(path string) (platform.VolumeUsage, error) {
+		return platform.VolumeUsage{
+			FreeBytes:  64 << 30,
+			TotalBytes: 512 << 30,
+		}, nil
+	}
+
+	ui := NewUI(nil)
+	pane := newFilePaneState(dir, nil)
+	ui.filePanes = []*filePaneState{pane}
+	ui.activeFilePane = 0
+
+	now := time.Unix(1700000000, 0)
+	ui.archiveExtract = &archiveExtractState{
+		pane:        0,
+		archivePath: "bundle.zip",
+		startedAt:   now.Add(-time.Second),
+		progress: filesys.CopyProgress{
+			BytesDone:   50 << 20,
+			BytesTotal:  100 << 20,
+			CurrentPath: filepath.Join("bundle.zip", "movie.mkv"),
+		},
+	}
+
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Now:         now,
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(320, 80)),
+	}
+	dims := ui.layoutFilePaneStatusBar(material.NewTheme(), gtx, 0, pane, filePanePaletteFromConfig(ui.fmCfg))
+	if dims.Size.X != 320 {
+		t.Fatalf("status bar width = %d, want full pane width 320", dims.Size.X)
+	}
+	if dims.Size.Y <= 0 {
+		t.Fatalf("status bar height = %d, want positive", dims.Size.Y)
+	}
+}
+
+func TestFilePaneStatusBarSeparatorModeFollowsPaneSide(t *testing.T) {
+	ui := NewUI(nil)
+	left := newFilePaneState(t.TempDir(), nil)
+	right := newFilePaneState(t.TempDir(), nil)
+	ui.filePanes = []*filePaneState{left, right}
+
+	if got := ui.filePaneStatusBarSeparatorMode(0); got != filePaneStatusBarSeparatorTrailing {
+		t.Fatalf("left pane separator mode = %v, want trailing", got)
+	}
+	if got := ui.filePaneStatusBarSeparatorMode(1); got != filePaneStatusBarSeparatorLeading {
+		t.Fatalf("right pane separator mode = %v, want leading", got)
+	}
+
+	ui.filePanes = []*filePaneState{left}
+	if got := ui.filePaneStatusBarSeparatorMode(0); got != filePaneStatusBarSeparatorNone {
+		t.Fatalf("single pane separator mode = %v, want none", got)
 	}
 }
