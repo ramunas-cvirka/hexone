@@ -21,9 +21,7 @@ func OpenFileWithConfiguredApp(appPath, filePath string) error {
 	if filePath == "" {
 		return errors.New("file path is empty")
 	}
-	cmd := exec.Command(appPath, filePath)
-	configureViewerCommandProcess(cmd)
-	return cmd.Start()
+	return openFileWithConfiguredAppCommand(appPath, filePath).Start()
 }
 
 func OpenFileWithSystemAssociation(filePath string) error {
@@ -41,4 +39,8 @@ func configureViewerCommandProcess(cmd *exec.Cmd) {
 		return
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+}
+
+func openFileWithConfiguredAppCommand(appPath, filePath string) *exec.Cmd {
+	return exec.Command(appPath, filePath)
 }
