@@ -6,6 +6,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +115,65 @@ func TestFinishFileCopyShowsNestedCopyCount(t *testing.T) {
 
 	if got, want := dstPane.noticeText, "copied 1 item (3 nested items)"; got != want {
 		t.Fatalf("destination noticeText = %q, want %q", got, want)
+	}
+}
+
+func TestCopyProgressTextIncludesTransferSpeed(t *testing.T) {
+	progress := filesys.CopyProgress{
+		EntriesDone:  1,
+		EntriesTotal: 2,
+		BytesDone:    2 << 20,
+		BytesTotal:   4 << 20,
+	}
+
+	got := copyProgressText(progress, 1<<20)
+	if !strings.Contains(got, "2.0 MB / 4.0 MB") {
+		t.Fatalf("progress text = %q, want copied and total size", got)
+	}
+	if !strings.Contains(got, "1.0 MB/s") {
+		t.Fatalf("progress text = %q, want transfer speed", got)
+	}
+}
+
+func TestFileCopySpeedSamplesAtInterval(t *testing.T) {
+	now := time.Unix(100, 0)
+	st := &fileCopyState{
+		progress: filesys.CopyProgress{BytesDone: 1 << 20},
+	}
+	st.sampleCopySpeed(now)
+
+	st.progress.BytesDone = 2 << 20
+	st.sampleCopySpeed(now.Add(500 * time.Millisecond))
+	if st.speedBytes != 0 {
+		t.Fatalf("speed before sample interval = %d, want 0", st.speedBytes)
+	}
+
+	st.sampleCopySpeed(now.Add(fileCopySpeedSampleInterval))
+	if st.speedBytes <= 0 {
+		t.Fatalf("speed after sample interval = %d, want > 0", st.speedBytes)
+	}
+	sampled := st.speedBytes
+
+	st.progress.BytesDone = 4 << 20
+	st.sampleCopySpeed(now.Add(fileCopySpeedSampleInterval + 200*time.Millisecond))
+	if st.speedBytes != sampled {
+		t.Fatalf("speed changed before next sample interval = %d, want %d", st.speedBytes, sampled)
+	}
+
+	st.sampleCopySpeed(now.Add(2 * fileCopySpeedSampleInterval))
+	if st.speedBytes <= 0 {
+		t.Fatalf("next sampled speed = %d, want > 0", st.speedBytes)
+	}
+	sampled = st.speedBytes
+
+	st.sampleCopySpeed(now.Add(3 * fileCopySpeedSampleInterval))
+	if st.speedBytes != sampled {
+		t.Fatalf("speed cleared too soon after quiet sample = %d, want %d", st.speedBytes, sampled)
+	}
+
+	st.sampleCopySpeed(now.Add(5 * fileCopySpeedSampleInterval))
+	if st.speedBytes != 0 {
+		t.Fatalf("stale speed = %d, want 0", st.speedBytes)
 	}
 }
 

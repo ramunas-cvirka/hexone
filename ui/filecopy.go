@@ -4,6 +4,8 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"hexone/filesys"
 	uitheme "hexone/ui/theme"
@@ -60,6 +62,14 @@ type fileCopyState struct {
 
 	progressCh  chan filesys.CopyProgress
 	doneCh      chan error
+	startedAt   time.Time
+	speedBytes  int64
+	speedAt     time.Time
+	speedDone   int64
+	speedSeenAt time.Time
+	cancelFunc  context.CancelFunc
+	cancelUntil time.Time
+	canceling   bool
 	actionsAnim segmentedAnimState
 	keyFocus    dialogKeyboardFocusState
 	focus       fileCopyDialogFocus
@@ -92,7 +102,13 @@ const (
 	fileCopyOpExtract
 )
 
-const fileCopySuccessNoticeDur = 1200 * time.Millisecond
+const (
+	fileCopySuccessNoticeDur       = 1200 * time.Millisecond
+	fileCopyCanceledNoticeDur      = 1200 * time.Millisecond
+	fileCopyCancelConfirmCountdown = 5 * time.Second
+	fileCopySpeedSampleInterval    = 750 * time.Millisecond
+	fileCopySpeedStaleAfter        = 3 * fileCopySpeedSampleInterval
+)
 
 type fileCopyPlan struct {
 	srcPath      string
@@ -317,6 +333,13 @@ func (st *fileCopyState) stepAction(step int) bool {
 	if st == nil {
 		return false
 	}
+	if st.running {
+		if st.actionFocus != fileCopyDialogActionCancel {
+			st.actionFocus = fileCopyDialogActionCancel
+			return true
+		}
+		return false
+	}
 	order := []fileCopyDialogAction{fileCopyDialogActionCancel, fileCopyDialogActionConfirm}
 	current := 0
 	for i, action := range order {
@@ -334,7 +357,13 @@ func (st *fileCopyState) stepAction(step int) bool {
 }
 
 func (st *fileCopyState) actionVisualState(target fileCopyDialogAction) dialogActionVisualState {
-	if st == nil || st.running {
+	if st == nil {
+		return dialogActionVisualState{}
+	}
+	if st.running {
+		if target == fileCopyDialogActionCancel && !st.canceling {
+			return dialogActionVisualState{Focused: true, Default: true}
+		}
 		return dialogActionVisualState{}
 	}
 	if st.focus == fileCopyDialogFocusActions {
@@ -342,6 +371,103 @@ func (st *fileCopyState) actionVisualState(target fileCopyDialogAction) dialogAc
 		return dialogActionVisualState{Focused: active, Default: active}
 	}
 	return dialogActionVisualState{Default: target == fileCopyDialogActionConfirm}
+}
+
+func (st *fileCopyState) beginCopyRun(cancel context.CancelFunc, now time.Time) {
+	if st == nil {
+		return
+	}
+	st.running = true
+	st.startedAt = now
+	st.speedBytes = 0
+	st.speedAt = now
+	st.speedDone = st.progress.BytesDone
+	st.speedSeenAt = time.Time{}
+	st.cancelFunc = cancel
+	st.cancelUntil = time.Time{}
+	st.canceling = false
+	st.focus = fileCopyDialogFocusActions
+	st.actionFocus = fileCopyDialogActionCancel
+	st.dstEditWant = false
+	st.keyFocus.focusKeyboard()
+}
+
+func (st *fileCopyState) sampleCopySpeed(now time.Time) {
+	if st == nil {
+		return
+	}
+	if st.speedAt.IsZero() {
+		st.speedAt = now
+		st.speedDone = st.progress.BytesDone
+		st.speedBytes = 0
+		st.speedSeenAt = time.Time{}
+		return
+	}
+	elapsed := now.Sub(st.speedAt)
+	if elapsed < fileCopySpeedSampleInterval {
+		return
+	}
+	delta := st.progress.BytesDone - st.speedDone
+	st.speedAt = now
+	st.speedDone = st.progress.BytesDone
+	if delta > 0 {
+		st.speedBytes = int64(float64(delta) / elapsed.Seconds())
+		st.speedSeenAt = now
+		return
+	}
+	if st.speedSeenAt.IsZero() || now.Sub(st.speedSeenAt) >= fileCopySpeedStaleAfter {
+		st.speedBytes = 0
+	}
+}
+
+func (st *fileCopyState) cancelConfirmActive(now time.Time) bool {
+	return st != nil && !st.cancelUntil.IsZero() && now.Before(st.cancelUntil)
+}
+
+func (st *fileCopyState) expireCancelConfirm(now time.Time) bool {
+	if st == nil || st.cancelUntil.IsZero() || now.Before(st.cancelUntil) {
+		return false
+	}
+	st.cancelUntil = time.Time{}
+	return true
+}
+
+func (st *fileCopyState) cancelButtonLabel(now time.Time) string {
+	if st == nil {
+		return "Cancel"
+	}
+	if st.canceling {
+		return "Canceling..."
+	}
+	if !st.cancelConfirmActive(now) {
+		return "Cancel"
+	}
+	remaining := st.cancelUntil.Sub(now)
+	seconds := int((remaining + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	return fmt.Sprintf("Confirm %ds", seconds)
+}
+
+func (ui *UI) requestOrConfirmFileCopyCancel(now time.Time) {
+	st := ui.fileCopy
+	if st == nil || !st.running || st.canceling {
+		return
+	}
+	st.actionsAnim.setPulse("cancel", now)
+	st.focus = fileCopyDialogFocusActions
+	st.actionFocus = fileCopyDialogActionCancel
+	st.keyFocus.focusKeyboard()
+	if st.cancelConfirmActive(now) {
+		st.cancelUntil = time.Time{}
+		st.canceling = true
+		if st.cancelFunc != nil {
+			st.cancelFunc()
+		}
+		return
+	}
+	st.cancelUntil = now.Add(fileCopyCancelConfirmCountdown)
 }
 
 func (ui *UI) defaultFileCopyDestination(srcIdx int, srcPane *filePaneState, srcEndpoint copyEndpoint) (int, copyEndpoint, string) {
@@ -555,14 +681,17 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 			EntriesTotal: totalEntries,
 			BytesTotal:   totalBytes,
 		}
-		st.running = true
+		ctx, cancel := context.WithCancel(context.Background())
+		st.beginCopyRun(cancel, now)
 
 		progressCh := make(chan filesys.CopyProgress, 32)
 		doneCh := make(chan error, 1)
 		st.progressCh = progressCh
 		st.doneCh = doneCh
 
-		go func(plans []fileCopyPlan, totalEntries int, totalBytes int64) {
+		srcEndpoint := st.srcEndpoint
+		dstEndpoint := st.dstEndpoint
+		go func(ctx context.Context, plans []fileCopyPlan, totalEntries int, totalBytes int64) {
 			sendProgress := func(p filesys.CopyProgress) {
 				for {
 					select {
@@ -580,7 +709,11 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 			doneEntries := 0
 			var doneBytes int64
 			for _, plan := range plans {
-				err := runCopyBetweenEndpoints(st.srcEndpoint, plan.srcPath, st.dstEndpoint, plan.dstPath, func(progress filesys.CopyProgress) {
+				if err := ctx.Err(); err != nil {
+					doneCh <- err
+					return
+				}
+				err := runCopyBetweenEndpoints(ctx, srcEndpoint, plan.srcPath, dstEndpoint, plan.dstPath, func(progress filesys.CopyProgress) {
 					progress.EntriesDone += doneEntries
 					progress.BytesDone += doneBytes
 					progress.EntriesTotal = totalEntries
@@ -595,9 +728,8 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 				doneBytes += plan.bytesTotal
 			}
 			doneCh <- nil
-		}(plans, totalEntries, totalBytes)
+		}(ctx, plans, totalEntries, totalBytes)
 
-		_ = now
 		return
 	}
 	effectiveDst, srcInfo, dstInfo, err := inspectCopyPaths(st.srcEndpoint, st.srcPath, st.dstEndpoint, dst)
@@ -620,7 +752,8 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 		EntriesTotal: entriesTotal,
 		BytesTotal:   bytesTotal,
 	}
-	st.running = true
+	ctx, cancel := context.WithCancel(context.Background())
+	st.beginCopyRun(cancel, now)
 
 	progressCh := make(chan filesys.CopyProgress, 32)
 	doneCh := make(chan error, 1)
@@ -629,7 +762,9 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 
 	src := st.srcPath
 	dst = st.dstPath
-	go func() {
+	srcEndpoint := st.srcEndpoint
+	dstEndpoint := st.dstEndpoint
+	go func(ctx context.Context) {
 		sendProgress := func(p filesys.CopyProgress) {
 			for {
 				select {
@@ -643,10 +778,9 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 				}
 			}
 		}
-		doneCh <- runCopyBetweenEndpoints(st.srcEndpoint, src, st.dstEndpoint, dst, sendProgress)
-	}()
+		doneCh <- runCopyBetweenEndpoints(ctx, srcEndpoint, src, dstEndpoint, dst, sendProgress)
+	}(ctx)
 
-	_ = now
 }
 
 func (ui *UI) pumpFileCopyState(gtx layout.Context) {
@@ -656,6 +790,9 @@ func (ui *UI) pumpFileCopyState(gtx layout.Context) {
 	}
 
 	if st.running {
+		if st.expireCancelConfirm(gtx.Now) {
+			gtx.Execute(op.InvalidateCmd{})
+		}
 		for {
 			select {
 			case p := <-st.progressCh:
@@ -665,12 +802,25 @@ func (ui *UI) pumpFileCopyState(gtx layout.Context) {
 			}
 		}
 	doneProgress:
+		st.sampleCopySpeed(gtx.Now)
 		select {
 		case err := <-st.doneCh:
+			if st.cancelFunc != nil {
+				st.cancelFunc()
+			}
 			st.running = false
 			st.progressCh = nil
 			st.doneCh = nil
+			st.cancelFunc = nil
+			st.cancelUntil = time.Time{}
+			st.canceling = false
+			st.speedBytes = 0
+			st.speedSeenAt = time.Time{}
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					ui.finishFileCopyCanceled(gtx.Now)
+					return
+				}
 				st.lastErr = err.Error()
 			} else {
 				ui.finishFileCopy(gtx.Now)
@@ -679,6 +829,57 @@ func (ui *UI) pumpFileCopyState(gtx layout.Context) {
 		default:
 		}
 		gtx.Execute(op.InvalidateCmd{})
+	}
+}
+
+func (ui *UI) finishFileCopyCanceled(now time.Time) {
+	st := ui.fileCopy
+	if st == nil {
+		return
+	}
+
+	srcPaneIdx := st.srcPane
+	dstPaneIdx := st.dstPane
+	noticePaneIdx := dstPaneIdx
+	if noticePaneIdx < 0 {
+		noticePaneIdx = srcPaneIdx
+	}
+	noticeText := "copy canceled"
+	ui.fileCopy = nil
+	ui.clearFileCopyHotkeyHold()
+
+	noticeShown := false
+	reloadPane := func(paneIdx int) {
+		if paneIdx < 0 || paneIdx >= len(ui.filePanes) {
+			return
+		}
+		pane := ui.filePanes[paneIdx]
+		if pane == nil || pane.table == nil {
+			return
+		}
+		selectedPath := ""
+		if sel := pane.selectedEntry(); sel != nil {
+			selectedPath = sel.Path
+		}
+		restorePos := sanitizePaneListPosition(pane.table.List.Position)
+		restoreAnchor := pane.visibleAnchorPath()
+		reloadNoticeText := ""
+		reloadNoticeDur := time.Duration(0)
+		if paneIdx == noticePaneIdx {
+			reloadNoticeText = noticeText
+			reloadNoticeDur = fileCopyCanceledNoticeDur
+		}
+		if ui.requestPaneLoadWithSelectionAndScroll(paneIdx, pane.dir, selectedPath, "", pane.table.Selected, restorePos, true, restoreAnchor, reloadNoticeText, reloadNoticeDur) && paneIdx == noticePaneIdx {
+			noticeShown = true
+		}
+	}
+	reloadPane(srcPaneIdx)
+	if dstPaneIdx != srcPaneIdx {
+		reloadPane(dstPaneIdx)
+	}
+	ui.setActiveFilePane(srcPaneIdx)
+	if !noticeShown && noticeText != "" && noticePaneIdx >= 0 && noticePaneIdx < len(ui.filePanes) && ui.filePanes[noticePaneIdx] != nil {
+		ui.filePanes[noticePaneIdx].setNoticeFor(noticeText, now, fileCopyCanceledNoticeDur)
 	}
 }
 
@@ -764,6 +965,9 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 
 	st.keyFocus.attach(gtx)
 	st.syncEditorFocus(gtx)
+	if st.expireCancelConfirm(gtx.Now) {
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	anyMods := ^key.Modifiers(0)
 
 	for {
@@ -785,9 +989,16 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 	for {
 		filters := []event.Filter{
 			key.Filter{Name: key.NameEscape, Optional: anyMods},
-			key.Filter{Name: key.NameTab, Optional: anyMods},
 		}
-		if st.focus == fileCopyDialogFocusActions {
+		if st.running {
+			filters = append(filters,
+				key.Filter{Name: key.NameEnter, Optional: anyMods},
+				key.Filter{Name: key.NameReturn, Optional: anyMods},
+			)
+		} else {
+			filters = append(filters, key.Filter{Name: key.NameTab, Optional: anyMods})
+		}
+		if !st.running && st.focus == fileCopyDialogFocusActions {
 			filters = append(filters,
 				key.Filter{Name: key.NameEnter, Optional: anyMods},
 				key.Filter{Name: key.NameReturn, Optional: anyMods},
@@ -806,6 +1017,8 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 		switch ke.Name {
 		case key.NameEscape:
 			if st.running {
+				ui.requestOrConfirmFileCopyCancel(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			ui.closeFileCopyDialog()
@@ -836,7 +1049,14 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameEnter, key.NameReturn:
-			if st.running || ke.Modifiers != 0 {
+			if st.running {
+				if ke.Modifiers == 0 {
+					ui.requestOrConfirmFileCopyCancel(gtx.Now)
+					gtx.Execute(op.InvalidateCmd{})
+				}
+				continue
+			}
+			if ke.Modifiers != 0 {
 				continue
 			}
 			if st.focus != fileCopyDialogFocusActions {
@@ -889,8 +1109,12 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 		}
 	} else {
 		for st.cancelClick.Clicked(gtx) {
+			ui.requestOrConfirmFileCopyCancel(gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
 		}
 		for st.closeClick.Clicked(gtx) {
+			ui.requestOrConfirmFileCopyCancel(gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
 		}
 		for st.confirmClick.Clicked(gtx) {
 		}
@@ -952,7 +1176,7 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 
 func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, st *fileCopyState) layout.Dimensions {
 	hoverActionKey := ""
-	if !st.running && st.cancelClick.Hovered() {
+	if (!st.running || !st.canceling) && st.cancelClick.Hovered() {
 		hoverActionKey = "cancel"
 	}
 	if !st.running && st.confirmClick.Hovered() {
@@ -985,7 +1209,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 	dstHdr.Color = hintColor
 
 	progress := st.progress
-	status := copyProgressText(progress)
+	status := copyProgressText(progress, st.speedBytes)
 	current := copyProgressCurrent(progress)
 	progressFrac := copyProgressFraction(progress)
 	overwriteLabel := ""
@@ -1123,6 +1347,13 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if st.running {
+					return ui.layoutDialogActionSingle(
+						th, gtx,
+						&st.cancelClick, st.cancelButtonLabel(gtx.Now), hoverCancel, pulseCancel, st.canceling,
+						st.actionVisualState(fileCopyDialogActionCancel),
+					)
+				}
 				return ui.layoutDialogActionPair(
 					th, gtx,
 					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, st.running,
@@ -1147,6 +1378,7 @@ func (ui *UI) layoutFileCopyProgress(th *material.Theme, gtx layout.Context, fra
 			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
 			lbl.Color = hintColor
 			lbl.MaxLines = 1
+			lbl.Truncator = "…"
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1339,6 +1571,33 @@ func (ui *UI) layoutDialogActionPair(th *material.Theme, gtx layout.Context, lef
 	return ui.layoutDialogActionPairState(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftDisabled, rightClick, rightLabel, rightHover, rightPulse, rightDisabled, leftState, rightState)
 }
 
+func (ui *UI) layoutDialogActionSingle(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, hover, pulse float32, disabled bool, state dialogActionVisualState) layout.Dimensions {
+	segW, stripH := ui.dialogActionSegmentMetricsPx(th, gtx, label)
+	maxW := gtx.Constraints.Max.X
+	if maxW > 0 && segW > maxW {
+		segW = maxW
+	}
+	if segW < 1 {
+		segW = 1
+	}
+	if stripH < 1 {
+		stripH = 1
+	}
+	return fillRoundedBox(
+		gtx,
+		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
+		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutDialogActionSegment(th, gtx, click, label, hover, pulse, segW, stripH, true, true, disabled, state)
+				})
+			})
+		},
+	)
+}
+
 func (ui *UI) layoutDialogActionPairState(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool, leftState, rightState dialogActionVisualState) layout.Dimensions {
 	leftW, leftH := ui.dialogActionSegmentMetricsPx(th, gtx, leftLabel)
 	rightW, rightH := ui.dialogActionSegmentMetricsPx(th, gtx, rightLabel)
@@ -1499,17 +1758,22 @@ func copyProgressFraction(progress filesys.CopyProgress) float32 {
 	return 0
 }
 
-func copyProgressText(progress filesys.CopyProgress) string {
+func copyProgressText(progress filesys.CopyProgress, speed int64) string {
 	if progress.EntriesTotal <= 0 && progress.BytesTotal <= 0 {
 		return "Preparing..."
 	}
+	speedText := ""
+	if speed > 0 {
+		speedText = "  •  " + formatCopySize(speed) + "/s"
+	}
 	if progress.BytesTotal > 0 {
 		return fmt.Sprintf(
-			"%d/%d entries  •  %s / %s",
+			"%d/%d entries  •  %s / %s%s",
 			progress.EntriesDone,
 			progress.EntriesTotal,
 			formatCopySize(progress.BytesDone),
 			formatCopySize(progress.BytesTotal),
+			speedText,
 		)
 	}
 	return fmt.Sprintf("%d/%d entries", progress.EntriesDone, progress.EntriesTotal)
