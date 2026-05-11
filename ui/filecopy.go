@@ -1397,46 +1397,233 @@ func (ui *UI) layoutFileCopyProgress(th *material.Theme, gtx layout.Context, fra
 }
 
 func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context, st *fileCopyState) layout.Dimensions {
-	srcMeta := formatCopyPathInfo(st.srcInfo)
-	dstMeta := formatCopyPathInfo(st.dstInfo)
+	return ui.layoutFileOverwriteDiffInfo(th, gtx, "Overwrite Details", st.srcInfo, st.dstInfo)
+}
+
+type fileOverwriteDiffPart struct {
+	Text      string
+	Highlight bool
+}
+
+type fileOverwriteDiffRow struct {
+	Prefix string
+	Size   fileOverwriteDiffPart
+	Date   fileOverwriteDiffPart
+	Time   fileOverwriteDiffPart
+}
+
+type fileOverwriteDiffStyle struct {
+	Title       color.NRGBA
+	Text        color.NRGBA
+	Muted       color.NRGBA
+	HighlightBg color.NRGBA
+	HighlightFg color.NRGBA
+	HighlightBr color.NRGBA
+}
+
+type fileOverwriteDiffColumns struct {
+	Size int
+	Date int
+	Time int
+}
+
+func (ui *UI) layoutFileOverwriteDiffInfo(th *material.Theme, gtx layout.Context, title string, srcInfo, dstInfo fileCopyPathInfo) layout.Dimensions {
+	panelBg := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
+	panelBorder := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
+	style := ui.fileOverwriteDiffStyle(panelBg)
+	rows := fileOverwriteDiffRows(srcInfo, dstInfo)
+	columns := ui.fileOverwriteDiffColumns(th, gtx, rows)
 	return fillRoundedBox(
 		gtx,
 		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 18},
+		panelBg,
+		panelBorder,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				children := make([]layout.FlexChild, 0, 2+len(rows))
+				children = append(children,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Caption(th, "Overwrite Details")
+						lbl := material.Caption(th, title)
 						lbl.Font.Typeface = ui.mainTypeface()
 						lbl.TextSize = scaleDialogThemeFontSize(th, 9)
-						lbl.Color = color.NRGBA{R: 208, G: 208, B: 208, A: 255}
-						return lbl.Layout(gtx)
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Caption(th, "src: "+srcMeta)
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleDialogThemeFontSize(th, 9)
-						lbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
-						lbl.MaxLines = 1
-						lbl.Truncator = "…"
-						return lbl.Layout(gtx)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Caption(th, "dst: "+dstMeta)
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleDialogThemeFontSize(th, 9)
-						lbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
-						lbl.MaxLines = 1
-						lbl.Truncator = "…"
+						lbl.Color = style.Title
 						return lbl.Layout(gtx)
 					}),
 				)
+				children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout))
+				for _, row := range rows {
+					row := row
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileOverwriteDiffRow(th, gtx, row, columns, style)
+					}))
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 			})
 		},
 	)
+}
+
+func (ui *UI) fileOverwriteDiffColumns(th *material.Theme, gtx layout.Context, rows []fileOverwriteDiffRow) fileOverwriteDiffColumns {
+	cellWidth := func(part fileOverwriteDiffPart) int {
+		if part.Text == "" {
+			return 0
+		}
+		lbl := material.Caption(th, part.Text)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+		lbl.MaxLines = 1
+		width := measureLabelUnconstrained(gtx, lbl).Size.X
+		return width + gtx.Dp(unit.Dp(6))
+	}
+	cols := fileOverwriteDiffColumns{}
+	for _, row := range rows {
+		if w := cellWidth(row.Size); w > cols.Size {
+			cols.Size = w
+		}
+		if w := cellWidth(row.Date); w > cols.Date {
+			cols.Date = w
+		}
+		if w := cellWidth(row.Time); w > cols.Time {
+			cols.Time = w
+		}
+	}
+	return cols
+}
+
+func (ui *UI) layoutFileOverwriteDiffRow(th *material.Theme, gtx layout.Context, row fileOverwriteDiffRow, columns fileOverwriteDiffColumns, style fileOverwriteDiffStyle) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, gtx.Dp(unit.Dp(24)), func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(th, row.Prefix)
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+				lbl.Color = style.Muted
+				lbl.MaxLines = 1
+				return lbl.Layout(gtx)
+			})
+		}),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, columns.Size, func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileOverwriteDiffPart(th, gtx, row.Size, style)
+					})
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, columns.Date, func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileOverwriteDiffPart(th, gtx, row.Date, style)
+					})
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, columns.Time, func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileOverwriteDiffPart(th, gtx, row.Time, style)
+					})
+				}),
+			)
+		}),
+	)
+}
+
+func (ui *UI) layoutFileOverwriteDiffPart(th *material.Theme, gtx layout.Context, part fileOverwriteDiffPart, style fileOverwriteDiffStyle) layout.Dimensions {
+	if part.Text == "" {
+		return layout.Dimensions{}
+	}
+	label := func(gtx layout.Context, col color.NRGBA) layout.Dimensions {
+		lbl := material.Caption(th, part.Text)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+		lbl.Color = col
+		lbl.MaxLines = 1
+		return lbl.Layout(gtx)
+	}
+	if !part.Highlight {
+		return layout.Inset{Left: unit.Dp(3), Right: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return label(gtx, style.Text)
+		})
+	}
+	return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedBox(
+			gtx,
+			gtx.Dp(unit.Dp(2)),
+			style.HighlightBg,
+			style.HighlightBr,
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return label(gtx, style.HighlightFg)
+				})
+			},
+		)
+	})
+}
+
+func (ui *UI) fileOverwriteDiffStyle(panelBg color.NRGBA) fileOverwriteDiffStyle {
+	popup := ui.filePanePopupTheme()
+	text := bestContrastColor(panelBg, popup.Text, txtColor)
+	muted := mixNRGBA(text, panelBg, 0.42)
+	muted.A = 220
+	title := bestContrastColor(panelBg, popup.Title, text)
+
+	highlightBg := mixNRGBA(popup.ActiveBg, popup.HoverBg, 0.22)
+	highlightBg.A = 230
+	if contrastScore(panelBg, highlightBg) < 1.45 {
+		highlightBg = mixNRGBA(panelBg, contrastTextColor(panelBg), 0.30)
+		highlightBg.A = 230
+	}
+	highlightFg := bestContrastColor(highlightBg, popup.ActiveText, popup.HoverText, popup.Text, txtColor)
+	highlightBr := mixNRGBA(highlightBg, highlightFg, 0.28)
+	highlightBr.A = 150
+
+	return fileOverwriteDiffStyle{
+		Title:       title,
+		Text:        text,
+		Muted:       muted,
+		HighlightBg: highlightBg,
+		HighlightFg: highlightFg,
+		HighlightBr: highlightBr,
+	}
+}
+
+func fileOverwriteDiffRows(srcInfo, dstInfo fileCopyPathInfo) []fileOverwriteDiffRow {
+	srcSize := fileOverwriteSizeText(srcInfo)
+	dstSize := fileOverwriteSizeText(dstInfo)
+	srcDate, srcTime := fileOverwriteDateTimeText(srcInfo.ModTime)
+	dstDate, dstTime := fileOverwriteDateTimeText(dstInfo.ModTime)
+	sizeDiff := srcSize != dstSize
+	dateDiff := srcDate != dstDate
+	timeDiff := srcTime != dstTime
+	return []fileOverwriteDiffRow{
+		fileOverwriteDiffRowFor("src:", srcSize, srcDate, srcTime, sizeDiff, dateDiff, timeDiff),
+		fileOverwriteDiffRowFor("dst:", dstSize, dstDate, dstTime, false, false, false),
+	}
+}
+
+func fileOverwriteDiffRowFor(prefix, sizeText, dateText, timeText string, sizeDiff, dateDiff, timeDiff bool) fileOverwriteDiffRow {
+	return fileOverwriteDiffRow{
+		Prefix: prefix,
+		Size:   fileOverwriteDiffPart{Text: sizeText, Highlight: sizeDiff},
+		Date:   fileOverwriteDiffPart{Text: dateText, Highlight: dateDiff},
+		Time:   fileOverwriteDiffPart{Text: timeText, Highlight: timeDiff},
+	}
+}
+
+func fileOverwriteSizeText(info fileCopyPathInfo) string {
+	if !info.Exists {
+		return "missing"
+	}
+	if info.IsDir {
+		return "dir"
+	}
+	return formatCopySize(info.Size)
+}
+
+func fileOverwriteDateTimeText(t time.Time) (dateText, timeText string) {
+	if t.IsZero() {
+		return "n/a", ""
+	}
+	return t.Format("2006-01-02"), t.Format("15:04:05")
 }
 
 func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, hoverFill, pulseFill float32, segW, stripH int, roundLeft, roundRight, disabled bool, state dialogActionVisualState) layout.Dimensions {
