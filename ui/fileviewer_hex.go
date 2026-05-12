@@ -1414,13 +1414,17 @@ func readHexViewerChunk(path string, remote *paneSSHSession, start, length int64
 			res.data = chunk
 			return res
 		}
-		info, statErr := os.Stat(path)
+		info, statErr := filesys.StatLocalFilesystemPath(path)
 		if statErr != nil {
 			res.err = statErr.Error()
 			return res
 		}
 		if info.IsDir() {
 			res.err = "viewer supports files only"
+			return res
+		}
+		if !info.Mode().IsRegular() {
+			res.err = viewerUnsupportedFileNotice(path, info.Mode())
 			return res
 		}
 		size = info.Size()
@@ -1438,6 +1442,10 @@ func readHexViewerChunk(path string, remote *paneSSHSession, start, length int64
 		}
 		if info.IsDir() {
 			res.err = "viewer supports files only"
+			return res
+		}
+		if !info.Mode().IsRegular() {
+			res.err = viewerUnsupportedFileNotice(path, info.Mode())
 			return res
 		}
 		size = info.Size()

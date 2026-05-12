@@ -89,7 +89,7 @@ func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 	showPerms := m.showPermissionColumn()
 	switch c {
 	case 0:
-		return entry.DisplayName, st
+		return m.filePaneEntryNameCell(entry, st, 0)
 	case 1:
 		if showPerms {
 			return m.defaultPermissionText(entry), st
@@ -112,7 +112,7 @@ func (m *filePaneModel) CellWithWidth(r, c, widthPx int) (string, table.CellStyl
 
 	switch c {
 	case 0:
-		return m.nameOrEmpty(entry.DisplayName, widthPx), st
+		return m.filePaneEntryNameCell(entry, st, widthPx)
 	case 1:
 		if showPerms {
 			return m.formatPermissions(entry, widthPx), st
@@ -180,6 +180,16 @@ func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
 		return table.LeadingIcon{}, false
 	}
 	entry := m.entries[r]
+	if entry.IsSymlink {
+		linkColor := color.NRGBA{R: 120, G: 202, B: 214, A: 255}
+		if entry.Kind == filesys.EntryBroken {
+			linkColor = color.NRGBA{R: 220, G: 85, B: 85, A: 255}
+		}
+		return table.LeadingIcon{
+			Kind:  table.IconLink,
+			Color: linkColor,
+		}, true
+	}
 	switch entry.Kind {
 	case filesys.EntryParent:
 		return table.LeadingIcon{
@@ -214,6 +224,39 @@ func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
 			Widget: m.defaultFileIconWidget(entry.Name),
 		}, true
 	}
+}
+
+func (m *filePaneModel) filePaneEntryNameCell(entry filesys.Entry, st table.CellStyle, widthPx int) (string, table.CellStyle) {
+	name := entry.DisplayName
+	if entry.IsSymlink && strings.TrimSpace(entry.LinkTarget) != "" {
+		st.Suffix = " -> " + entry.LinkTarget
+		st.SuffixColor = color.NRGBA{R: 132, G: 146, B: 156, A: 255}
+		st.SuffixWeight = font.Normal
+		st.SuffixWeightSet = true
+		st.SuffixPreserveColor = true
+		if entry.Kind == filesys.EntryBroken {
+			st.SuffixColor = color.NRGBA{R: 224, G: 88, B: 88, A: 255}
+		}
+		if widthPx > 0 {
+			suffixW := m.approxCharPx() * utf8.RuneCountInString(st.Suffix)
+			if measured, ok := m.measuredTextWidth(st.Suffix); ok {
+				suffixW = measured
+			}
+			if suffixW > widthPx/2 {
+				suffixW = widthPx / 2
+			}
+			if nameW := widthPx - suffixW; nameW > m.approxCharPx()*3 {
+				name = m.nameOrEmpty(name, nameW)
+			} else {
+				name = m.nameOrEmpty(name, widthPx)
+			}
+		}
+		return name, st
+	}
+	if widthPx > 0 {
+		name = m.nameOrEmpty(name, widthPx)
+	}
+	return name, st
 }
 
 type filePaneState struct {

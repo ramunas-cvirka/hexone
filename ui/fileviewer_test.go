@@ -13,14 +13,134 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode"
 	"unicode/utf16"
 
+	"hexone/filesys"
 	"hexone/fm"
 )
+
+func TestStartFileViewerBrokenSymlinkShowsPaneNotice(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := &UI{
+		fmCfg: fm.DefaultConfig(),
+		filePanes: []*filePaneState{
+			newFilePaneState("/", cfg),
+		},
+	}
+	pane := ui.filePanes[0]
+	pane.applyListing(filesys.Listing{
+		Dir: "/",
+		Entries: []filesys.Entry{{
+			Name:        ".VolumeIcon.icns",
+			DisplayName: ".VolumeIcon.icns",
+			Path:        "/.VolumeIcon.icns",
+			Kind:        filesys.EntryBroken,
+			IsSymlink:   true,
+			LinkTarget:  "System/Volumes/Data/.VolumeIcon.icns",
+		}},
+	}, "", "", 0)
+
+	ui.startFileViewer(0, time.Now())
+
+	if ui.fileViewer != nil {
+		t.Fatal("broken symlink should not open the viewer")
+	}
+	if got, want := pane.noticeText, "link target does not exist: System/Volumes/Data/.VolumeIcon.icns"; got != want {
+		t.Fatalf("notice = %q, want %q", got, want)
+	}
+}
+
+func TestStartFileViewerPermissionDeniedShowsPaneNotice(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bit behavior is platform-specific on Windows")
+	}
+
+	root := t.TempDir()
+	target := filepath.Join(root, "locked.txt")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write locked file: %v", err)
+	}
+	if err := os.Chmod(target, 0); err != nil {
+		t.Fatalf("chmod locked file: %v", err)
+	}
+	defer os.Chmod(target, 0o600)
+	if file, err := os.Open(target); err == nil {
+		_ = file.Close()
+		t.Skip("current user can still open mode-000 files")
+	}
+
+	cfg := fm.DefaultConfig()
+	ui := &UI{
+		fmCfg: fm.DefaultConfig(),
+		filePanes: []*filePaneState{
+			newFilePaneState(root, cfg),
+		},
+	}
+	pane := ui.filePanes[0]
+	pane.applyListing(filesys.Listing{
+		Dir: root,
+		Entries: []filesys.Entry{{
+			Name:        "locked.txt",
+			DisplayName: "locked.txt",
+			Path:        target,
+			Kind:        filesys.EntryFile,
+		}},
+	}, "", "", 0)
+
+	ui.startFileViewer(0, time.Now())
+
+	if ui.fileViewer != nil {
+		t.Fatal("permission denied file should not open the viewer")
+	}
+	if got := pane.noticeText; !strings.Contains(got, "permission denied") || !strings.Contains(got, target) {
+		t.Fatalf("notice = %q, want permission denied with path %q", got, target)
+	}
+}
+
+func TestStartFileViewerNamedPipeShowsPaneNotice(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mkfifo is unsupported on Windows")
+	}
+
+	root := t.TempDir()
+	target := filepath.Join(root, "pipe")
+	if err := syscall.Mkfifo(target, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+
+	cfg := fm.DefaultConfig()
+	ui := &UI{
+		fmCfg: fm.DefaultConfig(),
+		filePanes: []*filePaneState{
+			newFilePaneState(root, cfg),
+		},
+	}
+	pane := ui.filePanes[0]
+	pane.applyListing(filesys.Listing{
+		Dir: root,
+		Entries: []filesys.Entry{{
+			Name:        "pipe",
+			DisplayName: "pipe",
+			Path:        target,
+			Kind:        filesys.EntryFile,
+		}},
+	}, "", "", 0)
+
+	ui.startFileViewer(0, time.Now())
+
+	if ui.fileViewer != nil {
+		t.Fatal("named pipe should not open the viewer")
+	}
+	if got := pane.noticeText; !strings.Contains(got, "viewer supports regular files only") || !strings.Contains(got, "named pipe") || !strings.Contains(got, target) {
+		t.Fatalf("notice = %q, want regular-file notice for named pipe %q", got, target)
+	}
+}
 
 type fakeViewerPDFRenderer struct {
 	available bool

@@ -6,8 +6,11 @@ package ui
 import (
 	"hexone/filesys"
 	"hexone/fm"
+	"hexone/ui/widget/table"
 	"testing"
 	"time"
+
+	"gioui.org/font"
 )
 
 func TestFilePaneFormatDateUsesMeasuredWidth(t *testing.T) {
@@ -48,5 +51,58 @@ func TestFilePaneFullOrEmptyUsesMeasuredWidth(t *testing.T) {
 
 	if got := model.fullOrEmpty("Mar 12 2026 15:04", 110); got != "" {
 		t.Fatalf("fullOrEmpty should reject text that measured wider than the cell, got %q", got)
+	}
+}
+
+func TestFilePaneModelDisplaysSymlinkTarget(t *testing.T) {
+	model := &filePaneModel{
+		entries: []filesys.Entry{{
+			Name:        "etc",
+			DisplayName: "etc",
+			IsSymlink:   true,
+			LinkTarget:  "private/etc",
+			Kind:        filesys.EntryDir,
+		}},
+		cfg: fm.DefaultConfig(),
+	}
+
+	text, _ := model.Cell(0, 0)
+	if text != "etc" {
+		t.Fatalf("cell text = %q, want base symlink name", text)
+	}
+	_, st := model.Cell(0, 0)
+	if st.Suffix != " -> private/etc" {
+		t.Fatalf("cell suffix = %q, want symlink target suffix", st.Suffix)
+	}
+	if st.SuffixColor.A == 0 || !st.SuffixPreserveColor {
+		t.Fatalf("suffix style = %#v, want preserved dim color", st)
+	}
+	if !st.SuffixWeightSet || st.SuffixWeight != font.Normal {
+		t.Fatalf("suffix weight = %v set=%v, want regular", st.SuffixWeight, st.SuffixWeightSet)
+	}
+	icon, ok := model.LeadingIcon(0, 0)
+	if !ok || icon.Kind != table.IconLink {
+		t.Fatalf("leading icon = %#v ok=%v, want link icon", icon, ok)
+	}
+}
+
+func TestFilePaneModelBrokenSymlinkSuffixIsRed(t *testing.T) {
+	model := &filePaneModel{
+		entries: []filesys.Entry{{
+			Name:        "missing-link",
+			DisplayName: "missing-link",
+			IsSymlink:   true,
+			LinkTarget:  "missing",
+			Kind:        filesys.EntryBroken,
+		}},
+		cfg: fm.DefaultConfig(),
+	}
+
+	_, st := model.Cell(0, 0)
+	if st.Suffix == "" {
+		t.Fatal("broken symlink should expose a suffix")
+	}
+	if st.SuffixColor.R <= st.SuffixColor.G || st.SuffixColor.R <= st.SuffixColor.B {
+		t.Fatalf("broken symlink suffix color = %#v, want red-tinted color", st.SuffixColor)
 	}
 }

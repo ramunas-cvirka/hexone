@@ -76,38 +76,18 @@ func ReadDirSFTP(client *sftp.Client, dir string) (Listing, error) {
 			DateText:  "—",
 		}
 
-		targetInfo := item
 		if item.Mode()&os.ModeSymlink != 0 {
+			target, _ := client.ReadLink(full)
+			var targetInfo os.FileInfo
 			if statInfo, statErr := client.Stat(full); statErr == nil {
 				targetInfo = statInfo
-			} else {
-				row.Kind = EntryBroken
-				row.DisplayName = name
-				rows = append(rows, sortable{entry: row, key: strings.ToLower(name), group: 2})
-				continue
 			}
-		}
-
-		row.PermText = formatPerms(targetInfo.Mode())
-		row.PermOctal = formatPermOctal(targetInfo.Mode())
-		if targetInfo.IsDir() {
-			row.Kind = EntryDir
-			row.DisplayName = name
-			row.SizeText = ""
-			row.CanEnter = true
+			populateSymlinkListingEntry(&row, name, item, targetInfo, target)
 		} else {
-			row.DisplayName = name
-			row.SizeBytes = targetInfo.Size()
-			row.SizeText = formatSize(targetInfo.Size())
+			populateListingEntry(&row, name, item)
 		}
-		row.DateText = formatDate(targetInfo.ModTime())
-		row.ModTime = targetInfo.ModTime()
 
-		group := 1
-		if row.Kind == EntryDir {
-			group = 0
-		}
-		rows = append(rows, sortable{entry: row, key: strings.ToLower(name), group: group})
+		rows = append(rows, sortable{entry: row, key: strings.ToLower(name), group: listingEntryGroup(row)})
 	}
 
 	sort.Slice(rows, func(i, j int) bool {

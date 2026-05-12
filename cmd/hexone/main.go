@@ -124,6 +124,7 @@ func run(window *app.Window) error {
 	iconSetter := appicon.NewSetter()
 	nativeInsertMonitorInstalled := false
 	sessionApplied := false
+	viewerWarmupStarted := false
 
 	for {
 		switch typ := window.Event().(type) {
@@ -162,6 +163,10 @@ func run(window *app.Window) error {
 				sessionApplied = true
 				mainUI.ApplySession(session)
 				window.Invalidate()
+			}
+			if !viewerWarmupStarted {
+				viewerWarmupStarted = true
+				ui.StartViewerWarmup()
 			}
 		}
 	}

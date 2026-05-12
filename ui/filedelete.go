@@ -77,6 +77,7 @@ type fileDeleteTarget struct {
 
 type fileDeleteResult struct {
 	err               error
+	failedPath        string
 	deletedNested     int
 	deletedCountKnown bool
 }
@@ -301,6 +302,7 @@ func (ui *UI) submitFileDeleteDialog(now time.Time) {
 			if remote != nil {
 				if err := deleteRemotePath(remote, target.Path); err != nil {
 					res.err = err
+					res.failedPath = target.Path
 					doneCh <- res
 					return
 				}
@@ -308,6 +310,7 @@ func (ui *UI) submitFileDeleteDialog(now time.Time) {
 			}
 			if err := filesys.DeletePath(target.Path); err != nil {
 				res.err = err
+				res.failedPath = target.Path
 				doneCh <- res
 				return
 			}
@@ -329,7 +332,7 @@ func (ui *UI) pumpFileDeleteState(gtx layout.Context) {
 		st.running = false
 		st.doneCh = nil
 		if res.err != nil {
-			st.lastErr = res.err.Error()
+			st.lastErr = formatFileDeleteError(res.err, res.failedPath)
 			gtx.Execute(op.InvalidateCmd{})
 			return
 		}
@@ -470,6 +473,33 @@ func fileDeleteSuccessNotice(count, nestedCount int) (string, time.Duration) {
 		msg = fmt.Sprintf("%s (%d %s)", msg, nestedCount, nestedLabel)
 	}
 	return msg, fileDeleteSuccessNoticeDur
+}
+
+func formatFileDeleteError(err error, targetPath string) string {
+	if err == nil {
+		return ""
+	}
+	pathText := strings.TrimSpace(targetPath)
+	if pathText == "" {
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) {
+			pathText = strings.TrimSpace(pathErr.Path)
+		}
+	}
+	errText := strings.TrimSpace(err.Error())
+	lowerErr := strings.ToLower(errText)
+	if errors.Is(err, os.ErrPermission) ||
+		strings.Contains(lowerErr, "permission denied") ||
+		strings.Contains(lowerErr, "operation not permitted") {
+		if pathText != "" {
+			return "permission denied: " + pathText
+		}
+		return "permission denied"
+	}
+	if errText == "" {
+		return "delete failed"
+	}
+	return "delete failed: " + errText
 }
 
 func countDeleteNestedEntries(targets []fileDeleteTarget, remote *paneSSHSession) (int, error) {

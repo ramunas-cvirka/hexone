@@ -47,9 +47,14 @@ type Column struct {
 }
 
 type CellStyle struct {
-	Color         color.NRGBA
-	Weight        font.Weight
-	PreserveColor bool
+	Color               color.NRGBA
+	Weight              font.Weight
+	PreserveColor       bool
+	Suffix              string
+	SuffixColor         color.NRGBA
+	SuffixWeight        font.Weight
+	SuffixWeightSet     bool
+	SuffixPreserveColor bool
 }
 
 type Mode uint8
@@ -76,6 +81,7 @@ const (
 	IconFolder
 	IconParent
 	IconBroken
+	IconLink
 )
 
 type LeadingIcon struct {
@@ -94,6 +100,7 @@ var leadingIconSet struct {
 	folder *widget.Icon
 	parent *widget.Icon
 	broken *widget.Icon
+	link   *widget.Icon
 }
 
 type Table struct {
@@ -412,6 +419,13 @@ func fillRoundedRect(gtx layout.Context, rect image.Rectangle, radius int, c col
 }
 
 func layoutCellLabel(gtx layout.Context, th *material.Theme, face font.Typeface, size unit.Sp, txt string, st CellStyle, align text.Alignment, hideIfTruncated bool) layout.Dimensions {
+	if st.Suffix != "" && align == text.Start {
+		return layoutCellLabelWithSuffix(gtx, th, face, size, txt, st, hideIfTruncated)
+	}
+	return layoutCellLabelPlain(gtx, th, face, size, txt, st, align, hideIfTruncated)
+}
+
+func layoutCellLabelPlain(gtx layout.Context, th *material.Theme, face font.Typeface, size unit.Sp, txt string, st CellStyle, align text.Alignment, hideIfTruncated bool) layout.Dimensions {
 	colorMacro := op.Record(gtx.Ops)
 	paint.ColorOp{Color: st.Color}.Add(gtx.Ops)
 	textColor := colorMacro.Stop()
@@ -464,6 +478,52 @@ func layoutCellLabel(gtx layout.Context, th *material.Theme, face font.Typeface,
 	if out.Baseline > 0 && out.Size.Y > dims.Size.Y {
 		out.Baseline += (out.Size.Y - dims.Size.Y) / 2
 	}
+	return out
+}
+
+func layoutCellLabelWithSuffix(gtx layout.Context, th *material.Theme, face font.Typeface, size unit.Sp, txt string, st CellStyle, hideIfTruncated bool) layout.Dimensions {
+	base := st
+	base.Suffix = ""
+	base.SuffixColor = color.NRGBA{}
+	base.SuffixWeight = 0
+	base.SuffixWeightSet = false
+	base.SuffixPreserveColor = false
+	prefixGtx := gtx
+	prefixGtx.Constraints.Min.X = 0
+	prefixDims := layoutCellLabelPlain(prefixGtx, th, face, size, txt, base, text.Start, hideIfTruncated)
+	if prefixDims.Size.X >= gtx.Constraints.Max.X {
+		return prefixDims
+	}
+
+	suffix := CellStyle{
+		Color:  st.SuffixColor,
+		Weight: st.SuffixWeight,
+	}
+	if suffix.Color.A == 0 {
+		suffix.Color = st.Color
+	}
+	if !st.SuffixWeightSet {
+		suffix.Weight = st.Weight
+	}
+	suffixGtx := gtx
+	remaining := gtx.Constraints.Max.X - prefixDims.Size.X
+	if remaining < 0 {
+		remaining = 0
+	}
+	suffixGtx.Constraints = layout.Exact(image.Pt(remaining, gtx.Constraints.Max.Y))
+	tr := op.Offset(image.Pt(prefixDims.Size.X, 0)).Push(gtx.Ops)
+	suffixDims := layoutCellLabelPlain(suffixGtx, th, face, size, st.Suffix, suffix, text.Start, false)
+	tr.Pop()
+
+	out := prefixDims
+	if suffixDims.Size.Y > out.Size.Y {
+		out.Size.Y = suffixDims.Size.Y
+	}
+	out.Size.X += suffixDims.Size.X
+	if out.Size.X > gtx.Constraints.Max.X {
+		out.Size.X = gtx.Constraints.Max.X
+	}
+	out.Size = gtx.Constraints.Constrain(out.Size)
 	return out
 }
 
@@ -546,6 +606,7 @@ func loadLeadingIcons() {
 	leadingIconSet.folder = mustIcon(widget.NewIcon(mdicons.FileFolder))
 	leadingIconSet.parent = mustIcon(widget.NewIcon(mdicons.NavigationSubdirectoryArrowLeft))
 	leadingIconSet.broken = mustIcon(widget.NewIcon(mdicons.AlertErrorOutline))
+	leadingIconSet.link = mustIcon(widget.NewIcon(mdicons.ContentLink))
 }
 
 func leadingWidgetIcon(kind IconKind) *widget.Icon {
@@ -559,6 +620,8 @@ func leadingWidgetIcon(kind IconKind) *widget.Icon {
 		return leadingIconSet.parent
 	case IconBroken:
 		return leadingIconSet.broken
+	case IconLink:
+		return leadingIconSet.link
 	default:
 		return nil
 	}
@@ -1568,6 +1631,9 @@ func (t *Table) rowColors(row int, hovered, marked bool) (color.NRGBA, *color.NR
 func applyRowForeground(st CellStyle, fg *color.NRGBA) CellStyle {
 	if fg != nil && !st.PreserveColor {
 		st.Color = *fg
+	}
+	if fg != nil && st.Suffix != "" && !st.SuffixPreserveColor {
+		st.SuffixColor = *fg
 	}
 	return st
 }

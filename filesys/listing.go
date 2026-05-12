@@ -24,6 +24,8 @@ const (
 type Entry struct {
 	Name        string
 	DisplayName string
+	IsSymlink   bool
+	LinkTarget  string
 	PermText    string
 	PermOctal   string
 	SizeText    string
@@ -89,19 +91,16 @@ func readLocalDir(abs string) (Listing, error) {
 			continue
 		}
 
-		targetInfo := info
 		if info.Mode()&os.ModeSymlink != 0 {
+			target, _ := os.Readlink(full)
+			var targetInfo os.FileInfo
 			if statInfo, statErr := os.Stat(full); statErr == nil {
 				targetInfo = statInfo
-			} else {
-				row.Kind = EntryBroken
-				row.DisplayName = name
-				rows = append(rows, sortableEntry{entry: row, key: strings.ToLower(name), group: 2})
-				continue
 			}
+			populateSymlinkListingEntry(&row, name, info, targetInfo, target)
+		} else {
+			populateListingEntry(&row, name, info)
 		}
-
-		populateListingEntry(&row, name, targetInfo)
 		if row.Kind == EntryFile && ArchiveNameSupported(name) {
 			row.CanEnter = true
 		}
@@ -210,9 +209,33 @@ func populateListingEntry(row *Entry, name string, info os.FileInfo) {
 	row.ModTime = info.ModTime()
 }
 
+func populateSymlinkListingEntry(row *Entry, name string, linkInfo os.FileInfo, targetInfo os.FileInfo, target string) {
+	if row == nil {
+		return
+	}
+	populateListingEntry(row, name, linkInfo)
+	row.IsSymlink = true
+	row.LinkTarget = target
+	if row.PermText != "" && row.PermText != "—" && !strings.HasPrefix(row.PermText, "l") {
+		row.PermText = "l" + row.PermText
+	}
+	if targetInfo == nil {
+		row.Kind = EntryBroken
+		row.CanEnter = false
+		return
+	}
+	if targetInfo.IsDir() {
+		row.Kind = EntryDir
+		row.CanEnter = true
+	}
+}
+
 func listingEntryGroup(row Entry) int {
 	if row.Kind == EntryDir {
 		return 0
+	}
+	if row.Kind == EntryBroken {
+		return 2
 	}
 	return 1
 }

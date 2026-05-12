@@ -90,7 +90,7 @@ func StatLocalPath(raw string) (os.FileInfo, error) {
 		}
 		return fs.Stat(fsys, loc.InnerPath)
 	}
-	return os.Stat(raw)
+	return StatLocalFilesystemPath(raw)
 }
 
 func LstatLocalPath(raw string) (os.FileInfo, error) {
@@ -120,6 +120,14 @@ func OpenLocalPath(raw string) (io.ReadCloser, os.FileInfo, error) {
 		}
 		return file, info, nil
 	}
+	return OpenLocalFilesystemPath(raw)
+}
+
+func StatLocalFilesystemPath(raw string) (os.FileInfo, error) {
+	return os.Stat(raw)
+}
+
+func OpenLocalFilesystemPath(raw string) (io.ReadCloser, os.FileInfo, error) {
 	info, err := os.Stat(raw)
 	if err != nil {
 		return nil, nil, err

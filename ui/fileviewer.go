@@ -665,6 +665,20 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 			return
 		}
 	}
+	if ok, notice := viewerSymlinkTargetAvailable(entry, remote); !ok {
+		if remote != nil {
+			remote.close()
+		}
+		pane.setNotice(notice, now)
+		return
+	}
+	if ok, notice := viewerFileOpenable(entry, remote); !ok {
+		if remote != nil {
+			remote.close()
+		}
+		pane.setNotice(notice, now)
+		return
+	}
 
 	st := &fileViewerState{
 		pane:            idx,
@@ -728,6 +742,107 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	ui.rep.active = false
 	ui.rep.pane = -1
 	ui.startFileViewerLoad(now)
+}
+
+func viewerSymlinkTargetAvailable(entry *filesys.Entry, remote *paneSSHSession) (bool, string) {
+	if entry == nil || !entry.IsSymlink {
+		return true, ""
+	}
+	if remote == nil {
+		if _, err := os.Stat(entry.Path); err != nil {
+			return false, viewerSymlinkTargetMissingNotice(entry.LinkTarget)
+		}
+		return true, ""
+	}
+	client := remote.sftpClient()
+	if client == nil {
+		return false, "sftp session is not connected"
+	}
+	if _, err := client.Stat(entry.Path); err != nil {
+		return false, viewerSymlinkTargetMissingNotice(entry.LinkTarget)
+	}
+	return true, ""
+}
+
+func viewerSymlinkTargetMissingNotice(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "link target does not exist"
+	}
+	return "link target does not exist: " + target
+}
+
+func viewerFileOpenable(entry *filesys.Entry, remote *paneSSHSession) (bool, string) {
+	if entry == nil || strings.TrimSpace(entry.Path) == "" {
+		return true, ""
+	}
+	if remote == nil {
+		info, err := filesys.StatLocalPath(entry.Path)
+		if err != nil {
+			return false, viewerOpenFailedNotice(entry.Path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return false, viewerUnsupportedFileNotice(entry.Path, info.Mode())
+		}
+		reader, _, err := filesys.OpenLocalPath(entry.Path)
+		if err != nil {
+			return false, viewerOpenFailedNotice(entry.Path, err)
+		}
+		_ = reader.Close()
+		return true, ""
+	}
+	client := remote.sftpClient()
+	if client == nil {
+		return false, "sftp session is not connected"
+	}
+	info, err := client.Stat(entry.Path)
+	if err != nil {
+		return false, viewerOpenFailedNotice(entry.Path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, viewerUnsupportedFileNotice(entry.Path, info.Mode())
+	}
+	file, err := client.Open(entry.Path)
+	if err != nil {
+		return false, viewerOpenFailedNotice(entry.Path, err)
+	}
+	_ = file.Close()
+	return true, ""
+}
+
+func viewerOpenFailedNotice(path string, err error) string {
+	if err == nil {
+		return ""
+	}
+	errText := strings.TrimSpace(err.Error())
+	path = strings.TrimSpace(path)
+	if errors.Is(err, os.ErrPermission) || strings.Contains(strings.ToLower(errText), "permission denied") {
+		if path != "" {
+			return "permission denied: " + path
+		}
+		return "permission denied"
+	}
+	if errText == "" {
+		return "open failed"
+	}
+	return "open failed: " + errText
+}
+
+func viewerUnsupportedFileNotice(path string, mode os.FileMode) string {
+	kind := "non-regular file"
+	switch {
+	case mode&os.ModeDevice != 0:
+		kind = "device file"
+	case mode&os.ModeNamedPipe != 0:
+		kind = "named pipe"
+	case mode&os.ModeSocket != 0:
+		kind = "socket"
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "viewer supports regular files only"
+	}
+	return "viewer supports regular files only: " + path + " is a " + kind
 }
 
 func (ui *UI) closeFileViewer() {
@@ -2057,7 +2172,7 @@ func (st *fileViewerState) statPath() (os.FileInfo, error) {
 		if filesys.ArchiveMemberPath(st.path) {
 			return filesys.StatLocalPath(st.path)
 		}
-		return os.Stat(st.path)
+		return filesys.StatLocalFilesystemPath(st.path)
 	}
 	client := st.remote.sftpClient()
 	if client == nil {
@@ -2686,6 +2801,9 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 			if info.IsDir() {
 				return "", "", "viewer supports files only", viewerReadInfo{}
 			}
+			if !info.Mode().IsRegular() {
+				return "", "", viewerUnsupportedFileNotice(path, info.Mode()), viewerReadInfo{}
+			}
 			size = info.Size()
 			if size > int64(maxBytes) && !unlimitedPreview {
 				return "", fmt.Sprintf("%s: %d bytes", prefix, size),
@@ -2693,15 +2811,18 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 			}
 			reader, _, openErr = filesys.OpenLocalPath(path)
 		} else {
-			info, err := os.Stat(path)
+			info, err := filesys.StatLocalFilesystemPath(path)
 			if err != nil {
 				return "", "", err.Error(), viewerReadInfo{}
 			}
 			if info.IsDir() {
 				return "", "", "viewer supports files only", viewerReadInfo{}
 			}
+			if !info.Mode().IsRegular() {
+				return "", "", viewerUnsupportedFileNotice(path, info.Mode()), viewerReadInfo{}
+			}
 			size = info.Size()
-			if viewerPDFPreviewUsesLocalPath && viewerCanPreviewPDFPath(path) {
+			if info.Mode()&os.ModeSymlink == 0 && viewerPDFPreviewUsesLocalPath && viewerCanPreviewPDFPath(path) {
 				info, err := decodeViewerPDFPreview(path, nil, 0)
 				if err != nil {
 					return "", fmt.Sprintf("file: %d bytes", size), err.Error(), viewerReadInfo{}
@@ -2712,7 +2833,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 				return "", fmt.Sprintf("file: %d bytes", size),
 					fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
 			}
-			reader, openErr = os.Open(path)
+			reader, _, openErr = filesys.OpenLocalFilesystemPath(path)
 		}
 	} else {
 		client := remote.sftpClient()
@@ -2722,17 +2843,21 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 		info, err := client.Stat(path)
 		if err != nil {
 			return "", "", err.Error(), viewerReadInfo{}
+		} else {
+			if info.IsDir() {
+				return "", "", "viewer supports files only", viewerReadInfo{}
+			}
+			if !info.Mode().IsRegular() {
+				return "", "", viewerUnsupportedFileNotice(path, info.Mode()), viewerReadInfo{}
+			}
+			size = info.Size()
+			if size > int64(maxBytes) && !unlimitedPreview {
+				return "", fmt.Sprintf("remote file: %d bytes", size),
+					fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
+			}
+			reader, openErr = client.Open(path)
+			prefix = "remote file"
 		}
-		if info.IsDir() {
-			return "", "", "viewer supports files only", viewerReadInfo{}
-		}
-		size = info.Size()
-		if size > int64(maxBytes) && !unlimitedPreview {
-			return "", fmt.Sprintf("remote file: %d bytes", size),
-				fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
-		}
-		reader, openErr = client.Open(path)
-		prefix = "remote file"
 	}
 	if openErr != nil {
 		return "", "", openErr.Error(), viewerReadInfo{}
