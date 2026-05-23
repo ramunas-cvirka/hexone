@@ -13,7 +13,7 @@ import (
 
 func TestSaveFMConfigRefusesToOverwriteConfigWithLoadIssue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
-	original := "viewer:\n  mode: [broken\n"
+	original := "viewer:\n  command_by_target: [broken\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
 	}
@@ -66,7 +66,6 @@ func TestSaveFMConfigRefusesSuspiciousDefaultOverwrite(t *testing.T) {
 	original := fm.DefaultConfig()
 	original.FavoriteLocations = []string{"/tmp/demo"}
 	original.SSH.Setups = []fm.SSHSetup{{Name: "demo", Host: "example.com", Port: 22, User: "root"}}
-	original.Viewer.Mode = "command"
 	original.Viewer.Command = "tail -f {path}"
 	original.Viewer.CommandHistory = []string{"tail -f {path}"}
 	if err := fm.SaveConfig(path, original); err != nil {
@@ -112,59 +111,6 @@ func TestSaveFMConfigAllowDefaultResetOverwritesCustomizedConfig(t *testing.T) {
 	}
 }
 
-func TestViewerModeRuntimeSaveRebasesOntoExistingConfig(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "hexone.yaml")
-	original := fm.DefaultConfig()
-	original.FavoriteLocations = []string{"/tmp/demo"}
-	original.SSH.Setups = []fm.SSHSetup{{Name: "demo", Host: "example.com", Port: 22, User: "root"}}
-	original.Viewer.CommandHistory = []string{"tail -f {path}"}
-	if err := fm.SaveConfig(path, original); err != nil {
-		t.Fatalf("SaveConfig: %v", err)
-	}
-
-	ui := NewUI(fm.DefaultConfig())
-	ui.configPath = path
-	ui.fmCfg.Viewer.Mode = "hex"
-	if err := ui.saveFMConfigWithOptions("viewer-mode", false); err != nil {
-		t.Fatalf("saveFMConfigWithOptions(viewer-mode): %v", err)
-	}
-
-	saved := fm.LoadConfig(path)
-	if got, want := saved.Viewer.Mode, "hex"; got != want {
-		t.Fatalf("viewer mode=%q want %q", got, want)
-	}
-	if got, want := len(saved.FavoriteLocations), 1; got != want {
-		t.Fatalf("favorites count=%d want %d", got, want)
-	}
-	if got, want := len(saved.SSH.Setups), 1; got != want {
-		t.Fatalf("ssh setups count=%d want %d", got, want)
-	}
-	if got, want := len(saved.Viewer.CommandHistory), 1; got != want {
-		t.Fatalf("command history count=%d want %d", got, want)
-	}
-}
-
-func TestViewerModeRuntimeSaveAllowsSwitchingCommandBackToFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "hexone.yaml")
-	original := fm.DefaultConfig()
-	original.Viewer.Mode = "command"
-	if err := fm.SaveConfig(path, original); err != nil {
-		t.Fatalf("SaveConfig: %v", err)
-	}
-
-	ui := NewUI(fm.DefaultConfig())
-	ui.configPath = path
-	ui.fmCfg.Viewer.Mode = "file"
-	if err := ui.saveFMConfigWithOptions("viewer-mode", false); err != nil {
-		t.Fatalf("saveFMConfigWithOptions(viewer-mode): %v", err)
-	}
-
-	saved := fm.LoadConfig(path)
-	if got, want := saved.Viewer.Mode, "file"; got != want {
-		t.Fatalf("viewer mode=%q want %q", got, want)
-	}
-}
-
 func TestViewerCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
 	original := fm.DefaultConfig()
@@ -176,7 +122,6 @@ func TestViewerCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 
 	ui := NewUI(fm.DefaultConfig())
 	ui.configPath = path
-	ui.fmCfg.Viewer.Mode = "command"
 	ui.fmCfg.Viewer.Command = "type {path}"
 	ui.fmCfg.Viewer.CommandHistory = []string{"type {path}"}
 	ui.fmCfg.Viewer.CommandByTarget = map[string]string{"local:c:/tmp/demo.txt": "type {path}"}

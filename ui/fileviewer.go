@@ -697,13 +697,14 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.mode = "file"
 	st.command = "cat {path}"
 	st.autoRefresh = viewerDefaultAutoRefresh
+	st.captureWatchState()
 	if ui != nil && ui.fmCfg != nil {
 		cfg := ui.fmCfg.Viewer
 		st.autoRefresh = cfg.CommandAutoRefresh
 		st.fileEncoding = fm.NormalizeViewerFileEncoding(cfg.FileEncoding)
-		st.mode, st.command = ui.viewerConfiguredModeAndCommand(st.path, st.remote, cfg.Mode, cfg.Command)
+		st.mode, st.command = ui.viewerInitialModeAndCommand(st.path, st.remote, cfg.Command)
 	} else {
-		st.mode, st.command = ui.viewerConfiguredModeAndCommand(st.path, st.remote, st.mode, st.command)
+		st.mode, st.command = ui.viewerInitialModeAndCommand(st.path, st.remote, st.command)
 	}
 	st.commandInfinite = st.mode == "command" && viewerCommandLooksInfinite(st.command)
 	if st.name == "" {
@@ -726,7 +727,6 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.find.resultCh = make(chan fileViewerFindResult, 1)
 	st.find.index = -1
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
-	st.captureWatchState()
 	st.hex = newHexViewerState()
 	st.hex.offsetDigits = viewerHexOffsetDigits(st.watchSize)
 
@@ -1066,7 +1066,6 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	}
 
 	cfg := fm.ViewerConfig{
-		Mode:    "file",
 		Shell:   "auto",
 		Command: "cat {path}",
 	}
@@ -1079,7 +1078,6 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	if st.command == "" {
 		st.command = "cat {path}"
 	}
-	cfg.Mode = st.mode
 	cfg.Command = st.command
 	cfg.CommandAutoRefresh = st.autoRefresh
 	cfg.FileEncoding = st.fileEncoding
@@ -1116,6 +1114,7 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	st.loadCancel = cancel
 	path := st.path
+	mode := st.mode
 	ch := st.resultCh
 	remote := st.remote
 
@@ -1128,7 +1127,7 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 				partial: true,
 			})
 		}
-		content, status, err, info := readViewerContent(ctx, path, cfg, maxBytes, remote, progress)
+		content, status, err, info := readViewerContent(ctx, path, cfg, mode, maxBytes, remote, progress)
 		res := fileViewerResult{
 			seq:            seq,
 			content:        content,
@@ -1149,7 +1148,7 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 			final:          true,
 		}
 		sendViewerResult(ch, res)
-		if err == "" && viewerShouldBuildSyntax(cfg.Mode, info, content) {
+		if err == "" && viewerShouldBuildSyntax(mode, info, content) {
 			go func(currentSeq int, currentPath, currentContent string) {
 				syntax := viewerBuildSyntaxDocument(ctx, currentPath, currentContent)
 				if !syntax.ready() || ctx.Err() != nil {
@@ -2268,7 +2267,10 @@ func (ui *UI) refreshFileViewerNow(now time.Time) {
 		return
 	}
 	if ui != nil && ui.fmCfg != nil {
-		st.mode, st.command = ui.viewerConfiguredModeAndCommand(st.path, st.remote, ui.fmCfg.Viewer.Mode, ui.fmCfg.Viewer.Command)
+		st.mode = normalizeViewerMode(st.mode)
+		if st.mode == "command" {
+			st.command, _, _ = ui.viewerDefaultCommand(st.path, st.remote, ui.fmCfg.Viewer.Command)
+		}
 		st.autoRefresh = ui.fmCfg.Viewer.CommandAutoRefresh
 		st.fileEncoding = fm.NormalizeViewerFileEncoding(ui.fmCfg.Viewer.FileEncoding)
 	}
@@ -2445,16 +2447,6 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 		st.clearSyntaxState()
 	}
 	st.clearModeSwitchFeedback()
-	if ui.fmCfg != nil {
-		ui.fmCfg.Viewer.Mode = st.mode
-		if st.mode == "command" {
-			ui.fmCfg.Viewer.Command = st.command
-		}
-		if err := ui.saveFMConfigWithOptions("viewer-mode", false); err != nil {
-			st.err = err.Error()
-			return
-		}
-	}
 	st.nextWatchCheck = time.Time{}
 	ui.refreshFileViewerFind(now, false)
 	ui.restartFileViewerLoad(now)
@@ -2573,7 +2565,6 @@ func (ui *UI) rememberViewerCommand(st *fileViewerState, cmd string) error {
 	if err := ui.ensureFMConfigLoaded(); err != nil {
 		return err
 	}
-	ui.fmCfg.Viewer.Mode = "command"
 	ui.fmCfg.Viewer.Command = cmd
 
 	key := viewerCommandTargetKey(st.path, st.remote)
@@ -2600,22 +2591,23 @@ func (ui *UI) rememberViewerCommand(st *fileViewerState, cmd string) error {
 	return ui.saveFMConfigWithOptions("viewer-command", false)
 }
 
-func (ui *UI) viewerConfiguredModeAndCommand(path string, remote *paneSSHSession, fallbackMode, fallbackCommand string) (string, string) {
-	mode := normalizeViewerMode(fallbackMode)
-	if remote == nil && filesys.ArchiveMemberPath(path) && mode == "command" {
-		mode = "file"
+func (ui *UI) viewerInitialModeAndCommand(path string, remote *paneSSHSession, fallbackCommand string) (string, string) {
+	cmd, matchedRule, matchedTarget := ui.viewerDefaultCommand(path, remote, fallbackCommand)
+	archiveMember := remote == nil && filesys.ArchiveMemberPath(path)
+	if !archiveMember && (matchedTarget || matchedRule) {
+		return "command", cmd
 	}
-	cmd, matchedRule := ui.viewerDefaultCommand(path, remote, fallbackCommand)
-	if remote == nil && filesys.ArchiveMemberPath(path) {
-		return mode, cmd
+	var cfg *fm.Config
+	if ui != nil {
+		cfg = ui.fmCfg
 	}
-	if matchedRule {
-		mode = "command"
+	if viewerPathExceedsMaxLoadLimit(path, remote, viewerMaxLoadBytes(cfg)) {
+		return "hex", cmd
 	}
-	return mode, cmd
+	return "file", cmd
 }
 
-func (ui *UI) viewerDefaultCommand(path string, remote *paneSSHSession, fallback string) (string, bool) {
+func (ui *UI) viewerDefaultCommand(path string, remote *paneSSHSession, fallback string) (string, bool, bool) {
 	cmd := strings.TrimSpace(fallback)
 	if cmd == "" {
 		cmd = "cat {path}"
@@ -2627,7 +2619,8 @@ func (ui *UI) viewerDefaultCommand(path string, remote *paneSSHSession, fallback
 			matchedRule = true
 		}
 	}
-	return ui.viewerCommandForTarget(path, remote, cmd), matchedRule
+	cmd, matchedTarget := ui.viewerCommandForTargetMatch(path, remote, cmd)
+	return cmd, matchedRule, matchedTarget
 }
 
 func (ui *UI) viewerRuleCommand(path string, remote *paneSSHSession) (string, bool) {
@@ -2650,21 +2643,51 @@ func (ui *UI) viewerRuleCommand(path string, remote *paneSSHSession) (string, bo
 }
 
 func (ui *UI) viewerCommandForTarget(path string, remote *paneSSHSession, fallback string) string {
+	cmd, _ := ui.viewerCommandForTargetMatch(path, remote, fallback)
+	return cmd
+}
+
+func (ui *UI) viewerCommandForTargetMatch(path string, remote *paneSSHSession, fallback string) (string, bool) {
 	cmd := strings.TrimSpace(fallback)
 	if cmd == "" {
 		cmd = "cat {path}"
 	}
 	if ui == nil || ui.fmCfg == nil {
-		return cmd
+		return cmd, false
 	}
 	key := viewerCommandTargetKey(path, remote)
 	if key == "" || len(ui.fmCfg.Viewer.CommandByTarget) == 0 {
-		return cmd
+		return cmd, false
 	}
 	if byTarget := strings.TrimSpace(ui.fmCfg.Viewer.CommandByTarget[key]); byTarget != "" {
-		return byTarget
+		return byTarget, true
 	}
-	return cmd
+	return cmd, false
+}
+
+func viewerPathExceedsMaxLoadLimit(path string, remote *paneSSHSession, maxBytes int) bool {
+	if maxBytes < 1 {
+		maxBytes = viewerDefaultMaxLoadBytes
+	}
+	info, err := viewerStatPath(path, remote)
+	if err != nil || info == nil {
+		return false
+	}
+	return info.Size() > int64(maxBytes)
+}
+
+func viewerStatPath(path string, remote *paneSSHSession) (os.FileInfo, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("viewer path is empty")
+	}
+	if remote == nil {
+		return filesys.StatLocalPath(path)
+	}
+	client := remote.sftpClient()
+	if client == nil {
+		return nil, errors.New("sftp session is not connected")
+	}
+	return client.Stat(path)
 }
 
 func viewerCommandMatchName(path string, remote *paneSSHSession) string {
@@ -2766,9 +2789,9 @@ func (ui *UI) setFileViewerEncoding(encoding string, now time.Time) {
 	ui.restartFileViewerLoad(now)
 }
 
-func readViewerContent(ctx context.Context, path string, cfg fm.ViewerConfig, maxBytes int, remote *paneSSHSession, onProgress func(string, string)) (string, string, string, viewerReadInfo) {
+func readViewerContent(ctx context.Context, path string, cfg fm.ViewerConfig, mode string, maxBytes int, remote *paneSSHSession, onProgress func(string, string)) (string, string, string, viewerReadInfo) {
 	start := time.Now()
-	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	mode = strings.ToLower(strings.TrimSpace(mode))
 	switch mode {
 	case "command":
 		content, status, err := readViewerCommand(ctx, path, cfg, maxBytes, start, remote, onProgress)

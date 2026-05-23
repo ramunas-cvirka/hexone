@@ -94,7 +94,7 @@ func (ui *UI) saveFMConfigWithOptions(reason string, allowDefaultReset bool) err
 	if strings.TrimSpace(reason) == "" {
 		reason = "runtime"
 	}
-	log.Printf("save config: reason=%s path=%s favorites=%d ssh=%d viewer_mode=%s command_history=%d command_targets=%d", reason, path, len(ui.fmCfg.FavoriteLocations), len(ui.fmCfg.SSH.Setups), strings.TrimSpace(ui.fmCfg.Viewer.Mode), len(ui.fmCfg.Viewer.CommandHistory), len(ui.fmCfg.Viewer.CommandByTarget))
+	log.Printf("save config: reason=%s path=%s favorites=%d ssh=%d command_history=%d command_targets=%d", reason, path, len(ui.fmCfg.FavoriteLocations), len(ui.fmCfg.SSH.Setups), len(ui.fmCfg.Viewer.CommandHistory), len(ui.fmCfg.Viewer.CommandByTarget))
 	return fm.SaveConfig(path, ui.fmCfg)
 }
 
@@ -130,9 +130,6 @@ func configHasCriticalUserState(cfg *fm.Config) bool {
 	if len(cfg.FavoriteLocations) > 0 || len(cfg.SSH.Setups) > 0 || len(cfg.Viewer.CommandByTarget) > 0 || len(cfg.Viewer.CommandHistory) > 0 || len(cfg.Viewer.CommandRules) > 0 || len(cfg.Associations) > 0 {
 		return true
 	}
-	if strings.TrimSpace(cfg.Viewer.Mode) == "command" {
-		return true
-	}
 	return strings.TrimSpace(cfg.Viewer.Command) != strings.TrimSpace(defaultCfg.Viewer.Command)
 }
 
@@ -146,11 +143,6 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 	}
 	rebased := cloneFMConfigForRuntimeSave(existing)
 	switch reason {
-	case "viewer-mode":
-		rebased.Viewer.Mode = next.Viewer.Mode
-		if normalizeViewerMode(next.Viewer.Mode) == "command" {
-			rebased.Viewer.Command = next.Viewer.Command
-		}
 	case "viewer-auto-refresh":
 		rebased.Viewer.CommandAutoRefresh = next.Viewer.CommandAutoRefresh
 	case "viewer-word-wrap":
@@ -158,7 +150,6 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 	case "viewer-encoding":
 		rebased.Viewer.FileEncoding = next.Viewer.FileEncoding
 	case "viewer-command":
-		rebased.Viewer.Mode = next.Viewer.Mode
 		rebased.Viewer.Command = next.Viewer.Command
 		rebased.Viewer.CommandByTarget = cloneStringMap(next.Viewer.CommandByTarget)
 		rebased.Viewer.CommandHistory = cloneStringSlice(next.Viewer.CommandHistory)

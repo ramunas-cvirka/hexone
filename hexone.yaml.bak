@@ -57,7 +57,6 @@ associations:
     - app_path: c:\portable_appz\xmplay\xmplay.exe
       extensions: mp3, mp4, mp5, mp6
 viewer:
-    mode: file
     file_encoding: auto
     typeface: Fira Code
     background: '#202020'

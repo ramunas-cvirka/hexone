@@ -158,13 +158,12 @@ func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
 	}
 }
 
-func TestSettingsKeyboardFocusOrderIncludesViewerButtons(t *testing.T) {
+func TestSettingsKeyboardFocusOrderIncludesViewerControls(t *testing.T) {
 	st := &settingsModalState{activeTab: "viewer"}
 
 	got := st.focusOrder()
 	want := []settingsKeyboardFocus{
 		settingsKeyboardFocusNav,
-		settingsKeyboardFocusViewerMode,
 		settingsKeyboardFocusViewerShell,
 		settingsKeyboardFocusViewerRemoteSearch,
 		settingsKeyboardFocusViewerSmoothScrolling,
@@ -231,8 +230,8 @@ func TestSettingsModalKeyboardUsesUpDownOnlyForNavFocus(t *testing.T) {
 		t.Fatal("settings modal did not open")
 	}
 	st.activeTab = "viewer"
-	st.focus = settingsKeyboardFocusViewerMode
-	st.viewMode = "file"
+	st.focus = settingsKeyboardFocusViewerShell
+	st.viewShellEdit.SetText("auto")
 	st.footerFocus = settingsFooterActionSave
 	st.keyFocus.wantFocus = true
 
@@ -250,14 +249,11 @@ func TestSettingsModalKeyboardUsesUpDownOnlyForNavFocus(t *testing.T) {
 	if st.activeTab != "viewer" {
 		t.Fatalf("activeTab after DownArrow = %q, want viewer", st.activeTab)
 	}
-	if st.viewMode != "file" {
-		t.Fatalf("viewMode after DownArrow = %q, want file", st.viewMode)
-	}
 
 	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press})
 	frame(now.Add(2 * time.Millisecond))
-	if st.viewMode != "hex" {
-		t.Fatalf("viewMode after RightArrow = %q, want hex", st.viewMode)
+	if got := st.viewShellEdit.Text(); got != "auto" {
+		t.Fatalf("viewer shell after RightArrow = %q, want auto", got)
 	}
 }
 
@@ -1706,7 +1702,7 @@ func TestSettingsViewerPreviewSelectionRectUsesFullRow(t *testing.T) {
 func TestSettingsViewerPreviewContentUsesContiguousRows(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
-	st := &settingsModalState{viewMode: "file"}
+	st := &settingsModalState{}
 
 	var r input.Router
 	gtx := layout.Context{
@@ -1829,10 +1825,10 @@ func TestMeasureTypefaceLineHeightDoesNotPaintSampleGlyphs(t *testing.T) {
 	}
 }
 
-func TestSettingsViewerPreviewIgnoresSelectedMode(t *testing.T) {
+func TestSettingsViewerPreviewContentHeightUsesTextRows(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
-	st := &settingsModalState{viewMode: "hex"}
+	st := &settingsModalState{}
 
 	var r input.Router
 	gtx := layout.Context{

@@ -59,7 +59,7 @@ func warmViewerTextPipeline() {
 		},
 		{
 			path:    "warmup.yaml",
-			content: "viewer:\n  mode: file\n  warmup: true\n",
+			content: "viewer:\n  warmup: true\n",
 		},
 		{
 			path:    "warmup.sh",

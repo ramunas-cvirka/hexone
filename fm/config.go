@@ -187,7 +187,6 @@ func (a AssociationProgram) MarshalYAML() (any, error) {
 }
 
 type ViewerConfig struct {
-	Mode                    string              `yaml:"mode"`
 	FileEncoding            string              `yaml:"file_encoding"`
 	Typeface                string              `yaml:"typeface"`
 	Background              string              `yaml:"background,omitempty"`
@@ -328,7 +327,6 @@ func DefaultConfig() *Config {
 		},
 		Associations: nil,
 		Viewer: ViewerConfig{
-			Mode:                    "file",
 			FileEncoding:            ViewerFileEncodingAuto,
 			Typeface:                resources.BundledFontFamilyFiraCode,
 			Background:              DefaultFilePaneBackgroundHex,
@@ -627,11 +625,6 @@ func (c *Config) normalize() {
 	c.Colors.Filenames.ExtensionRules = NormalizeFilenameExtensionRules(c.Colors.Filenames.ExtensionRules)
 	c.Colors.Filenames.SizeRules = NormalizeFilenameSizeRules(c.Colors.Filenames.SizeRules)
 
-	switch c.Viewer.Mode {
-	case "file", "hex", "command":
-	default:
-		c.Viewer.Mode = "file"
-	}
 	c.Viewer.FileEncoding = NormalizeViewerFileEncoding(c.Viewer.FileEncoding)
 	switch strings.ToLower(strings.TrimSpace(c.Viewer.Shell)) {
 	case "", "auto":

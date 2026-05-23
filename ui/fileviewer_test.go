@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 	"unicode"
@@ -110,7 +109,7 @@ func TestStartFileViewerNamedPipeShowsPaneNotice(t *testing.T) {
 
 	root := t.TempDir()
 	target := filepath.Join(root, "pipe")
-	if err := syscall.Mkfifo(target, 0o600); err != nil {
+	if err := mkfifoForTest(target, 0o600); err != nil {
 		t.Fatalf("mkfifo: %v", err)
 	}
 

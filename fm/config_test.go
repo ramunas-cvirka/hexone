@@ -177,7 +177,6 @@ font:
 general:
   dim_inactive_panes: true
 viewer:
-  mode: file
   shell: auto
   command: cat {path}
 `
@@ -286,7 +285,6 @@ associations:
       - .pdf
       - txt
 viewer:
-  mode: file
   shell: auto
   command: cat {path}
 `
@@ -410,17 +408,6 @@ func TestMatchViewerCommandRulesUsesLastMatch(t *testing.T) {
 	}
 }
 
-func TestNormalizeViewerModeAcceptsHex(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Viewer.Mode = "hex"
-
-	cfg.normalize()
-
-	if cfg.Viewer.Mode != "hex" {
-		t.Fatalf("Viewer.Mode=%q, want hex", cfg.Viewer.Mode)
-	}
-}
-
 func TestNormalizeViewerFileEncodingAcceptsUTF16Variants(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Viewer.FileEncoding = "utf16-be"
@@ -485,7 +472,6 @@ func TestDefaultConfigEnablesViewerSmoothScrolling(t *testing.T) {
 func TestLoadConfigDefaultsViewerSmoothScrollingWhenFieldMissing(t *testing.T) {
 	raw := `
 viewer:
-  mode: file
   shell: auto
   command: cat {path}
 `
@@ -535,7 +521,7 @@ func TestLoadConfigEnsuringFileCreatesDefaultWhenMissing(t *testing.T) {
 
 func TestLoadConfigEnsuringFilePreservesInvalidExistingConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
-	original := "viewer:\n  mode: [broken\n"
+	original := "viewer:\n  command_by_target: [broken\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
 	}

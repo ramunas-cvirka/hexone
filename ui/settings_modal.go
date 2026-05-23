@@ -61,17 +61,6 @@ type settingsModalState struct {
 	navPulseKey      string
 	navPulseAt       time.Time
 
-	viewModeFileClick           widget.Clickable
-	viewModeHexClick            widget.Clickable
-	viewModeCommandClick        widget.Clickable
-	viewMode                    string
-	viewModePrev                string
-	viewModeAnimAt              time.Time
-	viewModeHoverKey            string
-	viewModeHoverPrev           string
-	viewModeHoverAt             time.Time
-	viewModePulseKey            string
-	viewModePulseAt             time.Time
 	colorScopePaneClick         widget.Clickable
 	colorScopeViewerClick       widget.Clickable
 	colorScopeFilenameClick     widget.Clickable
@@ -464,13 +453,6 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	if st == nil || cfg == nil {
 		return
 	}
-	mode := strings.ToLower(strings.TrimSpace(cfg.Viewer.Mode))
-	switch mode {
-	case "file", "hex", "command":
-	default:
-		mode = "file"
-	}
-	st.viewMode = mode
 	switch st.colorCategory {
 	case "normal", "hover", "selection", "selected_files", "focused_selected", "current_dir", "scrollbar":
 	default:
@@ -2489,15 +2471,6 @@ func (st *settingsModalState) pulseFill(now time.Time, key string) (float32, boo
 	return 1 - t, true
 }
 
-func (st *settingsModalState) setViewMode(next string, now time.Time) {
-	if st == nil || next == "" || st.viewMode == next {
-		return
-	}
-	st.viewModePrev = st.viewMode
-	st.viewModeAnimAt = now
-	st.viewMode = next
-}
-
 func (st *settingsChoiceAnim) setValue(current *string, next string, now time.Time) {
 	if st == nil || current == nil || *current == next {
 		return
@@ -2564,125 +2537,6 @@ func (st *settingsChoiceAnim) position(now time.Time, current string, keys []str
 	prevIdx := float32(idxOf(st.prev))
 	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
 	return prevIdx + (currentIdx-prevIdx)*t, true
-}
-
-func settingsViewModeIndex(key string) int {
-	switch key {
-	case "hex":
-		return 1
-	case "command":
-		return 2
-	default:
-		return 0
-	}
-}
-
-func (st *settingsModalState) viewModePosition(now time.Time) (float32, bool) {
-	if st == nil {
-		return 0, false
-	}
-	current := float32(settingsViewModeIndex(st.viewMode))
-	if st.viewModePrev == "" || st.viewModeAnimAt.IsZero() || st.viewModePrev == st.viewMode {
-		return current, false
-	}
-	prev := float32(settingsViewModeIndex(st.viewModePrev))
-	elapsed := now.Sub(st.viewModeAnimAt)
-	if elapsed >= toolbarAnimDur {
-		st.viewModePrev = ""
-		st.viewModeAnimAt = time.Time{}
-		return current, false
-	}
-	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
-	return prev + (current-prev)*t, true
-}
-
-func (st *settingsModalState) viewModeFill(now time.Time, key string) (float32, bool) {
-	if st == nil || key == "" {
-		return 0, false
-	}
-	if st.viewModePrev == "" || st.viewModeAnimAt.IsZero() || st.viewModePrev == st.viewMode {
-		if key == st.viewMode {
-			return 1, false
-		}
-		return 0, false
-	}
-	elapsed := now.Sub(st.viewModeAnimAt)
-	if elapsed >= toolbarAnimDur {
-		st.viewModePrev = ""
-		st.viewModeAnimAt = time.Time{}
-		if key == st.viewMode {
-			return 1, false
-		}
-		return 0, false
-	}
-	t := smoothstep01(float32(elapsed) / float32(toolbarAnimDur))
-	if key == st.viewMode {
-		return t, true
-	}
-	if key == st.viewModePrev {
-		return 1 - t, true
-	}
-	return 0, true
-}
-
-func (st *settingsModalState) setViewModeHover(key string, now time.Time) {
-	if st == nil || st.viewModeHoverKey == key {
-		return
-	}
-	st.viewModeHoverPrev = st.viewModeHoverKey
-	st.viewModeHoverKey = key
-	st.viewModeHoverAt = now
-}
-
-func (st *settingsModalState) viewModeHoverFill(now time.Time, key string) (float32, bool) {
-	if st == nil || key == "" {
-		return 0, false
-	}
-	if st.viewModeHoverAt.IsZero() || st.viewModeHoverPrev == st.viewModeHoverKey {
-		if st.viewModeHoverKey == key {
-			return 1, false
-		}
-		return 0, false
-	}
-	elapsed := now.Sub(st.viewModeHoverAt)
-	if elapsed >= toolbarHoverDur {
-		st.viewModeHoverPrev = ""
-		st.viewModeHoverAt = time.Time{}
-		if st.viewModeHoverKey == key {
-			return 1, false
-		}
-		return 0, false
-	}
-	t := clamp01(float32(elapsed) / float32(toolbarHoverDur))
-	if key == st.viewModeHoverKey {
-		return t, true
-	}
-	if key == st.viewModeHoverPrev {
-		return 1 - t, true
-	}
-	return 0, true
-}
-
-func (st *settingsModalState) setViewModePulse(key string, now time.Time) {
-	if st == nil || key == "" {
-		return
-	}
-	st.viewModePulseKey = key
-	st.viewModePulseAt = now
-}
-
-func (st *settingsModalState) viewModePulseFill(now time.Time, key string) (float32, bool) {
-	if st == nil || key == "" || st.viewModePulseKey != key || st.viewModePulseAt.IsZero() {
-		return 0, false
-	}
-	elapsed := now.Sub(st.viewModePulseAt)
-	if elapsed >= toolbarClickDur {
-		st.viewModePulseKey = ""
-		st.viewModePulseAt = time.Time{}
-		return 0, false
-	}
-	t := clamp01(float32(elapsed) / float32(toolbarClickDur))
-	return 1 - t, true
 }
 
 func (st *settingsModalState) setFooterHover(key string, now time.Time) {
@@ -2851,17 +2705,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	}
 	ui.fmCfg.Colors.Filenames = filenameColors
 
-	mode := strings.ToLower(strings.TrimSpace(st.viewMode))
-	switch mode {
-	case "file", "hex", "command":
-	default:
-		return fmt.Errorf("viewer mode is invalid")
-	}
-
 	cmd := strings.TrimSpace(st.viewCommandEdit.Text())
-	if mode == "command" && cmd == "" {
-		return fmt.Errorf("viewer command is required in command mode")
-	}
 	if cmd == "" {
 		cmd = "cat {path}"
 	}
@@ -2906,7 +2750,6 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	}
 	ui.fmCfg.General.Typeface = st.paneFontFamily
 	ui.fmCfg.General.FontSizeSp = float32(paneFontSize)
-	ui.fmCfg.Viewer.Mode = mode
 	ui.fmCfg.Viewer.Typeface = st.viewFontFamily
 	ui.fmCfg.Viewer.Command = cmd
 	ui.fmCfg.Viewer.Shell = shell
@@ -3238,21 +3081,6 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 		st.setKeyboardFocus(settingsKeyboardFocusNav)
 		st.setActiveTab("config", gtx.Now)
 		st.setPulse("config", gtx.Now)
-	}
-	if st.viewModeFileClick.Clicked(gtx) {
-		st.setKeyboardFocus(settingsKeyboardFocusViewerMode)
-		st.setViewMode("file", gtx.Now)
-		st.setViewModePulse("file", gtx.Now)
-	}
-	if st.viewModeHexClick.Clicked(gtx) {
-		st.setKeyboardFocus(settingsKeyboardFocusViewerMode)
-		st.setViewMode("hex", gtx.Now)
-		st.setViewModePulse("hex", gtx.Now)
-	}
-	if st.viewModeCommandClick.Clicked(gtx) {
-		st.setKeyboardFocus(settingsKeyboardFocusViewerMode)
-		st.setViewMode("command", gtx.Now)
-		st.setViewModePulse("command", gtx.Now)
 	}
 	st.normalizeKeyboardFocus()
 	dims := st.backdropClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -3982,44 +3810,6 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	_, currentRuleExists := st.viewerCommandRule(currentRulePattern)
 	pickerRules, pickerMatchCount := st.viewerCommandRulePickerRules()
 
-	fillFile, animFile := st.viewModeFill(gtx.Now, "file")
-	fillHex, animHex := st.viewModeFill(gtx.Now, "hex")
-	fillCommand, animCommand := st.viewModeFill(gtx.Now, "command")
-	hoverModeKey := ""
-	if st.viewModeFileClick.Hovered() {
-		hoverModeKey = "file"
-	}
-	if st.viewModeHexClick.Hovered() {
-		hoverModeKey = "hex"
-	}
-	if st.viewModeCommandClick.Hovered() {
-		hoverModeKey = "command"
-	}
-	st.setViewModeHover(hoverModeKey, gtx.Now)
-	hoverFile, hoverAnimFile := st.viewModeHoverFill(gtx.Now, "file")
-	hoverHex, hoverAnimHex := st.viewModeHoverFill(gtx.Now, "hex")
-	hoverCommand, hoverAnimCommand := st.viewModeHoverFill(gtx.Now, "command")
-	pulseFile, pulseAnimFile := st.viewModePulseFill(gtx.Now, "file")
-	pulseHex, pulseAnimHex := st.viewModePulseFill(gtx.Now, "hex")
-	pulseCommand, pulseAnimCommand := st.viewModePulseFill(gtx.Now, "command")
-	pos, animPos := st.viewModePosition(gtx.Now)
-	focusFile := float32(0)
-	focusHex := float32(0)
-	focusCommand := float32(0)
-	if st.focus == settingsKeyboardFocusViewerMode {
-		switch st.viewMode {
-		case "hex":
-			focusHex = 1
-		case "command":
-			focusCommand = 1
-		default:
-			focusFile = 1
-		}
-	}
-	if animFile || animHex || animCommand || hoverAnimFile || hoverAnimHex || hoverAnimCommand || pulseAnimFile || pulseAnimHex || pulseAnimCommand || animPos {
-		gtx.Execute(op.InvalidateCmd{})
-	}
-
 	rowLabel := func(txt string, enabled bool) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, enabled)
 	}
@@ -4133,47 +3923,6 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		ruleApplyLabel = "Update"
 	}
 
-	layoutModeStrip := func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints.Min.X = 0
-		stripH := gtx.Dp(unit.Dp(22))
-		if stripH < 1 {
-			stripH = 1
-		}
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, 10), []slidingTabSpec{
-					{
-						Label:      "File",
-						Click:      &st.viewModeFileClick,
-						ActiveFill: fillFile,
-						HoverFill:  hoverFile,
-						PulseFill:  pulseFile,
-						FocusFill:  focusFile,
-					},
-					{
-						Label:      "Hex",
-						Click:      &st.viewModeHexClick,
-						ActiveFill: fillHex,
-						HoverFill:  hoverHex,
-						PulseFill:  pulseHex,
-						FocusFill:  focusHex,
-					},
-					{
-						Label:      "Command",
-						Click:      &st.viewModeCommandClick,
-						ActiveFill: fillCommand,
-						HoverFill:  hoverCommand,
-						PulseFill:  pulseCommand,
-						FocusFill:  focusCommand,
-					},
-				})
-			}),
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH+gtx.Dp(unit.Dp(2)))}
-			}),
-		)
-	}
-
 	noticeLabel := func(text string, maxLines int, truncator string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, text)
@@ -4187,13 +3936,6 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	}
 
 	sections := []layout.Widget{
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(rowLabel("Default viewer mode", true)),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-				layout.Rigid(layoutModeStrip),
-			)
-		},
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(rowLabel("Shell (all viewer commands)", true)),
@@ -4811,11 +4553,6 @@ func (st *settingsModalState) previewViewerConfig(cfg *fm.Config) *fm.Config {
 	palette, _ := st.draftFilePanePalette(cfg)
 	draft.Colors = filePanePaletteToConfigColors(palette)
 
-	mode := strings.ToLower(strings.TrimSpace(st.viewMode))
-	switch mode {
-	case "file", "hex", "command":
-		draft.Viewer.Mode = mode
-	}
 	if strings.TrimSpace(st.viewFontFamily) != "" && resources.IsBundledFontFamily(st.viewFontFamily) {
 		draft.Viewer.Typeface = st.viewFontFamily
 	}

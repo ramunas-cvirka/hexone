@@ -94,6 +94,8 @@ The internal viewer has three explicit modes, plus automatic image-style preview
 - `hex` for raw bytes
 - `command` for shell output based on the selected file
 
+New viewer opens default to `file`; exact target commands and filename command rules open in `command`, while files over the configured read limit open in `hex` when no target or rule command applies.
+
 Useful viewer keys:
 
 - `F3` refreshes the current file or reruns the current command
@@ -200,7 +202,6 @@ On Windows, they currently live in the current working directory as `hexone.yaml
 
 Useful things to adjust:
 
-- default viewer mode
 - fallback command
 - exact target overrides
 - filename regex rules
@@ -217,7 +218,6 @@ Example:
 
 ```yaml
 viewer:
-  mode: command
   shell: auto
   command: cat {path}
   smooth_scrolling: true
@@ -241,7 +241,7 @@ Notes:
 - Priority 2: `command_rules` match the filename only; later matches override earlier ones
 - Priority 3: `command` is the generic fallback
 - `command_rules` switch the viewer into command mode automatically when a filename matches
-- `command_by_target` overrides the chosen command, but by itself it does not force command mode
+- `command_by_target` overrides the chosen command and opens that target in command mode by default
 - `remote_search_command` is used by SSH hex Find; set it to `off` to disable the remote utility path
 - `command_auto_refresh` matters most for non-streaming command mode
 - Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling and viewer auto-hide

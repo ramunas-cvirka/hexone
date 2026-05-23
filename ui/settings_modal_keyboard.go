@@ -23,7 +23,6 @@ const (
 	settingsKeyboardFocusGeneralPaneFontSize
 	settingsKeyboardFocusGeneralViewFont
 	settingsKeyboardFocusGeneralViewFontSize
-	settingsKeyboardFocusViewerMode
 	settingsKeyboardFocusViewerShell
 	settingsKeyboardFocusViewerRemoteSearch
 	settingsKeyboardFocusViewerSmoothScrolling
@@ -282,7 +281,6 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		order = append(order, settingsKeyboardFocusGeneralViewFontSize)
 	case "viewer":
 		order = append(order,
-			settingsKeyboardFocusViewerMode,
 			settingsKeyboardFocusViewerShell,
 			settingsKeyboardFocusViewerRemoteSearch,
 			settingsKeyboardFocusViewerSmoothScrolling,
@@ -1248,24 +1246,6 @@ func (st *settingsModalState) stepViewFontFamily(step int, families []resources.
 	return true
 }
 
-func (st *settingsModalState) stepViewMode(step int, now time.Time) bool {
-	if st == nil {
-		return false
-	}
-	keys := []string{"file", "hex", "command"}
-	current := st.viewMode
-	if current == "" {
-		current = "file"
-	}
-	next := settingsChoiceStep(current, keys, step)
-	if next == "" || next == current {
-		return false
-	}
-	st.setViewMode(next, now)
-	st.setViewModePulse(next, now)
-	return true
-}
-
 func (st *settingsModalState) stepColorScope(step int, now time.Time) bool {
 	if st == nil {
 		return false
@@ -1365,8 +1345,6 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 		return st.stepPaneFontFamily(step, families, now)
 	case settingsKeyboardFocusGeneralViewFont:
 		return st.stepViewFontFamily(step, families, now)
-	case settingsKeyboardFocusViewerMode:
-		return st.stepViewMode(step, now)
 	case settingsKeyboardFocusColorsScope:
 		return st.stepColorScope(step, now)
 	case settingsKeyboardFocusFilenameRuleMode:
