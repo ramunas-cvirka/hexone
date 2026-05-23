@@ -55,7 +55,7 @@ Use this when a folder makes more sense grouped by modification time, extension,
 ## Function Key Bar
 
 - `F1` opens or closes Help.
-- `F2` is currently reserved and not implemented yet.
+- `F2` opens custom commands. The first menu item opens the custom command editor; saved commands appear below it.
 - `F3` opens the Internal Viewer.
 - `F4` opens the selected file with the system association.
 - `F5` copies.
@@ -67,6 +67,18 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F11` hides or shows the function key bar.
 
 If the function key bar is auto-hidden in the viewer, `F11` can still bring it back.
+
+## Custom Commands
+
+`F2` is for saved shell snippets that are not tied to a single file. The editor stores up to 10 commands, each with a short name, optional shortcut, and multi-line command body.
+
+- `Run` saves the current command and shows its output in a command-only viewer.
+- `Ctrl+Enter` or `Cmd+Enter` runs from the editor.
+- `Ctrl+S` or `Cmd+S` saves from the editor without closing it.
+- `Esc` closes the editor, F2 menu, or command output viewer.
+- `Ctrl+1` through `Ctrl+0` run the saved commands while the F2 menu is open. Plain number keys also work there.
+
+Commands run locally for local panes and over SSH for connected remote panes. `{path}`, `{fullpath}`, and `{filename}` are expanded like viewer commands when used.
 
 ## Favorites And SSH
 
@@ -232,6 +244,15 @@ viewer:
   command_auto_refresh: true
   command_refresh_ms: 1500
   hide_function_bar_when_open: true
+
+custom_commands:
+  - name: Process summary
+    shortcut: Ctrl+1
+    command: |
+      pid=$(pidof gpstrack | awk '{print $1}')
+      python - "$pid" <<'PY'
+      print("PID", __import__("sys").argv[1])
+      PY
 ```
 
 Notes:

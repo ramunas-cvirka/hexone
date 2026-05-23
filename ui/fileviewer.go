@@ -97,6 +97,7 @@ type fileViewerState struct {
 	commandEditor        widget.Editor
 	wrapToggle           widget.Clickable
 	copyToggle           widget.Clickable
+	commandOnly          bool
 	commandEditOn        bool
 	commandFocus         bool
 	fileEncoding         string
@@ -404,8 +405,6 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 	}
 	if !editorFocused {
 		filters = append(filters,
-			key.Filter{Name: key.NameF3},
-			key.Filter{Name: key.NameTab, Optional: anyMods},
 			key.Filter{Name: key.NameUpArrow},
 			key.Filter{Name: key.NameDownArrow},
 			key.Filter{Name: key.NamePageUp},
@@ -421,6 +420,12 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			key.Filter{Name: "a", Required: key.ModShortcut, Optional: anyMods},
 			key.Filter{Name: "A", Required: key.ModShortcut, Optional: anyMods},
 		)
+		if !st.commandOnly {
+			filters = append(filters,
+				key.Filter{Name: key.NameF3},
+				key.Filter{Name: key.NameTab, Optional: anyMods},
+			)
+		}
 		if st.detectedImagePreview {
 			filters = append(filters,
 				key.Filter{Name: key.NameLeftArrow},
@@ -535,6 +540,9 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			}
 			ui.closeFileViewer()
 		case key.NameF3:
+			if st.commandOnly {
+				continue
+			}
 			ui.startFileViewerLoad(gtx.Now)
 		case key.NameEnter, key.NameReturn:
 			if !st.find.open || !findFocused {
@@ -551,6 +559,9 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 				}
 			}
 		case key.NameTab:
+			if st.commandOnly {
+				continue
+			}
 			step, ok := viewerModeTabStep(ke.Modifiers)
 			if !ok {
 				continue
@@ -2268,10 +2279,12 @@ func (ui *UI) refreshFileViewerNow(now time.Time) {
 	}
 	if ui != nil && ui.fmCfg != nil {
 		st.mode = normalizeViewerMode(st.mode)
-		if st.mode == "command" {
+		if st.mode == "command" && !st.commandOnly {
 			st.command, _, _ = ui.viewerDefaultCommand(st.path, st.remote, ui.fmCfg.Viewer.Command)
 		}
-		st.autoRefresh = ui.fmCfg.Viewer.CommandAutoRefresh
+		if !st.commandOnly {
+			st.autoRefresh = ui.fmCfg.Viewer.CommandAutoRefresh
+		}
 		st.fileEncoding = fm.NormalizeViewerFileEncoding(ui.fmCfg.Viewer.FileEncoding)
 	}
 	st.commandEditOn = false
@@ -2416,6 +2429,9 @@ func (st *fileViewerState) tabPosition(now time.Time) (float32, bool) {
 func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 	st := ui.fileViewer
 	if st == nil {
+		return
+	}
+	if st.commandOnly {
 		return
 	}
 	mode = normalizeViewerMode(mode)
@@ -3014,7 +3030,7 @@ func readViewerLocalCommand(ctx context.Context, path, cmdline string, shell vie
 	args := append(append([]string{}, shell.args...), cmdline)
 	cmd := exec.CommandContext(runCtx, shell.program, args...)
 	configureViewerCommandProcess(cmd)
-	cmd.Dir = filepath.Clean(filepath.Dir(path))
+	cmd.Dir = viewerLocalCommandWorkingDir(path)
 	buf := newViewerCommandBuffer(maxBytes, cancel, infinite)
 	cmd.Stdout = buf
 	cmd.Stderr = buf
@@ -3072,6 +3088,26 @@ loop:
 		return "", "no output", ""
 	}
 	return content, status, ""
+}
+
+func viewerLocalCommandWorkingDir(path string) string {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if clean == "" || clean == "." {
+		if cwd, err := os.Getwd(); err == nil {
+			return cwd
+		}
+		return "."
+	}
+	if info, err := filesys.StatLocalFilesystemPath(clean); err == nil && info.IsDir() {
+		return clean
+	}
+	dir := filepath.Clean(filepath.Dir(clean))
+	if dir == "" || dir == "." {
+		if cwd, err := os.Getwd(); err == nil {
+			return cwd
+		}
+	}
+	return dir
 }
 
 func readViewerRemoteCommand(ctx context.Context, remote *paneSSHSession, cmdline string, shell viewerShellSpec, maxBytes int, started time.Time, timeout time.Duration, infinite bool, onProgress func(string, string)) (string, string, string) {

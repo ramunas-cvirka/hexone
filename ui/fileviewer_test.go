@@ -932,6 +932,39 @@ func TestSetFileViewerModeClearsStaleErrorsAndPendingState(t *testing.T) {
 	}
 }
 
+func TestSetFileViewerModeLeavesCommandOnlyViewerInCommandMode(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = &fileViewerState{
+		mode:        "command",
+		command:     "uptime",
+		commandOnly: true,
+	}
+
+	ui.setFileViewerMode("file", time.Now())
+
+	if ui.fileViewer.mode != "command" {
+		t.Fatalf("mode=%q want command", ui.fileViewer.mode)
+	}
+	if ui.fileViewer.command != "uptime" {
+		t.Fatalf("command=%q want uptime", ui.fileViewer.command)
+	}
+}
+
+func TestViewerLocalCommandWorkingDirUsesDirectoryTargets(t *testing.T) {
+	dir := t.TempDir()
+	if got := viewerLocalCommandWorkingDir(dir); got != filepath.Clean(dir) {
+		t.Fatalf("working dir=%q want %q", got, filepath.Clean(dir))
+	}
+
+	path := filepath.Join(dir, "log.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+	if got := viewerLocalCommandWorkingDir(path); got != filepath.Clean(dir) {
+		t.Fatalf("file working dir=%q want %q", got, filepath.Clean(dir))
+	}
+}
+
 func TestViewerEncodingStatusLabelUsesBinaryPreviewLabel(t *testing.T) {
 	st := &fileViewerState{
 		fileEncoding:          fm.ViewerFileEncodingAuto,

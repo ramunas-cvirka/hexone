@@ -34,7 +34,7 @@ type functionBarAction uint8
 
 const (
 	functionBarActionHelp functionBarAction = iota
-	functionBarActionWIP
+	functionBarActionCustom
 	functionBarActionView
 	functionBarActionOpen
 	functionBarActionCopy
@@ -96,7 +96,7 @@ func popupPressed(gtx layout.Context, tag event.Tag) bool {
 }
 
 func (ui *UI) hasBlockingFileDialog() bool {
-	return ui != nil && (ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen())
+	return ui != nil && (ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.customCommandEditor != nil || ui.archiveExtractConflictOpen())
 }
 
 func (ui *UI) closeFunctionBarToolsMenu() {
@@ -109,6 +109,26 @@ func (ui *UI) closeFunctionBarToolsMenu() {
 	ui.functionBarToolsHoverID = ""
 	ui.functionBarToolsHoverAnim = segmentedAnimState{}
 	ui.functionBarToolsSelected = -1
+}
+
+func (ui *UI) closeCustomCommandMenu() {
+	if ui == nil {
+		return
+	}
+	ui.customCommandMenuOpen = false
+	ui.customCommandMenuRect = image.Rectangle{}
+	ui.customCommandMenuOpenedAt = time.Time{}
+	ui.customCommandMenuHoverID = ""
+	ui.customCommandMenuHoverAnim = segmentedAnimState{}
+	ui.customCommandMenuSelected = -1
+}
+
+func (ui *UI) closeFunctionBarPopups() {
+	if ui == nil {
+		return
+	}
+	ui.closeCustomCommandMenu()
+	ui.closeFunctionBarToolsMenu()
 }
 
 func (ui *UI) requestWindowClose() {
@@ -152,7 +172,7 @@ func (ui *UI) toggleFunctionBarVisibility(now time.Time) bool {
 	} else {
 		ui.functionBarHidden = !ui.functionBarHidden
 	}
-	ui.closeFunctionBarToolsMenu()
+	ui.closeFunctionBarPopups()
 	ui.setToolbarHover("", now)
 	if !ui.functionBarVisible() && ui.Tabs.Value == "tab0" {
 		if pane := ui.activePane(); pane != nil {
@@ -180,7 +200,7 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 	}
 
 	switch action {
-	case functionBarActionWIP:
+	case functionBarActionCustom:
 		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
 	case functionBarActionView:
 		if ui.fileViewer != nil {
@@ -205,20 +225,30 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
+		ui.closeFunctionBarPopups()
 		ui.openHelpModal()
 		return true
-	case functionBarActionWIP:
+	case functionBarActionCustom:
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
-		if pane := ui.activePane(); pane != nil {
-			pane.setNotice("F2 is not implemented yet", now)
-			return true
+		if ui.customCommandMenuOpen {
+			ui.closeCustomCommandMenu()
+		} else {
+			ui.closeFunctionBarToolsMenu()
+			items := ui.customCommandMenuSpecs()
+			ui.customCommandMenuOpen = true
+			ui.customCommandMenuOpenedAt = now
+			ui.customCommandMenuHoverID = ""
+			ui.customCommandMenuHoverAnim = segmentedAnimState{}
+			ui.customCommandMenuSelected = customCommandMenuDefaultIndex(items)
 		}
+		return true
 	case functionBarActionView:
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
+		ui.closeFunctionBarPopups()
 		if ui.fileViewer != nil {
 			ui.startFileViewerLoad(now)
 			return true
@@ -229,30 +259,35 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
+		ui.closeFunctionBarPopups()
 		ui.startFileExternalOpenAction(ui.activeFilePane, now)
 		return true
 	case functionBarActionCopy:
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
+		ui.closeFunctionBarPopups()
 		ui.startFileCopyDialog(ui.activeFilePane, now)
 		return true
 	case functionBarActionMove:
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
+		ui.closeFunctionBarPopups()
 		ui.startFileMoveDialog(ui.activeFilePane, now)
 		return true
 	case functionBarActionCreate:
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
+		ui.closeFunctionBarPopups()
 		ui.startFileCreateDialog(ui.activeFilePane, now)
 		return true
 	case functionBarActionDelete:
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
+		ui.closeFunctionBarPopups()
 		ui.startFileDeleteDialog(ui.activeFilePane, now)
 		return true
 	case functionBarActionTools:
@@ -262,6 +297,7 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		if ui.functionBarToolsOpen {
 			ui.closeFunctionBarToolsMenu()
 		} else {
+			ui.closeCustomCommandMenu()
 			items := ui.functionBarToolSpecs()
 			ui.functionBarToolsOpen = true
 			ui.functionBarToolsOpenedAt = now
@@ -271,7 +307,7 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		}
 		return true
 	case functionBarActionExit:
-		ui.closeFunctionBarToolsMenu()
+		ui.closeFunctionBarPopups()
 		ui.requestWindowClose()
 		return true
 	}
@@ -281,7 +317,7 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 func (ui *UI) functionBarButtonSpecs() []functionBarButtonSpec {
 	return []functionBarButtonSpec{
 		{action: functionBarActionHelp, keyLabel: "F1", label: "Help", click: &ui.functionBarClicks[0], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionHelp)},
-		{action: functionBarActionWIP, keyLabel: "F2", label: "WIP", click: &ui.functionBarClicks[1], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionWIP)},
+		{action: functionBarActionCustom, keyLabel: "F2", label: "Custom", click: &ui.functionBarClicks[1], activeFill: ui.customCommandMenuFill(), enabled: ui.functionBarActionEnabled(functionBarActionCustom)},
 		{action: functionBarActionView, keyLabel: "F3", label: "View", click: &ui.functionBarClicks[2], activeFill: boolFill(ui.fileViewer != nil), enabled: ui.functionBarActionEnabled(functionBarActionView)},
 		{action: functionBarActionOpen, keyLabel: "F4", label: "Open", click: &ui.functionBarClicks[3], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
 		{action: functionBarActionCopy, keyLabel: "F5", label: "Copy", click: &ui.functionBarClicks[4], activeFill: boolFill(ui.fileCopy != nil), enabled: ui.functionBarActionEnabled(functionBarActionCopy)},
@@ -309,6 +345,16 @@ func (ui *UI) functionBarToolsFill() float32 {
 	}
 	if ui.settingsModal != nil || ui.Tabs.Value == "tab1" || ui.Tabs.Value == "tab2" {
 		return 0.7
+	}
+	return 0
+}
+
+func (ui *UI) customCommandMenuFill() float32 {
+	if ui == nil {
+		return 0
+	}
+	if ui.customCommandMenuOpen || ui.customCommandEditor != nil {
+		return 1
 	}
 	return 0
 }
@@ -437,7 +483,7 @@ func (ui *UI) functionBarShortcutLabel(keys string) string {
 
 func (ui *UI) functionBarModifierHintSpecs() []functionBarHintSpec {
 	mod := ui.functionBarHeldHintModifier()
-	if ui == nil || mod == 0 || ui.functionBarToolsOpen {
+	if ui == nil || mod == 0 || ui.customCommandMenuOpen || ui.functionBarToolsOpen {
 		return nil
 	}
 	if ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
@@ -554,6 +600,7 @@ func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context,
 		stripH = 1
 	}
 	ui.functionBarToolsButtonRect = image.Rectangle{}
+	ui.customCommandMenuButtonRect = image.Rectangle{}
 
 	return layout.Inset{
 		Top:   unit.Dp(functionBarTopInsetDp),
@@ -684,6 +731,8 @@ func (ui *UI) functionBarActiveIndex(specs []functionBarButtonSpec) int {
 		return -1
 	}
 	switch {
+	case ui.customCommandMenuOpen, ui.customCommandEditor != nil:
+		return ui.functionBarIndexForAction(specs, functionBarActionCustom)
 	case ui.functionBarToolsOpen, ui.settingsModal != nil, ui.Tabs.Value == "tab1", ui.Tabs.Value == "tab2":
 		return ui.functionBarIndexForAction(specs, functionBarActionTools)
 	case ui.fileDelete != nil:
@@ -821,6 +870,7 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 		stripH = 1
 	}
 	ui.functionBarToolsButtonRect = image.Rectangle{}
+	ui.customCommandMenuButtonRect = image.Rectangle{}
 
 	animating := sliderAnim
 	dims := layout.Inset{
@@ -885,6 +935,9 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 								i := i
 								spec := spec
 								segW := widths[i]
+								if spec.action == functionBarActionCustom {
+									ui.customCommandMenuButtonRect = image.Rect(cursorX, y0, cursorX+segW, y0+stripH)
+								}
 								if spec.action == functionBarActionTools {
 									ui.functionBarToolsButtonRect = image.Rect(cursorX, y0, cursorX+segW, y0+stripH)
 								}
@@ -909,9 +962,6 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 											bg = mixNRGBA(bg, color.NRGBA{R: 255, G: 255, B: 255, A: 16}, pulseFill*0.18)
 
 											fg := slidingStripTextColor(proximity, hoverFill, pulseFill)
-											if spec.action == functionBarActionWIP {
-												fg = mixNRGBA(fg, color.NRGBA{R: 170, G: 176, B: 188, A: 255}, 0.35)
-											}
 											if !spec.enabled {
 												bg = dimColor(bg, uint8(float32(bg.A)*0.6))
 												fg = mixNRGBA(dimColor(fg, 112), fg, hoverFill*0.55+proximity*0.35)
@@ -1084,7 +1134,7 @@ func (ui *UI) activateFunctionBarTool(key string, now time.Time) {
 	if ui == nil {
 		return
 	}
-	ui.closeFunctionBarToolsMenu()
+	ui.closeFunctionBarPopups()
 	switch key {
 	case "files":
 		ui.setActiveTab("tab0", now)

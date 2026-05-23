@@ -94,7 +94,7 @@ func (ui *UI) saveFMConfigWithOptions(reason string, allowDefaultReset bool) err
 	if strings.TrimSpace(reason) == "" {
 		reason = "runtime"
 	}
-	log.Printf("save config: reason=%s path=%s favorites=%d ssh=%d command_history=%d command_targets=%d", reason, path, len(ui.fmCfg.FavoriteLocations), len(ui.fmCfg.SSH.Setups), len(ui.fmCfg.Viewer.CommandHistory), len(ui.fmCfg.Viewer.CommandByTarget))
+	log.Printf("save config: reason=%s path=%s favorites=%d ssh=%d custom_commands=%d command_history=%d command_targets=%d", reason, path, len(ui.fmCfg.FavoriteLocations), len(ui.fmCfg.SSH.Setups), len(ui.fmCfg.CustomCommands), len(ui.fmCfg.Viewer.CommandHistory), len(ui.fmCfg.Viewer.CommandByTarget))
 	return fm.SaveConfig(path, ui.fmCfg)
 }
 
@@ -127,7 +127,7 @@ func configHasCriticalUserState(cfg *fm.Config) bool {
 		return false
 	}
 	defaultCfg := fm.DefaultConfig()
-	if len(cfg.FavoriteLocations) > 0 || len(cfg.SSH.Setups) > 0 || len(cfg.Viewer.CommandByTarget) > 0 || len(cfg.Viewer.CommandHistory) > 0 || len(cfg.Viewer.CommandRules) > 0 || len(cfg.Associations) > 0 {
+	if len(cfg.FavoriteLocations) > 0 || len(cfg.SSH.Setups) > 0 || len(cfg.CustomCommands) > 0 || len(cfg.Viewer.CommandByTarget) > 0 || len(cfg.Viewer.CommandHistory) > 0 || len(cfg.Viewer.CommandRules) > 0 || len(cfg.Associations) > 0 {
 		return true
 	}
 	return strings.TrimSpace(cfg.Viewer.Command) != strings.TrimSpace(defaultCfg.Viewer.Command)
@@ -153,6 +153,8 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 		rebased.Viewer.Command = next.Viewer.Command
 		rebased.Viewer.CommandByTarget = cloneStringMap(next.Viewer.CommandByTarget)
 		rebased.Viewer.CommandHistory = cloneStringSlice(next.Viewer.CommandHistory)
+	case "custom-commands":
+		rebased.CustomCommands = cloneCustomCommands(next.CustomCommands)
 	case "favorites-add", "favorites-remove":
 		rebased.FavoriteLocations = cloneStringSlice(next.FavoriteLocations)
 	case "ssh-modal":
@@ -172,6 +174,7 @@ func cloneFMConfigForRuntimeSave(cfg *fm.Config) *fm.Config {
 	out.FavoriteLocations = cloneStringSlice(cfg.FavoriteLocations)
 	out.Columns.FullDropPriority = cloneStringSlice(cfg.Columns.FullDropPriority)
 	out.Associations = cloneAssociationPrograms(cfg.Associations)
+	out.CustomCommands = cloneCustomCommands(cfg.CustomCommands)
 	out.Viewer.Associations = cloneViewerAssociations(cfg.Viewer.Associations)
 	out.Viewer.AssociatedExtensions = cloneStringSlice(cfg.Viewer.AssociatedExtensions)
 	out.Viewer.CommandRules = cloneViewerCommandRules(cfg.Viewer.CommandRules)
@@ -204,6 +207,13 @@ func cloneViewerCommandRules(src []fm.ViewerCommandRule) []fm.ViewerCommandRule 
 		return nil
 	}
 	return append([]fm.ViewerCommandRule(nil), src...)
+}
+
+func cloneCustomCommands(src []fm.CustomCommand) []fm.CustomCommand {
+	if src == nil {
+		return nil
+	}
+	return append([]fm.CustomCommand(nil), src...)
 }
 
 func cloneViewerAssociations(src []fm.ViewerAssociation) []fm.ViewerAssociation {

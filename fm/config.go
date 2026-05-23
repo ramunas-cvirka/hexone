@@ -156,6 +156,12 @@ type ViewerCommandRule struct {
 	Command string `yaml:"command"`
 }
 
+type CustomCommand struct {
+	Name     string `yaml:"name"`
+	Shortcut string `yaml:"shortcut,omitempty"`
+	Command  string `yaml:"command"`
+}
+
 type AssociationProgram struct {
 	AppPath    string   `yaml:"app_path"`
 	Extensions []string `yaml:"extensions"`
@@ -234,6 +240,7 @@ type Config struct {
 	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
+	CustomCommands    []CustomCommand      `yaml:"custom_commands,omitempty"`
 	Viewer            ViewerConfig         `yaml:"viewer"`
 	SSH               SSHConfig            `yaml:"ssh"`
 
@@ -251,6 +258,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		General           GeneralConfig        `yaml:"general"`
 		Colors            ColorsConfig         `yaml:"colors"`
 		Associations      []AssociationProgram `yaml:"associations,omitempty"`
+		CustomCommands    []CustomCommand      `yaml:"custom_commands,omitempty"`
 		Viewer            ViewerConfig         `yaml:"viewer"`
 		SSH               SSHConfig            `yaml:"ssh"`
 	}{
@@ -280,6 +288,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		General:           raw.General,
 		Colors:            raw.Colors,
 		Associations:      raw.Associations,
+		CustomCommands:    raw.CustomCommands,
 		Viewer:            raw.Viewer,
 		SSH:               raw.SSH,
 	}
@@ -325,7 +334,8 @@ func DefaultConfig() *Config {
 			CurrentDirBg:        DefaultCurrentDirBackgroundHex,
 			CurrentDirText:      DefaultCurrentDirTextHex,
 		},
-		Associations: nil,
+		Associations:   nil,
+		CustomCommands: nil,
 		Viewer: ViewerConfig{
 			FileEncoding:            ViewerFileEncodingAuto,
 			Typeface:                resources.BundledFontFamilyFiraCode,
@@ -624,6 +634,7 @@ func (c *Config) normalize() {
 	c.Colors.Filenames.PermissionRules = NormalizeFilenamePermissionRules(c.Colors.Filenames.PermissionRules)
 	c.Colors.Filenames.ExtensionRules = NormalizeFilenameExtensionRules(c.Colors.Filenames.ExtensionRules)
 	c.Colors.Filenames.SizeRules = NormalizeFilenameSizeRules(c.Colors.Filenames.SizeRules)
+	c.CustomCommands = NormalizeCustomCommands(c.CustomCommands)
 
 	c.Viewer.FileEncoding = NormalizeViewerFileEncoding(c.Viewer.FileEncoding)
 	switch strings.ToLower(strings.TrimSpace(c.Viewer.Shell)) {
@@ -888,6 +899,71 @@ func NormalizeViewerFileEncoding(raw string) string {
 	default:
 		return ViewerFileEncodingAuto
 	}
+}
+
+func NormalizeCustomCommand(raw CustomCommand) (CustomCommand, bool) {
+	command := strings.TrimSpace(raw.Command)
+	if command == "" {
+		return CustomCommand{}, false
+	}
+	name := strings.TrimSpace(raw.Name)
+	if name == "" {
+		name = customCommandFallbackName(command)
+	}
+	if name == "" {
+		return CustomCommand{}, false
+	}
+	return CustomCommand{
+		Name:     name,
+		Shortcut: strings.TrimSpace(raw.Shortcut),
+		Command:  command,
+	}, true
+}
+
+func NormalizeCustomCommands(raw []CustomCommand) []CustomCommand {
+	if len(raw) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(raw))
+	reversed := make([]CustomCommand, 0, len(raw))
+	for i := len(raw) - 1; i >= 0; i-- {
+		cmd, ok := NormalizeCustomCommand(raw[i])
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(cmd.Name)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		reversed = append(reversed, cmd)
+		if len(reversed) >= 10 {
+			break
+		}
+	}
+	if len(reversed) == 0 {
+		return nil
+	}
+	out := make([]CustomCommand, 0, len(reversed))
+	for i := len(reversed) - 1; i >= 0; i-- {
+		out = append(out, reversed[i])
+	}
+	return out
+}
+
+func customCommandFallbackName(command string) string {
+	for _, line := range strings.Split(command, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if utf8.RuneCountInString(line) > 48 {
+			runes := []rune(line)
+			line = strings.TrimSpace(string(runes[:48]))
+		}
+		return line
+	}
+	return ""
 }
 
 // NormalizeViewerAssociationExtension accepts forms like ".pdf", "pdf", or

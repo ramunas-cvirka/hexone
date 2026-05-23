@@ -146,3 +146,34 @@ func TestViewerCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 		t.Fatalf("target command=%q want %q", got, want)
 	}
 }
+
+func TestCustomCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	original.SSH.Setups = []fm.SSHSetup{{Name: "demo", Host: "example.com", Port: 22, User: "root"}}
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = path
+	ui.fmCfg.CustomCommands = []fm.CustomCommand{{Name: "Health", Command: "uptime"}}
+	if err := ui.saveFMConfigWithOptions("custom-commands", false); err != nil {
+		t.Fatalf("saveFMConfigWithOptions(custom-commands): %v", err)
+	}
+
+	saved := fm.LoadConfig(path)
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+	if got, want := len(saved.SSH.Setups), 1; got != want {
+		t.Fatalf("ssh setups count=%d want %d", got, want)
+	}
+	if got, want := len(saved.CustomCommands), 1; got != want {
+		t.Fatalf("custom command count=%d want %d", got, want)
+	}
+	if got, want := saved.CustomCommands[0].Name, "Health"; got != want {
+		t.Fatalf("custom command name=%q want %q", got, want)
+	}
+}

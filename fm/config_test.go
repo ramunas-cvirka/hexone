@@ -334,6 +334,53 @@ func TestNormalizeViewerCommandRules(t *testing.T) {
 	}
 }
 
+func TestNormalizeCustomCommandsKeepsTenNamedCommands(t *testing.T) {
+	cfg := DefaultConfig()
+	for i := 0; i < 12; i++ {
+		cfg.CustomCommands = append(cfg.CustomCommands, CustomCommand{
+			Name:     strings.TrimSpace(" cmd "),
+			Shortcut: " " + string(rune('a'+i)) + " ",
+			Command:  strings.TrimSpace("echo old"),
+		})
+		cfg.CustomCommands = append(cfg.CustomCommands, CustomCommand{
+			Name:    "cmd" + string(rune('a'+i)),
+			Command: " echo " + string(rune('a'+i)) + " ",
+		})
+	}
+	cfg.CustomCommands = append(cfg.CustomCommands,
+		CustomCommand{Name: "", Command: "  python - <<'PY'\nprint('hi')\nPY  "},
+		CustomCommand{Name: "empty", Command: "   "},
+	)
+
+	cfg.normalize()
+
+	if len(cfg.CustomCommands) != 10 {
+		t.Fatalf("custom command count=%d want 10", len(cfg.CustomCommands))
+	}
+	for _, cmd := range cfg.CustomCommands {
+		if strings.TrimSpace(cmd.Name) == "" || strings.TrimSpace(cmd.Command) == "" {
+			t.Fatalf("custom command should be normalized, got %#v", cmd)
+		}
+	}
+	for i := 1; i < len(cfg.CustomCommands); i++ {
+		if strings.EqualFold(cfg.CustomCommands[i-1].Name, cfg.CustomCommands[i].Name) {
+			t.Fatalf("duplicate command name survived normalization: %#v", cfg.CustomCommands)
+		}
+	}
+}
+
+func TestNormalizeCustomCommandDerivesNameFromFirstCommandLine(t *testing.T) {
+	cmd, ok := NormalizeCustomCommand(CustomCommand{
+		Command: "\n\n  echo hello | head -n 1\n",
+	})
+	if !ok {
+		t.Fatal("expected command to normalize")
+	}
+	if cmd.Name != "echo hello | head -n 1" {
+		t.Fatalf("derived name=%q", cmd.Name)
+	}
+}
+
 func TestNormalizeViewerRemoteSearchCommandDefaultsAndAllowsOff(t *testing.T) {
 	cfg := DefaultConfig()
 	if cfg.Viewer.RemoteSearchMode != ViewerRemoteSearchModeRemote {
