@@ -1643,8 +1643,9 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 	if disabled {
 		hoverFill = 0
 		pulseFill = 0
-		focusFill = 0
-		defaultFill = 0
+		if focusFill == 0 {
+			defaultFill = 0
+		}
 	}
 	dims := fixedWidth(gtx, segW, func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
@@ -1669,8 +1670,15 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 				fg = mixNRGBA(fg, color.NRGBA{R: 250, G: 246, B: 236, A: 255}, focusFill*0.3)
 
 				if disabled {
-					bg = color.NRGBA{R: 24, G: 24, B: 24, A: 170}
-					fg = color.NRGBA{R: 160, G: 166, B: 180, A: 255}
+					disabledBg := color.NRGBA{R: 24, G: 24, B: 24, A: 170}
+					disabledFg := color.NRGBA{R: 160, G: 166, B: 180, A: 255}
+					bg = disabledBg
+					fg = disabledFg
+					if focusFill > 0 || defaultFill > 0 {
+						bg = mixNRGBA(bg, defaultCol, defaultFill*0.52)
+						bg = mixNRGBA(bg, focusCol, focusFill*0.32)
+						fg = mixNRGBA(fg, color.NRGBA{R: 244, G: 234, B: 206, A: 255}, clamp01(defaultFill*0.24+focusFill*0.24))
+					}
 				}
 
 				radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))

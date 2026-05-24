@@ -64,7 +64,7 @@ func TestFunctionBarCustomMenuSpecsStartWithEditorAndSavedCommands(t *testing.T)
 	ui := &UI{fmCfg: fm.DefaultConfig()}
 	ui.fmCfg.CustomCommands = []fm.CustomCommand{
 		{Name: "Health", Command: "uptime"},
-		{Name: "Ports", Shortcut: "Ctrl+P", Command: "ss -tanp"},
+		{Slot: 3, Name: "Ports", Command: "ss -tanp"},
 	}
 
 	items := ui.customCommandMenuSpecs()
@@ -80,8 +80,8 @@ func TestFunctionBarCustomMenuSpecsStartWithEditorAndSavedCommands(t *testing.T)
 	if got, want := items[1].shortcut, "Ctrl+1"; got != want {
 		t.Fatalf("first command shortcut=%q want %q", got, want)
 	}
-	if got, want := items[2].shortcut, "Ctrl+P"; got != want {
-		t.Fatalf("configured shortcut=%q want %q", got, want)
+	if got, want := items[2].shortcut, "Ctrl+3"; got != want {
+		t.Fatalf("fixed slot shortcut=%q want %q", got, want)
 	}
 }
 
@@ -107,13 +107,16 @@ func TestFunctionBarCustomActionOpensMenuAndClosesTools(t *testing.T) {
 	}
 }
 
-func TestCustomCommandShortcutMatchingAcceptsConfiguredModifier(t *testing.T) {
-	ke := key.Event{Name: "p", State: key.Press, Modifiers: key.ModCtrl}
-	if !customCommandShortcutMatches(ke, "Ctrl+P") {
-		t.Fatal("Ctrl+P should match lowercase key event")
+func TestCustomCommandShortcutSlotUsesFixedNumberBindings(t *testing.T) {
+	slot, ok := customCommandShortcutSlot(key.Event{Name: "3", State: key.Press, Modifiers: key.ModCtrl | key.ModShortcut})
+	if !ok || slot != 2 {
+		t.Fatalf("Ctrl+3 slot=%d ok=%v want slot 2", slot, ok)
 	}
-	if customCommandShortcutMatches(ke, "Alt+P") {
-		t.Fatal("Alt+P should not match Ctrl+P key event")
+	if _, ok := customCommandShortcutSlot(key.Event{Name: "p", State: key.Press, Modifiers: key.ModCtrl}); ok {
+		t.Fatal("custom letter shortcuts should not be accepted")
+	}
+	if _, ok := customCommandShortcutSlot(key.Event{Name: "3", State: key.Press, Modifiers: key.ModCtrl | key.ModAlt}); ok {
+		t.Fatal("custom command shortcuts should not accept extra modifiers")
 	}
 }
 
@@ -141,6 +144,19 @@ func TestFunctionBarExitRequestsWindowClose(t *testing.T) {
 	}
 	if ui.ConsumeWindowCloseRequest() {
 		t.Fatal("close request should only be consumed once")
+	}
+}
+
+func TestFunctionBarExitDisabledWhileCustomCommandEditorOpen(t *testing.T) {
+	ui := &UI{customCommandEditor: &customCommandEditorState{}}
+	if ui.functionBarActionEnabled(functionBarActionExit) {
+		t.Fatal("exit should be disabled while the custom command editor is open")
+	}
+	if ui.performFunctionBarAction(functionBarActionExit, time.Now()) {
+		t.Fatal("exit action should not run while the custom command editor is open")
+	}
+	if ui.ConsumeWindowCloseRequest() {
+		t.Fatal("disabled exit should not request window close")
 	}
 }
 

@@ -38,16 +38,14 @@ type customCommandMenuSpec struct {
 
 type customCommandEditorState struct {
 	draft    []fm.CustomCommand
+	saved    []fm.CustomCommand
 	selected int
 
-	nameEdit     widget.Editor
-	shortcutEdit widget.Editor
-	commandEdit  widget.Editor
+	nameEdit    widget.Editor
+	commandEdit widget.Editor
 
 	backdropClick widget.Clickable
 	closeClick    widget.Clickable
-	newClick      widget.Clickable
-	deleteClick   widget.Clickable
 	cancelClick   widget.Clickable
 	saveClick     widget.Clickable
 	runClick      widget.Clickable
@@ -62,17 +60,12 @@ type customCommandEditorState struct {
 	actionFocus  customCommandEditorAction
 }
 
-type customCommandShortcutKey struct {
-	name key.Name
-	mods key.Modifiers
-}
-
 type customCommandEditorFocus uint8
 
 const (
 	customCommandEditorFocusNone customCommandEditorFocus = iota
+	customCommandEditorFocusSlots
 	customCommandEditorFocusName
-	customCommandEditorFocusShortcut
 	customCommandEditorFocusCommand
 	customCommandEditorFocusActions
 )
@@ -108,12 +101,15 @@ func (ui *UI) customCommandMenuSpecs() []customCommandMenuSpec {
 	if ui == nil || ui.fmCfg == nil {
 		return items
 	}
-	commands := fm.NormalizeCustomCommands(ui.fmCfg.CustomCommands)
+	commands := customCommandSlots(ui.fmCfg.CustomCommands)
 	for i, cmd := range commands {
+		if strings.TrimSpace(cmd.Command) == "" {
+			continue
+		}
 		items = append(items, customCommandMenuSpec{
 			key:      fmt.Sprintf("cmd:%d:%s", i, cmd.Name),
 			label:    cmd.Name,
-			shortcut: customCommandMenuShortcut(i, cmd.Shortcut),
+			shortcut: customCommandMenuShortcut(i),
 			index:    i,
 			command:  cmd,
 		})
@@ -121,10 +117,7 @@ func (ui *UI) customCommandMenuSpecs() []customCommandMenuSpec {
 	return items
 }
 
-func customCommandMenuShortcut(index int, configured string) string {
-	if shortcut := strings.TrimSpace(configured); shortcut != "" {
-		return shortcut
-	}
+func customCommandMenuShortcut(index int) string {
 	if index < 0 || index >= 10 {
 		return ""
 	}
@@ -135,69 +128,28 @@ func customCommandMenuShortcut(index int, configured string) string {
 	return "Ctrl+" + keyText
 }
 
-func parseCustomCommandShortcut(raw string) (customCommandShortcutKey, bool) {
-	parts := strings.Split(strings.TrimSpace(raw), "+")
-	if len(parts) == 0 {
-		return customCommandShortcutKey{}, false
+func customCommandSlots(raw []fm.CustomCommand) []fm.CustomCommand {
+	slots := make([]fm.CustomCommand, 10)
+	for i := range slots {
+		slots[i].Slot = i + 1
 	}
-	keyPart := strings.TrimSpace(parts[len(parts)-1])
-	if keyPart == "" {
-		return customCommandShortcutKey{}, false
-	}
-	var mods key.Modifiers
-	for _, rawPart := range parts[:len(parts)-1] {
-		switch strings.ToLower(strings.TrimSpace(rawPart)) {
-		case "ctrl", "control":
-			mods |= key.ModCtrl
-		case "cmd", "command", "shortcut":
-			mods |= key.ModShortcut
-		case "alt", "option":
-			mods |= key.ModAlt
-		case "shift":
-			mods |= key.ModShift
-		case "":
-		default:
-			return customCommandShortcutKey{}, false
-		}
-	}
-	return customCommandShortcutKey{name: key.Name(keyPart), mods: mods}, true
-}
-
-func customCommandShortcutNames(name key.Name) []key.Name {
-	raw := string(name)
-	if len(raw) == 1 {
-		lower := key.Name(strings.ToLower(raw))
-		upper := key.Name(strings.ToUpper(raw))
-		if lower != upper {
-			return []key.Name{lower, upper}
-		}
-	}
-	return []key.Name{name}
-}
-
-func customCommandShortcutMatches(ke key.Event, raw string) bool {
-	shortcut, ok := parseCustomCommandShortcut(raw)
-	if !ok || ke.Modifiers != shortcut.mods {
-		return false
-	}
-	eventName := strings.ToLower(string(ke.Name))
-	wantName := strings.ToLower(string(shortcut.name))
-	return eventName == wantName
-}
-
-func (ui *UI) customCommandShortcutKeyFilters(optional key.Modifiers) []event.Filter {
-	if ui == nil || ui.fmCfg == nil {
-		return nil
-	}
-	var filters []event.Filter
-	for _, cmd := range fm.NormalizeCustomCommands(ui.fmCfg.CustomCommands) {
-		shortcut, ok := parseCustomCommandShortcut(cmd.Shortcut)
-		if !ok {
+	for _, cmd := range fm.NormalizeCustomCommands(raw) {
+		if cmd.Slot < 1 || cmd.Slot > 10 {
 			continue
 		}
-		for _, name := range customCommandShortcutNames(shortcut.name) {
-			filters = append(filters, key.Filter{Name: name, Required: shortcut.mods, Optional: optional})
-		}
+		slots[cmd.Slot-1] = cmd
+	}
+	return slots
+}
+
+func customCommandShortcutKeyFilters(optional key.Modifiers) []event.Filter {
+	filters := make([]event.Filter, 0, 30)
+	for _, name := range []key.Name{"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"} {
+		filters = append(filters,
+			key.Filter{Name: name, Required: key.ModCtrl, Optional: optional},
+			key.Filter{Name: name, Required: key.ModShortcut, Optional: optional},
+			key.Filter{Name: name, Required: key.ModCommand, Optional: optional},
+		)
 	}
 	return filters
 }
@@ -297,63 +249,91 @@ func (ui *UI) activateCustomCommandMenuShortcut(name key.Name, mods key.Modifier
 	if ui == nil || !ui.customCommandMenuOpen {
 		return false
 	}
-	if mods != 0 && mods != key.ModCtrl && mods != key.ModShortcut {
+	idx, ok := customCommandShortcutSlotFromName(name)
+	if !ok {
 		return false
 	}
-	idx := -1
-	switch name {
-	case "1":
-		idx = 0
-	case "2":
-		idx = 1
-	case "3":
-		idx = 2
-	case "4":
-		idx = 3
-	case "5":
-		idx = 4
-	case "6":
-		idx = 5
-	case "7":
-		idx = 6
-	case "8":
-		idx = 7
-	case "9":
-		idx = 8
-	case "0":
-		idx = 9
-	}
-	if idx < 0 {
+	if mods != 0 && !customCommandShortcutModifier(mods) {
 		return false
 	}
-	items := ui.customCommandMenuSpecs()
-	itemIndex := idx + 1
-	if itemIndex >= len(items) {
+	if !ui.activateCustomCommandSlot(idx, now) {
 		return false
 	}
-	ui.activateCustomCommandMenuItem(items[itemIndex], now)
+	ui.closeCustomCommandMenu()
 	return true
 }
 
-func (ui *UI) activateCustomCommandConfiguredShortcut(ke key.Event, now time.Time) bool {
+func customCommandShortcutModifier(mods key.Modifiers) bool {
+	shortcutMods := key.ModCtrl | key.ModShortcut | key.ModCommand
+	return mods&shortcutMods != 0 && mods&^shortcutMods == 0
+}
+
+func customCommandShortcutSlotFromName(name key.Name) (int, bool) {
+	switch name {
+	case "1":
+		return 0, true
+	case "2":
+		return 1, true
+	case "3":
+		return 2, true
+	case "4":
+		return 3, true
+	case "5":
+		return 4, true
+	case "6":
+		return 5, true
+	case "7":
+		return 6, true
+	case "8":
+		return 7, true
+	case "9":
+		return 8, true
+	case "0":
+		return 9, true
+	default:
+		return -1, false
+	}
+}
+
+func customCommandShortcutSlot(ke key.Event) (int, bool) {
+	if !customCommandShortcutModifier(ke.Modifiers) {
+		return -1, false
+	}
+	return customCommandShortcutSlotFromName(ke.Name)
+}
+
+func (ui *UI) activateCustomCommandSlot(slot int, now time.Time) bool {
+	if ui == nil || ui.fmCfg == nil || slot < 0 || slot >= 10 {
+		return false
+	}
+	commands := customCommandSlots(ui.fmCfg.CustomCommands)
+	cmd := commands[slot]
+	if strings.TrimSpace(cmd.Command) == "" {
+		return false
+	}
+	return ui.startCustomCommandViewer(cmd, now)
+}
+
+func (ui *UI) activateCustomCommandFixedShortcut(ke key.Event, now time.Time) bool {
 	if ui == nil || ui.fmCfg == nil || ke.State != key.Press {
 		return false
 	}
-	for _, cmd := range fm.NormalizeCustomCommands(ui.fmCfg.CustomCommands) {
-		if strings.TrimSpace(cmd.Shortcut) == "" || !customCommandShortcutMatches(ke, cmd.Shortcut) {
-			continue
-		}
-		ui.closeCustomCommandMenu()
-		return ui.startCustomCommandViewer(cmd, now)
+	slot, ok := customCommandShortcutSlot(ke)
+	if !ok {
+		return false
 	}
-	return false
+	if !ui.activateCustomCommandSlot(slot, now) {
+		return false
+	}
+	ui.closeCustomCommandMenu()
+	return true
 }
 
 func (ui *UI) activateCustomCommandGlobalShortcut(ke key.Event, now time.Time) bool {
 	if ui == nil || ui.Tabs.Value != "tab0" || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() || ui.pathEditActive() || ui.fileViewer != nil {
 		return false
 	}
-	return ui.activateCustomCommandConfiguredShortcut(ke, now)
+	return ui.activateCustomCommandFixedShortcut(ke, now)
 }
 
 func (ui *UI) customCommandMenuAnchorRect(gtx layout.Context) image.Rectangle {
@@ -549,7 +529,7 @@ func (ui *UI) handleCustomCommandMenuKeys(gtx layout.Context) {
 				key.Filter{Name: name, Required: key.ModShortcut, Optional: anyMods},
 			)
 		}
-		filters = append(filters, ui.customCommandShortcutKeyFilters(anyMods)...)
+		filters = append(filters, customCommandShortcutKeyFilters(anyMods)...)
 		ev, ok := gtx.Event(filters...)
 		if !ok {
 			return
@@ -575,7 +555,7 @@ func (ui *UI) handleCustomCommandMenuKeys(gtx layout.Context) {
 		default:
 			handled = ui.activateCustomCommandMenuShortcut(ke.Name, ke.Modifiers, gtx.Now)
 			if !handled {
-				handled = ui.activateCustomCommandConfiguredShortcut(ke, gtx.Now)
+				handled = ui.activateCustomCommandFixedShortcut(ke, gtx.Now)
 			}
 		}
 		if handled {
@@ -594,8 +574,10 @@ func (ui *UI) openCustomCommandEditor(index int) {
 		}
 		return
 	}
+	slots := customCommandSlots(ui.fmCfg.CustomCommands)
 	st := &customCommandEditorState{
-		draft:        cloneCustomCommands(ui.fmCfg.CustomCommands),
+		draft:        cloneCustomCommands(slots),
+		saved:        cloneCustomCommands(slots),
 		selected:     -1,
 		focus:        customCommandEditorFocusCommand,
 		focusPending: customCommandEditorFocusCommand,
@@ -603,17 +585,13 @@ func (ui *UI) openCustomCommandEditor(index int) {
 	}
 	st.nameEdit.SingleLine = true
 	st.nameEdit.Submit = false
-	st.shortcutEdit.SingleLine = true
-	st.shortcutEdit.Submit = false
 	st.commandEdit.SingleLine = false
 	st.commandEdit.Submit = false
-	st.commandEdit.SetText("")
-	st.nameEdit.SetText("")
-	st.shortcutEdit.SetText("")
 	ui.customCommandEditor = st
-	if index >= 0 && index < len(st.draft) {
-		st.selectCommand(index)
+	if index < 0 || index >= 10 {
+		index = 0
 	}
+	st.selectSlot(index)
 }
 
 func (ui *UI) closeCustomCommandEditor() {
@@ -642,8 +620,8 @@ func (st *customCommandEditorState) focusOrder() []customCommandEditorFocus {
 		return nil
 	}
 	return []customCommandEditorFocus{
+		customCommandEditorFocusSlots,
 		customCommandEditorFocusName,
-		customCommandEditorFocusShortcut,
 		customCommandEditorFocusCommand,
 		customCommandEditorFocusActions,
 	}
@@ -653,18 +631,31 @@ func (st *customCommandEditorState) syncEditorFocus(gtx layout.Context) {
 	if st == nil {
 		return
 	}
+	switch st.focusPending {
+	case customCommandEditorFocusName:
+		if gtx.Focused(&st.nameEdit) {
+			st.focus = customCommandEditorFocusName
+			st.focusPending = customCommandEditorFocusNone
+		}
+		return
+	case customCommandEditorFocusCommand:
+		if gtx.Focused(&st.commandEdit) {
+			st.focus = customCommandEditorFocusCommand
+			st.focusPending = customCommandEditorFocusNone
+		}
+		return
+	case customCommandEditorFocusSlots, customCommandEditorFocusActions:
+		if gtx.Focused(&st.keyFocus.tag) {
+			st.focus = st.focusPending
+			st.focusPending = customCommandEditorFocusNone
+		}
+		return
+	}
 	switch {
 	case gtx.Focused(&st.nameEdit):
 		st.focus = customCommandEditorFocusName
-	case gtx.Focused(&st.shortcutEdit):
-		st.focus = customCommandEditorFocusShortcut
 	case gtx.Focused(&st.commandEdit):
 		st.focus = customCommandEditorFocusCommand
-	case gtx.Focused(&st.keyFocus.tag):
-		st.focus = customCommandEditorFocusActions
-		if st.focusPending == customCommandEditorFocusActions {
-			st.focusPending = customCommandEditorFocusNone
-		}
 	}
 }
 
@@ -672,10 +663,17 @@ func (st *customCommandEditorState) setFocus(target customCommandEditorFocus) bo
 	if st == nil || target == customCommandEditorFocusNone {
 		return false
 	}
+	prev := st.focus
 	changed := st.focus != target || st.focusPending != target
 	st.focus = target
 	st.focusPending = target
 	if target == customCommandEditorFocusActions {
+		if prev != customCommandEditorFocusActions {
+			st.actionFocus = customCommandEditorActionSave
+		}
+		st.keyFocus.focusKeyboard()
+	}
+	if target == customCommandEditorFocusSlots {
 		st.keyFocus.focusKeyboard()
 	}
 	return changed
@@ -728,7 +726,24 @@ func (st *customCommandEditorState) stepAction(step int) bool {
 	return true
 }
 
-func (st *customCommandEditorState) actionVisualState(target customCommandEditorAction, canSaveRun bool) dialogActionVisualState {
+func (st *customCommandEditorState) stepSlot(step int) bool {
+	if st == nil || step == 0 {
+		return false
+	}
+	st.ensureDraftSlots()
+	current := st.selected
+	if current < 0 || current >= 10 {
+		current = 0
+	}
+	next := dialogWrappedIndex(current, 10, step)
+	if next == st.selected {
+		return false
+	}
+	st.selectSlot(next)
+	return true
+}
+
+func (st *customCommandEditorState) actionVisualState(target customCommandEditorAction, _ bool) dialogActionVisualState {
 	if st == nil {
 		return dialogActionVisualState{}
 	}
@@ -736,43 +751,118 @@ func (st *customCommandEditorState) actionVisualState(target customCommandEditor
 		active := st.actionFocus == target
 		return dialogActionVisualState{Focused: active, Default: active}
 	}
-	return dialogActionVisualState{Default: canSaveRun && target == customCommandEditorActionSave}
+	return dialogActionVisualState{Default: target == customCommandEditorActionSave}
 }
 
-func (st *customCommandEditorState) clearFields() {
-	if st == nil {
-		return
-	}
-	st.selected = -1
-	st.nameEdit.SetText("")
-	st.shortcutEdit.SetText("")
-	st.commandEdit.SetText("")
-	st.setFocus(customCommandEditorFocusCommand)
-	st.lastErr = ""
+func customCommandEditorEquivalent(a, b fm.CustomCommand) bool {
+	return strings.TrimSpace(a.Name) == strings.TrimSpace(b.Name) &&
+		strings.TrimSpace(a.Command) == strings.TrimSpace(b.Command)
 }
 
-func (st *customCommandEditorState) selectCommand(index int) {
-	if st == nil || index < 0 || index >= len(st.draft) {
+func (st *customCommandEditorState) syncCurrentFieldsToDraft() {
+	if st == nil || st.selected < 0 || st.selected >= 10 {
 		return
 	}
+	st.ensureDraftSlots()
+	st.draft[st.selected] = fm.CustomCommand{
+		Slot:    st.selected + 1,
+		Name:    strings.TrimSpace(st.nameEdit.Text()),
+		Command: st.commandEdit.Text(),
+	}
+}
+
+func (st *customCommandEditorState) slotDirty(index int) bool {
+	if st == nil || index < 0 || index >= 10 {
+		return false
+	}
+	st.ensureDraftSlots()
+	if len(st.saved) != 10 {
+		st.saved = customCommandSlots(st.saved)
+	}
+	return !customCommandEditorEquivalent(st.draft[index], st.saved[index])
+}
+
+func (st *customCommandEditorState) loadSlotFields(index int) {
+	if st == nil || index < 0 || index >= 10 {
+		return
+	}
+	st.ensureDraftSlots()
 	cmd := st.draft[index]
 	st.selected = index
 	st.nameEdit.SetText(cmd.Name)
-	st.shortcutEdit.SetText(cmd.Shortcut)
 	st.commandEdit.SetText(cmd.Command)
 	st.commandEdit.SetCaret(st.commandEdit.Len(), st.commandEdit.Len())
-	st.setFocus(customCommandEditorFocusCommand)
 	st.lastErr = ""
+}
+
+func (st *customCommandEditorState) selectSlot(index int) {
+	if st == nil || index < 0 || index >= 10 {
+		return
+	}
+	st.syncCurrentFieldsToDraft()
+	st.loadSlotFields(index)
+}
+
+func (st *customCommandEditorState) selectCommand(index int) {
+	if st == nil || index < 0 || index >= 10 {
+		return
+	}
+	st.selectSlot(index)
+	st.setFocus(customCommandEditorFocusCommand)
+}
+
+func (st *customCommandEditorState) ensureDraftSlots() {
+	if st == nil {
+		return
+	}
+	if len(st.draft) != 10 {
+		st.draft = customCommandSlots(st.draft)
+	}
+	if len(st.saved) != 10 {
+		st.saved = customCommandSlots(st.saved)
+	}
+	for i := range st.draft {
+		st.draft[i].Slot = i + 1
+	}
+	for i := range st.saved {
+		st.saved[i].Slot = i + 1
+	}
+}
+
+func (st *customCommandEditorState) refreshSavedSlotsFromConfig(cfg *fm.Config) {
+	if st == nil || cfg == nil {
+		return
+	}
+	slots := customCommandSlots(cfg.CustomCommands)
+	st.draft = cloneCustomCommands(slots)
+	st.saved = cloneCustomCommands(slots)
+	index := st.selected
+	if index < 0 || index >= 10 {
+		index = 0
+	}
+	st.loadSlotFields(index)
+}
+
+func (st *customCommandEditorState) selectedDraftCommand() fm.CustomCommand {
+	if st == nil || st.selected < 0 || st.selected >= 10 {
+		return fm.CustomCommand{}
+	}
+	st.ensureDraftSlots()
+	return st.draft[st.selected]
 }
 
 func (st *customCommandEditorState) currentCommandFields() (fm.CustomCommand, error) {
 	if st == nil {
 		return fm.CustomCommand{}, fmt.Errorf("custom command editor is not open")
 	}
+	st.ensureDraftSlots()
+	if st.selected < 0 || st.selected >= 10 {
+		return fm.CustomCommand{}, fmt.Errorf("custom command slot is not selected")
+	}
 	cmd, ok := fm.NormalizeCustomCommand(fm.CustomCommand{
-		Name:     st.nameEdit.Text(),
-		Shortcut: st.shortcutEdit.Text(),
-		Command:  st.commandEdit.Text(),
+		Slot:    st.selected + 1,
+		Name:    st.nameEdit.Text(),
+		Command: st.commandEdit.Text(),
 	})
 	if !ok {
 		return fm.CustomCommand{}, fmt.Errorf("command is empty")
@@ -785,51 +875,15 @@ func (st *customCommandEditorState) upsertCurrentCommand() (fm.CustomCommand, er
 	if err != nil {
 		return fm.CustomCommand{}, err
 	}
-	commands := fm.NormalizeCustomCommands(st.draft)
-	idx := -1
-	if st.selected >= 0 && st.selected < len(commands) {
-		idx = st.selected
-	}
-	for i, existing := range commands {
-		if strings.EqualFold(existing.Name, cmd.Name) {
-			idx = i
-			break
-		}
-	}
-	if idx >= 0 {
-		commands[idx] = cmd
-	} else {
-		if len(commands) >= 10 {
-			return fm.CustomCommand{}, fmt.Errorf("custom command limit is 10")
-		}
-		commands = append(commands, cmd)
-		idx = len(commands) - 1
-	}
-	st.draft = fm.NormalizeCustomCommands(commands)
-	for i, existing := range st.draft {
-		if strings.EqualFold(existing.Name, cmd.Name) {
-			st.selected = i
-			break
-		}
-	}
+	st.ensureDraftSlots()
+	cmd.Slot = st.selected + 1
+	st.draft[st.selected] = cmd
 	return cmd, nil
 }
 
 func (st *customCommandEditorState) canUpsertCurrentCommand() bool {
-	cmd, err := st.currentCommandFields()
-	if err != nil {
-		return false
-	}
-	commands := fm.NormalizeCustomCommands(st.draft)
-	if st.selected >= 0 && st.selected < len(commands) {
-		return true
-	}
-	for _, existing := range commands {
-		if strings.EqualFold(existing.Name, cmd.Name) {
-			return true
-		}
-	}
-	return len(commands) < 10
+	_, err := st.currentCommandFields()
+	return err == nil
 }
 
 func (ui *UI) saveCustomCommandEditorDraft() error {
@@ -839,6 +893,7 @@ func (ui *UI) saveCustomCommandEditorDraft() error {
 	if err := ui.ensureFMConfigLoaded(); err != nil {
 		return err
 	}
+	ui.customCommandEditor.ensureDraftSlots()
 	ui.fmCfg.CustomCommands = fm.NormalizeCustomCommands(ui.customCommandEditor.draft)
 	return ui.saveFMConfigWithOptions("custom-commands", false)
 }
@@ -848,6 +903,22 @@ func (ui *UI) saveCurrentCustomCommand() bool {
 	if st == nil {
 		return false
 	}
+	st.syncCurrentFieldsToDraft()
+	st.ensureDraftSlots()
+	if st.selected < 0 || st.selected >= 10 {
+		st.lastErr = "custom command slot is not selected"
+		return false
+	}
+	if strings.TrimSpace(st.commandEdit.Text()) == "" {
+		st.draft[st.selected] = fm.CustomCommand{Slot: st.selected + 1}
+		if err := ui.saveCustomCommandEditorDraft(); err != nil {
+			st.lastErr = err.Error()
+			return false
+		}
+		st.refreshSavedSlotsFromConfig(ui.fmCfg)
+		st.lastErr = ""
+		return true
+	}
 	if _, err := st.upsertCurrentCommand(); err != nil {
 		st.lastErr = err.Error()
 		return false
@@ -856,7 +927,8 @@ func (ui *UI) saveCurrentCustomCommand() bool {
 		st.lastErr = err.Error()
 		return false
 	}
-	st.lastErr = "saved"
+	st.refreshSavedSlotsFromConfig(ui.fmCfg)
+	st.lastErr = ""
 	return true
 }
 
@@ -865,6 +937,7 @@ func (ui *UI) runCurrentCustomCommand(now time.Time) bool {
 	if st == nil {
 		return false
 	}
+	st.syncCurrentFieldsToDraft()
 	cmd, err := st.upsertCurrentCommand()
 	if err != nil {
 		st.lastErr = err.Error()
@@ -878,28 +951,13 @@ func (ui *UI) runCurrentCustomCommand(now time.Time) bool {
 	return ui.startCustomCommandViewer(cmd, now)
 }
 
-func (ui *UI) deleteSelectedCustomCommand() bool {
-	st := ui.customCommandEditor
-	if st == nil || st.selected < 0 || st.selected >= len(st.draft) {
-		return false
-	}
-	st.draft = append(st.draft[:st.selected], st.draft[st.selected+1:]...)
-	st.draft = fm.NormalizeCustomCommands(st.draft)
-	st.clearFields()
-	if err := ui.saveCustomCommandEditorDraft(); err != nil {
-		st.lastErr = err.Error()
-		return false
-	}
-	st.lastErr = "deleted"
-	return true
-}
-
 func (ui *UI) handleCustomCommandEditorKeys(gtx layout.Context, st *customCommandEditorState) bool {
 	if ui == nil || st == nil {
 		return false
 	}
 	anyMods := ^key.Modifiers(0)
 	for {
+		editorFocused := gtx.Focused(&st.nameEdit) || gtx.Focused(&st.commandEdit)
 		filters := []event.Filter{
 			key.Filter{Name: key.NameEscape, Optional: anyMods},
 			key.Filter{Name: key.NameTab, Optional: anyMods},
@@ -912,12 +970,14 @@ func (ui *UI) handleCustomCommandEditorKeys(gtx layout.Context, st *customComman
 			key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
 			key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
 		}
-		if st.focus == customCommandEditorFocusActions {
+		if st.focus == customCommandEditorFocusSlots || st.focus == customCommandEditorFocusActions || !editorFocused {
 			filters = append(filters,
 				key.Filter{Name: key.NameEnter, Optional: anyMods},
 				key.Filter{Name: key.NameReturn, Optional: anyMods},
 				key.Filter{Name: key.NameLeftArrow, Optional: anyMods},
 				key.Filter{Name: key.NameRightArrow, Optional: anyMods},
+				key.Filter{Name: key.NameUpArrow, Optional: anyMods},
+				key.Filter{Name: key.NameDownArrow, Optional: anyMods},
 			)
 		}
 		ev, ok := gtx.Event(filters...)
@@ -957,6 +1017,30 @@ func (ui *UI) handleCustomCommandEditorKeys(gtx layout.Context, st *customComman
 				gtx.Execute(op.InvalidateCmd{})
 			}
 			return true
+		case key.NameUpArrow:
+			if ke.Modifiers != 0 {
+				continue
+			}
+			switch st.focus {
+			case customCommandEditorFocusSlots:
+				if st.stepSlot(-1) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			default:
+			}
+			return true
+		case key.NameDownArrow:
+			if ke.Modifiers != 0 {
+				continue
+			}
+			switch st.focus {
+			case customCommandEditorFocusSlots:
+				if st.stepSlot(1) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+			default:
+			}
+			return true
 		case key.NameEnter, key.NameReturn:
 			if ke.Modifiers.Contain(key.ModCtrl) || ke.Modifiers.Contain(key.ModShortcut) {
 				if ui.runCurrentCustomCommand(gtx.Now) {
@@ -967,6 +1051,14 @@ func (ui *UI) handleCustomCommandEditorKeys(gtx layout.Context, st *customComman
 				return true
 			}
 			if ke.Modifiers != 0 || st.focus != customCommandEditorFocusActions {
+				if ke.Modifiers == 0 && st.focus == customCommandEditorFocusSlots {
+					st.setFocus(customCommandEditorFocusCommand)
+					gtx.Execute(op.InvalidateCmd{})
+					return true
+				}
+				if ke.Modifiers == 0 {
+					return true
+				}
 				continue
 			}
 			switch st.actionFocus {
@@ -995,6 +1087,32 @@ func (ui *UI) handleCustomCommandEditorKeys(gtx layout.Context, st *customComman
 	return false
 }
 
+func (ui *UI) handleCustomCommandEditorPreLayoutInput(gtx layout.Context) {
+	st := ui.customCommandEditor
+	if ui == nil || st == nil {
+		return
+	}
+	st.keyFocus.attach(gtx)
+	st.syncEditorFocus(gtx)
+	ui.handleCustomCommandEditorKeys(gtx, st)
+	st = ui.customCommandEditor
+	if st == nil {
+		return
+	}
+	for _, ed := range []*widget.Editor{&st.nameEdit, &st.commandEdit} {
+		for {
+			ev, ok := ed.Update(gtx)
+			if !ok {
+				break
+			}
+			if _, ok := ev.(widget.ChangeEvent); ok {
+				st.syncCurrentFieldsToDraft()
+				st.lastErr = ""
+			}
+		}
+	}
+}
+
 func (ui *UI) layoutCustomCommandEditor(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	st := ui.customCommandEditor
 	if st == nil {
@@ -1002,37 +1120,16 @@ func (ui *UI) layoutCustomCommandEditor(th *material.Theme, gtx layout.Context) 
 	}
 	st.keyFocus.attach(gtx)
 	st.syncEditorFocus(gtx)
-	if ui.handleCustomCommandEditorKeys(gtx, st) {
-		return layout.Dimensions{}
-	}
-	for _, ed := range []*widget.Editor{&st.nameEdit, &st.shortcutEdit, &st.commandEdit} {
-		for {
-			ev, ok := ed.Update(gtx)
-			if !ok {
-				break
-			}
-			if _, ok := ev.(widget.ChangeEvent); ok {
-				st.lastErr = ""
-			}
-		}
-	}
 
-	st.ensureCommandClicks(len(st.draft))
-	for i := range st.draft {
+	st.ensureDraftSlots()
+	st.ensureCommandClicks(10)
+	for i := 0; i < 10; i++ {
 		i := i
 		for st.commandClicks[i].Clicked(gtx) {
-			st.selectCommand(i)
+			st.selectSlot(i)
+			st.setFocus(customCommandEditorFocusSlots)
 			gtx.Execute(op.InvalidateCmd{})
 		}
-	}
-	if st.newClick.Clicked(gtx) {
-		st.clearFields()
-		gtx.Execute(op.InvalidateCmd{})
-	}
-	if st.deleteClick.Clicked(gtx) {
-		st.actionsAnim.setPulse("delete", gtx.Now)
-		ui.deleteSelectedCustomCommand()
-		gtx.Execute(op.InvalidateCmd{})
 	}
 	if st.cancelClick.Clicked(gtx) || st.closeClick.Clicked(gtx) {
 		st.actionFocus = customCommandEditorActionCancel
@@ -1101,8 +1198,6 @@ func (ui *UI) layoutCustomCommandEditor(th *material.Theme, gtx layout.Context) 
 func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Context, st *customCommandEditorState) layout.Dimensions {
 	hoverActionKey := ""
 	switch {
-	case st.deleteClick.Hovered():
-		hoverActionKey = "delete"
 	case st.cancelClick.Hovered():
 		hoverActionKey = "cancel"
 	case st.saveClick.Hovered():
@@ -1111,20 +1206,17 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 		hoverActionKey = "run"
 	}
 	st.actionsAnim.setHover(hoverActionKey, gtx.Now)
-	hoverDelete, hoverAnimDelete := st.actionsAnim.hoverFill(gtx.Now, "delete")
 	hoverCancel, hoverAnimCancel := st.actionsAnim.hoverFill(gtx.Now, "cancel")
 	hoverSave, hoverAnimSave := st.actionsAnim.hoverFill(gtx.Now, "save")
 	hoverRun, hoverAnimRun := st.actionsAnim.hoverFill(gtx.Now, "run")
-	pulseDelete, pulseAnimDelete := st.actionsAnim.pulseFill(gtx.Now, "delete")
 	pulseCancel, pulseAnimCancel := st.actionsAnim.pulseFill(gtx.Now, "cancel")
 	pulseSave, pulseAnimSave := st.actionsAnim.pulseFill(gtx.Now, "save")
 	pulseRun, pulseAnimRun := st.actionsAnim.pulseFill(gtx.Now, "run")
-	if hoverAnimDelete || hoverAnimCancel || hoverAnimSave || hoverAnimRun || pulseAnimDelete || pulseAnimCancel || pulseAnimSave || pulseAnimRun {
+	if hoverAnimCancel || hoverAnimSave || hoverAnimRun || pulseAnimCancel || pulseAnimSave || pulseAnimRun {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
-	canDelete := st.selected >= 0 && st.selected < len(st.draft)
-	canSaveRun := st.canUpsertCurrentCommand()
+	canRun := st.canUpsertCurrentCommand()
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1154,7 +1246,7 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Start}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedWidth(gtx, leftW, func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutCustomCommandEditorList(th, gtx, st, canDelete, hoverDelete, pulseDelete)
+						return ui.layoutCustomCommandEditorList(th, gtx, st)
 					})
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
@@ -1165,19 +1257,17 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.lastErr == "" {
-				return layout.Dimensions{}
-			}
-			col := hintColor
-			if st.lastErr != "saved" && st.lastErr != "deleted" {
-				col = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
-			}
-			lbl := material.Caption(th, st.lastErr)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
-			lbl.Color = col
-			lbl.MaxLines = 2
-			return lbl.Layout(gtx)
+			return fixedHeight(gtx, gtx.Dp(unit.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+				if st.lastErr == "" {
+					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Min.Y)}
+				}
+				lbl := material.Caption(th, st.lastErr)
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+				lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
+				lbl.MaxLines = 1
+				return lbl.Layout(gtx)
+			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1185,101 +1275,94 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 				return ui.layoutDialogActionTriple(
 					th, gtx,
 					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, false,
-					&st.saveClick, "Save", hoverSave, pulseSave, !canSaveRun,
-					&st.runClick, "Run", hoverRun, pulseRun, !canSaveRun,
-					st.actionVisualState(customCommandEditorActionCancel, canSaveRun),
-					st.actionVisualState(customCommandEditorActionSave, canSaveRun),
-					st.actionVisualState(customCommandEditorActionRun, canSaveRun),
+					&st.saveClick, "Save", hoverSave, pulseSave, false,
+					&st.runClick, "Run", hoverRun, pulseRun, !canRun,
+					st.actionVisualState(customCommandEditorActionCancel, canRun),
+					st.actionVisualState(customCommandEditorActionSave, canRun),
+					st.actionVisualState(customCommandEditorActionRun, canRun),
 				)
 			})
 		}),
 	)
 }
 
-func (ui *UI) layoutCustomCommandEditorList(th *material.Theme, gtx layout.Context, st *customCommandEditorState, canDelete bool, hoverDelete, pulseDelete float32) layout.Dimensions {
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(th, fmt.Sprintf("%d/10 saved", len(st.draft)))
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleDialogThemeFontSize(th, 9)
-					lbl.Color = hintColor
-					lbl.MaxLines = 1
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutDialogActionSingle(th, gtx, &st.deleteClick, "Delete", hoverDelete, pulseDelete, !canDelete, dialogActionVisualState{})
-				}),
-			)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return st.newClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutCustomCommandEditorListRow(th, gtx, "New command", "", st.selected < 0, st.newClick.Hovered())
-			})
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			children := make([]layout.FlexChild, 0, len(st.draft)*2)
-			for i, cmd := range st.draft {
-				i := i
-				cmd := cmd
-				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					click := &st.commandClicks[i]
-					return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutCustomCommandEditorListRow(th, gtx, cmd.Name, cmd.Shortcut, st.selected == i, click.Hovered())
-					})
-				}))
-				if i < len(st.draft)-1 {
-					children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout))
-				}
-			}
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
-		}),
-	)
+func customCommandEditorSlotLabel(st *customCommandEditorState, index int) string {
+	if st == nil || index < 0 || index >= 10 {
+		return ""
+	}
+	st.ensureDraftSlots()
+	name := strings.TrimSpace(st.draft[index].Name)
+	if name == "" {
+		name = fmt.Sprintf("Slot %d", index+1)
+	}
+	if st.slotDirty(index) {
+		name += " *"
+	}
+	return fmt.Sprintf("%s  %s", customCommandMenuShortcut(index), name)
 }
 
-func (ui *UI) layoutCustomCommandEditorListRow(th *material.Theme, gtx layout.Context, name, shortcut string, selected, hovered bool) layout.Dimensions {
-	theme := ui.filePanePopupTheme()
-	bg := theme.Bg
-	border := theme.Border
-	fg := theme.Text
-	detail := theme.Muted
-	if hovered {
-		bg = theme.HoverBg
-		fg = theme.HoverText
+func (ui *UI) layoutCustomCommandEditorList(th *material.Theme, gtx layout.Context, st *customCommandEditorState) layout.Dimensions {
+	st.ensureDraftSlots()
+	stripH := gtx.Dp(unit.Dp(30))
+	if stripH < 1 {
+		stripH = 1
 	}
-	if selected {
-		bg = theme.ActiveBg
-		fg = theme.ActiveText
-		detail = mixNRGBA(theme.ActiveText, theme.ActiveBg, 0.48)
+	sepH := gtx.Dp(unit.Dp(1))
+	if sepH < 1 {
+		sepH = 1
 	}
-	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, border, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, name)
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleDialogThemeFontSize(th, 10)
-					lbl.Font.Weight = font.Medium
-					lbl.Color = fg
-					lbl.MaxLines = 1
-					lbl.Truncator = "..."
-					return lbl.Layout(gtx)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if strings.TrimSpace(shortcut) == "" {
-						return layout.Dimensions{}
-					}
-					lbl := material.Caption(th, shortcut)
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleDialogThemeFontSize(th, 8)
-					lbl.Color = detail
-					lbl.MaxLines = 1
-					return lbl.Layout(gtx)
-				}),
-			)
+	totalH := stripH*10 + sepH*9
+	selected := st.selected
+	if selected < 0 || selected >= 10 {
+		selected = 0
+	}
+	return fillBgExact(gtx, color.NRGBA{R: 24, G: 24, B: 24, A: 255}, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, totalH, func(gtx layout.Context) layout.Dimensions {
+			w := gtx.Constraints.Max.X
+			if w < 1 {
+				w = 1
+			}
+			step := stripH + sepH
+			sliderY := selected * step
+			maxSliderY := totalH - stripH
+			if sliderY > maxSliderY {
+				sliderY = maxSliderY
+			}
+			if sliderY < 0 {
+				sliderY = 0
+			}
+
+			innerClip := clip.Rect(image.Rect(0, 0, w, totalH)).Push(gtx.Ops)
+			paint.FillShape(gtx.Ops, color.NRGBA{R: 54, G: 54, B: 54, A: 255}, clip.Rect(image.Rect(0, sliderY, w, sliderY+stripH)).Op())
+
+			children := make([]layout.FlexChild, 0, 19)
+			for i := 0; i < 10; i++ {
+				i := i
+				label := customCommandEditorSlotLabel(st, i)
+				activeFill := float32(0)
+				if i == selected {
+					activeFill = 1
+				}
+				hoverFill := float32(0)
+				if st.commandClicks[i].Hovered() {
+					hoverFill = 1
+				}
+				focusFill := float32(0)
+				if st.focus == customCommandEditorFocusSlots && i == selected {
+					focusFill = 1
+				}
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.commandClicks[i], label, activeFill, hoverFill, 0, focusFill, stripH)
+				}))
+				if i < 9 {
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layoutSettingsNavSeparator(gtx)
+					}))
+				}
+			}
+			dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			innerClip.Pop()
+			return dims
 		})
 	})
 }
@@ -1316,15 +1399,21 @@ func (ui *UI) layoutCustomCommandEditorFields(th *material.Theme, gtx layout.Con
 		}
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(rowLabel("Slot")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			text := fmt.Sprintf("%d / %s", st.selected+1, customCommandMenuShortcut(st.selected))
+			lbl := material.Body2(th, text)
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+			lbl.Color = txtColor
+			lbl.MaxLines = 1
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(rowLabel("Short name")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(editor("custom-command-name", "gpstrack summary", &st.nameEdit, 0, customCommandEditorFocusName)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(rowLabel("Shortcut")),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, gtx.Dp(unit.Dp(150)), editor("custom-command-shortcut", "Ctrl+1", &st.shortcutEdit, 0, customCommandEditorFocusShortcut))
-		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(rowLabel("Command")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),

@@ -157,9 +157,9 @@ type ViewerCommandRule struct {
 }
 
 type CustomCommand struct {
-	Name     string `yaml:"name"`
-	Shortcut string `yaml:"shortcut,omitempty"`
-	Command  string `yaml:"command"`
+	Slot    int    `yaml:"slot,omitempty"`
+	Name    string `yaml:"name"`
+	Command string `yaml:"command"`
 }
 
 type AssociationProgram struct {
@@ -913,10 +913,14 @@ func NormalizeCustomCommand(raw CustomCommand) (CustomCommand, bool) {
 	if name == "" {
 		return CustomCommand{}, false
 	}
+	slot := raw.Slot
+	if slot < 1 || slot > 10 {
+		slot = 0
+	}
 	return CustomCommand{
-		Name:     name,
-		Shortcut: strings.TrimSpace(raw.Shortcut),
-		Command:  command,
+		Slot:    slot,
+		Name:    name,
+		Command: command,
 	}, true
 }
 
@@ -924,29 +928,39 @@ func NormalizeCustomCommands(raw []CustomCommand) []CustomCommand {
 	if len(raw) == 0 {
 		return nil
 	}
-	seen := make(map[string]struct{}, len(raw))
-	reversed := make([]CustomCommand, 0, len(raw))
-	for i := len(raw) - 1; i >= 0; i-- {
-		cmd, ok := NormalizeCustomCommand(raw[i])
+	slots := make([]CustomCommand, 10)
+	used := make([]bool, 10)
+	nextSlot := 1
+	for _, rawCmd := range raw {
+		cmd, ok := NormalizeCustomCommand(rawCmd)
 		if !ok {
 			continue
 		}
-		key := strings.ToLower(cmd.Name)
-		if _, exists := seen[key]; exists {
+		slot := cmd.Slot
+		if slot < 1 || slot > 10 {
+			for nextSlot <= 10 && used[nextSlot-1] {
+				nextSlot++
+			}
+			if nextSlot > 10 {
+				continue
+			}
+			slot = nextSlot
+			nextSlot++
+		}
+		cmd.Slot = slot
+		slots[slot-1] = cmd
+		used[slot-1] = true
+	}
+	out := make([]CustomCommand, 0, 10)
+	for i, cmd := range slots {
+		if !used[i] {
 			continue
 		}
-		seen[key] = struct{}{}
-		reversed = append(reversed, cmd)
-		if len(reversed) >= 10 {
-			break
-		}
+		cmd.Slot = i + 1
+		out = append(out, cmd)
 	}
-	if len(reversed) == 0 {
+	if len(out) == 0 {
 		return nil
-	}
-	out := make([]CustomCommand, 0, len(reversed))
-	for i := len(reversed) - 1; i >= 0; i-- {
-		out = append(out, reversed[i])
 	}
 	return out
 }

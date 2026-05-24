@@ -188,7 +188,7 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 	}
 	switch action {
 	case functionBarActionExit:
-		return true
+		return ui.helpModal == nil && ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
 	case functionBarActionHelp:
 		return ui.helpModal == nil && ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
 	case functionBarActionTools:
@@ -307,6 +307,9 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		}
 		return true
 	case functionBarActionExit:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
 		ui.closeFunctionBarPopups()
 		ui.requestWindowClose()
 		return true

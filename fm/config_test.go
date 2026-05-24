@@ -334,13 +334,12 @@ func TestNormalizeViewerCommandRules(t *testing.T) {
 	}
 }
 
-func TestNormalizeCustomCommandsKeepsTenNamedCommands(t *testing.T) {
+func TestNormalizeCustomCommandsKeepsTenFixedSlots(t *testing.T) {
 	cfg := DefaultConfig()
 	for i := 0; i < 12; i++ {
 		cfg.CustomCommands = append(cfg.CustomCommands, CustomCommand{
-			Name:     strings.TrimSpace(" cmd "),
-			Shortcut: " " + string(rune('a'+i)) + " ",
-			Command:  strings.TrimSpace("echo old"),
+			Name:    strings.TrimSpace(" cmd "),
+			Command: strings.TrimSpace("echo old"),
 		})
 		cfg.CustomCommands = append(cfg.CustomCommands, CustomCommand{
 			Name:    "cmd" + string(rune('a'+i)),
@@ -361,10 +360,13 @@ func TestNormalizeCustomCommandsKeepsTenNamedCommands(t *testing.T) {
 		if strings.TrimSpace(cmd.Name) == "" || strings.TrimSpace(cmd.Command) == "" {
 			t.Fatalf("custom command should be normalized, got %#v", cmd)
 		}
+		if cmd.Slot < 1 || cmd.Slot > 10 {
+			t.Fatalf("custom command slot=%d want 1..10", cmd.Slot)
+		}
 	}
-	for i := 1; i < len(cfg.CustomCommands); i++ {
-		if strings.EqualFold(cfg.CustomCommands[i-1].Name, cfg.CustomCommands[i].Name) {
-			t.Fatalf("duplicate command name survived normalization: %#v", cfg.CustomCommands)
+	for i, cmd := range cfg.CustomCommands {
+		if cmd.Slot != i+1 {
+			t.Fatalf("custom command slot at index %d=%d want %d", i, cmd.Slot, i+1)
 		}
 	}
 }

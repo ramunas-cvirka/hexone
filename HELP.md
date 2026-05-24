@@ -70,13 +70,14 @@ If the function key bar is auto-hidden in the viewer, `F11` can still bring it b
 
 ## Custom Commands
 
-`F2` is for saved shell snippets that are not tied to a single file. The editor stores up to 10 commands, each with a short name, optional shortcut, and multi-line command body.
+`F2` is for saved shell snippets that are not tied to a single file. The editor stores up to 10 fixed slots, each with a short name and multi-line command body.
 
 - `Run` saves the current command and shows its output in a command-only viewer.
+- Saving an empty command clears the selected slot.
 - `Ctrl+Enter` or `Cmd+Enter` runs from the editor.
 - `Ctrl+S` or `Cmd+S` saves from the editor without closing it.
 - `Esc` closes the editor, F2 menu, or command output viewer.
-- `Ctrl+1` through `Ctrl+0` run the saved commands while the F2 menu is open. Plain number keys also work there.
+- `Ctrl+1` through `Ctrl+0` run slots 1 through 10. Plain number keys also work while the F2 menu is open.
 
 Commands run locally for local panes and over SSH for connected remote panes. `{path}`, `{fullpath}`, and `{filename}` are expanded like viewer commands when used.
 
@@ -247,7 +248,7 @@ viewer:
 
 custom_commands:
   - name: Process summary
-    shortcut: Ctrl+1
+    slot: 1
     command: |
       pid=$(pidof gpstrack | awk '{print $1}')
       python - "$pid" <<'PY'

@@ -703,6 +703,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleGlobalEscapeToFileManager(gtx)
 	ui.handleEditorContextMenuGlobalPresses(gtx)
 	ui.handleEditorContextMenuClipboardEvents(gtx)
+	ui.handleCustomCommandEditorPreLayoutInput(gtx)
 
 	r := image.Rectangle{Max: gtx.Constraints.Max}
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 32, G: 32, B: 32, A: 255}, clip.Rect(r).Op())
@@ -971,7 +972,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
 		key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
 	}
-	filters = append(filters, ui.customCommandShortcutKeyFilters(anyMods)...)
+	filters = append(filters, customCommandShortcutKeyFilters(anyMods)...)
 	for {
 		ev, ok := gtx.Event(filters...)
 		if !ok {
@@ -1051,6 +1052,12 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ke.State != key.Press {
 				continue
 			}
+			if customCommandShortcutModifier(ke.Modifiers) {
+				if ui.activateCustomCommandGlobalShortcut(ke, gtx.Now) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+				continue
+			}
 			// Swallow Alt+1 globally to avoid platform dinging even when the
 			// drive picker can't be opened in the current context.
 			if ke.Modifiers != key.ModAlt {
@@ -1064,6 +1071,12 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			}
 		case "2":
 			if ke.State != key.Press {
+				continue
+			}
+			if customCommandShortcutModifier(ke.Modifiers) {
+				if ui.activateCustomCommandGlobalShortcut(ke, gtx.Now) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
 				continue
 			}
 			// Swallow Alt+2 globally to avoid platform dinging even when the
