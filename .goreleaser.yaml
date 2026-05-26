@@ -1,0 +1,143 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: hexone
+
+dist: dist/goreleaser
+
+before:
+  hooks:
+    - make headers
+
+builds:
+  - id: hexone-linux-amd64
+    main: ./cmd/hexone
+    binary: hexone
+    goos:
+      - linux
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=1
+    tags:
+      - nowayland
+      - pdfium
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w
+        -X hexone/buildinfo.Version={{ .Version }}
+        -X hexone/buildinfo.SemVersion={{ .Version }}
+        -X hexone/buildinfo.Commit={{ .ShortCommit }}
+    hooks:
+      post:
+        - cmd: packaging/goreleaser/linux-post-build.sh "{{ .Path }}" "{{ .Target }}"
+          output: true
+
+  - id: hexone-windows-amd64
+    main: ./cmd/hexone
+    binary: hexone
+    goos:
+      - windows
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=0
+    tags:
+      - pdfium
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w -H windowsgui
+        -X hexone/buildinfo.Version={{ .Version }}
+        -X hexone/buildinfo.SemVersion={{ .Version }}
+        -X hexone/buildinfo.Commit={{ .ShortCommit }}
+
+archives:
+  - id: hexone-linux-amd64
+    ids:
+      - hexone-linux-amd64
+    formats:
+      - tar.gz
+    name_template: hexone_linux_amd64
+    files:
+      - LICENSE
+      - NOTICE
+      - protocols.yaml
+      - src: dist/goreleaser/linux-amd64/lib
+        dst: lib
+      - src: dist/goreleaser/linux-amd64/share
+        dst: share
+
+  - id: hexone-windows-amd64-portable
+    ids:
+      - hexone-windows-amd64
+    formats:
+      - zip
+    name_template: hexone_windows_amd64_portable
+    files:
+      - LICENSE
+      - NOTICE
+      - protocols.yaml
+
+flatpak:
+  - id: hexone-linux-amd64-flatpak
+    ids:
+      - hexone-linux-amd64
+    name_template: io.github.ramunascvirka.hexone_{{ .Version }}_{{ .Arch }}
+    app_id: io.github.ramunascvirka.hexone
+    runtime: org.freedesktop.Platform
+    runtime_version: "24.08"
+    sdk: org.freedesktop.Sdk
+    command: hexone
+    finish_args:
+      - --share=ipc
+      - --socket=fallback-x11
+      - --socket=wayland
+      - --share=network
+      - --filesystem=home
+      - --device=dri
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: ramunas-cvirka
+    name: hexone
+  replace_existing_artifacts: true
+  extra_files:
+    - glob: dist/external/hexone_macos_arm64.dmg
+    - glob: dist/external/hexone_windows_amd64.msix
+
+brews:
+  - name: hexone
+    ids:
+      - hexone-linux-amd64
+    repository:
+      owner: ramunas-cvirka
+      name: homebrew-hexone
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    homepage: https://github.com/ramunas-cvirka/hexone
+    description: Keyboard-driven file manager with a built-in viewer
+    license: Apache-2.0
+    skip_upload: "{{ .Env.GORELEASER_SKIP_HOMEBREW }}"
+    install: |
+      bin.install "hexone"
+      (bin/"lib").install Dir["lib/*"] if OS.linux? && Dir.exist?("lib")
+      prefix.install "share" if OS.linux? && Dir.exist?("share")
+      pkgshare.install "protocols.yaml" if File.exist?("protocols.yaml")
+    test: |
+      assert_predicate bin/"hexone", :exist?
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

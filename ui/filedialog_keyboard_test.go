@@ -202,6 +202,77 @@ func TestFileCopyDialogFocusedDestinationEnterSubmits(t *testing.T) {
 	}
 }
 
+func TestFileCopyDialogRunningCancelRequiresConfirmation(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	cancelCalls := 0
+	st := &fileCopyState{
+		srcPath:     "source.txt",
+		dstPath:     "copy.txt",
+		running:     true,
+		startedAt:   now,
+		cancelFunc:  func() { cancelCalls++ },
+		focus:       fileCopyDialogFocusActions,
+		actionFocus: fileCopyDialogActionCancel,
+		keyFocus:    dialogKeyboardFocusState{wantFocus: true},
+	}
+	ui.fileCopy = st
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutFileCopyDialog(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(time.Millisecond))
+	if cancelCalls != 0 {
+		t.Fatalf("first Enter canceled immediately, calls=%d", cancelCalls)
+	}
+	if !st.cancelConfirmActive(now.Add(time.Millisecond)) {
+		t.Fatal("first Enter should arm cancel confirmation")
+	}
+	if got := st.cancelButtonLabel(now.Add(time.Millisecond)); got != "Confirm 5s" {
+		t.Fatalf("cancel label after first Enter = %q, want Confirm 5s", got)
+	}
+
+	frame(now.Add(6 * time.Second))
+	if st.cancelConfirmActive(now.Add(6 * time.Second)) {
+		t.Fatal("cancel confirmation should expire after the countdown")
+	}
+	if got := st.cancelButtonLabel(now.Add(6 * time.Second)); got != "Cancel" {
+		t.Fatalf("cancel label after expiry = %q, want Cancel", got)
+	}
+	if cancelCalls != 0 {
+		t.Fatalf("expiry canceled unexpectedly, calls=%d", cancelCalls)
+	}
+
+	router.Queue(key.Event{Name: key.NameEscape, State: key.Press})
+	frame(now.Add(6*time.Second + time.Millisecond))
+	if cancelCalls != 0 {
+		t.Fatalf("first Esc canceled immediately, calls=%d", cancelCalls)
+	}
+	if !st.cancelConfirmActive(now.Add(6*time.Second + time.Millisecond)) {
+		t.Fatal("first Esc should arm cancel confirmation")
+	}
+
+	router.Queue(key.Event{Name: key.NameEscape, State: key.Press})
+	frame(now.Add(6*time.Second + 2*time.Millisecond))
+	if cancelCalls != 1 {
+		t.Fatalf("second Esc cancel calls=%d, want 1", cancelCalls)
+	}
+	if !st.canceling {
+		t.Fatal("confirmed cancel should mark the copy as canceling")
+	}
+}
+
 func TestFileMoveDialogFocusedDestinationEnterSubmits(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()

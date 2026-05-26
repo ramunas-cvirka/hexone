@@ -797,12 +797,22 @@ func (v *hexViewerState) scrollByDelta(delta float32) {
 	v.scrollByLines(steps)
 }
 
-func (v *hexViewerState) computeLayout(size image.Point) {
+func (v *hexViewerState) computeLayout(size image.Point, scrollbarW int) {
 	if v == nil || size.X <= 0 || size.Y <= 0 {
 		return
 	}
-	scrollbarW := 6
-	trackGap := 4
+	if scrollbarW < 0 {
+		scrollbarW = 0
+	}
+	if scrollbarW > size.X {
+		scrollbarW = size.X
+	}
+	trackGap := scrollbarW / 2
+	if scrollbarW <= 0 {
+		trackGap = 0
+	} else if trackGap < 4 {
+		trackGap = 4
+	}
 	offsetDigits := v.offsetDigits
 	if offsetDigits < 8 {
 		offsetDigits = 8
@@ -842,14 +852,18 @@ func (v *hexViewerState) computeLayout(size image.Point) {
 	v.hexRect = image.Rect(v.offsetRect.Max.X+v.columnGap, top, v.offsetRect.Max.X+v.columnGap+hexW, size.Y)
 	v.textRect = image.Rect(v.hexRect.Max.X+v.columnGap, top, v.hexRect.Max.X+v.columnGap+textW, size.Y)
 
-	trackX := size.X - scrollbarW
-	if trackX < v.textRect.Max.X+trackGap {
-		trackX = v.textRect.Max.X + trackGap
+	if scrollbarW > 0 {
+		trackX := size.X - scrollbarW
+		if trackX < v.textRect.Max.X+trackGap {
+			trackX = v.textRect.Max.X + trackGap
+		}
+		if trackX > size.X-scrollbarW {
+			trackX = size.X - scrollbarW
+		}
+		v.trackRect = image.Rect(trackX, 0, trackX+scrollbarW, size.Y)
+	} else {
+		v.trackRect = image.Rectangle{}
 	}
-	if trackX > size.X-scrollbarW {
-		trackX = size.X - scrollbarW
-	}
-	v.trackRect = image.Rect(trackX, 0, trackX+scrollbarW, size.Y)
 	v.computeScrollbar()
 	v.rebuildHexByteX()
 }
@@ -896,14 +910,14 @@ func (v *hexViewerState) computeScrollbar() {
 		v.thumbRect = image.Rectangle{}
 		return
 	}
-	thumbH := int(float32(v.trackRect.Dy()) * float32(v.visibleLines) / float32(totalLines))
-	if thumbH < 18 {
-		thumbH = 18
+	maxTop := totalLines - int64(v.visibleLines)
+	thumbH := int(float64(v.trackRect.Dy()) * float64(v.visibleLines) / float64(totalLines))
+	if thumbH < fileViewerScrollbarMinThumbPx {
+		thumbH = fileViewerScrollbarMinThumbPx
 	}
 	if thumbH > v.trackRect.Dy() {
 		thumbH = v.trackRect.Dy()
 	}
-	maxTop := totalLines - int64(v.visibleLines)
 	maxTravel := v.trackRect.Dy() - thumbH
 	if v.dragging {
 		topForThumb := v.dragTop
@@ -915,9 +929,9 @@ func (v *hexViewerState) computeScrollbar() {
 		}
 		thumbY := 0
 		if maxTop > 0 && maxTravel > 0 {
-			thumbY = int(float64(topForThumb) * float64(maxTravel) / float64(maxTop))
+			thumbY = int(math.Round(float64(topForThumb) * float64(maxTravel) / float64(maxTop)))
 		}
-		v.thumbRect = image.Rect(v.trackRect.Min.X+1, v.trackRect.Min.Y+thumbY, v.trackRect.Max.X-1, v.trackRect.Min.Y+thumbY+thumbH)
+		v.thumbRect = viewerScrollbarThumbFromPosition(v.trackRect, thumbY, thumbH, true)
 		return
 	}
 	thumbY := 0
@@ -932,9 +946,27 @@ func (v *hexViewerState) computeScrollbar() {
 		if topForThumb > float64(maxTop) {
 			topForThumb = float64(maxTop)
 		}
-		thumbY = int(topForThumb * float64(maxTravel) / float64(maxTop))
+		thumbY = int(math.Round(topForThumb * float64(maxTravel) / float64(maxTop)))
 	}
-	v.thumbRect = image.Rect(v.trackRect.Min.X+1, v.trackRect.Min.Y+thumbY, v.trackRect.Max.X-1, v.trackRect.Min.Y+thumbY+thumbH)
+	v.thumbRect = viewerScrollbarThumbFromPosition(v.trackRect, thumbY, thumbH, true)
+}
+
+func (v *hexViewerState) updateScrollbarHover(pos image.Point) bool {
+	if v == nil {
+		return false
+	}
+	old := v.hoverTrack
+	v.hoverTrack = viewerPointInRect(pos, v.trackRect)
+	return old != v.hoverTrack
+}
+
+func (v *hexViewerState) clearScrollbarHover() bool {
+	if v == nil {
+		return false
+	}
+	changed := v.hoverTrack
+	v.hoverTrack = false
+	return changed
 }
 
 func (v *hexViewerState) rowFromPointY(y int) (int, bool) {
@@ -1382,13 +1414,17 @@ func readHexViewerChunk(path string, remote *paneSSHSession, start, length int64
 			res.data = chunk
 			return res
 		}
-		info, statErr := os.Stat(path)
+		info, statErr := filesys.StatLocalFilesystemPath(path)
 		if statErr != nil {
 			res.err = statErr.Error()
 			return res
 		}
 		if info.IsDir() {
 			res.err = "viewer supports files only"
+			return res
+		}
+		if !info.Mode().IsRegular() {
+			res.err = viewerUnsupportedFileNotice(path, info.Mode())
 			return res
 		}
 		size = info.Size()
@@ -1406,6 +1442,10 @@ func readHexViewerChunk(path string, remote *paneSSHSession, start, length int64
 		}
 		if info.IsDir() {
 			res.err = "viewer supports files only"
+			return res
+		}
+		if !info.Mode().IsRegular() {
+			res.err = viewerUnsupportedFileNotice(path, info.Mode())
 			return res
 		}
 		size = info.Size()
@@ -1494,7 +1534,8 @@ func (ui *UI) layoutHexOutputView(th *material.Theme, gtx layout.Context, st *fi
 	}
 
 	v.ensureMetrics(ui, th, gtx)
-	v.computeLayout(size)
+	scrollbarW := viewerScrollbarThickness(gtx, size.X)
+	v.computeLayout(size, scrollbarW)
 	v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg))
 	v.computeScrollbar()
 	ui.handleHexViewerEvents(gtx, st)
@@ -1711,20 +1752,7 @@ func (ui *UI) drawHexScrollbar(gtx layout.Context, st *fileViewerState) {
 	if v == nil || v.trackRect.Dx() <= 0 || v.trackRect.Dy() <= 0 || v.thumbRect.Dy() <= 0 {
 		return
 	}
-	theme := ui.fileViewerTheme()
-	trackColor := theme.ScrollTrack
-	if v.hoverTrack || v.dragging {
-		trackColor = theme.ScrollTrackHover
-	}
-	thumbColor := theme.ScrollThumb
-	if v.hoverTrack {
-		thumbColor = theme.ScrollThumbHover
-	}
-	if v.dragging {
-		thumbColor = theme.ScrollThumbDrag
-	}
-	paint.FillShape(gtx.Ops, trackColor, clip.Rect(v.trackRect).Op())
-	paint.FillShape(gtx.Ops, thumbColor, clip.Rect(v.thumbRect).Op())
+	paintViewerScrollbar(gtx, ui.fileViewerTheme(), v.trackRect, v.thumbRect, v.hoverTrack, v.hoverTrack, v.dragging)
 }
 
 func (ui *UI) drawHexScrollTooltip(gtx layout.Context, th *material.Theme, st *fileViewerState) {
@@ -1752,25 +1780,31 @@ func (ui *UI) drawHexScrollTooltip(gtx layout.Context, th *material.Theme, st *f
 	msg := fmt.Sprintf("~ 0x%X  line %d/%d (%.1f%%)", offset, line, total, percent)
 	theme := ui.fileViewerTheme()
 
-	boxW := gtx.Dp(unit.Dp(198))
-	boxH := gtx.Dp(unit.Dp(24))
-	if boxW < 96 {
-		boxW = 96
+	gap := gtx.Dp(unit.Dp(streamTooltipGapDp))
+	if gap < 1 {
+		gap = 1
 	}
-	if boxH < 16 {
-		boxH = 16
+	edgeInset := gtx.Dp(unit.Dp(fileViewerTooltipEdgeInsetDp))
+	if edgeInset < 2 {
+		edgeInset = 2
 	}
-	x := v.trackRect.Min.X - boxW - gtx.Dp(unit.Dp(6))
-	if x < 2 {
-		x = 2
+	maxBoxW := gtx.Constraints.Max.X - edgeInset*2
+	if maxBoxW < 1 {
+		return
+	}
+	box := ui.measureHexScrollTooltipBox(th, gtx, msg, maxBoxW)
+	boxW, boxH := box.X, box.Y
+	x := v.trackRect.Min.X - gap - boxW
+	if x < edgeInset {
+		x = edgeInset
 	}
 	y := v.thumbRect.Min.Y + v.thumbRect.Dy()/2 - boxH/2
-	if y < 2 {
-		y = 2
+	if y < edgeInset {
+		y = edgeInset
 	}
-	maxY := gtx.Constraints.Max.Y - boxH - 2
-	if maxY < 2 {
-		maxY = 2
+	maxY := gtx.Constraints.Max.Y - boxH - edgeInset
+	if maxY < edgeInset {
+		maxY = edgeInset
 	}
 	if y > maxY {
 		y = maxY
@@ -1785,18 +1819,27 @@ func (ui *UI) drawHexScrollTooltip(gtx layout.Context, th *material.Theme, st *f
 		theme.TooltipBg,
 		theme.TooltipBorder,
 		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(th, msg)
-				lbl.Font.Typeface = ui.viewerTypeface()
-				lbl.TextSize = scaleThemeFontSize(th, 9)
+			return layout.Inset{
+				Left:   unit.Dp(streamTooltipInsetXDp),
+				Right:  unit.Dp(streamTooltipInsetXDp),
+				Top:    unit.Dp(streamTooltipInsetYDp),
+				Bottom: unit.Dp(streamTooltipInsetYDp),
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := ui.hexScrollTooltipLabel(th, msg)
 				lbl.Color = theme.TooltipText
-				lbl.MaxLines = 1
-				lbl.Truncator = ""
 				return layoutVCenteredLabel(gtx, lbl)
 			})
 		},
 	)
 	stack.Pop()
+}
+
+func (ui *UI) measureHexScrollTooltipBox(th *material.Theme, gtx layout.Context, msg string, maxBoxW int) image.Point {
+	return ui.measureStreamOutputTooltipBox(th, gtx, msg, maxBoxW)
+}
+
+func (ui *UI) hexScrollTooltipLabel(th *material.Theme, msg string) material.LabelStyle {
+	return ui.streamOutputTooltipLabel(th, msg)
 }
 
 func (ui *UI) applyHexViewerCursor(gtx layout.Context, st *fileViewerState) {
@@ -1805,7 +1848,6 @@ func (ui *UI) applyHexViewerCursor(gtx layout.Context, st *fileViewerState) {
 		return
 	}
 	if v.dragging {
-		defer clip.Rect(v.trackRect).Push(gtx.Ops).Pop()
 		pointer.CursorGrabbing.Add(gtx.Ops)
 		return
 	}
@@ -1861,6 +1903,7 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				v.dragID = pe.PointerID
 				v.dragGrabY = v.verticalThumbGrabY(pos)
 				v.dragTop = v.estimatedTopFromDragY(pos.Y, v.dragGrabY)
+				v.updateScrollbarHover(pos)
 				gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
 				st.markUserBrowsing(gtx.Now)
 				continue
@@ -1907,6 +1950,7 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				v.dragTop = v.estimatedTopFromDragY(pos.Y, v.dragGrabY)
 				v.clampTop()
 				st.markUserBrowsing(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 			}
 			if v.selecting && pe.PointerID == v.selectID {
 				if !pe.Buttons.Contain(pointer.ButtonPrimary) {
@@ -1924,7 +1968,9 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)
 			}
-			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
+			if v.updateScrollbarHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Release:
 			if v.dragging && pe.PointerID == v.dragID {
 				v.topLine = v.dragTop
@@ -1941,7 +1987,9 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 					v.syncVisualTop()
 				}
 			}
-			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
+			if v.updateScrollbarHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Cancel:
 			v.pointerOutside = true
 			if v.dragging && pe.PointerID == v.dragID {
@@ -1953,7 +2001,9 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 			} else {
 				v.clearCancelGrace()
 			}
-			v.hoverTrack = false
+			if v.clearScrollbarHover() {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Move, pointer.Enter:
 			if pe.Kind == pointer.Enter {
 				v.pointerOutside = false
@@ -1971,7 +2021,9 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)
 			}
-			v.hoverTrack = viewerPointInRect(pos, v.trackRect)
+			if v.updateScrollbarHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Leave:
 			v.pointerOutside = true
 			if v.selecting {
@@ -1987,7 +2039,9 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)
 			}
-			v.hoverTrack = false
+			if v.clearScrollbarHover() {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		}
 	}
 }

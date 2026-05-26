@@ -177,7 +177,6 @@ font:
 general:
   dim_inactive_panes: true
 viewer:
-  mode: file
   shell: auto
   command: cat {path}
 `
@@ -286,7 +285,6 @@ associations:
       - .pdf
       - txt
 viewer:
-  mode: file
   shell: auto
   command: cat {path}
 `
@@ -333,6 +331,55 @@ func TestNormalizeViewerCommandRules(t *testing.T) {
 	}
 	if strings.Contains(out, "pattern: [") {
 		t.Fatalf("serialized config should drop invalid command rule patterns:\n%s", out)
+	}
+}
+
+func TestNormalizeCustomCommandsKeepsTenFixedSlots(t *testing.T) {
+	cfg := DefaultConfig()
+	for i := 0; i < 12; i++ {
+		cfg.CustomCommands = append(cfg.CustomCommands, CustomCommand{
+			Name:    strings.TrimSpace(" cmd "),
+			Command: strings.TrimSpace("echo old"),
+		})
+		cfg.CustomCommands = append(cfg.CustomCommands, CustomCommand{
+			Name:    "cmd" + string(rune('a'+i)),
+			Command: " echo " + string(rune('a'+i)) + " ",
+		})
+	}
+	cfg.CustomCommands = append(cfg.CustomCommands,
+		CustomCommand{Name: "", Command: "  python - <<'PY'\nprint('hi')\nPY  "},
+		CustomCommand{Name: "empty", Command: "   "},
+	)
+
+	cfg.normalize()
+
+	if len(cfg.CustomCommands) != 10 {
+		t.Fatalf("custom command count=%d want 10", len(cfg.CustomCommands))
+	}
+	for _, cmd := range cfg.CustomCommands {
+		if strings.TrimSpace(cmd.Name) == "" || strings.TrimSpace(cmd.Command) == "" {
+			t.Fatalf("custom command should be normalized, got %#v", cmd)
+		}
+		if cmd.Slot < 1 || cmd.Slot > 10 {
+			t.Fatalf("custom command slot=%d want 1..10", cmd.Slot)
+		}
+	}
+	for i, cmd := range cfg.CustomCommands {
+		if cmd.Slot != i+1 {
+			t.Fatalf("custom command slot at index %d=%d want %d", i, cmd.Slot, i+1)
+		}
+	}
+}
+
+func TestNormalizeCustomCommandDerivesNameFromFirstCommandLine(t *testing.T) {
+	cmd, ok := NormalizeCustomCommand(CustomCommand{
+		Command: "\n\n  echo hello | head -n 1\n",
+	})
+	if !ok {
+		t.Fatal("expected command to normalize")
+	}
+	if cmd.Name != "echo hello | head -n 1" {
+		t.Fatalf("derived name=%q", cmd.Name)
 	}
 }
 
@@ -410,17 +457,6 @@ func TestMatchViewerCommandRulesUsesLastMatch(t *testing.T) {
 	}
 }
 
-func TestNormalizeViewerModeAcceptsHex(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Viewer.Mode = "hex"
-
-	cfg.normalize()
-
-	if cfg.Viewer.Mode != "hex" {
-		t.Fatalf("Viewer.Mode=%q, want hex", cfg.Viewer.Mode)
-	}
-}
-
 func TestNormalizeViewerFileEncodingAcceptsUTF16Variants(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Viewer.FileEncoding = "utf16-be"
@@ -485,7 +521,6 @@ func TestDefaultConfigEnablesViewerSmoothScrolling(t *testing.T) {
 func TestLoadConfigDefaultsViewerSmoothScrollingWhenFieldMissing(t *testing.T) {
 	raw := `
 viewer:
-  mode: file
   shell: auto
   command: cat {path}
 `
@@ -535,7 +570,7 @@ func TestLoadConfigEnsuringFileCreatesDefaultWhenMissing(t *testing.T) {
 
 func TestLoadConfigEnsuringFilePreservesInvalidExistingConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
-	original := "viewer:\n  mode: [broken\n"
+	original := "viewer:\n  command_by_target: [broken\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
 	}
@@ -658,6 +693,8 @@ func TestNormalizeColors(t *testing.T) {
 	cfg.Colors.FocusedSelectedText = "focusedtext"
 	cfg.Colors.CurrentDirBg = "currdir"
 	cfg.Colors.CurrentDirText = "currtext"
+	cfg.Colors.ScrollbarThumb = "scrollthumb"
+	cfg.Colors.ScrollbarTrack = "scrolltrack"
 
 	cfg.normalize()
 
@@ -696,6 +733,12 @@ func TestNormalizeColors(t *testing.T) {
 	}
 	if cfg.Colors.CurrentDirText != DefaultCurrentDirTextHex {
 		t.Fatalf("CurrentDirText=%q, want %q", cfg.Colors.CurrentDirText, DefaultCurrentDirTextHex)
+	}
+	if cfg.Colors.ScrollbarThumb != "" {
+		t.Fatalf("ScrollbarThumb=%q, want empty optional color", cfg.Colors.ScrollbarThumb)
+	}
+	if cfg.Colors.ScrollbarTrack != "" {
+		t.Fatalf("ScrollbarTrack=%q, want empty optional color", cfg.Colors.ScrollbarTrack)
 	}
 }
 

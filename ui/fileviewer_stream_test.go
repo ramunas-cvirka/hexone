@@ -116,6 +116,28 @@ func TestEstimatedHColFromDragXPreservesThumbGrabOffset(t *testing.T) {
 	}
 }
 
+func TestStreamVerticalScrollbarDragUpdatesContentImmediately(t *testing.T) {
+	v := &streamOutputView{
+		lines:        make([]string, 100),
+		visibleLines: 10,
+		topLine:      5,
+		lineH:        16,
+	}
+	v.syncVisualTop()
+
+	v.applyVerticalScrollbarDrag(42)
+
+	if got, want := v.topLine, 42; got != want {
+		t.Fatalf("topLine=%d want immediate drag target %d", got, want)
+	}
+	if got, want := v.dragTopLine, 42; got != want {
+		t.Fatalf("dragTopLine=%d want %d", got, want)
+	}
+	if got, want := v.visualTop, float32(42); got != want {
+		t.Fatalf("visualTop=%v want synced %v", got, want)
+	}
+}
+
 func TestStopTextSelectionDragPreservesExistingSelectionRange(t *testing.T) {
 	v := &streamOutputView{
 		selActive:        true,

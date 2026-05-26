@@ -13,14 +13,133 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 	"unicode"
 	"unicode/utf16"
 
+	"hexone/filesys"
 	"hexone/fm"
 )
+
+func TestStartFileViewerBrokenSymlinkShowsPaneNotice(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := &UI{
+		fmCfg: fm.DefaultConfig(),
+		filePanes: []*filePaneState{
+			newFilePaneState("/", cfg),
+		},
+	}
+	pane := ui.filePanes[0]
+	pane.applyListing(filesys.Listing{
+		Dir: "/",
+		Entries: []filesys.Entry{{
+			Name:        ".VolumeIcon.icns",
+			DisplayName: ".VolumeIcon.icns",
+			Path:        "/.VolumeIcon.icns",
+			Kind:        filesys.EntryBroken,
+			IsSymlink:   true,
+			LinkTarget:  "System/Volumes/Data/.VolumeIcon.icns",
+		}},
+	}, "", "", 0)
+
+	ui.startFileViewer(0, time.Now())
+
+	if ui.fileViewer != nil {
+		t.Fatal("broken symlink should not open the viewer")
+	}
+	if got, want := pane.noticeText, "link target does not exist: System/Volumes/Data/.VolumeIcon.icns"; got != want {
+		t.Fatalf("notice = %q, want %q", got, want)
+	}
+}
+
+func TestStartFileViewerPermissionDeniedShowsPaneNotice(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bit behavior is platform-specific on Windows")
+	}
+
+	root := t.TempDir()
+	target := filepath.Join(root, "locked.txt")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write locked file: %v", err)
+	}
+	if err := os.Chmod(target, 0); err != nil {
+		t.Fatalf("chmod locked file: %v", err)
+	}
+	defer os.Chmod(target, 0o600)
+	if file, err := os.Open(target); err == nil {
+		_ = file.Close()
+		t.Skip("current user can still open mode-000 files")
+	}
+
+	cfg := fm.DefaultConfig()
+	ui := &UI{
+		fmCfg: fm.DefaultConfig(),
+		filePanes: []*filePaneState{
+			newFilePaneState(root, cfg),
+		},
+	}
+	pane := ui.filePanes[0]
+	pane.applyListing(filesys.Listing{
+		Dir: root,
+		Entries: []filesys.Entry{{
+			Name:        "locked.txt",
+			DisplayName: "locked.txt",
+			Path:        target,
+			Kind:        filesys.EntryFile,
+		}},
+	}, "", "", 0)
+
+	ui.startFileViewer(0, time.Now())
+
+	if ui.fileViewer != nil {
+		t.Fatal("permission denied file should not open the viewer")
+	}
+	if got := pane.noticeText; !strings.Contains(got, "permission denied") || !strings.Contains(got, target) {
+		t.Fatalf("notice = %q, want permission denied with path %q", got, target)
+	}
+}
+
+func TestStartFileViewerNamedPipeShowsPaneNotice(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mkfifo is unsupported on Windows")
+	}
+
+	root := t.TempDir()
+	target := filepath.Join(root, "pipe")
+	if err := mkfifoForTest(target, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+
+	cfg := fm.DefaultConfig()
+	ui := &UI{
+		fmCfg: fm.DefaultConfig(),
+		filePanes: []*filePaneState{
+			newFilePaneState(root, cfg),
+		},
+	}
+	pane := ui.filePanes[0]
+	pane.applyListing(filesys.Listing{
+		Dir: root,
+		Entries: []filesys.Entry{{
+			Name:        "pipe",
+			DisplayName: "pipe",
+			Path:        target,
+			Kind:        filesys.EntryFile,
+		}},
+	}, "", "", 0)
+
+	ui.startFileViewer(0, time.Now())
+
+	if ui.fileViewer != nil {
+		t.Fatal("named pipe should not open the viewer")
+	}
+	if got := pane.noticeText; !strings.Contains(got, "viewer supports regular files only") || !strings.Contains(got, "named pipe") || !strings.Contains(got, target) {
+		t.Fatalf("notice = %q, want regular-file notice for named pipe %q", got, target)
+	}
+}
 
 type fakeViewerPDFRenderer struct {
 	available bool
@@ -813,6 +932,39 @@ func TestSetFileViewerModeClearsStaleErrorsAndPendingState(t *testing.T) {
 	}
 }
 
+func TestSetFileViewerModeLeavesCommandOnlyViewerInCommandMode(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = &fileViewerState{
+		mode:        "command",
+		command:     "uptime",
+		commandOnly: true,
+	}
+
+	ui.setFileViewerMode("file", time.Now())
+
+	if ui.fileViewer.mode != "command" {
+		t.Fatalf("mode=%q want command", ui.fileViewer.mode)
+	}
+	if ui.fileViewer.command != "uptime" {
+		t.Fatalf("command=%q want uptime", ui.fileViewer.command)
+	}
+}
+
+func TestViewerLocalCommandWorkingDirUsesDirectoryTargets(t *testing.T) {
+	dir := t.TempDir()
+	if got := viewerLocalCommandWorkingDir(dir); got != filepath.Clean(dir) {
+		t.Fatalf("working dir=%q want %q", got, filepath.Clean(dir))
+	}
+
+	path := filepath.Join(dir, "log.txt")
+	if err := os.WriteFile(path, []byte("hello"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+	if got := viewerLocalCommandWorkingDir(path); got != filepath.Clean(dir) {
+		t.Fatalf("file working dir=%q want %q", got, filepath.Clean(dir))
+	}
+}
+
 func TestViewerEncodingStatusLabelUsesBinaryPreviewLabel(t *testing.T) {
 	st := &fileViewerState{
 		fileEncoding:          fm.ViewerFileEncodingAuto,
@@ -875,6 +1027,123 @@ func TestViewerCommandTokenNameNormalizesExeAndPaths(t *testing.T) {
 		if got := viewerCommandTokenName(token); got != want {
 			t.Fatalf("viewerCommandTokenName(%q)=%q want %q", token, got, want)
 		}
+	}
+}
+
+func TestViewerCommandBufferRollsStreamingOutputByLines(t *testing.T) {
+	canceled := false
+	buf := newViewerCommandBuffer(20, func() { canceled = true }, true)
+
+	if _, err := buf.Write([]byte("line01\nline02\nline03\nline04\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	out := string(buf.Bytes())
+
+	if canceled {
+		t.Fatal("rolling streaming buffer should not cancel the command at the size limit")
+	}
+	if len(out) > 20 {
+		t.Fatalf("rolling output length=%d want <= 20", len(out))
+	}
+	if strings.Contains(out, "line01") || strings.Contains(out, "line02") {
+		t.Fatalf("rolling output kept trimmed head: %q", out)
+	}
+	if !strings.Contains(out, "line03") || !strings.Contains(out, "line04") {
+		t.Fatalf("rolling output should keep newest complete lines, got %q", out)
+	}
+	if !buf.Truncated() {
+		t.Fatal("rolling buffer should report truncated history after dropping old lines")
+	}
+}
+
+func TestViewerCommandBufferFiniteOutputCancelsAtLimit(t *testing.T) {
+	canceled := false
+	buf := newViewerCommandBuffer(8, func() { canceled = true }, false)
+
+	if _, err := buf.Write([]byte("0123456789")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if !canceled {
+		t.Fatal("finite command buffer should cancel when it reaches the size limit")
+	}
+	if got := string(buf.Bytes()); got != "01234567" {
+		t.Fatalf("finite output=%q want capped prefix", got)
+	}
+	if !buf.Truncated() {
+		t.Fatal("finite buffer should report truncation")
+	}
+}
+
+func TestEmitViewerCommandProgressTracksRollingChangesAtSameLength(t *testing.T) {
+	buf := newViewerCommandBuffer(12, nil, true)
+	var sent []string
+	progress := func(content, status string) {
+		sent = append(sent, content+"|"+status)
+	}
+
+	if _, err := buf.Write([]byte("aa\nbb\ncc\n")); err != nil {
+		t.Fatalf("Write first: %v", err)
+	}
+	version := emitViewerCommandProgress(progress, buf, "command", viewerShellSpec{}, time.Now(), true, true, viewerCommandUnsentVersion)
+	if _, err := buf.Write([]byte("dd\nee\n")); err != nil {
+		t.Fatalf("Write second: %v", err)
+	}
+	version = emitViewerCommandProgress(progress, buf, "command", viewerShellSpec{}, time.Now(), true, true, version)
+
+	if len(sent) != 2 {
+		t.Fatalf("progress sends=%d want 2 (%#v)", len(sent), sent)
+	}
+	if sent[0] == sent[1] {
+		t.Fatalf("rolling progress did not change content: %#v", sent)
+	}
+	if strings.Contains(sent[1], "[truncated]") {
+		t.Fatalf("rolling progress should use status, not an inline marker: %q", sent[1])
+	}
+	_ = version
+}
+
+func TestApplyFileViewerContentResultKeepsBottomAfterRollingTrim(t *testing.T) {
+	st := &fileViewerState{
+		mode:            "command",
+		commandInfinite: true,
+		content:         "a\nb\nc\n",
+	}
+	st.stream.SetContent(st.content)
+	st.stream.visibleLines = 2
+	st.stream.scrollToBottom()
+
+	applyFileViewerContentResult(st, "b\nc\nd\n")
+
+	if got, want := st.content, "b\nc\nd\n"; got != want {
+		t.Fatalf("content=%q want %q", got, want)
+	}
+	if got, want := st.stream.topLine, st.stream.maxTopLine(); got != want {
+		t.Fatalf("topLine=%d want bottom %d", got, want)
+	}
+}
+
+func TestApplyFileViewerContentResultPreservesViewportAfterRollingTrim(t *testing.T) {
+	st := &fileViewerState{
+		mode:            "command",
+		commandInfinite: true,
+		content:         "a\nb\nc\nd\n",
+	}
+	st.stream.SetContent(st.content)
+	st.stream.visibleLines = 2
+	st.stream.topLine = 1
+	st.stream.syncVisualTop()
+
+	applyFileViewerContentResult(st, "b\nc\nd\ne\n")
+
+	if got, want := st.stream.topLine, 0; got != want {
+		t.Fatalf("topLine=%d want shifted %d", got, want)
+	}
+	if got, want := st.stream.lines[st.stream.topLine], "b"; got != want {
+		t.Fatalf("top visible line=%q want %q", got, want)
+	}
+	if got, want := st.stream.visualTop, float32(0); got != want {
+		t.Fatalf("visualTop=%v want %v", got, want)
 	}
 }
 

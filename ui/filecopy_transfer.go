@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"hexone/filesys"
 	"io"
@@ -283,9 +284,15 @@ type transferEntry struct {
 	symlinkDest string
 }
 
-func runCopyBetweenEndpoints(srcEp copyEndpoint, srcPath string, dstEp copyEndpoint, dstPath string, report func(filesys.CopyProgress)) error {
+func runCopyBetweenEndpoints(ctx context.Context, srcEp copyEndpoint, srcPath string, dstEp copyEndpoint, dstPath string, report func(filesys.CopyProgress)) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !srcEp.isRemote() && !dstEp.isRemote() && !srcEp.isArchive() && !dstEp.isArchive() {
-		return filesys.CopyPath(srcPath, dstPath, report)
+		return filesys.CopyPathContext(ctx, srcPath, dstPath, report)
 	}
 
 	srcNorm, err := srcEp.normalizeSourcePath(srcPath)
@@ -314,7 +321,7 @@ func runCopyBetweenEndpoints(srcEp copyEndpoint, srcPath string, dstEp copyEndpo
 		return errors.New("destination cannot be inside source directory")
 	}
 
-	entries, bytesTotal, err := collectTransferEntries(srcEp, srcNorm, srcInfo)
+	entries, bytesTotal, err := collectTransferEntriesContext(ctx, srcEp, srcNorm, srcInfo)
 	if err != nil {
 		return err
 	}
@@ -326,11 +333,14 @@ func runCopyBetweenEndpoints(srcEp copyEndpoint, srcPath string, dstEp copyEndpo
 	reportCopyProgress(report, progress)
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		progress.CurrentPath = entry.srcPath
 		reportCopyProgress(report, progress)
 
 		dstEntryPath := dstEp.join(dstNorm, entry.rel)
-		if err := copyTransferEntry(srcEp, dstEp, entry, dstEntryPath, &progress, report); err != nil {
+		if err := copyTransferEntryContext(ctx, srcEp, dstEp, entry, dstEntryPath, &progress, report); err != nil {
 			return err
 		}
 		progress.EntriesDone++
@@ -341,16 +351,36 @@ func runCopyBetweenEndpoints(srcEp copyEndpoint, srcPath string, dstEp copyEndpo
 }
 
 func collectTransferEntries(srcEp copyEndpoint, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
+	return collectTransferEntriesContext(context.Background(), srcEp, srcRoot, srcInfo)
+}
+
+func collectTransferEntriesContext(ctx context.Context, srcEp copyEndpoint, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	if srcEp.isRemote() {
-		return collectRemoteTransferEntries(srcEp.remote.sftpClient(), srcRoot, srcInfo)
+		return collectRemoteTransferEntriesContext(ctx, srcEp.remote.sftpClient(), srcRoot, srcInfo)
 	}
 	if srcEp.isArchive() {
-		return collectArchiveTransferEntries(srcRoot, srcInfo)
+		return collectArchiveTransferEntriesContext(ctx, srcRoot, srcInfo)
 	}
-	return collectLocalTransferEntries(srcRoot, srcInfo)
+	return collectLocalTransferEntriesContext(ctx, srcRoot, srcInfo)
 }
 
 func collectArchiveTransferEntries(srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
+	return collectArchiveTransferEntriesContext(context.Background(), srcRoot, srcInfo)
+}
+
+func collectArchiveTransferEntriesContext(ctx context.Context, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	loc, ok := filesys.ParseArchivePath(srcRoot)
 	if !ok {
 		return nil, 0, errors.New("source path is not inside an archive")
@@ -384,6 +414,9 @@ func collectArchiveTransferEntries(srcRoot string, srcInfo os.FileInfo) ([]trans
 	entries := make([]transferEntry, 0, 64)
 	var bytesTotal int64
 	err = fs.WalkDir(fsys, rootInner, func(curr string, d fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -442,6 +475,16 @@ func archiveDisplayPath(archivePath, innerPath string) string {
 }
 
 func collectLocalTransferEntries(srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
+	return collectLocalTransferEntriesContext(context.Background(), srcRoot, srcInfo)
+}
+
+func collectLocalTransferEntriesContext(ctx context.Context, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	if !srcInfo.IsDir() {
 		entry := transferEntry{
 			srcPath:   srcRoot,
@@ -470,6 +513,9 @@ func collectLocalTransferEntries(srcRoot string, srcInfo os.FileInfo) ([]transfe
 	entries := make([]transferEntry, 0, 64)
 	var bytesTotal int64
 	err := filepath.WalkDir(srcRoot, func(curr string, d fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -515,6 +561,16 @@ func collectLocalTransferEntries(srcRoot string, srcInfo os.FileInfo) ([]transfe
 }
 
 func collectRemoteTransferEntries(client sftpClientLike, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
+	return collectRemoteTransferEntriesContext(context.Background(), client, srcRoot, srcInfo)
+}
+
+func collectRemoteTransferEntriesContext(ctx context.Context, client sftpClientLike, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
 	if client == nil {
 		return nil, 0, errors.New("sftp session is not connected")
 	}
@@ -547,6 +603,9 @@ func collectRemoteTransferEntries(client sftpClientLike, srcRoot string, srcInfo
 	var bytesTotal int64
 	var walk func(curr, rel string, info os.FileInfo) error
 	walk = func(curr, rel string, info os.FileInfo) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		entry := transferEntry{
 			srcPath:   curr,
 			rel:       rel,
@@ -571,11 +630,17 @@ func collectRemoteTransferEntries(client sftpClientLike, srcRoot string, srcInfo
 		if !info.IsDir() || entry.isSymlink {
 			return nil
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		items, err := client.ReadDir(curr)
 		if err != nil {
 			return err
 		}
 		for _, item := range items {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			name := item.Name()
 			childPath := path.Join(curr, name)
 			childInfo, err := client.Lstat(childPath)
@@ -599,13 +664,23 @@ func collectRemoteTransferEntries(client sftpClientLike, srcRoot string, srcInfo
 }
 
 func copyTransferEntry(srcEp, dstEp copyEndpoint, entry transferEntry, dstPath string, progress *filesys.CopyProgress, report func(filesys.CopyProgress)) error {
+	return copyTransferEntryContext(context.Background(), srcEp, dstEp, entry, dstPath, progress, report)
+}
+
+func copyTransferEntryContext(ctx context.Context, srcEp, dstEp copyEndpoint, entry transferEntry, dstPath string, progress *filesys.CopyProgress, report func(filesys.CopyProgress)) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	switch {
 	case entry.isDir:
 		return createDirAtEndpoint(dstEp, dstPath, entry.mode, entry.modTime)
 	case entry.isSymlink:
 		return copySymlinkToEndpoint(dstEp, dstPath, entry.symlinkDest)
 	default:
-		return copyRegularToEndpoint(srcEp, dstEp, entry, dstPath, progress, report)
+		return copyRegularToEndpoint(ctx, srcEp, dstEp, entry, dstPath, progress, report)
 	}
 }
 
@@ -650,7 +725,7 @@ func copySymlinkToEndpoint(ep copyEndpoint, dstPath, target string) error {
 	return os.Symlink(target, dstPath)
 }
 
-func copyRegularToEndpoint(srcEp, dstEp copyEndpoint, entry transferEntry, dstPath string, progress *filesys.CopyProgress, report func(filesys.CopyProgress)) error {
+func copyRegularToEndpoint(ctx context.Context, srcEp, dstEp copyEndpoint, entry transferEntry, dstPath string, progress *filesys.CopyProgress, report func(filesys.CopyProgress)) error {
 	parent := dstEp.dirName(dstPath)
 	if err := ensureEndpointDir(dstEp, parent); err != nil {
 		return err
@@ -670,10 +745,16 @@ func copyRegularToEndpoint(srcEp, dstEp copyEndpoint, entry transferEntry, dstPa
 
 	buf := make([]byte, 1<<20)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		nr, readErr := in.Read(buf)
 		if nr > 0 {
 			chunk := buf[:nr]
 			for len(chunk) > 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				nw, writeErr := out.Write(chunk)
 				if nw > 0 {
 					chunk = chunk[nw:]

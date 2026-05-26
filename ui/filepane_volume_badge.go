@@ -102,6 +102,7 @@ func (p *filePaneState) filePaneVolumeLookupPath() string {
 		if raw == "" {
 			raw = "/"
 		}
+		raw = strings.ReplaceAll(raw, `\`, `/`)
 		clean := path.Clean(raw)
 		if clean == "." {
 			return "/"
@@ -377,6 +378,72 @@ func (ui *UI) layoutFilePaneVolumeBadge(th *material.Theme, gtx layout.Context, 
 	return layout.Dimensions{Size: gtx.Constraints.Max, Baseline: dims.Baseline}
 }
 
+type filePaneStatusBarSeparatorMode uint8
+
+const (
+	filePaneStatusBarSeparatorNone filePaneStatusBarSeparatorMode = iota
+	filePaneStatusBarSeparatorLeading
+	filePaneStatusBarSeparatorTrailing
+)
+
+func (ui *UI) filePaneStatusBarSeparatorMode(idx int) filePaneStatusBarSeparatorMode {
+	if ui == nil || len(ui.filePanes) <= 1 {
+		return filePaneStatusBarSeparatorNone
+	}
+	if idx <= 0 {
+		return filePaneStatusBarSeparatorTrailing
+	}
+	return filePaneStatusBarSeparatorLeading
+}
+
+func (ui *UI) layoutFilePaneStatusBar(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, palette filePanePalette) layout.Dimensions {
+	if pane == nil || ui == nil || ui.archiveExtractPane() != pane {
+		return layout.Dimensions{}
+	}
+
+	leftInset := unit.Dp(8)
+	rightInset := unit.Dp(8)
+	mode := ui.filePaneStatusBarSeparatorMode(idx)
+	trailingSeparator := mode == filePaneStatusBarSeparatorTrailing
+	switch mode {
+	case filePaneStatusBarSeparatorLeading:
+		leftInset = 0
+	case filePaneStatusBarSeparatorTrailing:
+		rightInset = 0
+	}
+	measure := func(text string) int {
+		return ui.measureFilePaneStatusBarTextWidth(th, gtx, text)
+	}
+	textMax := gtx.Constraints.Max.X - gtx.Dp(leftInset) - gtx.Dp(rightInset)
+	if textMax < 0 {
+		textMax = 0
+	}
+	label := archiveExtractStatusLineForWidth(ui.archiveExtract, gtx.Now, textMax, measure)
+	if mode != filePaneStatusBarSeparatorNone {
+		label = archiveExtractStatusLineWithSeparatorForWidth(ui.archiveExtract, gtx.Now, textMax, measure, trailingSeparator)
+	}
+	if strings.TrimSpace(label) == "" {
+		return layout.Dimensions{}
+	}
+	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(archiveExtractStatusRefreshInterval)})
+
+	bg, border, textColor := filePaneVolumeBadgeColors(palette)
+	return layoutFilePaneStatusBarBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: leftInset, Right: rightInset, Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, label)
+			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.TextSize = scaleThemeFontSize(th, 11)
+			lbl.Color = textColor
+			lbl.MaxLines = 1
+			lbl.Truncator = ""
+			if trailingSeparator {
+				return layout.E.Layout(gtx, lbl.Layout)
+			}
+			return lbl.Layout(gtx)
+		})
+	})
+}
+
 func (ui *UI) filePaneVolumeBadgeWidth(th *material.Theme, gtx layout.Context, pane *filePaneState, label string) int {
 	if pane == nil {
 		return ui.measureFilePaneVolumeBadgeWidth(th, gtx, label)
@@ -408,6 +475,15 @@ func (ui *UI) measureFilePaneVolumeBadgeWidth(th *material.Theme, gtx layout.Con
 	return width
 }
 
+func (ui *UI) measureFilePaneStatusBarTextWidth(th *material.Theme, gtx layout.Context, label string) int {
+	lbl := material.Body2(th, label)
+	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.TextSize = scaleThemeFontSize(th, 11)
+	lbl.MaxLines = 1
+	lbl.Truncator = ""
+	return measureLabelUnconstrained(gtx, lbl).Size.X
+}
+
 func filePaneVolumeBadgeColors(palette filePanePalette) (bg, border, text color.NRGBA) {
 	bg = palette.PaneBg
 	bg.A = 255
@@ -422,6 +498,29 @@ func filePaneVolumeBadgeColors(palette filePanePalette) (bg, border, text color.
 	}
 	border.A = 168
 	return bg, border, text
+}
+
+func layoutFilePaneStatusBarBox(gtx layout.Context, bg, border color.NRGBA, w layout.Widget) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := m.Stop()
+
+	width := gtx.Constraints.Max.X
+	if width < dims.Size.X {
+		width = dims.Size.X
+	}
+	if width <= 0 || dims.Size.Y <= 0 {
+		call.Add(gtx.Ops)
+		return dims
+	}
+
+	rect := image.Rect(0, 0, width, dims.Size.Y)
+	paint.FillShape(gtx.Ops, bg, clip.Rect(rect).Op())
+	if border.A != 0 {
+		paint.FillShape(gtx.Ops, border, clip.Rect(image.Rect(0, 0, width, 1)).Op())
+	}
+	call.Add(gtx.Ops)
+	return layout.Dimensions{Size: image.Pt(width, dims.Size.Y), Baseline: dims.Baseline}
 }
 
 func layoutFilePaneAttachedBadge(gtx layout.Context, bg, border color.NRGBA, attachedLeft bool, w layout.Widget) layout.Dimensions {

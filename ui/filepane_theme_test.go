@@ -41,3 +41,46 @@ func TestFilePaneInactiveShadeColorStaysSubtle(t *testing.T) {
 		t.Fatalf("disabled shade=%v want zero", disabled)
 	}
 }
+
+func TestFilePaneScrollbarDefaultsContrastWithPaneBackground(t *testing.T) {
+	dark := filePanePaletteFromConfig(&fm.Config{
+		Colors: fm.ColorsConfig{
+			FilePaneBackground: fm.DefaultFilePaneBackgroundHex,
+			FilePaneText:       fm.DefaultFilePaneTextHex,
+			HoverText:          fm.DefaultFilePaneHoverTextHex,
+			SelectionText:      fm.DefaultFilePaneSelectionTextHex,
+			CurrentDirText:     fm.DefaultCurrentDirTextHex,
+		},
+	})
+	if contrastScore(dark.PaneBg, dark.ScrollThumb) < 4 {
+		t.Fatalf("dark scrollbar contrast=%0.2f want >= 4", contrastScore(dark.PaneBg, dark.ScrollThumb))
+	}
+
+	light := filePanePaletteFromConfig(&fm.Config{
+		Colors: fm.ColorsConfig{
+			FilePaneBackground: "#F3F4F6",
+			FilePaneText:       "#1F2937",
+			HoverText:          "#111827",
+			SelectionText:      "#0B1220",
+			CurrentDirText:     "#111827",
+		},
+	})
+	if contrastScore(light.PaneBg, light.ScrollThumb) < 4 {
+		t.Fatalf("light scrollbar contrast=%0.2f want >= 4", contrastScore(light.PaneBg, light.ScrollThumb))
+	}
+}
+
+func TestFilePaneScrollbarUsesConfigOverrides(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Colors.ScrollbarThumb = "#ABCDEF"
+	cfg.Colors.ScrollbarTrack = "#123456"
+
+	palette := filePanePaletteFromConfig(cfg)
+
+	if got := fm.FormatHexColor(palette.ScrollThumb); got != "#ABCDEF" {
+		t.Fatalf("scrollbar thumb=%q want override", got)
+	}
+	if got := fm.FormatHexColor(palette.ScrollTrack); got != "#123456" {
+		t.Fatalf("scrollbar track=%q want override", got)
+	}
+}

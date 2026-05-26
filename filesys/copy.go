@@ -4,6 +4,7 @@
 package filesys
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -24,6 +25,18 @@ type CopyProgress struct {
 // If dstPath points to an existing directory, the source base name is appended.
 // Existing destination files are overwritten.
 func CopyPath(srcPath, dstPath string, report func(CopyProgress)) error {
+	return CopyPathContext(context.Background(), srcPath, dstPath, report)
+}
+
+// CopyPathContext copies a file or directory from srcPath to dstPath, aborting
+// between filesystem operations when ctx is canceled.
+func CopyPathContext(ctx context.Context, srcPath, dstPath string, report func(CopyProgress)) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	srcAbs, err := filepath.Abs(srcPath)
 	if err != nil {
 		return err
@@ -52,10 +65,10 @@ func CopyPath(srcPath, dstPath string, report func(CopyProgress)) error {
 		if pathWithin(dstAbs, srcAbs) {
 			return errors.New("destination cannot be inside source directory")
 		}
-		return copyDirectory(srcAbs, dstAbs, report)
+		return copyDirectory(ctx, srcAbs, dstAbs, report)
 	}
 
-	return copySingleEntry(srcAbs, dstAbs, srcInfo, report)
+	return copySingleEntry(ctx, srcAbs, dstAbs, srcInfo, report)
 }
 
 type copyEntry struct {
@@ -64,7 +77,7 @@ type copyEntry struct {
 	info os.FileInfo
 }
 
-func copySingleEntry(src, dst string, info os.FileInfo, report func(CopyProgress)) error {
+func copySingleEntry(ctx context.Context, src, dst string, info os.FileInfo, report func(CopyProgress)) error {
 	progress := CopyProgress{
 		EntriesTotal: 1,
 		CurrentPath:  src,
@@ -74,7 +87,7 @@ func copySingleEntry(src, dst string, info os.FileInfo, report func(CopyProgress
 	}
 	reportCopyProgress(report, progress)
 
-	if err := copyEntryAt(copyEntry{src: src, dst: dst, info: info}, &progress, report); err != nil {
+	if err := copyEntryAt(ctx, copyEntry{src: src, dst: dst, info: info}, &progress, report); err != nil {
 		return err
 	}
 	progress.EntriesDone = 1
@@ -82,11 +95,14 @@ func copySingleEntry(src, dst string, info os.FileInfo, report func(CopyProgress
 	return nil
 }
 
-func copyDirectory(srcRoot, dstRoot string, report func(CopyProgress)) error {
+func copyDirectory(ctx context.Context, srcRoot, dstRoot string, report func(CopyProgress)) error {
 	entries := make([]copyEntry, 0, 64)
 	var bytesTotal int64
 
 	if err := filepath.WalkDir(srcRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -124,9 +140,12 @@ func copyDirectory(srcRoot, dstRoot string, report func(CopyProgress)) error {
 	reportCopyProgress(report, progress)
 
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		progress.CurrentPath = entry.src
 		reportCopyProgress(report, progress)
-		if err := copyEntryAt(entry, &progress, report); err != nil {
+		if err := copyEntryAt(ctx, entry, &progress, report); err != nil {
 			return err
 		}
 		progress.EntriesDone++
@@ -136,7 +155,10 @@ func copyDirectory(srcRoot, dstRoot string, report func(CopyProgress)) error {
 	return nil
 }
 
-func copyEntryAt(entry copyEntry, progress *CopyProgress, report func(CopyProgress)) error {
+func copyEntryAt(ctx context.Context, entry copyEntry, progress *CopyProgress, report func(CopyProgress)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	info := entry.info
 	switch {
 	case info.IsDir():
@@ -153,11 +175,11 @@ func copyEntryAt(entry copyEntry, progress *CopyProgress, report func(CopyProgre
 		}
 		return nil
 	default:
-		return copyRegularFile(entry.src, entry.dst, info, progress, report)
+		return copyRegularFile(ctx, entry.src, entry.dst, info, progress, report)
 	}
 }
 
-func copyRegularFile(src, dst string, info os.FileInfo, progress *CopyProgress, report func(CopyProgress)) error {
+func copyRegularFile(ctx context.Context, src, dst string, info os.FileInfo, progress *CopyProgress, report func(CopyProgress)) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -175,10 +197,16 @@ func copyRegularFile(src, dst string, info os.FileInfo, progress *CopyProgress, 
 
 	buf := make([]byte, 1<<20)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		nr, readErr := in.Read(buf)
 		if nr > 0 {
 			chunk := buf[:nr]
 			for len(chunk) > 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				nw, writeErr := out.Write(chunk)
 				if nw > 0 {
 					chunk = chunk[nw:]

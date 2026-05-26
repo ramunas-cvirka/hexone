@@ -97,6 +97,7 @@ type fileViewerState struct {
 	commandEditor        widget.Editor
 	wrapToggle           widget.Clickable
 	copyToggle           widget.Clickable
+	commandOnly          bool
 	commandEditOn        bool
 	commandFocus         bool
 	fileEncoding         string
@@ -404,8 +405,6 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 	}
 	if !editorFocused {
 		filters = append(filters,
-			key.Filter{Name: key.NameF3},
-			key.Filter{Name: key.NameTab, Optional: anyMods},
 			key.Filter{Name: key.NameUpArrow},
 			key.Filter{Name: key.NameDownArrow},
 			key.Filter{Name: key.NamePageUp},
@@ -421,6 +420,12 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			key.Filter{Name: "a", Required: key.ModShortcut, Optional: anyMods},
 			key.Filter{Name: "A", Required: key.ModShortcut, Optional: anyMods},
 		)
+		if !st.commandOnly {
+			filters = append(filters,
+				key.Filter{Name: key.NameF3},
+				key.Filter{Name: key.NameTab, Optional: anyMods},
+			)
+		}
 		if st.detectedImagePreview {
 			filters = append(filters,
 				key.Filter{Name: key.NameLeftArrow},
@@ -535,6 +540,9 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			}
 			ui.closeFileViewer()
 		case key.NameF3:
+			if st.commandOnly {
+				continue
+			}
 			ui.startFileViewerLoad(gtx.Now)
 		case key.NameEnter, key.NameReturn:
 			if !st.find.open || !findFocused {
@@ -551,6 +559,9 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 				}
 			}
 		case key.NameTab:
+			if st.commandOnly {
+				continue
+			}
 			step, ok := viewerModeTabStep(ke.Modifiers)
 			if !ok {
 				continue
@@ -665,6 +676,20 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 			return
 		}
 	}
+	if ok, notice := viewerSymlinkTargetAvailable(entry, remote); !ok {
+		if remote != nil {
+			remote.close()
+		}
+		pane.setNotice(notice, now)
+		return
+	}
+	if ok, notice := viewerFileOpenable(entry, remote); !ok {
+		if remote != nil {
+			remote.close()
+		}
+		pane.setNotice(notice, now)
+		return
+	}
 
 	st := &fileViewerState{
 		pane:            idx,
@@ -683,13 +708,14 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.mode = "file"
 	st.command = "cat {path}"
 	st.autoRefresh = viewerDefaultAutoRefresh
+	st.captureWatchState()
 	if ui != nil && ui.fmCfg != nil {
 		cfg := ui.fmCfg.Viewer
 		st.autoRefresh = cfg.CommandAutoRefresh
 		st.fileEncoding = fm.NormalizeViewerFileEncoding(cfg.FileEncoding)
-		st.mode, st.command = ui.viewerConfiguredModeAndCommand(st.path, st.remote, cfg.Mode, cfg.Command)
+		st.mode, st.command = ui.viewerInitialModeAndCommand(st.path, st.remote, cfg.Command)
 	} else {
-		st.mode, st.command = ui.viewerConfiguredModeAndCommand(st.path, st.remote, st.mode, st.command)
+		st.mode, st.command = ui.viewerInitialModeAndCommand(st.path, st.remote, st.command)
 	}
 	st.commandInfinite = st.mode == "command" && viewerCommandLooksInfinite(st.command)
 	if st.name == "" {
@@ -712,7 +738,6 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.find.resultCh = make(chan fileViewerFindResult, 1)
 	st.find.index = -1
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
-	st.captureWatchState()
 	st.hex = newHexViewerState()
 	st.hex.offsetDigits = viewerHexOffsetDigits(st.watchSize)
 
@@ -728,6 +753,107 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	ui.rep.active = false
 	ui.rep.pane = -1
 	ui.startFileViewerLoad(now)
+}
+
+func viewerSymlinkTargetAvailable(entry *filesys.Entry, remote *paneSSHSession) (bool, string) {
+	if entry == nil || !entry.IsSymlink {
+		return true, ""
+	}
+	if remote == nil {
+		if _, err := os.Stat(entry.Path); err != nil {
+			return false, viewerSymlinkTargetMissingNotice(entry.LinkTarget)
+		}
+		return true, ""
+	}
+	client := remote.sftpClient()
+	if client == nil {
+		return false, "sftp session is not connected"
+	}
+	if _, err := client.Stat(entry.Path); err != nil {
+		return false, viewerSymlinkTargetMissingNotice(entry.LinkTarget)
+	}
+	return true, ""
+}
+
+func viewerSymlinkTargetMissingNotice(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "link target does not exist"
+	}
+	return "link target does not exist: " + target
+}
+
+func viewerFileOpenable(entry *filesys.Entry, remote *paneSSHSession) (bool, string) {
+	if entry == nil || strings.TrimSpace(entry.Path) == "" {
+		return true, ""
+	}
+	if remote == nil {
+		info, err := filesys.StatLocalPath(entry.Path)
+		if err != nil {
+			return false, viewerOpenFailedNotice(entry.Path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return false, viewerUnsupportedFileNotice(entry.Path, info.Mode())
+		}
+		reader, _, err := filesys.OpenLocalPath(entry.Path)
+		if err != nil {
+			return false, viewerOpenFailedNotice(entry.Path, err)
+		}
+		_ = reader.Close()
+		return true, ""
+	}
+	client := remote.sftpClient()
+	if client == nil {
+		return false, "sftp session is not connected"
+	}
+	info, err := client.Stat(entry.Path)
+	if err != nil {
+		return false, viewerOpenFailedNotice(entry.Path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, viewerUnsupportedFileNotice(entry.Path, info.Mode())
+	}
+	file, err := client.Open(entry.Path)
+	if err != nil {
+		return false, viewerOpenFailedNotice(entry.Path, err)
+	}
+	_ = file.Close()
+	return true, ""
+}
+
+func viewerOpenFailedNotice(path string, err error) string {
+	if err == nil {
+		return ""
+	}
+	errText := strings.TrimSpace(err.Error())
+	path = strings.TrimSpace(path)
+	if errors.Is(err, os.ErrPermission) || strings.Contains(strings.ToLower(errText), "permission denied") {
+		if path != "" {
+			return "permission denied: " + path
+		}
+		return "permission denied"
+	}
+	if errText == "" {
+		return "open failed"
+	}
+	return "open failed: " + errText
+}
+
+func viewerUnsupportedFileNotice(path string, mode os.FileMode) string {
+	kind := "non-regular file"
+	switch {
+	case mode&os.ModeDevice != 0:
+		kind = "device file"
+	case mode&os.ModeNamedPipe != 0:
+		kind = "named pipe"
+	case mode&os.ModeSocket != 0:
+		kind = "socket"
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "viewer supports regular files only"
+	}
+	return "viewer supports regular files only: " + path + " is a " + kind
 }
 
 func (ui *UI) closeFileViewer() {
@@ -951,7 +1077,6 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	}
 
 	cfg := fm.ViewerConfig{
-		Mode:    "file",
 		Shell:   "auto",
 		Command: "cat {path}",
 	}
@@ -964,7 +1089,6 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	if st.command == "" {
 		st.command = "cat {path}"
 	}
-	cfg.Mode = st.mode
 	cfg.Command = st.command
 	cfg.CommandAutoRefresh = st.autoRefresh
 	cfg.FileEncoding = st.fileEncoding
@@ -1001,6 +1125,7 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	st.loadCancel = cancel
 	path := st.path
+	mode := st.mode
 	ch := st.resultCh
 	remote := st.remote
 
@@ -1013,7 +1138,7 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 				partial: true,
 			})
 		}
-		content, status, err, info := readViewerContent(ctx, path, cfg, maxBytes, remote, progress)
+		content, status, err, info := readViewerContent(ctx, path, cfg, mode, maxBytes, remote, progress)
 		res := fileViewerResult{
 			seq:            seq,
 			content:        content,
@@ -1034,7 +1159,7 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 			final:          true,
 		}
 		sendViewerResult(ch, res)
-		if err == "" && viewerShouldBuildSyntax(cfg.Mode, info, content) {
+		if err == "" && viewerShouldBuildSyntax(mode, info, content) {
 			go func(currentSeq int, currentPath, currentContent string) {
 				syntax := viewerBuildSyntaxDocument(ctx, currentPath, currentContent)
 				if !syntax.ready() || ctx.Err() != nil {
@@ -1656,6 +1781,15 @@ func applyFileViewerContentResult(st *fileViewerState, next string) {
 		}
 		return
 	}
+	if commandMode && st.commandInfinite && prev != "" {
+		if overlap := viewerTrimmedCommandOverlap(prev, next); viewerTrimmedCommandOverlapUsable(prev, next, overlap) {
+			removedPrefix := prev[:len(prev)-overlap]
+			followBottom := st.stream.nearBottom() && !st.stream.hasSelection()
+			st.content = next
+			st.stream.SetContentAfterTrim(next, removedPrefix, followBottom)
+			return
+		}
+	}
 
 	st.content = next
 	st.stream.SetContent(next)
@@ -1690,7 +1824,53 @@ func viewerUpdateAction(st *fileViewerState, next string, nextImagePreview bool,
 	if st.mode == "command" && prev != "" && strings.HasPrefix(next, prev) {
 		return viewerUpdateAppend
 	}
+	if st.mode == "command" && st.commandInfinite && prev != "" {
+		if overlap := viewerTrimmedCommandOverlap(prev, next); viewerTrimmedCommandOverlapUsable(prev, next, overlap) {
+			return viewerUpdateAppend
+		}
+	}
 	return viewerUpdateReplace
+}
+
+func viewerTrimmedCommandOverlapUsable(prev, next string, overlap int) bool {
+	if overlap <= 0 || overlap >= len(prev) {
+		return false
+	}
+	minOverlap := 64
+	if len(prev) < minOverlap || len(next) < minOverlap {
+		minOverlap = 1
+	}
+	return overlap >= minOverlap
+}
+
+func viewerTrimmedCommandOverlap(prev, next string) int {
+	if prev == "" || next == "" {
+		return 0
+	}
+	lps := make([]int, len(next))
+	for i, j := 1, 0; i < len(next); i++ {
+		for j > 0 && next[i] != next[j] {
+			j = lps[j-1]
+		}
+		if next[i] == next[j] {
+			j++
+			lps[i] = j
+		}
+	}
+
+	j := 0
+	for i := 0; i < len(prev); i++ {
+		for j > 0 && prev[i] != next[j] {
+			j = lps[j-1]
+		}
+		if prev[i] == next[j] {
+			j++
+		}
+		if j == len(next) && i+1 < len(prev) {
+			j = lps[j-1]
+		}
+	}
+	return j
 }
 
 func viewerSelectionNearEnd(start, end, total int) bool {
@@ -1945,12 +2125,18 @@ func (st *fileViewerState) userIsBrowsing(now time.Time) bool {
 	return now.Before(st.userBrowseUntil)
 }
 
-func (st *fileViewerState) updateScrollbarHover(pos image.Point) {
+func (st *fileViewerState) updateScrollbarHover(pos image.Point) bool {
 	if st == nil || !st.scrollbarVisible {
+		if st == nil {
+			return false
+		}
+		changed := st.scrollbarHover
 		st.scrollbarHover = false
-		return
+		return changed
 	}
+	old := st.scrollbarHover
 	st.scrollbarHover = viewerPointInRect(pos, st.scrollbarTrack)
+	return old != st.scrollbarHover
 }
 
 func (st *fileViewerState) captureWatchState() {
@@ -1996,7 +2182,7 @@ func (st *fileViewerState) statPath() (os.FileInfo, error) {
 		if filesys.ArchiveMemberPath(st.path) {
 			return filesys.StatLocalPath(st.path)
 		}
-		return os.Stat(st.path)
+		return filesys.StatLocalFilesystemPath(st.path)
 	}
 	client := st.remote.sftpClient()
 	if client == nil {
@@ -2092,8 +2278,13 @@ func (ui *UI) refreshFileViewerNow(now time.Time) {
 		return
 	}
 	if ui != nil && ui.fmCfg != nil {
-		st.mode, st.command = ui.viewerConfiguredModeAndCommand(st.path, st.remote, ui.fmCfg.Viewer.Mode, ui.fmCfg.Viewer.Command)
-		st.autoRefresh = ui.fmCfg.Viewer.CommandAutoRefresh
+		st.mode = normalizeViewerMode(st.mode)
+		if st.mode == "command" && !st.commandOnly {
+			st.command, _, _ = ui.viewerDefaultCommand(st.path, st.remote, ui.fmCfg.Viewer.Command)
+		}
+		if !st.commandOnly {
+			st.autoRefresh = ui.fmCfg.Viewer.CommandAutoRefresh
+		}
 		st.fileEncoding = fm.NormalizeViewerFileEncoding(ui.fmCfg.Viewer.FileEncoding)
 	}
 	st.commandEditOn = false
@@ -2240,6 +2431,9 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 	if st == nil {
 		return
 	}
+	if st.commandOnly {
+		return
+	}
 	mode = normalizeViewerMode(mode)
 	if mode == st.mode && !st.historyOpen {
 		return
@@ -2269,16 +2463,6 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 		st.clearSyntaxState()
 	}
 	st.clearModeSwitchFeedback()
-	if ui.fmCfg != nil {
-		ui.fmCfg.Viewer.Mode = st.mode
-		if st.mode == "command" {
-			ui.fmCfg.Viewer.Command = st.command
-		}
-		if err := ui.saveFMConfigWithOptions("viewer-mode", false); err != nil {
-			st.err = err.Error()
-			return
-		}
-	}
 	st.nextWatchCheck = time.Time{}
 	ui.refreshFileViewerFind(now, false)
 	ui.restartFileViewerLoad(now)
@@ -2397,7 +2581,6 @@ func (ui *UI) rememberViewerCommand(st *fileViewerState, cmd string) error {
 	if err := ui.ensureFMConfigLoaded(); err != nil {
 		return err
 	}
-	ui.fmCfg.Viewer.Mode = "command"
 	ui.fmCfg.Viewer.Command = cmd
 
 	key := viewerCommandTargetKey(st.path, st.remote)
@@ -2424,22 +2607,23 @@ func (ui *UI) rememberViewerCommand(st *fileViewerState, cmd string) error {
 	return ui.saveFMConfigWithOptions("viewer-command", false)
 }
 
-func (ui *UI) viewerConfiguredModeAndCommand(path string, remote *paneSSHSession, fallbackMode, fallbackCommand string) (string, string) {
-	mode := normalizeViewerMode(fallbackMode)
-	if remote == nil && filesys.ArchiveMemberPath(path) && mode == "command" {
-		mode = "file"
+func (ui *UI) viewerInitialModeAndCommand(path string, remote *paneSSHSession, fallbackCommand string) (string, string) {
+	cmd, matchedRule, matchedTarget := ui.viewerDefaultCommand(path, remote, fallbackCommand)
+	archiveMember := remote == nil && filesys.ArchiveMemberPath(path)
+	if !archiveMember && (matchedTarget || matchedRule) {
+		return "command", cmd
 	}
-	cmd, matchedRule := ui.viewerDefaultCommand(path, remote, fallbackCommand)
-	if remote == nil && filesys.ArchiveMemberPath(path) {
-		return mode, cmd
+	var cfg *fm.Config
+	if ui != nil {
+		cfg = ui.fmCfg
 	}
-	if matchedRule {
-		mode = "command"
+	if viewerPathExceedsMaxLoadLimit(path, remote, viewerMaxLoadBytes(cfg)) {
+		return "hex", cmd
 	}
-	return mode, cmd
+	return "file", cmd
 }
 
-func (ui *UI) viewerDefaultCommand(path string, remote *paneSSHSession, fallback string) (string, bool) {
+func (ui *UI) viewerDefaultCommand(path string, remote *paneSSHSession, fallback string) (string, bool, bool) {
 	cmd := strings.TrimSpace(fallback)
 	if cmd == "" {
 		cmd = "cat {path}"
@@ -2451,7 +2635,8 @@ func (ui *UI) viewerDefaultCommand(path string, remote *paneSSHSession, fallback
 			matchedRule = true
 		}
 	}
-	return ui.viewerCommandForTarget(path, remote, cmd), matchedRule
+	cmd, matchedTarget := ui.viewerCommandForTargetMatch(path, remote, cmd)
+	return cmd, matchedRule, matchedTarget
 }
 
 func (ui *UI) viewerRuleCommand(path string, remote *paneSSHSession) (string, bool) {
@@ -2474,21 +2659,51 @@ func (ui *UI) viewerRuleCommand(path string, remote *paneSSHSession) (string, bo
 }
 
 func (ui *UI) viewerCommandForTarget(path string, remote *paneSSHSession, fallback string) string {
+	cmd, _ := ui.viewerCommandForTargetMatch(path, remote, fallback)
+	return cmd
+}
+
+func (ui *UI) viewerCommandForTargetMatch(path string, remote *paneSSHSession, fallback string) (string, bool) {
 	cmd := strings.TrimSpace(fallback)
 	if cmd == "" {
 		cmd = "cat {path}"
 	}
 	if ui == nil || ui.fmCfg == nil {
-		return cmd
+		return cmd, false
 	}
 	key := viewerCommandTargetKey(path, remote)
 	if key == "" || len(ui.fmCfg.Viewer.CommandByTarget) == 0 {
-		return cmd
+		return cmd, false
 	}
 	if byTarget := strings.TrimSpace(ui.fmCfg.Viewer.CommandByTarget[key]); byTarget != "" {
-		return byTarget
+		return byTarget, true
 	}
-	return cmd
+	return cmd, false
+}
+
+func viewerPathExceedsMaxLoadLimit(path string, remote *paneSSHSession, maxBytes int) bool {
+	if maxBytes < 1 {
+		maxBytes = viewerDefaultMaxLoadBytes
+	}
+	info, err := viewerStatPath(path, remote)
+	if err != nil || info == nil {
+		return false
+	}
+	return info.Size() > int64(maxBytes)
+}
+
+func viewerStatPath(path string, remote *paneSSHSession) (os.FileInfo, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("viewer path is empty")
+	}
+	if remote == nil {
+		return filesys.StatLocalPath(path)
+	}
+	client := remote.sftpClient()
+	if client == nil {
+		return nil, errors.New("sftp session is not connected")
+	}
+	return client.Stat(path)
 }
 
 func viewerCommandMatchName(path string, remote *paneSSHSession) string {
@@ -2590,9 +2805,9 @@ func (ui *UI) setFileViewerEncoding(encoding string, now time.Time) {
 	ui.restartFileViewerLoad(now)
 }
 
-func readViewerContent(ctx context.Context, path string, cfg fm.ViewerConfig, maxBytes int, remote *paneSSHSession, onProgress func(string, string)) (string, string, string, viewerReadInfo) {
+func readViewerContent(ctx context.Context, path string, cfg fm.ViewerConfig, mode string, maxBytes int, remote *paneSSHSession, onProgress func(string, string)) (string, string, string, viewerReadInfo) {
 	start := time.Now()
-	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	mode = strings.ToLower(strings.TrimSpace(mode))
 	switch mode {
 	case "command":
 		content, status, err := readViewerCommand(ctx, path, cfg, maxBytes, start, remote, onProgress)
@@ -2625,6 +2840,9 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 			if info.IsDir() {
 				return "", "", "viewer supports files only", viewerReadInfo{}
 			}
+			if !info.Mode().IsRegular() {
+				return "", "", viewerUnsupportedFileNotice(path, info.Mode()), viewerReadInfo{}
+			}
 			size = info.Size()
 			if size > int64(maxBytes) && !unlimitedPreview {
 				return "", fmt.Sprintf("%s: %d bytes", prefix, size),
@@ -2632,15 +2850,18 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 			}
 			reader, _, openErr = filesys.OpenLocalPath(path)
 		} else {
-			info, err := os.Stat(path)
+			info, err := filesys.StatLocalFilesystemPath(path)
 			if err != nil {
 				return "", "", err.Error(), viewerReadInfo{}
 			}
 			if info.IsDir() {
 				return "", "", "viewer supports files only", viewerReadInfo{}
 			}
+			if !info.Mode().IsRegular() {
+				return "", "", viewerUnsupportedFileNotice(path, info.Mode()), viewerReadInfo{}
+			}
 			size = info.Size()
-			if viewerPDFPreviewUsesLocalPath && viewerCanPreviewPDFPath(path) {
+			if info.Mode()&os.ModeSymlink == 0 && viewerPDFPreviewUsesLocalPath && viewerCanPreviewPDFPath(path) {
 				info, err := decodeViewerPDFPreview(path, nil, 0)
 				if err != nil {
 					return "", fmt.Sprintf("file: %d bytes", size), err.Error(), viewerReadInfo{}
@@ -2651,7 +2872,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 				return "", fmt.Sprintf("file: %d bytes", size),
 					fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
 			}
-			reader, openErr = os.Open(path)
+			reader, _, openErr = filesys.OpenLocalFilesystemPath(path)
 		}
 	} else {
 		client := remote.sftpClient()
@@ -2661,17 +2882,21 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 		info, err := client.Stat(path)
 		if err != nil {
 			return "", "", err.Error(), viewerReadInfo{}
+		} else {
+			if info.IsDir() {
+				return "", "", "viewer supports files only", viewerReadInfo{}
+			}
+			if !info.Mode().IsRegular() {
+				return "", "", viewerUnsupportedFileNotice(path, info.Mode()), viewerReadInfo{}
+			}
+			size = info.Size()
+			if size > int64(maxBytes) && !unlimitedPreview {
+				return "", fmt.Sprintf("remote file: %d bytes", size),
+					fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
+			}
+			reader, openErr = client.Open(path)
+			prefix = "remote file"
 		}
-		if info.IsDir() {
-			return "", "", "viewer supports files only", viewerReadInfo{}
-		}
-		size = info.Size()
-		if size > int64(maxBytes) && !unlimitedPreview {
-			return "", fmt.Sprintf("remote file: %d bytes", size),
-				fmt.Sprintf("file too large: %s > %s limit", formatCopySize(size), formatCopySize(int64(maxBytes))), viewerReadInfo{}
-		}
-		reader, openErr = client.Open(path)
-		prefix = "remote file"
 	}
 	if openErr != nil {
 		return "", "", openErr.Error(), viewerReadInfo{}
@@ -2805,8 +3030,8 @@ func readViewerLocalCommand(ctx context.Context, path, cmdline string, shell vie
 	args := append(append([]string{}, shell.args...), cmdline)
 	cmd := exec.CommandContext(runCtx, shell.program, args...)
 	configureViewerCommandProcess(cmd)
-	cmd.Dir = filepath.Clean(filepath.Dir(path))
-	buf := newViewerCommandBuffer(maxBytes, cancel)
+	cmd.Dir = viewerLocalCommandWorkingDir(path)
+	buf := newViewerCommandBuffer(maxBytes, cancel, infinite)
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 	if err := cmd.Start(); err != nil {
@@ -2818,8 +3043,7 @@ func readViewerLocalCommand(ctx context.Context, path, cmdline string, shell vie
 		waitCh <- cmd.Wait()
 	}()
 
-	lastSent := -1
-	lastTruncated := false
+	lastSentVersion := viewerCommandUnsentVersion
 	ticker := time.NewTicker(viewerCommandStreamTick)
 	defer ticker.Stop()
 
@@ -2830,27 +3054,26 @@ loop:
 		case err = <-waitCh:
 			break loop
 		case <-ticker.C:
-			lastSent, lastTruncated = emitViewerCommandProgress(onProgress, buf, "command", shell, started, infinite, true, lastSent, lastTruncated)
+			lastSentVersion = emitViewerCommandProgress(onProgress, buf, "command", shell, started, infinite, true, lastSentVersion)
 		case <-runCtx.Done():
 			err = <-waitCh
 			break loop
 		}
 	}
 
-	out := buf.Bytes()
-	truncated := buf.Truncated()
-	_, _ = emitViewerCommandProgress(onProgress, buf, "command", shell, started, infinite, false, lastSent, lastTruncated)
-	content := string(bytes.ToValidUTF8(out, []byte("\xef\xbf\xbd")))
+	snap := buf.Snapshot()
+	_ = emitViewerCommandProgress(onProgress, buf, "command", shell, started, infinite, false, lastSentVersion)
+	content := string(bytes.ToValidUTF8(snap.data, []byte("\xef\xbf\xbd")))
 	content = sanitizeViewerContent(content)
-	if truncated {
+	if snap.truncated && !snap.rolling {
 		content += "\n\n[truncated]"
 	}
-	status := viewerCommandStatus("command", shell, started, truncated, infinite, false)
+	status := viewerCommandStatus("command", shell, started, snap.truncated, infinite, false)
 	if err != nil {
 		if runCtx.Err() == context.DeadlineExceeded {
 			return content, status, "viewer command timed out"
 		}
-		if runCtx.Err() == context.Canceled && truncated {
+		if runCtx.Err() == context.Canceled && snap.truncated && !snap.rolling {
 			return content, status, ""
 		}
 		if runCtx.Err() == context.Canceled && errors.Is(ctx.Err(), context.Canceled) {
@@ -2865,6 +3088,26 @@ loop:
 		return "", "no output", ""
 	}
 	return content, status, ""
+}
+
+func viewerLocalCommandWorkingDir(path string) string {
+	clean := filepath.Clean(strings.TrimSpace(path))
+	if clean == "" || clean == "." {
+		if cwd, err := os.Getwd(); err == nil {
+			return cwd
+		}
+		return "."
+	}
+	if info, err := filesys.StatLocalFilesystemPath(clean); err == nil && info.IsDir() {
+		return clean
+	}
+	dir := filepath.Clean(filepath.Dir(clean))
+	if dir == "" || dir == "." {
+		if cwd, err := os.Getwd(); err == nil {
+			return cwd
+		}
+	}
+	return dir
 }
 
 func readViewerRemoteCommand(ctx context.Context, remote *paneSSHSession, cmdline string, shell viewerShellSpec, maxBytes int, started time.Time, timeout time.Duration, infinite bool, onProgress func(string, string)) (string, string, string) {
@@ -2906,7 +3149,7 @@ func readViewerRemoteCommand(ctx context.Context, remote *paneSSHSession, cmdlin
 		}
 	}
 
-	buf := newViewerCommandBuffer(maxBytes, cancel)
+	buf := newViewerCommandBuffer(maxBytes, cancel, infinite)
 	if err := session.Start(fullCmd); err != nil {
 		return "", "", err.Error()
 	}
@@ -2929,8 +3172,7 @@ func readViewerRemoteCommand(ctx context.Context, remote *paneSSHSession, cmdlin
 	}()
 
 	var waitErr error
-	lastSent := -1
-	lastTruncated := false
+	lastSentVersion := viewerCommandUnsentVersion
 	ticker := time.NewTicker(viewerCommandStreamTick)
 	defer ticker.Stop()
 
@@ -2940,7 +3182,7 @@ loop:
 		case waitErr = <-waitCh:
 			break loop
 		case <-ticker.C:
-			lastSent, lastTruncated = emitViewerCommandProgress(onProgress, buf, "remote command", shell, started, infinite, true, lastSent, lastTruncated)
+			lastSentVersion = emitViewerCommandProgress(onProgress, buf, "remote command", shell, started, infinite, true, lastSentVersion)
 		case <-runCtx.Done():
 			_ = session.Close()
 			waitErr = <-waitCh
@@ -2948,22 +3190,21 @@ loop:
 		}
 	}
 
-	out := buf.Bytes()
-	truncated := buf.Truncated()
-	_, _ = emitViewerCommandProgress(onProgress, buf, "remote command", shell, started, infinite, false, lastSent, lastTruncated)
-	content := string(bytes.ToValidUTF8(out, []byte("\xef\xbf\xbd")))
+	snap := buf.Snapshot()
+	_ = emitViewerCommandProgress(onProgress, buf, "remote command", shell, started, infinite, false, lastSentVersion)
+	content := string(bytes.ToValidUTF8(snap.data, []byte("\xef\xbf\xbd")))
 	content = sanitizeViewerContent(content)
-	if truncated {
+	if snap.truncated && !snap.rolling {
 		content += "\n\n[truncated]"
 	}
 
-	status := viewerCommandStatus("remote command", shell, started, truncated, infinite, false)
+	status := viewerCommandStatus("remote command", shell, started, snap.truncated, infinite, false)
 
 	if waitErr != nil {
 		if runCtx.Err() == context.DeadlineExceeded {
 			return content, status, "viewer command timed out"
 		}
-		if runCtx.Err() == context.Canceled && truncated {
+		if runCtx.Err() == context.Canceled && snap.truncated && !snap.rolling {
 			return content, status, ""
 		}
 		if runCtx.Err() == context.Canceled && errors.Is(ctx.Err(), context.Canceled) {
@@ -3044,23 +3285,22 @@ func viewerCommandTokenName(token string) string {
 	return strings.ToLower(token)
 }
 
-func emitViewerCommandProgress(onProgress func(string, string), buf *viewerCommandBuffer, kind string, shell viewerShellSpec, started time.Time, infinite, running bool, lastLen int, lastTruncated bool) (int, bool) {
+func emitViewerCommandProgress(onProgress func(string, string), buf *viewerCommandBuffer, kind string, shell viewerShellSpec, started time.Time, infinite, running bool, lastVersion uint64) uint64 {
 	if onProgress == nil || buf == nil {
-		return lastLen, lastTruncated
+		return lastVersion
 	}
-	out := buf.Bytes()
-	truncated := buf.Truncated()
-	if len(out) == lastLen && truncated == lastTruncated {
-		return lastLen, lastTruncated
+	snap := buf.Snapshot()
+	if snap.version == lastVersion {
+		return lastVersion
 	}
-	content := string(bytes.ToValidUTF8(out, []byte("\xef\xbf\xbd")))
+	content := string(bytes.ToValidUTF8(snap.data, []byte("\xef\xbf\xbd")))
 	content = sanitizeViewerContent(content)
-	if truncated {
+	if snap.truncated && !snap.rolling {
 		content += "\n\n[truncated]"
 	}
-	status := viewerCommandStatus(kind, shell, started, truncated, infinite, running)
+	status := viewerCommandStatus(kind, shell, started, snap.truncated, infinite, running)
 	onProgress(content, status)
-	return len(out), truncated
+	return snap.version
 }
 
 func viewerCommandStatus(kind string, shell viewerShellSpec, started time.Time, truncated, infinite, running bool) string {
@@ -3085,16 +3325,32 @@ type viewerCommandBuffer struct {
 	cancel     context.CancelFunc
 	cancelOnce sync.Once
 	truncated  bool
+	rolling    bool
+	version    uint64
 }
 
-func newViewerCommandBuffer(maxBytes int, cancel context.CancelFunc) *viewerCommandBuffer {
+type viewerCommandSnapshot struct {
+	data      []byte
+	truncated bool
+	rolling   bool
+	version   uint64
+}
+
+const (
+	viewerCommandUnsentVersion       = ^uint64(0)
+	viewerCommandRollingTrimDivisor  = 16
+	viewerCommandRollingMinTrimBytes = 1
+)
+
+func newViewerCommandBuffer(maxBytes int, cancel context.CancelFunc, rolling bool) *viewerCommandBuffer {
 	if maxBytes < 1 {
 		maxBytes = 1
 	}
 	return &viewerCommandBuffer{
-		data:   make([]byte, 0, maxBytes),
-		max:    maxBytes,
-		cancel: cancel,
+		data:    make([]byte, 0, maxBytes),
+		max:     maxBytes,
+		cancel:  cancel,
+		rolling: rolling,
 	}
 }
 
@@ -3104,18 +3360,28 @@ func (b *viewerCommandBuffer) Write(p []byte) (int, error) {
 	}
 	triggerCancel := false
 	b.mu.Lock()
-	remain := b.max - len(b.data)
-	if remain > 0 {
-		if len(p) <= remain {
-			b.data = append(b.data, p...)
+	oldLen := len(b.data)
+	oldTruncated := b.truncated
+	if b.rolling {
+		b.data = append(b.data, p...)
+		b.trimRollingLocked()
+	} else {
+		remain := b.max - len(b.data)
+		if remain > 0 {
+			if len(p) <= remain {
+				b.data = append(b.data, p...)
+			} else {
+				b.data = append(b.data, p[:remain]...)
+				b.truncated = true
+				triggerCancel = true
+			}
 		} else {
-			b.data = append(b.data, p[:remain]...)
 			b.truncated = true
 			triggerCancel = true
 		}
-	} else {
-		b.truncated = true
-		triggerCancel = true
+	}
+	if len(b.data) != oldLen || b.truncated != oldTruncated || b.rolling {
+		b.version++
 	}
 	b.mu.Unlock()
 
@@ -3125,18 +3391,56 @@ func (b *viewerCommandBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (b *viewerCommandBuffer) Bytes() []byte {
+func (b *viewerCommandBuffer) trimRollingLocked() {
+	if b == nil || !b.rolling || len(b.data) <= b.max {
+		return
+	}
+	target := b.max - b.max/viewerCommandRollingTrimDivisor
+	if target < viewerCommandRollingMinTrimBytes {
+		target = viewerCommandRollingMinTrimBytes
+	}
+	if target > b.max {
+		target = b.max
+	}
+	if len(b.data) <= target {
+		return
+	}
+	drop := len(b.data) - target
+	if drop < len(b.data) {
+		if newline := bytes.IndexByte(b.data[drop:], '\n'); newline >= 0 {
+			drop += newline + 1
+		}
+	}
+	if drop < 1 {
+		drop = 1
+	}
+	if drop > len(b.data) {
+		drop = len(b.data)
+	}
+	copy(b.data, b.data[drop:])
+	b.data = b.data[:len(b.data)-drop]
+	b.truncated = true
+}
+
+func (b *viewerCommandBuffer) Snapshot() viewerCommandSnapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	out := make([]byte, len(b.data))
 	copy(out, b.data)
-	return out
+	return viewerCommandSnapshot{
+		data:      out,
+		truncated: b.truncated,
+		rolling:   b.rolling,
+		version:   b.version,
+	}
+}
+
+func (b *viewerCommandBuffer) Bytes() []byte {
+	return b.Snapshot().data
 }
 
 func (b *viewerCommandBuffer) Truncated() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.truncated
+	return b.Snapshot().truncated
 }
 
 type viewerShellSpec struct {

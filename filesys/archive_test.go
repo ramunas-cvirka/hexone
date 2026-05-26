@@ -5,6 +5,10 @@ package filesys
 
 import (
 	"archive/zip"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -122,6 +126,49 @@ func TestOpenLocalPathAndReadChunkArchiveMember(t *testing.T) {
 	}
 }
 
+func TestOpenMultiVolumeRarArchiveMember(t *testing.T) {
+	tests := []struct {
+		name   string
+		first  string
+		second string
+	}{
+		{name: "new-style part rar", first: "test.part01.rar", second: "test.part02.rar"},
+		{name: "old-style r00", first: "test.rar", second: "test.r00"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			archivePath := writeTestMultiVolumeRar(t, root, tt.first, tt.second)
+
+			listing, err := ReadDir(archivePath)
+			if err != nil {
+				t.Fatalf("ReadDir multi-volume rar: %v", err)
+			}
+			if len(listing.Entries) < 2 || listing.Entries[1].Name != "test.txt" {
+				t.Fatalf("root entries = %#v, want test.txt", listing.Entries)
+			}
+
+			memberPath := filepath.Join(archivePath, "test.txt")
+			file, info, err := OpenLocalPath(memberPath)
+			if err != nil {
+				t.Fatalf("OpenLocalPath multi-volume rar member: %v", err)
+			}
+			defer file.Close()
+			if info.IsDir() {
+				t.Fatal("rar member should be a file")
+			}
+
+			h := sha1.New()
+			if _, err := io.Copy(h, file); err != nil {
+				t.Fatalf("read multi-volume rar member: %v", err)
+			}
+			if got, want := hex.EncodeToString(h.Sum(nil)), "4da7f88f69b44a3fdb705667019a65f4c6e058a3"; got != want {
+				t.Fatalf("sha1 = %s, want %s", got, want)
+			}
+		})
+	}
+}
+
 func writeTestArchive(dst string, files map[string]string) error {
 	f, err := os.Create(dst)
 	if err != nil {
@@ -143,3 +190,26 @@ func writeTestArchive(dst string, files map[string]string) error {
 	}
 	return zw.Close()
 }
+
+func writeTestMultiVolumeRar(t *testing.T, dir, first, second string) string {
+	t.Helper()
+	archivePath := filepath.Join(dir, first)
+	writeBase64File(t, archivePath, testMultiVolumeRarPart01)
+	writeBase64File(t, filepath.Join(dir, second), testMultiVolumeRarPart02)
+	return archivePath
+}
+
+func writeBase64File(t *testing.T, path, encoded string) {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("DecodeString(%q): %v", filepath.Base(path), err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("os.WriteFile(%q): %v", filepath.Base(path), err)
+	}
+}
+
+const testMultiVolumeRarPart01 = "UmFyIRoHAQBt4SgnCwEFBwEGAQGAgIAAEP5UsygCEwvhhgAEv8UApIMC4JlDmoADAQh0ZXN0LnR4dAoDEyO9GGi6v4cPz7QlBEVUMzUFU/JQNHL7mGuFIr5z/J6B4bcvXfL11LjidU6p04HF6D3xMapGjQBCKOxFtYcNiyPkggDd6gOAjCMD/5QACQANA/frHrT1r6z629b+uPXPrr1jyJ3Fx3Gx3Hx3Ix3Jx3Kxx+bmdzdJp5RtpNJpNJpNJpNZrNfPaW1ms1ms1mszMzMz5yLZmZmZmZtNptNpt588ttNptNpvN5vN5vN/PrbbzebzicTicTicTjzpluJxOZzOZzOZzOZz52u3M6nU6nU6nU6nU6nXgL7BnvsG++w899hHvsKe+wn32HvvsK++wt782/0bXeDjwc+D94OvB/8Hfg87Hvc7zb6TSaTSaTSaTSaTWazWazWazWazWazMzMzMzMzMzMzM2m02m02m36/jzH6fj57+I+n9jaf8f2/p5j+//juvx83/+x/K7g/r/v7r/pp/T/jDv+/PW/fbg+Ly9rzeMC+MDeMD+MEeME+MHvGCvGD/jBf1gz6wb4w8+sI+sKfWE/WHv1hX6wt9YX+sMeMM97r7QxMTExMTExMTE0mk0mk0mk0mk0mk1ms1ms1ms1ms1mszMzMzMzMzMzMzNptNptNptNptNptN5vN5vN5vN5vN5vOJxOJxOJxOJxOJxOZzOZzOZzOZzOZzOp1Op1Op1Op1Op5fOJiYmJiYmJiYn+vwF13j7QxMTExMTExMTy+cTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE7yBBiIECBAgQIECBAgQIECBAgQIFdp8Wutda611rrXWutdYECBAgRpBGk0mk0mk0hpECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgV2vxa611rrXWutda611gRiCBAg1iBAgQI1msFbzLPx9oazWazWeXygQIECBAgQIECBAgQIECBAgQIECBAgQIECBXZ+LXWutda611rrXWusCBAgQIECBAgQIECBAjMzMwRmZmZmGYgQIECBAgQIECBAgQIECBAgQIECBArtvi11rrXWutda611rrAgRiCBBtECBAgQIECBAgQIECBG02m02m0NvL52m07y+0BAgQIECBAgQIECBAgQIECBArt/i11rrXWutda611rrAgQIECBAgQIECBAgQIECBAgQIECBAgQIItHUSYDBQQBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+
+const testMultiVolumeRarPart02 = "UmFyIRoHAQCpwsTKDAEFBwMBBgEBgICAAKB9hWAoAgsLyIEABL/FAKSDApFhDOCAAwEIdGVzdC50eHQKAxMjvRhour+HD0G8QbxAgQIECBAgQIECBAgV3Hxa611rrXWutda611gQIEYgg4iBAgQIECBAgQIECBAgQIECBAgQIECBAgQI45+5faHM8vlAgQIOIgQIECu5+LXWutda611rrXWusCBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECBAg5nfgfmBAgQdRXWutda611rrXWusCBAgRiHUQIECBAgQIECBAgQIECBAgQIECBAgQIECBAgQIECDqdTqdTqdTqdTqdTrr5dvOWHXdWUQMFBAA="

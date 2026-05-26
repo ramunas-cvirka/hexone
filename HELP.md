@@ -55,7 +55,7 @@ Use this when a folder makes more sense grouped by modification time, extension,
 ## Function Key Bar
 
 - `F1` opens or closes Help.
-- `F2` is currently reserved and not implemented yet.
+- `F2` opens custom commands. The first menu item opens the custom command editor; saved commands appear below it.
 - `F3` opens the Internal Viewer.
 - `F4` opens the selected file with the system association.
 - `F5` copies.
@@ -67,6 +67,19 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F11` hides or shows the function key bar.
 
 If the function key bar is auto-hidden in the viewer, `F11` can still bring it back.
+
+## Custom Commands
+
+`F2` is for saved shell snippets that are not tied to a single file. The editor stores up to 10 fixed slots, each with a short name and multi-line command body.
+
+- `Run` saves the current command and shows its output in a command-only viewer.
+- Saving an empty command clears the selected slot.
+- `Ctrl+Enter` or `Cmd+Enter` runs from the editor.
+- `Ctrl+S` or `Cmd+S` saves from the editor without closing it.
+- `Esc` closes the editor, F2 menu, or command output viewer.
+- `Ctrl+1` through `Ctrl+0` run slots 1 through 10. Plain number keys also work while the F2 menu is open.
+
+Commands run locally for local panes and over SSH for connected remote panes. `{path}`, `{fullpath}`, and `{filename}` are expanded like viewer commands when used.
 
 ## Favorites And SSH
 
@@ -93,6 +106,8 @@ The internal viewer has three explicit modes, plus automatic image-style preview
 - `file` for normal text content plus image/PDF preview when supported
 - `hex` for raw bytes
 - `command` for shell output based on the selected file
+
+New viewer opens default to `file`; exact target commands and filename command rules open in `command`, while files over the configured read limit open in `hex` when no target or rule command applies.
 
 Useful viewer keys:
 
@@ -200,7 +215,6 @@ On Windows, they currently live in the current working directory as `hexone.yaml
 
 Useful things to adjust:
 
-- default viewer mode
 - fallback command
 - exact target overrides
 - filename regex rules
@@ -217,7 +231,6 @@ Example:
 
 ```yaml
 viewer:
-  mode: command
   shell: auto
   command: cat {path}
   smooth_scrolling: true
@@ -232,6 +245,15 @@ viewer:
   command_auto_refresh: true
   command_refresh_ms: 1500
   hide_function_bar_when_open: true
+
+custom_commands:
+  - name: Process summary
+    slot: 1
+    command: |
+      pid=$(pidof gpstrack | awk '{print $1}')
+      python - "$pid" <<'PY'
+      print("PID", __import__("sys").argv[1])
+      PY
 ```
 
 Notes:
@@ -241,7 +263,7 @@ Notes:
 - Priority 2: `command_rules` match the filename only; later matches override earlier ones
 - Priority 3: `command` is the generic fallback
 - `command_rules` switch the viewer into command mode automatically when a filename matches
-- `command_by_target` overrides the chosen command, but by itself it does not force command mode
+- `command_by_target` overrides the chosen command and opens that target in command mode by default
 - `remote_search_command` is used by SSH hex Find; set it to `off` to disable the remote utility path
 - `command_auto_refresh` matters most for non-streaming command mode
 - Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling and viewer auto-hide

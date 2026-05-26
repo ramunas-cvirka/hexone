@@ -53,6 +53,7 @@ Download a package from the [Releases](../../releases) page for macOS, Linux, or
 | Key | Action |
 |-----|--------|
 | `F1` | Help |
+| `F2` | Custom commands |
 | `F3` | Open viewer |
 | `F4` | Open with system default app |
 | `F5` | Copy |

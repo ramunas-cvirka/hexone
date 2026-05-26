@@ -893,6 +893,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 
 	meta := formatCopyPathInfo(st.srcInfo)
 	sameTarget := st.previewSameTarget()
+	showTargetDiff := st.dstInfo.Exists && !sameTarget && !st.multiSource()
 	if st.multiSource() {
 		meta = st.sourceSummary()
 		if st.dstInfo.Exists {
@@ -985,7 +986,12 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
-		layout.Rigid(metaLbl.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if showTargetDiff {
+				return ui.layoutFileOverwriteDiffInfo(th, gtx, "Target Details", st.srcInfo, st.dstInfo)
+			}
+			return metaLbl.Layout(gtx)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.lastErr == "" {

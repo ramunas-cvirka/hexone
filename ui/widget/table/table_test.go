@@ -125,6 +125,104 @@ func TestApplyRowForegroundRespectsPreserveColor(t *testing.T) {
 	}
 }
 
+func TestFullModeScrollbarReservesColumnWidth(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{
+		{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true},
+		{Width: unit.Dp(30), MinWidth: unit.Dp(20)},
+	})
+	tbl.RowHeight = unit.Dp(20)
+	tbl.ScrollbarWidth = unit.Dp(10)
+	gtx := testTableLayoutContext(image.Pt(120, 100))
+
+	tbl.Layout(th, gtx, tableTestModel{rows: 20})
+
+	if !tbl.scrollbarVisible {
+		t.Fatal("expected full-mode vertical scrollbar")
+	}
+	if tbl.scrollbarAxis != layout.Vertical {
+		t.Fatalf("scrollbar axis=%v want vertical", tbl.scrollbarAxis)
+	}
+	if got, want := tbl.hitSize.X, 106; got != want {
+		t.Fatalf("hit width=%d want content width after scrollbar %d", got, want)
+	}
+	if got := sumInts(tbl.fullModeWidths); got != tbl.hitSize.X {
+		t.Fatalf("column width sum=%d want hit width %d", got, tbl.hitSize.X)
+	}
+	if !tbl.HitScrollbar(image.Pt(109, 8)) {
+		t.Fatal("scrollbar gutter should be hittable")
+	}
+	if col := tbl.HitColumn(image.Pt(109, 8)); col != -1 {
+		t.Fatalf("scrollbar gutter column=%d want -1", col)
+	}
+}
+
+func TestBriefModeScrollbarReservesBottomSpaceAndRecomputesRows(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(60), MinWidth: unit.Dp(20), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(30)
+	tbl.BriefColumnWidth = unit.Dp(48)
+	tbl.BriefGap = unit.Dp(0)
+	tbl.ScrollbarWidth = unit.Dp(10)
+	gtx := testTableLayoutContext(image.Pt(120, 100))
+
+	tbl.Layout(th, gtx, tableTestModel{rows: 30})
+
+	if !tbl.scrollbarVisible {
+		t.Fatal("expected brief-mode horizontal scrollbar")
+	}
+	if tbl.scrollbarAxis != layout.Horizontal {
+		t.Fatalf("scrollbar axis=%v want horizontal", tbl.scrollbarAxis)
+	}
+	if got, want := tbl.briefRowsPerCol, 2; got != want {
+		t.Fatalf("rows per brief column=%d want recomputed value %d", got, want)
+	}
+	if got, want := tbl.hitSize.Y, 86; got != want {
+		t.Fatalf("hit height=%d want content height after scrollbar %d", got, want)
+	}
+	if tbl.HitRow(image.Pt(4, 89), 30) != -1 {
+		t.Fatal("bottom scrollbar gutter should not hit a file row")
+	}
+}
+
+func TestScrollbarDragUpdatesListPositionImmediately(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
+	tbl.RowHeight = unit.Dp(20)
+	tbl.ScrollbarWidth = unit.Dp(10)
+	gtx := testTableLayoutContext(image.Pt(120, 100))
+	tbl.Layout(th, gtx, tableTestModel{rows: 100})
+
+	tbl.scrollbarDragGrab = tbl.scrollbarThumb.Dy() / 2
+	if !tbl.setScrollFromScrollbarPos(image.Pt(tbl.scrollbarTrack.Min.X+1, tbl.scrollbarTrack.Max.Y), 100) {
+		t.Fatal("dragging to the bottom should update the list position")
+	}
+	if got, want := tbl.List.Position.First, 96; got != want {
+		t.Fatalf("list first=%d want max first %d", got, want)
+	}
+}
+
+type tableTestModel struct {
+	rows int
+}
+
+func (m tableTestModel) Len() int {
+	return m.rows
+}
+
+func (m tableTestModel) Cell(row, col int) (string, CellStyle) {
+	return "cell", CellStyle{Color: color.NRGBA{A: 255}}
+}
+
+func sumInts(values []int) int {
+	total := 0
+	for _, v := range values {
+		total += v
+	}
+	return total
+}
+
 func testTableLayoutContext(size image.Point) layout.Context {
 	var router input.Router
 	return layout.Context{

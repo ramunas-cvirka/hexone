@@ -15,14 +15,11 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/unit"
 	"gioui.org/widget/material"
 	xdraw "golang.org/x/image/draw"
 )
 
 const (
-	fileViewerImageScrollbarDp    = 10
-	fileViewerImageScrollbarMinPx = 8
 	fileViewerImageKeyStepPx      = 48
 	fileViewerImageWheelStepPx    = 28
 	fileViewerImageWheelDeltaStep = 80
@@ -532,48 +529,7 @@ func (v *imagePreviewView) computeScrollbars(content image.Point, verticalScroll
 }
 
 func viewerImagePreviewThumbRect(track image.Rectangle, visible, total, scroll int, vertical bool) image.Rectangle {
-	if total <= 0 || visible <= 0 {
-		return image.Rectangle{}
-	}
-	if visible > total {
-		visible = total
-	}
-	if vertical {
-		if track.Dy() <= 0 {
-			return image.Rectangle{}
-		}
-		thumbH := int(float32(track.Dy()) * float32(visible) / float32(total))
-		if thumbH < 18 {
-			thumbH = 18
-		}
-		if thumbH > track.Dy() {
-			thumbH = track.Dy()
-		}
-		thumbY := track.Min.Y
-		maxScroll := total - visible
-		maxTravel := track.Dy() - thumbH
-		if maxScroll > 0 && maxTravel > 0 {
-			thumbY += int(float32(scroll) / float32(maxScroll) * float32(maxTravel))
-		}
-		return image.Rect(track.Min.X+1, thumbY, max(track.Min.X+2, track.Max.X-1), thumbY+thumbH)
-	}
-	if track.Dx() <= 0 {
-		return image.Rectangle{}
-	}
-	thumbW := int(float32(track.Dx()) * float32(visible) / float32(total))
-	if thumbW < 18 {
-		thumbW = 18
-	}
-	if thumbW > track.Dx() {
-		thumbW = track.Dx()
-	}
-	thumbX := track.Min.X
-	maxScroll := total - visible
-	maxTravel := track.Dx() - thumbW
-	if maxScroll > 0 && maxTravel > 0 {
-		thumbX += int(float32(scroll) / float32(maxScroll) * float32(maxTravel))
-	}
-	return image.Rect(thumbX, track.Min.Y+1, thumbX+thumbW, max(track.Min.Y+2, track.Max.Y-1))
+	return viewerScrollbarThumbForScroll(track, visible, total, float64(scroll), vertical)
 }
 
 func (v *imagePreviewView) verticalThumbGrabY(pos image.Point) int {
@@ -660,28 +616,39 @@ func (v *imagePreviewView) setScrollFromHorizontalDrag(img image.Image, posX, gr
 	return true
 }
 
-func (v *imagePreviewView) updateHover(pos image.Point) {
+func (v *imagePreviewView) updateHover(pos image.Point) bool {
 	if v == nil {
-		return
+		return false
 	}
+	oldVTrack, oldVThumb := v.hoverVTrack, v.hoverVThumb
+	oldHTrack, oldHThumb := v.hoverHTrack, v.hoverHThumb
+	oldPDFTrack, oldPDFThumb := v.hoverPDFTrack, v.hoverPDFThumb
 	v.hoverVTrack = viewerPointInRect(pos, v.vTrackRect)
 	v.hoverVThumb = viewerPointInRect(pos, v.vThumbRect)
 	v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
 	v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
 	v.hoverPDFTrack = viewerPointInRect(pos, v.pdfTrackRect)
 	v.hoverPDFThumb = viewerPointInRect(pos, v.pdfThumbRect)
+	return oldVTrack != v.hoverVTrack ||
+		oldVThumb != v.hoverVThumb ||
+		oldHTrack != v.hoverHTrack ||
+		oldHThumb != v.hoverHThumb ||
+		oldPDFTrack != v.hoverPDFTrack ||
+		oldPDFThumb != v.hoverPDFThumb
 }
 
-func (v *imagePreviewView) clearHover() {
+func (v *imagePreviewView) clearHover() bool {
 	if v == nil {
-		return
+		return false
 	}
+	changed := v.hoverVTrack || v.hoverVThumb || v.hoverHTrack || v.hoverHThumb || v.hoverPDFTrack || v.hoverPDFThumb
 	v.hoverVTrack = false
 	v.hoverVThumb = false
 	v.hoverHTrack = false
 	v.hoverHThumb = false
 	v.hoverPDFTrack = false
 	v.hoverPDFThumb = false
+	return changed
 }
 
 func (v *imagePreviewView) clearPDFDocumentScrollbar() {
@@ -763,10 +730,7 @@ func (ui *UI) layoutImageOutputView(_ *material.Theme, gtx layout.Context, st *f
 	}
 	ui.paintFileViewerImageBackdrop(gtx, size)
 	v := &st.imageView
-	scrollbarPx := gtx.Dp(unit.Dp(fileViewerImageScrollbarDp))
-	if scrollbarPx < fileViewerImageScrollbarMinPx {
-		scrollbarPx = fileViewerImageScrollbarMinPx
-	}
+	scrollbarPx := viewerScrollbarThickness(gtx, min(size.X, size.Y))
 	layoutSize := size
 	pdfDocScrollbarPx := 0
 	verticalScrollbarPx := scrollbarPx
@@ -925,7 +889,9 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 				continue
 			}
 			if !pe.Buttons.Contain(pointer.ButtonPrimary) {
-				v.updateHover(pos)
+				if v.updateHover(pos) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
 				continue
 			}
 			if st.menuOpen {
@@ -962,7 +928,9 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 					st.markUserBrowsing(gtx.Now)
 				}
 			}
-			v.updateHover(pos)
+			if v.updateHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Drag:
 			changed := false
 			if v.pdfDragging && pe.PointerID == v.pdfDragID {
@@ -981,7 +949,9 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 				st.markUserBrowsing(gtx.Now)
 				gtx.Execute(op.InvalidateCmd{})
 			}
-			v.updateHover(pos)
+			if v.updateHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Release:
 			if v.pdfDragging && pe.PointerID == v.pdfDragID {
 				targetPage := v.pdfDragPage
@@ -1002,7 +972,9 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 				v.hDragging = false
 				v.hDragGrab = 0
 			}
-			v.updateHover(pos)
+			if v.updateHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Cancel:
 			if v.pdfDragging && pe.PointerID == v.pdfDragID {
 				v.pdfDragging = false
@@ -1017,11 +989,17 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 				v.hDragging = false
 				v.hDragGrab = 0
 			}
-			v.clearHover()
+			if v.clearHover() {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Move, pointer.Enter:
-			v.updateHover(pos)
+			if v.updateHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Leave:
-			v.clearHover()
+			if v.clearHover() {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		}
 	}
 }
@@ -1072,20 +1050,7 @@ func (ui *UI) paintImagePreviewScrollbars(gtx layout.Context, st *fileViewerStat
 	v := &st.imageView
 	theme := ui.fileViewerTheme()
 	draw := func(track, thumb image.Rectangle, hoverTrack, hoverThumb, dragging bool) {
-		if track.Dx() <= 0 || track.Dy() <= 0 || thumb.Dx() <= 0 || thumb.Dy() <= 0 {
-			return
-		}
-		trackColor := theme.ScrollTrack
-		thumbColor := theme.ScrollThumb
-		if hoverTrack || hoverThumb {
-			trackColor = theme.ScrollTrackHover
-			thumbColor = theme.ScrollThumbHover
-		}
-		if dragging {
-			thumbColor = theme.ScrollThumbDrag
-		}
-		paint.FillShape(gtx.Ops, trackColor, clip.Rect(track).Op())
-		paint.FillShape(gtx.Ops, thumbColor, clip.Rect(thumb).Op())
+		paintViewerScrollbar(gtx, theme, track, thumb, hoverTrack, hoverThumb, dragging)
 	}
 	draw(v.vTrackRect, v.vThumbRect, v.hoverVTrack, v.hoverVThumb, v.vDragging)
 	draw(v.hTrackRect, v.hThumbRect, v.hoverHTrack, v.hoverHThumb, v.hDragging)
@@ -1098,17 +1063,14 @@ func (ui *UI) applyImagePreviewCursor(gtx layout.Context, st *fileViewerState) {
 	}
 	v := &st.imageView
 	if v.pdfDragging {
-		defer clip.Rect(v.pdfTrackRect).Push(gtx.Ops).Pop()
 		pointer.CursorGrabbing.Add(gtx.Ops)
 		return
 	}
 	if v.vDragging {
-		defer clip.Rect(v.vTrackRect).Push(gtx.Ops).Pop()
 		pointer.CursorGrabbing.Add(gtx.Ops)
 		return
 	}
 	if v.hDragging {
-		defer clip.Rect(v.hTrackRect).Push(gtx.Ops).Pop()
 		pointer.CursorGrabbing.Add(gtx.Ops)
 		return
 	}
