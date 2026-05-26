@@ -35,3 +35,14 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - File list auto-refreshes when the current directory changes on disk
 - Free and total disk space shown at the bottom of each pane
 - Various fixes & tweaks
+
+## v0.5.0 - 2026-05-26
+- Added rounded scrollbars throughout the app
+- Improved streaming mode by discarding buffered data before it reaches the size limit
+- Added multi-file RAR extraction with progress status
+- Fixed associated app launching in cases where paths or arguments were handled incorrectly
+- Added cancellable copy operations with transfer speed indication
+- Added a small diff view when overwriting files during copy
+- Improved Unix link handling and warmed up the viewer for faster initial loads
+- Removed the default viewer mode setting
+- Replaced the `F2` WIP behavior with custom commands, including a fixed-size command builder with 10 command slots

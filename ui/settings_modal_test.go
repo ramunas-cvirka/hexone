@@ -158,13 +158,12 @@ func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
 	}
 }
 
-func TestSettingsKeyboardFocusOrderIncludesViewerButtons(t *testing.T) {
+func TestSettingsKeyboardFocusOrderIncludesViewerControls(t *testing.T) {
 	st := &settingsModalState{activeTab: "viewer"}
 
 	got := st.focusOrder()
 	want := []settingsKeyboardFocus{
 		settingsKeyboardFocusNav,
-		settingsKeyboardFocusViewerMode,
 		settingsKeyboardFocusViewerShell,
 		settingsKeyboardFocusViewerRemoteSearch,
 		settingsKeyboardFocusViewerSmoothScrolling,
@@ -231,8 +230,8 @@ func TestSettingsModalKeyboardUsesUpDownOnlyForNavFocus(t *testing.T) {
 		t.Fatal("settings modal did not open")
 	}
 	st.activeTab = "viewer"
-	st.focus = settingsKeyboardFocusViewerMode
-	st.viewMode = "file"
+	st.focus = settingsKeyboardFocusViewerShell
+	st.viewShellEdit.SetText("auto")
 	st.footerFocus = settingsFooterActionSave
 	st.keyFocus.wantFocus = true
 
@@ -250,14 +249,11 @@ func TestSettingsModalKeyboardUsesUpDownOnlyForNavFocus(t *testing.T) {
 	if st.activeTab != "viewer" {
 		t.Fatalf("activeTab after DownArrow = %q, want viewer", st.activeTab)
 	}
-	if st.viewMode != "file" {
-		t.Fatalf("viewMode after DownArrow = %q, want file", st.viewMode)
-	}
 
 	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press})
 	frame(now.Add(2 * time.Millisecond))
-	if st.viewMode != "hex" {
-		t.Fatalf("viewMode after RightArrow = %q, want hex", st.viewMode)
+	if got := st.viewShellEdit.Text(); got != "auto" {
+		t.Fatalf("viewer shell after RightArrow = %q, want auto", got)
 	}
 }
 
@@ -1706,7 +1702,7 @@ func TestSettingsViewerPreviewSelectionRectUsesFullRow(t *testing.T) {
 func TestSettingsViewerPreviewContentUsesContiguousRows(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
-	st := &settingsModalState{viewMode: "file"}
+	st := &settingsModalState{}
 
 	var r input.Router
 	gtx := layout.Context{
@@ -1770,6 +1766,40 @@ func TestSettingsColorsPreviewHostHeightUsesSharedValue(t *testing.T) {
 	}
 }
 
+func TestSettingsPreviewScrollbarGeometryCentersThumb(t *testing.T) {
+	track, thumb := settingsPreviewScrollbarGeometry(8, 88, 22)
+
+	if track != image.Rect(0, 0, 8, 88) {
+		t.Fatalf("track=%v want %v", track, image.Rect(0, 0, 8, 88))
+	}
+	if thumb != image.Rect(1, 33, 7, 55) {
+		t.Fatalf("thumb=%v want %v", thumb, image.Rect(1, 33, 7, 55))
+	}
+}
+
+func TestSettingsPanePreviewScrollbarFillsAvailableHeight(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	palette := filePanePaletteFromConfig(ui.fmCfg)
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(32, 118),
+		},
+	}
+
+	dims := ui.layoutSettingsPanePreviewScrollbar(gtx, palette)
+	if dims.Size.X != 8 {
+		t.Fatalf("pane preview scrollbar width=%d want 8", dims.Size.X)
+	}
+	if dims.Size.Y != 118 {
+		t.Fatalf("pane preview scrollbar height=%d want available height 118", dims.Size.Y)
+	}
+}
+
 func TestMeasureTypefaceLineHeightDoesNotPaintSampleGlyphs(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
@@ -1795,10 +1825,10 @@ func TestMeasureTypefaceLineHeightDoesNotPaintSampleGlyphs(t *testing.T) {
 	}
 }
 
-func TestSettingsViewerPreviewIgnoresSelectedMode(t *testing.T) {
+func TestSettingsViewerPreviewContentHeightUsesTextRows(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
-	st := &settingsModalState{viewMode: "hex"}
+	st := &settingsModalState{}
 
 	var r input.Router
 	gtx := layout.Context{

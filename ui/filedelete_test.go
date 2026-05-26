@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -167,6 +168,16 @@ func TestFilePaneRestoreAnchorPathSkippingSkipsDeletedVisibleEntry(t *testing.T)
 	}
 	if got, want := filePaneRestoreAnchorPathSkipping(pane, deleted, false), fileDeleteTestName(11); got != want {
 		t.Fatalf("restore anchor = %q, want %q", got, want)
+	}
+}
+
+func TestFormatFileDeleteErrorSimplifiesPermissionDenied(t *testing.T) {
+	err := &os.PathError{Op: "remove", Path: "/.VolumeIcon.icns", Err: errors.New("operation not permitted")}
+	if got, want := formatFileDeleteError(err, ""), "permission denied: /.VolumeIcon.icns"; got != want {
+		t.Fatalf("formatted error = %q, want %q", got, want)
+	}
+	if got, want := formatFileDeleteError(err, "/override"), "permission denied: /override"; got != want {
+		t.Fatalf("formatted target error = %q, want %q", got, want)
 	}
 }
 

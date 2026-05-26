@@ -5,6 +5,7 @@ package ui
 
 import (
 	"archive/zip"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -116,6 +117,7 @@ func TestRunCopyBetweenEndpointsCopiesArchiveMember(t *testing.T) {
 	dstPath := filepath.Join(dstDir, "readme.txt")
 
 	err := runCopyBetweenEndpoints(
+		context.Background(),
 		copyEndpoint{dir: archivePath, archive: true},
 		srcPath,
 		copyEndpoint{dir: dstDir},

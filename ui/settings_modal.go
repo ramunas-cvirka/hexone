@@ -61,17 +61,6 @@ type settingsModalState struct {
 	navPulseKey      string
 	navPulseAt       time.Time
 
-	viewModeFileClick           widget.Clickable
-	viewModeHexClick            widget.Clickable
-	viewModeCommandClick        widget.Clickable
-	viewMode                    string
-	viewModePrev                string
-	viewModeAnimAt              time.Time
-	viewModeHoverKey            string
-	viewModeHoverPrev           string
-	viewModeHoverAt             time.Time
-	viewModePulseKey            string
-	viewModePulseAt             time.Time
 	colorScopePaneClick         widget.Clickable
 	colorScopeViewerClick       widget.Clickable
 	colorScopeFilenameClick     widget.Clickable
@@ -111,6 +100,8 @@ type settingsModalState struct {
 	colorFocusedSelectedText    string
 	colorCurrentDir             string
 	colorCurrentDirText         string
+	colorScrollbarThumb         string
+	colorScrollbarTrack         string
 	colorViewerBackground       string
 	colorViewerText             string
 	colorViewerSelection        string
@@ -305,6 +296,7 @@ var settingsPaneColorOptions = []settingsColorOption{
 	{key: "selected_files", label: "Selected Files"},
 	{key: "focused_selected", label: "Focused + Selected Files"},
 	{key: "current_dir", label: "Current Dir"},
+	{key: "scrollbar", label: "Scrollbar"},
 }
 
 var settingsViewerColorOptions = []settingsColorOption{
@@ -461,15 +453,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	if st == nil || cfg == nil {
 		return
 	}
-	mode := strings.ToLower(strings.TrimSpace(cfg.Viewer.Mode))
-	switch mode {
-	case "file", "hex", "command":
-	default:
-		mode = "file"
-	}
-	st.viewMode = mode
 	switch st.colorCategory {
-	case "normal", "hover", "selection", "selected_files", "focused_selected", "current_dir":
+	case "normal", "hover", "selection", "selected_files", "focused_selected", "current_dir", "scrollbar":
 	default:
 		st.colorCategory = "selection"
 	}
@@ -490,6 +475,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorFocusedSelectedText = cfg.Colors.FocusedSelectedText
 	st.colorCurrentDir = cfg.Colors.CurrentDirBg
 	st.colorCurrentDirText = cfg.Colors.CurrentDirText
+	st.colorScrollbarThumb = cfg.Colors.ScrollbarThumb
+	st.colorScrollbarTrack = cfg.Colors.ScrollbarTrack
 	st.colorViewerBackground = cfg.Viewer.Background
 	st.colorViewerText = cfg.Viewer.Text
 	st.colorViewerSelection = cfg.Viewer.Selection
@@ -605,6 +592,8 @@ func (st *settingsModalState) colorValue(key string) string {
 		return st.colorFocusedSelected
 	case "current_dir":
 		return st.colorCurrentDir
+	case "scrollbar":
+		return st.colorScrollbarThumb
 	case "hover":
 		return st.colorHover
 	case "selected_files":
@@ -634,6 +623,8 @@ func (st *settingsModalState) setColorValue(key, value string) {
 		st.colorFocusedSelected = value
 	case "current_dir":
 		st.colorCurrentDir = value
+	case "scrollbar":
+		st.colorScrollbarThumb = value
 	case "hover":
 		st.colorHover = value
 	case "selected_files":
@@ -657,6 +648,8 @@ func (st *settingsModalState) colorTextValue(key string) string {
 		return st.colorFocusedSelectedText
 	case "current_dir":
 		return st.colorCurrentDirText
+	case "scrollbar":
+		return st.colorScrollbarTrack
 	case "hover":
 		return st.colorHoverText
 	case "selected_files":
@@ -681,6 +674,8 @@ func (st *settingsModalState) setColorTextValue(key, value string) {
 		st.colorFocusedSelectedText = value
 	case "current_dir":
 		st.colorCurrentDirText = value
+	case "scrollbar":
+		st.colorScrollbarTrack = value
 	case "hover":
 		st.colorHoverText = value
 	case "selected_files":
@@ -1142,7 +1137,6 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		currentDirFallback = cfg.Colors.CurrentDirBg
 		currentDirTextFallback = cfg.Colors.CurrentDirText
 	}
-
 	bgRaw := strings.TrimSpace(st.colorPaneBackground)
 	paneTextRaw := strings.TrimSpace(st.colorPaneText)
 	hoverRaw := strings.TrimSpace(st.colorHover)
@@ -1155,6 +1149,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	focusedSelectedTextRaw := strings.TrimSpace(st.colorFocusedSelectedText)
 	currentDirRaw := strings.TrimSpace(st.colorCurrentDir)
 	currentDirTextRaw := strings.TrimSpace(st.colorCurrentDirText)
+	scrollbarThumbRaw := strings.TrimSpace(st.colorScrollbarThumb)
+	scrollbarTrackRaw := strings.TrimSpace(st.colorScrollbarTrack)
 
 	errText := ""
 	for _, field := range []struct {
@@ -1173,6 +1169,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		{label: "Focused + selected files text", value: focusedSelectedTextRaw},
 		{label: "Current dir background", value: currentDirRaw},
 		{label: "Current dir text", value: currentDirTextRaw},
+		{label: "Scrollbar thumb", value: scrollbarThumbRaw},
+		{label: "Scrollbar track", value: scrollbarTrackRaw},
 	} {
 		if field.value == "" {
 			continue
@@ -1196,6 +1194,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	draft.Colors.FocusedSelectedText = fm.NormalizeHexColor(focusedSelectedTextRaw, focusedSelectedTextFallback)
 	draft.Colors.CurrentDirBg = fm.NormalizeHexColor(currentDirRaw, currentDirFallback)
 	draft.Colors.CurrentDirText = fm.NormalizeHexColor(currentDirTextRaw, currentDirTextFallback)
+	draft.Colors.ScrollbarThumb = fm.NormalizeOptionalHexColor(scrollbarThumbRaw)
+	draft.Colors.ScrollbarTrack = fm.NormalizeOptionalHexColor(scrollbarTrackRaw)
 	return filePanePaletteFromConfig(draft), errText
 }
 
@@ -1213,6 +1213,8 @@ func filePanePaletteToConfigColors(palette filePanePalette) fm.ColorsConfig {
 		FocusedSelectedText: fm.FormatHexColor(palette.MarkedSelFg),
 		CurrentDirBg:        fm.FormatHexColor(palette.CurrentDirBg),
 		CurrentDirText:      fm.FormatHexColor(palette.CurrentDirFg),
+		ScrollbarThumb:      fm.FormatHexColor(palette.ScrollThumb),
+		ScrollbarTrack:      fm.FormatHexColor(palette.ScrollTrack),
 	}
 }
 
@@ -2469,15 +2471,6 @@ func (st *settingsModalState) pulseFill(now time.Time, key string) (float32, boo
 	return 1 - t, true
 }
 
-func (st *settingsModalState) setViewMode(next string, now time.Time) {
-	if st == nil || next == "" || st.viewMode == next {
-		return
-	}
-	st.viewModePrev = st.viewMode
-	st.viewModeAnimAt = now
-	st.viewMode = next
-}
-
 func (st *settingsChoiceAnim) setValue(current *string, next string, now time.Time) {
 	if st == nil || current == nil || *current == next {
 		return
@@ -2544,125 +2537,6 @@ func (st *settingsChoiceAnim) position(now time.Time, current string, keys []str
 	prevIdx := float32(idxOf(st.prev))
 	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
 	return prevIdx + (currentIdx-prevIdx)*t, true
-}
-
-func settingsViewModeIndex(key string) int {
-	switch key {
-	case "hex":
-		return 1
-	case "command":
-		return 2
-	default:
-		return 0
-	}
-}
-
-func (st *settingsModalState) viewModePosition(now time.Time) (float32, bool) {
-	if st == nil {
-		return 0, false
-	}
-	current := float32(settingsViewModeIndex(st.viewMode))
-	if st.viewModePrev == "" || st.viewModeAnimAt.IsZero() || st.viewModePrev == st.viewMode {
-		return current, false
-	}
-	prev := float32(settingsViewModeIndex(st.viewModePrev))
-	elapsed := now.Sub(st.viewModeAnimAt)
-	if elapsed >= toolbarAnimDur {
-		st.viewModePrev = ""
-		st.viewModeAnimAt = time.Time{}
-		return current, false
-	}
-	t := smoothstep01(clamp01(float32(elapsed) / float32(toolbarAnimDur)))
-	return prev + (current-prev)*t, true
-}
-
-func (st *settingsModalState) viewModeFill(now time.Time, key string) (float32, bool) {
-	if st == nil || key == "" {
-		return 0, false
-	}
-	if st.viewModePrev == "" || st.viewModeAnimAt.IsZero() || st.viewModePrev == st.viewMode {
-		if key == st.viewMode {
-			return 1, false
-		}
-		return 0, false
-	}
-	elapsed := now.Sub(st.viewModeAnimAt)
-	if elapsed >= toolbarAnimDur {
-		st.viewModePrev = ""
-		st.viewModeAnimAt = time.Time{}
-		if key == st.viewMode {
-			return 1, false
-		}
-		return 0, false
-	}
-	t := smoothstep01(float32(elapsed) / float32(toolbarAnimDur))
-	if key == st.viewMode {
-		return t, true
-	}
-	if key == st.viewModePrev {
-		return 1 - t, true
-	}
-	return 0, true
-}
-
-func (st *settingsModalState) setViewModeHover(key string, now time.Time) {
-	if st == nil || st.viewModeHoverKey == key {
-		return
-	}
-	st.viewModeHoverPrev = st.viewModeHoverKey
-	st.viewModeHoverKey = key
-	st.viewModeHoverAt = now
-}
-
-func (st *settingsModalState) viewModeHoverFill(now time.Time, key string) (float32, bool) {
-	if st == nil || key == "" {
-		return 0, false
-	}
-	if st.viewModeHoverAt.IsZero() || st.viewModeHoverPrev == st.viewModeHoverKey {
-		if st.viewModeHoverKey == key {
-			return 1, false
-		}
-		return 0, false
-	}
-	elapsed := now.Sub(st.viewModeHoverAt)
-	if elapsed >= toolbarHoverDur {
-		st.viewModeHoverPrev = ""
-		st.viewModeHoverAt = time.Time{}
-		if st.viewModeHoverKey == key {
-			return 1, false
-		}
-		return 0, false
-	}
-	t := clamp01(float32(elapsed) / float32(toolbarHoverDur))
-	if key == st.viewModeHoverKey {
-		return t, true
-	}
-	if key == st.viewModeHoverPrev {
-		return 1 - t, true
-	}
-	return 0, true
-}
-
-func (st *settingsModalState) setViewModePulse(key string, now time.Time) {
-	if st == nil || key == "" {
-		return
-	}
-	st.viewModePulseKey = key
-	st.viewModePulseAt = now
-}
-
-func (st *settingsModalState) viewModePulseFill(now time.Time, key string) (float32, bool) {
-	if st == nil || key == "" || st.viewModePulseKey != key || st.viewModePulseAt.IsZero() {
-		return 0, false
-	}
-	elapsed := now.Sub(st.viewModePulseAt)
-	if elapsed >= toolbarClickDur {
-		st.viewModePulseKey = ""
-		st.viewModePulseAt = time.Time{}
-		return 0, false
-	}
-	t := clamp01(float32(elapsed) / float32(toolbarClickDur))
-	return 1 - t, true
 }
 
 func (st *settingsModalState) setFooterHover(key string, now time.Time) {
@@ -2811,23 +2685,27 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	} else {
 		ui.fmCfg.Colors.CurrentDirText = fm.FormatHexColor(c)
 	}
+	if raw := strings.TrimSpace(st.colorScrollbarThumb); raw == "" {
+		ui.fmCfg.Colors.ScrollbarThumb = ""
+	} else if c, ok := fm.ParseHexColor(raw); !ok {
+		return fmt.Errorf("scrollbar thumb color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.ScrollbarThumb = fm.FormatHexColor(c)
+	}
+	if raw := strings.TrimSpace(st.colorScrollbarTrack); raw == "" {
+		ui.fmCfg.Colors.ScrollbarTrack = ""
+	} else if c, ok := fm.ParseHexColor(raw); !ok {
+		return fmt.Errorf("scrollbar track color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.ScrollbarTrack = fm.FormatHexColor(c)
+	}
 	filenameColors, filenameErr := st.draftFilenameColors()
 	if filenameErr != "" {
 		return fmt.Errorf("%s", filenameErr)
 	}
 	ui.fmCfg.Colors.Filenames = filenameColors
 
-	mode := strings.ToLower(strings.TrimSpace(st.viewMode))
-	switch mode {
-	case "file", "hex", "command":
-	default:
-		return fmt.Errorf("viewer mode is invalid")
-	}
-
 	cmd := strings.TrimSpace(st.viewCommandEdit.Text())
-	if mode == "command" && cmd == "" {
-		return fmt.Errorf("viewer command is required in command mode")
-	}
 	if cmd == "" {
 		cmd = "cat {path}"
 	}
@@ -2872,7 +2750,6 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	}
 	ui.fmCfg.General.Typeface = st.paneFontFamily
 	ui.fmCfg.General.FontSizeSp = float32(paneFontSize)
-	ui.fmCfg.Viewer.Mode = mode
 	ui.fmCfg.Viewer.Typeface = st.viewFontFamily
 	ui.fmCfg.Viewer.Command = cmd
 	ui.fmCfg.Viewer.Shell = shell
@@ -3204,21 +3081,6 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 		st.setKeyboardFocus(settingsKeyboardFocusNav)
 		st.setActiveTab("config", gtx.Now)
 		st.setPulse("config", gtx.Now)
-	}
-	if st.viewModeFileClick.Clicked(gtx) {
-		st.setKeyboardFocus(settingsKeyboardFocusViewerMode)
-		st.setViewMode("file", gtx.Now)
-		st.setViewModePulse("file", gtx.Now)
-	}
-	if st.viewModeHexClick.Clicked(gtx) {
-		st.setKeyboardFocus(settingsKeyboardFocusViewerMode)
-		st.setViewMode("hex", gtx.Now)
-		st.setViewModePulse("hex", gtx.Now)
-	}
-	if st.viewModeCommandClick.Clicked(gtx) {
-		st.setKeyboardFocus(settingsKeyboardFocusViewerMode)
-		st.setViewMode("command", gtx.Now)
-		st.setViewModePulse("command", gtx.Now)
 	}
 	st.normalizeKeyboardFocus()
 	dims := st.backdropClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -3948,44 +3810,6 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	_, currentRuleExists := st.viewerCommandRule(currentRulePattern)
 	pickerRules, pickerMatchCount := st.viewerCommandRulePickerRules()
 
-	fillFile, animFile := st.viewModeFill(gtx.Now, "file")
-	fillHex, animHex := st.viewModeFill(gtx.Now, "hex")
-	fillCommand, animCommand := st.viewModeFill(gtx.Now, "command")
-	hoverModeKey := ""
-	if st.viewModeFileClick.Hovered() {
-		hoverModeKey = "file"
-	}
-	if st.viewModeHexClick.Hovered() {
-		hoverModeKey = "hex"
-	}
-	if st.viewModeCommandClick.Hovered() {
-		hoverModeKey = "command"
-	}
-	st.setViewModeHover(hoverModeKey, gtx.Now)
-	hoverFile, hoverAnimFile := st.viewModeHoverFill(gtx.Now, "file")
-	hoverHex, hoverAnimHex := st.viewModeHoverFill(gtx.Now, "hex")
-	hoverCommand, hoverAnimCommand := st.viewModeHoverFill(gtx.Now, "command")
-	pulseFile, pulseAnimFile := st.viewModePulseFill(gtx.Now, "file")
-	pulseHex, pulseAnimHex := st.viewModePulseFill(gtx.Now, "hex")
-	pulseCommand, pulseAnimCommand := st.viewModePulseFill(gtx.Now, "command")
-	pos, animPos := st.viewModePosition(gtx.Now)
-	focusFile := float32(0)
-	focusHex := float32(0)
-	focusCommand := float32(0)
-	if st.focus == settingsKeyboardFocusViewerMode {
-		switch st.viewMode {
-		case "hex":
-			focusHex = 1
-		case "command":
-			focusCommand = 1
-		default:
-			focusFile = 1
-		}
-	}
-	if animFile || animHex || animCommand || hoverAnimFile || hoverAnimHex || hoverAnimCommand || pulseAnimFile || pulseAnimHex || pulseAnimCommand || animPos {
-		gtx.Execute(op.InvalidateCmd{})
-	}
-
 	rowLabel := func(txt string, enabled bool) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, enabled)
 	}
@@ -4099,47 +3923,6 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		ruleApplyLabel = "Update"
 	}
 
-	layoutModeStrip := func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints.Min.X = 0
-		stripH := gtx.Dp(unit.Dp(22))
-		if stripH < 1 {
-			stripH = 1
-		}
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, 10), []slidingTabSpec{
-					{
-						Label:      "File",
-						Click:      &st.viewModeFileClick,
-						ActiveFill: fillFile,
-						HoverFill:  hoverFile,
-						PulseFill:  pulseFile,
-						FocusFill:  focusFile,
-					},
-					{
-						Label:      "Hex",
-						Click:      &st.viewModeHexClick,
-						ActiveFill: fillHex,
-						HoverFill:  hoverHex,
-						PulseFill:  pulseHex,
-						FocusFill:  focusHex,
-					},
-					{
-						Label:      "Command",
-						Click:      &st.viewModeCommandClick,
-						ActiveFill: fillCommand,
-						HoverFill:  hoverCommand,
-						PulseFill:  pulseCommand,
-						FocusFill:  focusCommand,
-					},
-				})
-			}),
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH+gtx.Dp(unit.Dp(2)))}
-			}),
-		)
-	}
-
 	noticeLabel := func(text string, maxLines int, truncator string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, text)
@@ -4153,13 +3936,6 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	}
 
 	sections := []layout.Widget{
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(rowLabel("Default viewer mode", true)),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-				layout.Rigid(layoutModeStrip),
-			)
-		},
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(rowLabel("Shell (all viewer commands)", true)),
@@ -4777,11 +4553,6 @@ func (st *settingsModalState) previewViewerConfig(cfg *fm.Config) *fm.Config {
 	palette, _ := st.draftFilePanePalette(cfg)
 	draft.Colors = filePanePaletteToConfigColors(palette)
 
-	mode := strings.ToLower(strings.TrimSpace(st.viewMode))
-	switch mode {
-	case "file", "hex", "command":
-		draft.Viewer.Mode = mode
-	}
 	if strings.TrimSpace(st.viewFontFamily) != "" && resources.IsBundledFontFamily(st.viewFontFamily) {
 		draft.Viewer.Typeface = st.viewFontFamily
 	}
@@ -5106,14 +4877,55 @@ func (ui *UI) layoutSettingsViewerPreviewScrollbar(gtx layout.Context, theme fil
 	if thumbH < 18 {
 		thumbH = 18
 	}
-	thumbY := (trackH - thumbH) / 2
+	track, thumb := settingsPreviewScrollbarGeometry(trackW, trackH, thumbH)
 	return fixedWidth(gtx, trackW, func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
-			paint.FillShape(gtx.Ops, theme.ScrollTrackHover, clip.Rect(image.Rect(0, 0, trackW, trackH)).Op())
-			paint.FillShape(gtx.Ops, theme.ScrollThumbHover, clip.Rect(image.Rect(1, thumbY, trackW-1, thumbY+thumbH)).Op())
+			paintSettingsPreviewRoundedRect(gtx, track, theme.ScrollTrackHover)
+			paintSettingsPreviewRoundedRect(gtx, thumb, theme.ScrollThumbHover)
 			return layout.Dimensions{Size: image.Pt(trackW, trackH)}
 		})
 	})
+}
+
+func settingsPreviewScrollbarGeometry(trackW, trackH, thumbH int) (track, thumb image.Rectangle) {
+	if trackW < 1 {
+		trackW = 1
+	}
+	if trackH < 1 {
+		trackH = 1
+	}
+	if thumbH < 1 {
+		thumbH = 1
+	}
+	if thumbH > trackH {
+		thumbH = trackH
+	}
+	inset := 1
+	if trackW <= 2 {
+		inset = 0
+	}
+	thumbY := (trackH - thumbH) / 2
+	track = image.Rect(0, 0, trackW, trackH)
+	thumb = image.Rect(inset, thumbY, trackW-inset, thumbY+thumbH)
+	if thumb.Empty() {
+		thumb = track
+	}
+	return track, thumb
+}
+
+func paintSettingsPreviewRoundedRect(gtx layout.Context, rect image.Rectangle, fill color.NRGBA) {
+	if fill.A == 0 || rect.Empty() {
+		return
+	}
+	radius := rect.Dx()
+	if rect.Dy() < radius {
+		radius = rect.Dy()
+	}
+	radius /= 2
+	if radius < 1 {
+		radius = 1
+	}
+	paint.FillShape(gtx.Ops, fill, clip.UniformRRect(rect, radius).Op(gtx.Ops))
 }
 
 func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
@@ -5220,6 +5032,12 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		currentText = parsed
 	}
 	showTextField := st.colorScope != "viewer" || settingsViewerCategoryHasText(st.colorCategory)
+	bgFieldLabel := "Background"
+	textFieldLabel := "Text"
+	if st.colorScope == "panes" && st.colorCategory == "scrollbar" {
+		bgFieldLabel = "Thumb"
+		textFieldLabel = "Track"
+	}
 
 	rowLabel := func(txt string, enabled bool) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, enabled)
@@ -5243,14 +5061,14 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			children := []layout.FlexChild{
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsColorValueField(th, gtx, st, "Background", currentBg, &st.colorValueEdit, &st.colorBgPickerClick, "background", bgSwatchGroups, settingsKeyboardFocusColorsBgPicker, settingsKeyboardFocusColorsValue)
+					return ui.layoutSettingsColorValueField(th, gtx, st, bgFieldLabel, currentBg, &st.colorValueEdit, &st.colorBgPickerClick, "background", bgSwatchGroups, settingsKeyboardFocusColorsBgPicker, settingsKeyboardFocusColorsValue)
 				}),
 			}
 			if showTextField {
 				children = append(children,
 					layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorValueField(th, gtx, st, "Text", currentText, &st.colorTextValueEdit, &st.colorTextPickerClick, "text", textSwatchGroups, settingsKeyboardFocusColorsTextPicker, settingsKeyboardFocusColorsTextValue)
+						return ui.layoutSettingsColorValueField(th, gtx, st, textFieldLabel, currentText, &st.colorTextValueEdit, &st.colorTextPickerClick, "text", textSwatchGroups, settingsKeyboardFocusColorsTextPicker, settingsKeyboardFocusColorsTextValue)
 					}),
 				)
 			}
@@ -5264,6 +5082,8 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 			note := "Use the same category for both background and text. Hover and Focused + Selected Files are tuned separately."
 			if st.colorScope == "viewer" {
 				note = "Viewer background/text and selection are saved separately from pane colors. Selection only needs a background override."
+			} else if st.colorCategory == "scrollbar" {
+				note = "Leave scrollbar fields empty to derive contrast from the active pane palette."
 			}
 			lbl := material.Caption(th, note)
 			lbl.Font.Typeface = ui.mainTypeface()
@@ -5828,33 +5648,72 @@ func (ui *UI) layoutSettingsColorPreview(th *material.Theme, gtx layout.Context,
 						return lbl.Layout(gtx)
 					}),
 					layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.PaneBg, palette.PaneFg, "Normal", "alpha.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.HoverBg, palette.HoverFg, "Hover", "beta.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.SelectedBg, palette.SelectedFg, "Focused", "gamma.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedBg, palette.MarkedFg, "Selected Files", "delta.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedSelBg, palette.MarkedSelFg, "Focused + Selected Files", "omega.txt")
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSettingsColorPreviewCurrentDir(th, gtx, palette)
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutSettingsColorPreviewRows(th, gtx, palette)
+							}),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutSettingsPanePreviewScrollbar(gtx, palette)
+							}),
+						)
 					}),
 				)
 			})
 		},
 	)
+}
+
+func (ui *UI) layoutSettingsColorPreviewRows(th *material.Theme, gtx layout.Context, palette filePanePalette) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.PaneBg, palette.PaneFg, "Normal", "alpha.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.HoverBg, palette.HoverFg, "Hover", "beta.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.SelectedBg, palette.SelectedFg, "Focused", "gamma.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedBg, palette.MarkedFg, "Selected Files", "delta.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedSelBg, palette.MarkedSelFg, "Focused + Selected Files", "omega.txt")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewCurrentDir(th, gtx, palette)
+		}),
+	)
+}
+
+func (ui *UI) layoutSettingsPanePreviewScrollbar(gtx layout.Context, palette filePanePalette) layout.Dimensions {
+	trackW := gtx.Dp(unit.Dp(8))
+	trackH := gtx.Constraints.Max.Y
+	if trackW < 6 {
+		trackW = 6
+	}
+	if trackH < 1 {
+		trackH = gtx.Dp(unit.Dp(88))
+	}
+	thumbH := trackH / 3
+	if minThumb := gtx.Dp(unit.Dp(22)); thumbH < minThumb {
+		thumbH = minThumb
+	}
+	track, thumb := settingsPreviewScrollbarGeometry(trackW, trackH, thumbH)
+	return fixedWidth(gtx, trackW, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, trackH, func(gtx layout.Context) layout.Dimensions {
+			paintSettingsPreviewRoundedRect(gtx, track, palette.ScrollTrackH)
+			paintSettingsPreviewRoundedRect(gtx, thumb, palette.ScrollThumbH)
+			return layout.Dimensions{Size: image.Pt(trackW, trackH)}
+		})
+	})
 }
 
 func (ui *UI) layoutSettingsColorPreviewCurrentDir(th *material.Theme, gtx layout.Context, palette filePanePalette) layout.Dimensions {
@@ -5962,6 +5821,7 @@ func settingsColorPreviewStateWidth(th *material.Theme, gtx layout.Context, cfg 
 		"Selected Files",
 		"Focused + Selected Files",
 		"Current Dir",
+		"Scrollbar",
 	}
 	maxW := 0
 	for _, txt := range labels {
@@ -6012,6 +5872,11 @@ func settingsPreviewColorForCategory(palette filePanePalette, key, part string) 
 			return palette.CurrentDirFg
 		}
 		return palette.CurrentDirBg
+	case "scrollbar":
+		if part == "text" {
+			return palette.ScrollTrack
+		}
+		return palette.ScrollThumb
 	default:
 		if part == "text" {
 			return palette.SelectedFg

@@ -38,6 +38,8 @@ type ColorsConfig struct {
 	FocusedSelectedText string               `yaml:"focused_selected_text"`
 	CurrentDirBg        string               `yaml:"current_dir_background"`
 	CurrentDirText      string               `yaml:"current_dir_text"`
+	ScrollbarThumb      string               `yaml:"scrollbar_thumb,omitempty"`
+	ScrollbarTrack      string               `yaml:"scrollbar_track,omitempty"`
 	Filenames           FilenameColorsConfig `yaml:"filenames,omitempty"`
 }
 

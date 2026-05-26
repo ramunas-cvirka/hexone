@@ -28,9 +28,15 @@ import (
 	uitheme "hexone/ui/theme"
 )
 
-var errArchiveExtractAborted = errors.New("extract aborted")
+var (
+	errArchiveExtractAborted = errors.New("extract aborted")
+	errArchiveExtractEmpty   = errors.New("archive is empty")
+)
 
-const archiveExtractSuccessNoticeDur = 1200 * time.Millisecond
+const (
+	archiveExtractSuccessNoticeDur      = 1200 * time.Millisecond
+	archiveExtractStatusRefreshInterval = 250 * time.Millisecond
+)
 
 type archiveExtractConflictDecision uint8
 
@@ -50,16 +56,25 @@ type archiveExtractConflict struct {
 	displayPath string
 }
 
+type archiveExtractDone struct {
+	err          error
+	dstDir       string
+	totalEntries int
+}
+
 type archiveExtractState struct {
 	pane         int
 	archivePath  string
 	dstDir       string
 	totalEntries int
+	startedAt    time.Time
 
-	doneCh         chan error
+	doneCh         chan archiveExtractDone
+	progressCh     chan filesys.CopyProgress
 	conflictReqCh  chan archiveExtractConflict
 	conflictRespCh chan archiveExtractConflictDecision
 	conflict       *archiveExtractConflict
+	progress       filesys.CopyProgress
 
 	backdropClick     widget.Clickable
 	closeClick        widget.Clickable
@@ -92,7 +107,7 @@ func buildArchiveExtractPlans(archivePath, dstDir string) (string, string, []arc
 	}
 
 	extractRoot := effectiveDstDir
-	if !archiveExtractRootIsEnclosed(rootEntries) {
+	if archiveExtractNeedsWrapper(rootEntries) {
 		extractRoot = dstEp.join(effectiveDstDir, archiveExtractWrapperName(archivePath))
 	}
 
@@ -121,8 +136,8 @@ func buildArchiveExtractPlans(archivePath, dstDir string) (string, string, []arc
 	return effectiveDstDir, extractRoot, plans, totalEntries, nil
 }
 
-func archiveExtractRootIsEnclosed(entries []filesys.Entry) bool {
-	return len(entries) == 1 && entries[0].Kind == filesys.EntryDir
+func archiveExtractNeedsWrapper(entries []filesys.Entry) bool {
+	return len(entries) > 1
 }
 
 func archiveExtractWrapperName(archivePath string) string {
@@ -188,12 +203,18 @@ func archiveExtractEntryNeedsOverwrite(dstEp copyEndpoint, entry transferEntry, 
 	return true, nil
 }
 
-func runArchiveExtractPlans(rootDir string, plans []archiveExtractPlan, dstEp copyEndpoint, dstDir string, onConflict func(archiveExtractConflict) archiveExtractConflictDecision) error {
+func runArchiveExtractPlans(rootDir string, plans []archiveExtractPlan, dstEp copyEndpoint, dstDir string, onConflict func(archiveExtractConflict) archiveExtractConflictDecision, report func(filesys.CopyProgress)) error {
 	srcEp := copyEndpoint{archive: true}
 	progress := filesys.CopyProgress{}
 	for _, plan := range plans {
 		progress.EntriesTotal += len(plan.entries)
+		for _, entry := range plan.entries {
+			if !entry.isDir && !entry.isSymlink && entry.size > 0 {
+				progress.BytesTotal += entry.size
+			}
+		}
 	}
+	reportCopyProgress(report, progress)
 
 	overwriteAll := false
 	if rootDir != "" && !samePath(rootDir, dstDir) {
@@ -229,6 +250,7 @@ func runArchiveExtractPlans(rootDir string, plans []archiveExtractPlan, dstEp co
 	for _, plan := range plans {
 		for _, entry := range plan.entries {
 			progress.CurrentPath = entry.srcPath
+			reportCopyProgress(report, progress)
 			dstEntryPath := dstEp.join(plan.dstPath, entry.rel)
 
 			needsOverwrite, err := archiveExtractEntryNeedsOverwrite(dstEp, entry, dstEntryPath)
@@ -258,10 +280,11 @@ func runArchiveExtractPlans(rootDir string, plans []archiveExtractPlan, dstEp co
 				}
 			}
 
-			if err := copyTransferEntry(srcEp, dstEp, entry, dstEntryPath, &progress, nil); err != nil {
+			if err := copyTransferEntry(srcEp, dstEp, entry, dstEntryPath, &progress, report); err != nil {
 				return err
 			}
 			progress.EntriesDone++
+			reportCopyProgress(report, progress)
 		}
 	}
 
@@ -290,6 +313,7 @@ func (ui *UI) startArchiveExtractHere(idx, row int, now time.Time) {
 		pane.setNotice("nothing selected to extract", now)
 		return
 	}
+	archivePath := entry.Path
 
 	ui.setActiveFilePane(idx)
 	pane.stopPathEdit()
@@ -307,39 +331,68 @@ func (ui *UI) startArchiveExtractHere(idx, row int, now time.Time) {
 		dstDir = "."
 	}
 
-	effectiveDstDir, extractRoot, plans, totalEntries, err := buildArchiveExtractPlans(entry.Path, dstDir)
-	if err != nil {
-		pane.setNotice("extract failed: "+err.Error(), now)
-		return
-	}
-	if len(plans) == 0 {
-		pane.setNotice("archive is empty", now)
-		return
-	}
-
+	progressCh := make(chan filesys.CopyProgress, 32)
 	st := &archiveExtractState{
 		pane:           idx,
-		archivePath:    entry.Path,
-		dstDir:         effectiveDstDir,
-		totalEntries:   totalEntries,
-		doneCh:         make(chan error, 1),
+		archivePath:    archivePath,
+		dstDir:         dstDir,
+		startedAt:      now,
+		doneCh:         make(chan archiveExtractDone, 1),
+		progressCh:     progressCh,
 		conflictReqCh:  make(chan archiveExtractConflict, 1),
 		conflictRespCh: make(chan archiveExtractConflictDecision, 1),
 	}
 	ui.archiveExtract = st
-	pane.setNotice("extracting archive", now)
 
 	go func() {
-		err := runArchiveExtractPlans(extractRoot, plans, copyEndpoint{dir: effectiveDstDir}, effectiveDstDir, func(conflict archiveExtractConflict) archiveExtractConflictDecision {
+		sendProgress := func(p filesys.CopyProgress) {
+			for {
+				select {
+				case progressCh <- p:
+					return
+				default:
+				}
+				select {
+				case <-progressCh:
+				default:
+				}
+			}
+		}
+
+		effectiveDstDir, extractRoot, plans, totalEntries, err := buildArchiveExtractPlans(archivePath, dstDir)
+		if err != nil {
+			st.doneCh <- archiveExtractDone{err: err}
+			return
+		}
+		if len(plans) == 0 {
+			st.doneCh <- archiveExtractDone{err: errArchiveExtractEmpty}
+			return
+		}
+
+		sendProgress(archiveExtractInitialProgress(plans))
+		err = runArchiveExtractPlans(extractRoot, plans, copyEndpoint{dir: effectiveDstDir}, effectiveDstDir, func(conflict archiveExtractConflict) archiveExtractConflictDecision {
 			st.conflictReqCh <- conflict
 			decision, ok := <-st.conflictRespCh
 			if !ok {
 				return archiveExtractDecisionAbort
 			}
 			return decision
-		})
-		st.doneCh <- err
+		}, sendProgress)
+		st.doneCh <- archiveExtractDone{err: err, dstDir: effectiveDstDir, totalEntries: totalEntries}
 	}()
+}
+
+func archiveExtractInitialProgress(plans []archiveExtractPlan) filesys.CopyProgress {
+	progress := filesys.CopyProgress{}
+	for _, plan := range plans {
+		progress.EntriesTotal += len(plan.entries)
+		for _, entry := range plan.entries {
+			if !entry.isDir && !entry.isSymlink && entry.size > 0 {
+				progress.BytesTotal += entry.size
+			}
+		}
+	}
+	return progress
 }
 
 func (ui *UI) pumpArchiveExtractState(gtx layout.Context) {
@@ -348,7 +401,28 @@ func (ui *UI) pumpArchiveExtractState(gtx layout.Context) {
 		return
 	}
 
-	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(archiveExtractStatusRefreshInterval)})
+
+	for {
+		select {
+		case progress := <-st.progressCh:
+			st.progress = progress
+		default:
+			goto doneProgress
+		}
+	}
+doneProgress:
+
+	select {
+	case done := <-st.doneCh:
+		if done.dstDir != "" {
+			st.dstDir = done.dstDir
+		}
+		st.totalEntries = done.totalEntries
+		ui.finishArchiveExtract(gtx.Now, done.err)
+		return
+	default:
+	}
 
 	if st.conflict == nil {
 		select {
@@ -360,12 +434,205 @@ func (ui *UI) pumpArchiveExtractState(gtx layout.Context) {
 	if st.conflict != nil {
 		return
 	}
+}
 
-	select {
-	case err := <-st.doneCh:
-		ui.finishArchiveExtract(gtx.Now, err)
-	default:
+func (ui *UI) archiveExtractPane() *filePaneState {
+	st := ui.archiveExtract
+	if st == nil || st.pane < 0 || st.pane >= len(ui.filePanes) {
+		return nil
 	}
+	return ui.filePanes[st.pane]
+}
+
+type archiveExtractStatusParts struct {
+	filename string
+	details  []string
+}
+
+func archiveExtractStatusLabel(st *archiveExtractState, now time.Time) string {
+	parts := archiveExtractStatusPartsFor(st, now)
+	if parts.filename == "" {
+		return ""
+	}
+	line := "[Extracting] " + parts.filename
+	if len(parts.details) > 0 {
+		line += " | " + strings.Join(parts.details, " | ")
+	}
+	return line
+}
+
+func archiveExtractStatusLineForWidth(st *archiveExtractState, now time.Time, maxWidth int, measure func(string) int) string {
+	parts := archiveExtractStatusPartsFor(st, now)
+	if parts.filename == "" {
+		return ""
+	}
+	details := append([]string(nil), parts.details...)
+	name := parts.filename
+	if measure == nil || maxWidth <= 0 {
+		return archiveExtractBuildStatusLine(name, details)
+	}
+	for {
+		line := archiveExtractBuildStatusLine(name, details)
+		if measure(line) <= maxWidth {
+			return line
+		}
+
+		nameMax := maxWidth - measure(archiveExtractBuildStatusLine("", details))
+		name = archiveExtractTrimMiddleToWidth(parts.filename, nameMax, measure)
+		line = archiveExtractBuildStatusLine(name, details)
+		if measure(line) <= maxWidth || len(details) <= 1 {
+			return line
+		}
+		details = details[:len(details)-1]
+		name = parts.filename
+	}
+}
+
+func archiveExtractStatusLineWithSeparatorForWidth(st *archiveExtractState, now time.Time, maxWidth int, measure func(string) int, trailing bool) string {
+	separator := "| "
+	if trailing {
+		separator = " |"
+	}
+	lineMax := maxWidth
+	if measure != nil && maxWidth > 0 {
+		lineMax -= measure(separator)
+		if lineMax < 0 {
+			lineMax = 0
+		}
+	}
+	line := archiveExtractStatusLineForWidth(st, now, lineMax, measure)
+	if strings.TrimSpace(line) == "" {
+		return ""
+	}
+	if trailing {
+		return line + separator
+	}
+	return separator + line
+}
+
+func archiveExtractStatusPartsFor(st *archiveExtractState, now time.Time) archiveExtractStatusParts {
+	if st == nil {
+		return archiveExtractStatusParts{}
+	}
+	progress := st.progress
+	name := strings.TrimSpace(copyProgressCurrent(progress))
+	if name == "" {
+		name = strings.TrimSpace(filepath.Base(st.archivePath))
+	}
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = "archive"
+	}
+
+	parts := archiveExtractStatusParts{filename: name}
+	if progress.BytesTotal > 0 || progress.EntriesTotal > 0 {
+		frac := copyProgressFraction(progress)
+		if frac < 0 {
+			frac = 0
+		}
+		if frac > 1 {
+			frac = 1
+		}
+		percent := int(frac*100 + 0.5)
+		parts.details = append(parts.details, fmt.Sprintf("%s %d%%", archiveExtractStatusBar(frac), percent))
+	} else {
+		parts.details = append(parts.details, "preparing")
+	}
+
+	if speed := archiveExtractSpeed(progress, st.startedAt, now); speed > 0 {
+		parts.details = append(parts.details, formatCopySize(speed)+"/s")
+		if eta := archiveExtractETA(progress, speed); eta > 0 {
+			parts.details = append(parts.details, formatArchiveExtractETA(eta)+" left")
+		}
+	}
+	return parts
+}
+
+func archiveExtractBuildStatusLine(filename string, details []string) string {
+	line := "[Extracting] " + filename
+	if len(details) > 0 {
+		line += " | " + strings.Join(details, " | ")
+	}
+	return line
+}
+
+func archiveExtractTrimMiddleToWidth(text string, maxWidth int, measure func(string) int) string {
+	text = strings.TrimSpace(text)
+	if text == "" || measure == nil || measure(text) <= maxWidth {
+		return text
+	}
+	const ellipsis = "…"
+	if maxWidth <= 0 || measure(ellipsis) > maxWidth {
+		return ""
+	}
+	runes := []rune(text)
+	for keep := len(runes) - 1; keep > 0; keep-- {
+		head := (keep + 1) / 2
+		tail := keep / 2
+		candidate := string(runes[:head]) + ellipsis + string(runes[len(runes)-tail:])
+		if measure(candidate) <= maxWidth {
+			return candidate
+		}
+	}
+	return ellipsis
+}
+
+func archiveExtractStatusBar(frac float32) string {
+	const width = 10
+	if frac < 0 {
+		frac = 0
+	}
+	if frac > 1 {
+		frac = 1
+	}
+	done := int(frac*width + 0.5)
+	if done < 0 {
+		done = 0
+	}
+	if done > width {
+		done = width
+	}
+	return strings.Repeat("█", done) + strings.Repeat("░", width-done)
+}
+
+func archiveExtractSpeed(progress filesys.CopyProgress, startedAt, now time.Time) int64 {
+	if progress.BytesDone <= 0 || startedAt.IsZero() || !now.After(startedAt) {
+		return 0
+	}
+	elapsed := now.Sub(startedAt)
+	if elapsed < 500*time.Millisecond {
+		return 0
+	}
+	speed := int64(float64(progress.BytesDone) / elapsed.Seconds())
+	if speed < 0 {
+		return 0
+	}
+	return speed
+}
+
+func archiveExtractETA(progress filesys.CopyProgress, speed int64) time.Duration {
+	if progress.BytesTotal <= 0 || progress.BytesDone >= progress.BytesTotal || speed <= 0 {
+		return 0
+	}
+	remaining := progress.BytesTotal - progress.BytesDone
+	return time.Duration(float64(remaining) / float64(speed) * float64(time.Second))
+}
+
+func formatArchiveExtractETA(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	d = d.Round(time.Second)
+	if d < time.Second {
+		d = time.Second
+	}
+	total := int(d.Seconds())
+	hours := total / 3600
+	minutes := (total / 60) % 60
+	seconds := total % 60
+	if hours > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+	}
+	return fmt.Sprintf("%d:%02d", minutes, seconds)
 }
 
 func (ui *UI) finishArchiveExtract(now time.Time, err error) {
@@ -428,6 +695,8 @@ func archiveExtractOutcomeNotice(err error, totalEntries int) (string, time.Dura
 			label = "item"
 		}
 		return fmt.Sprintf("extracted %d %s", totalEntries, label), archiveExtractSuccessNoticeDur
+	case errors.Is(err, errArchiveExtractEmpty):
+		return "archive is empty", 0
 	case errors.Is(err, errArchiveExtractAborted):
 		return "extract aborted", 0
 	default:

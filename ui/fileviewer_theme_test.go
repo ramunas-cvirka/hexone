@@ -26,6 +26,23 @@ func TestFileViewerThemeUsesExplicitOverrides(t *testing.T) {
 	}
 }
 
+func TestFileViewerThemeUsesScrollbarOverrides(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Viewer.Background = "#112233"
+	cfg.Viewer.Text = "#F1E2D3"
+	cfg.Colors.ScrollbarThumb = "#AA3300"
+	cfg.Colors.ScrollbarTrack = "#001122"
+
+	theme := (&UI{fmCfg: cfg}).fileViewerTheme()
+
+	if got := fm.FormatHexColor(theme.ScrollThumb); got != "#AA3300" {
+		t.Fatalf("ScrollThumb=%q want %q", got, "#AA3300")
+	}
+	if got := fm.FormatHexColor(theme.ScrollTrack); got != "#001122" {
+		t.Fatalf("ScrollTrack=%q want %q", got, "#001122")
+	}
+}
+
 func TestFileViewerSelectionContrastIsStrongerThanBefore(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	theme := (&UI{fmCfg: cfg}).fileViewerTheme()

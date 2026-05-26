@@ -13,7 +13,7 @@ import (
 
 func TestSaveFMConfigRefusesToOverwriteConfigWithLoadIssue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
-	original := "viewer:\n  mode: [broken\n"
+	original := "viewer:\n  command_by_target: [broken\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatalf("os.WriteFile: %v", err)
 	}
@@ -66,7 +66,6 @@ func TestSaveFMConfigRefusesSuspiciousDefaultOverwrite(t *testing.T) {
 	original := fm.DefaultConfig()
 	original.FavoriteLocations = []string{"/tmp/demo"}
 	original.SSH.Setups = []fm.SSHSetup{{Name: "demo", Host: "example.com", Port: 22, User: "root"}}
-	original.Viewer.Mode = "command"
 	original.Viewer.Command = "tail -f {path}"
 	original.Viewer.CommandHistory = []string{"tail -f {path}"}
 	if err := fm.SaveConfig(path, original); err != nil {
@@ -109,5 +108,72 @@ func TestSaveFMConfigAllowDefaultResetOverwritesCustomizedConfig(t *testing.T) {
 	}
 	if got := len(saved.SSH.Setups); got != 0 {
 		t.Fatalf("ssh setups count=%d want 0", got)
+	}
+}
+
+func TestViewerCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	original.SSH.Setups = []fm.SSHSetup{{Name: "demo", Host: "example.com", Port: 22, User: "root"}}
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = path
+	ui.fmCfg.Viewer.Command = "type {path}"
+	ui.fmCfg.Viewer.CommandHistory = []string{"type {path}"}
+	ui.fmCfg.Viewer.CommandByTarget = map[string]string{"local:c:/tmp/demo.txt": "type {path}"}
+	if err := ui.saveFMConfigWithOptions("viewer-command", false); err != nil {
+		t.Fatalf("saveFMConfigWithOptions(viewer-command): %v", err)
+	}
+
+	saved := fm.LoadConfig(path)
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+	if got, want := len(saved.SSH.Setups), 1; got != want {
+		t.Fatalf("ssh setups count=%d want %d", got, want)
+	}
+	if got, want := saved.Viewer.Command, "type {path}"; got != want {
+		t.Fatalf("viewer command=%q want %q", got, want)
+	}
+	if got, want := len(saved.Viewer.CommandHistory), 1; got != want {
+		t.Fatalf("command history count=%d want %d", got, want)
+	}
+	if got, want := saved.Viewer.CommandByTarget["local:c:/tmp/demo.txt"], "type {path}"; got != want {
+		t.Fatalf("target command=%q want %q", got, want)
+	}
+}
+
+func TestCustomCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	original.SSH.Setups = []fm.SSHSetup{{Name: "demo", Host: "example.com", Port: 22, User: "root"}}
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = path
+	ui.fmCfg.CustomCommands = []fm.CustomCommand{{Name: "Health", Command: "uptime"}}
+	if err := ui.saveFMConfigWithOptions("custom-commands", false); err != nil {
+		t.Fatalf("saveFMConfigWithOptions(custom-commands): %v", err)
+	}
+
+	saved := fm.LoadConfig(path)
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+	if got, want := len(saved.SSH.Setups), 1; got != want {
+		t.Fatalf("ssh setups count=%d want %d", got, want)
+	}
+	if got, want := len(saved.CustomCommands), 1; got != want {
+		t.Fatalf("custom command count=%d want %d", got, want)
+	}
+	if got, want := saved.CustomCommands[0].Name, "Health"; got != want {
+		t.Fatalf("custom command name=%q want %q", got, want)
 	}
 }

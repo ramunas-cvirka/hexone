@@ -343,6 +343,7 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 				gtx.Execute(pointer.GrabCmd{Tag: &st.contentPointerTag, ID: pe.PointerID})
 				st.markUserBrowsing(gtx.Now)
 				viewerScrollFromScrollbarPos(st, pos.Y)
+				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			if pe.Buttons.Contain(pointer.ButtonPrimary) || pe.Buttons.Contain(pointer.ButtonSecondary) || pe.Buttons.Contain(pointer.ButtonTertiary) {
@@ -351,23 +352,35 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 				if st.menuOpen {
 					st.closeContextMenu()
 				}
-				st.updateScrollbarHover(pos)
+				if st.updateScrollbarHover(pos) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
 			}
 		case pointer.Drag:
 			if st.scrollbarDragging && pe.PointerID == st.scrollbarDragID {
 				st.markUserBrowsing(gtx.Now)
 				viewerScrollFromScrollbarPos(st, pos.Y)
+				gtx.Execute(op.InvalidateCmd{})
 			}
-			st.updateScrollbarHover(pos)
+			if st.updateScrollbarHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Release, pointer.Cancel:
 			if st.scrollbarDragging && pe.PointerID == st.scrollbarDragID {
 				st.scrollbarDragging = false
 			}
-			st.updateScrollbarHover(pos)
+			if st.updateScrollbarHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Move, pointer.Enter:
-			st.updateScrollbarHover(pos)
+			if st.updateScrollbarHover(pos) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		case pointer.Leave:
-			st.scrollbarHover = false
+			if st.scrollbarHover {
+				st.scrollbarHover = false
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		}
 	}
 
@@ -442,43 +455,27 @@ func (ui *UI) paintFileViewerScrollHint(gtx layout.Context, st *fileViewerState,
 		top = maxTop
 	}
 
-	thumbH := int(float32(size.Y) * float32(visibleLines) / float32(totalLines))
-	if thumbH < 18 {
-		thumbH = 18
+	trackW := viewerScrollbarThickness(gtx, size.X)
+	if trackW <= 0 {
+		st.scrollbarVisible = false
+		st.scrollbarTrack = image.Rectangle{}
+		st.scrollbarThumb = image.Rectangle{}
+		st.scrollbarHover = false
+		return
 	}
-	if thumbH > size.Y {
-		thumbH = size.Y
-	}
-	thumbY := 0
-	if maxTop > 0 && size.Y > thumbH {
-		thumbY = int(float32(top) / float32(maxTop) * float32(size.Y-thumbH))
-	}
-
-	const trackW = 6
-	trackX := size.X - trackW - 1
+	trackX := size.X - trackW
 	if trackX < 0 {
 		trackX = 0
 	}
 	track := image.Rect(trackX, 0, trackX+trackW, size.Y)
-	thumb := image.Rect(trackX+1, thumbY, trackX+trackW-1, thumbY+thumbH)
+	thumb := viewerScrollbarThumbForScroll(track, visibleLines, totalLines, float64(top), true)
 	st.scrollbarVisible = true
 	st.scrollbarTrack = track
 	st.scrollbarThumb = thumb
 	st.scrollbarLines = totalLines
 	st.scrollbarVisibleN = visibleLines
 
-	theme := ui.fileViewerTheme()
-	trackColor := theme.ScrollTrack
-	thumbColor := theme.ScrollThumb
-	if st.scrollbarHover {
-		trackColor = theme.ScrollTrackHover
-		thumbColor = theme.ScrollThumbHover
-	}
-	if st.scrollbarDragging {
-		thumbColor = theme.ScrollThumbDrag
-	}
-	paint.FillShape(gtx.Ops, trackColor, clip.Rect(track).Op())
-	paint.FillShape(gtx.Ops, thumbColor, clip.Rect(thumb).Op())
+	paintViewerScrollbar(gtx, ui.fileViewerTheme(), track, thumb, st.scrollbarHover, st.scrollbarHover, st.scrollbarDragging)
 }
 
 func (ui *UI) applyFileViewerScrollCursor(gtx layout.Context, st *fileViewerState) {
@@ -486,7 +483,6 @@ func (ui *UI) applyFileViewerScrollCursor(gtx layout.Context, st *fileViewerStat
 		return
 	}
 	if st.scrollbarDragging {
-		defer clip.Rect(st.scrollbarTrack).Push(gtx.Ops).Pop()
 		pointer.CursorGrabbing.Add(gtx.Ops)
 		return
 	}
@@ -1118,6 +1114,12 @@ func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRG
 	}
 	theme := ui.fileViewerTheme()
 	statusText, statusColor := ui.fileViewerBaseStatusText(st)
+	if st.commandOnly {
+		if st.commandInfinite {
+			return "streaming", theme.StatusAccent
+		}
+		return statusText, statusColor
+	}
 	if st.mode == "command" && st.commandInfinite {
 		return "streaming", theme.StatusAccent
 	}
@@ -1362,7 +1364,7 @@ func (ui *UI) layoutFileViewerInfoDivider(gtx layout.Context, stripH int) layout
 }
 
 func (ui *UI) viewerShowsAutoRefreshButton(st *fileViewerState) bool {
-	return st != nil && st.mode == "command" && !st.commandInfinite
+	return st != nil && st.mode == "command" && !st.commandOnly && !st.commandInfinite
 }
 
 func (ui *UI) layoutFileViewerInfoButtons(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
@@ -1582,6 +1584,17 @@ func (ui *UI) layoutFileViewerModeTabs(th *material.Theme, gtx layout.Context, s
 }
 
 func (ui *UI) layoutFileViewerHeaderRow(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
+	if st != nil && st.commandOnly {
+		m := op.Record(gtx.Ops)
+		dims := layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return ui.layoutFileViewerInfoStrip(th, gtx, st, stripH)
+		})
+		call := m.Stop()
+		ui.paintFileViewerHeaderDivider(gtx, dims.Size, st)
+		call.Add(gtx.Ops)
+		return dims
+	}
 	m := op.Record(gtx.Ops)
 	dims := layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X

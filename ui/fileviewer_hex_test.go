@@ -5,10 +5,15 @@ package ui
 
 import (
 	"image"
+	"math"
 	"testing"
 	"time"
 
+	"gioui.org/io/input"
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
+	"gioui.org/widget/material"
 	"hexone/fm"
 )
 
@@ -101,11 +106,31 @@ func TestHexViewerComputeScrollbarUsesDragTopWhileDragging(t *testing.T) {
 	}
 
 	const totalLines = 256
-	const thumbH = 18
+	const thumbH = fileViewerScrollbarMinThumbPx
 	wantDragYf := float64(40*(160-thumbH)) / float64(totalLines-8)
-	wantDragY := int(wantDragYf)
+	wantDragY := int(math.Round(wantDragYf))
 	if dragThumbY != wantDragY {
 		t.Fatalf("drag thumb Y=%d, want %d", dragThumbY, wantDragY)
+	}
+}
+
+func TestHexScrollTooltipMeasurementExpandsPastOldFixedWidth(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(720, 120),
+		},
+	}
+
+	msg := "~ 0x123456789ABCDEF0  line 1234567/7654321 (100.0%)"
+	box := ui.measureHexScrollTooltipBox(th, gtx, msg, 640)
+
+	if box.X <= 198 {
+		t.Fatalf("hex tooltip width=%d want content width beyond old fixed 198px", box.X)
 	}
 }
 

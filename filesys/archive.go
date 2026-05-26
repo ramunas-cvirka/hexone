@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/mholt/archives"
+	"github.com/nwaples/rardecode/v2"
 )
 
 type ArchivePath struct {
@@ -89,7 +90,7 @@ func StatLocalPath(raw string) (os.FileInfo, error) {
 		}
 		return fs.Stat(fsys, loc.InnerPath)
 	}
-	return os.Stat(raw)
+	return StatLocalFilesystemPath(raw)
 }
 
 func LstatLocalPath(raw string) (os.FileInfo, error) {
@@ -119,6 +120,14 @@ func OpenLocalPath(raw string) (io.ReadCloser, os.FileInfo, error) {
 		}
 		return file, info, nil
 	}
+	return OpenLocalFilesystemPath(raw)
+}
+
+func StatLocalFilesystemPath(raw string) (os.FileInfo, error) {
+	return os.Stat(raw)
+}
+
+func OpenLocalFilesystemPath(raw string) (io.ReadCloser, os.FileInfo, error) {
 	info, err := os.Stat(raw)
 	if err != nil {
 		return nil, nil, err
@@ -207,6 +216,14 @@ func splitArchivePath(raw string) (archivePath, innerPath string, ok bool) {
 }
 
 func openArchiveFSForLocation(loc ArchivePath) (fs.FS, error) {
+	if archivePathIsRar(loc.ArchivePath) {
+		fsys, err := openRarArchiveFS(loc.ArchivePath)
+		if err != nil {
+			return nil, err
+		}
+		return fsys, nil
+	}
+
 	fsys, err := archives.FileSystem(context.Background(), loc.ArchivePath, nil)
 	if err != nil {
 		return nil, err
@@ -215,4 +232,17 @@ func openArchiveFSForLocation(loc ArchivePath) (fs.FS, error) {
 		return nil, errors.New("path is not an archive")
 	}
 	return fsys, nil
+}
+
+func archivePathIsRar(archivePath string) bool {
+	return strings.EqualFold(filepath.Ext(strings.TrimSpace(archivePath)), ".rar")
+}
+
+func openRarArchiveFS(archivePath string) (fs.FS, error) {
+	dir, name := filepath.Split(filepath.Clean(archivePath))
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("archive name is empty")
+	}
+	return rardecode.OpenFS(name, rardecode.FileSystem(archives.DirFS(filepath.Clean(dir))))
 }

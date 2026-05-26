@@ -156,6 +156,12 @@ type ViewerCommandRule struct {
 	Command string `yaml:"command"`
 }
 
+type CustomCommand struct {
+	Slot    int    `yaml:"slot,omitempty"`
+	Name    string `yaml:"name"`
+	Command string `yaml:"command"`
+}
+
 type AssociationProgram struct {
 	AppPath    string   `yaml:"app_path"`
 	Extensions []string `yaml:"extensions"`
@@ -187,7 +193,6 @@ func (a AssociationProgram) MarshalYAML() (any, error) {
 }
 
 type ViewerConfig struct {
-	Mode                    string              `yaml:"mode"`
 	FileEncoding            string              `yaml:"file_encoding"`
 	Typeface                string              `yaml:"typeface"`
 	Background              string              `yaml:"background,omitempty"`
@@ -235,6 +240,7 @@ type Config struct {
 	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
+	CustomCommands    []CustomCommand      `yaml:"custom_commands,omitempty"`
 	Viewer            ViewerConfig         `yaml:"viewer"`
 	SSH               SSHConfig            `yaml:"ssh"`
 
@@ -252,6 +258,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		General           GeneralConfig        `yaml:"general"`
 		Colors            ColorsConfig         `yaml:"colors"`
 		Associations      []AssociationProgram `yaml:"associations,omitempty"`
+		CustomCommands    []CustomCommand      `yaml:"custom_commands,omitempty"`
 		Viewer            ViewerConfig         `yaml:"viewer"`
 		SSH               SSHConfig            `yaml:"ssh"`
 	}{
@@ -281,6 +288,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		General:           raw.General,
 		Colors:            raw.Colors,
 		Associations:      raw.Associations,
+		CustomCommands:    raw.CustomCommands,
 		Viewer:            raw.Viewer,
 		SSH:               raw.SSH,
 	}
@@ -326,9 +334,9 @@ func DefaultConfig() *Config {
 			CurrentDirBg:        DefaultCurrentDirBackgroundHex,
 			CurrentDirText:      DefaultCurrentDirTextHex,
 		},
-		Associations: nil,
+		Associations:   nil,
+		CustomCommands: nil,
 		Viewer: ViewerConfig{
-			Mode:                    "file",
 			FileEncoding:            ViewerFileEncodingAuto,
 			Typeface:                resources.BundledFontFamilyFiraCode,
 			Background:              DefaultFilePaneBackgroundHex,
@@ -618,18 +626,16 @@ func (c *Config) normalize() {
 	c.Colors.FocusedSelectedText = NormalizeHexColor(c.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
 	c.Colors.CurrentDirBg = NormalizeHexColor(c.Colors.CurrentDirBg, DefaultCurrentDirBackgroundHex)
 	c.Colors.CurrentDirText = NormalizeHexColor(c.Colors.CurrentDirText, DefaultCurrentDirTextHex)
+	c.Colors.ScrollbarThumb = NormalizeOptionalHexColor(c.Colors.ScrollbarThumb)
+	c.Colors.ScrollbarTrack = NormalizeOptionalHexColor(c.Colors.ScrollbarTrack)
 	c.Colors.Filenames.Text = NormalizeOptionalHexColor(c.Colors.Filenames.Text)
 	c.Colors.Filenames.Icon = NormalizeFilenameIcon(c.Colors.Filenames.Icon)
 	c.Colors.Filenames.AgeRules = NormalizeFilenameAgeRules(c.Colors.Filenames.AgeRules)
 	c.Colors.Filenames.PermissionRules = NormalizeFilenamePermissionRules(c.Colors.Filenames.PermissionRules)
 	c.Colors.Filenames.ExtensionRules = NormalizeFilenameExtensionRules(c.Colors.Filenames.ExtensionRules)
 	c.Colors.Filenames.SizeRules = NormalizeFilenameSizeRules(c.Colors.Filenames.SizeRules)
+	c.CustomCommands = NormalizeCustomCommands(c.CustomCommands)
 
-	switch c.Viewer.Mode {
-	case "file", "hex", "command":
-	default:
-		c.Viewer.Mode = "file"
-	}
 	c.Viewer.FileEncoding = NormalizeViewerFileEncoding(c.Viewer.FileEncoding)
 	switch strings.ToLower(strings.TrimSpace(c.Viewer.Shell)) {
 	case "", "auto":
@@ -893,6 +899,85 @@ func NormalizeViewerFileEncoding(raw string) string {
 	default:
 		return ViewerFileEncodingAuto
 	}
+}
+
+func NormalizeCustomCommand(raw CustomCommand) (CustomCommand, bool) {
+	command := strings.TrimSpace(raw.Command)
+	if command == "" {
+		return CustomCommand{}, false
+	}
+	name := strings.TrimSpace(raw.Name)
+	if name == "" {
+		name = customCommandFallbackName(command)
+	}
+	if name == "" {
+		return CustomCommand{}, false
+	}
+	slot := raw.Slot
+	if slot < 1 || slot > 10 {
+		slot = 0
+	}
+	return CustomCommand{
+		Slot:    slot,
+		Name:    name,
+		Command: command,
+	}, true
+}
+
+func NormalizeCustomCommands(raw []CustomCommand) []CustomCommand {
+	if len(raw) == 0 {
+		return nil
+	}
+	slots := make([]CustomCommand, 10)
+	used := make([]bool, 10)
+	nextSlot := 1
+	for _, rawCmd := range raw {
+		cmd, ok := NormalizeCustomCommand(rawCmd)
+		if !ok {
+			continue
+		}
+		slot := cmd.Slot
+		if slot < 1 || slot > 10 {
+			for nextSlot <= 10 && used[nextSlot-1] {
+				nextSlot++
+			}
+			if nextSlot > 10 {
+				continue
+			}
+			slot = nextSlot
+			nextSlot++
+		}
+		cmd.Slot = slot
+		slots[slot-1] = cmd
+		used[slot-1] = true
+	}
+	out := make([]CustomCommand, 0, 10)
+	for i, cmd := range slots {
+		if !used[i] {
+			continue
+		}
+		cmd.Slot = i + 1
+		out = append(out, cmd)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func customCommandFallbackName(command string) string {
+	for _, line := range strings.Split(command, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if utf8.RuneCountInString(line) > 48 {
+			runes := []rune(line)
+			line = strings.TrimSpace(string(runes[:48]))
+		}
+		return line
+	}
+	return ""
 }
 
 // NormalizeViewerAssociationExtension accepts forms like ".pdf", "pdf", or

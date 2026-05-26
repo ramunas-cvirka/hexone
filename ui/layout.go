@@ -146,6 +146,16 @@ type UI struct {
 	functionBarClicks           [10]widget.Clickable
 	functionBarHidden           bool
 	functionBarViewerShown      bool
+	customCommandMenuOpen       bool
+	customCommandMenuButtonRect image.Rectangle
+	customCommandMenuRect       image.Rectangle
+	customCommandMenuOpenedAt   time.Time
+	customCommandMenuHoverID    string
+	customCommandMenuHoverAnim  segmentedAnimState
+	customCommandMenuSelected   int
+	customCommandMenuClicks     []widget.Clickable
+	customCommandMenuGlobalTag  uiEventTag
+	customCommandMenuBodyTag    uiEventTag
 	functionBarToolsOpen        bool
 	functionBarToolsButtonRect  image.Rectangle
 	functionBarToolsRect        image.Rectangle
@@ -178,6 +188,7 @@ type UI struct {
 	fileCreate                  *fileCreateState
 	filePerm                    *filePermState
 	fileViewer                  *fileViewerState
+	customCommandEditor         *customCommandEditorState
 	helpModal                   *helpModalState
 	settingsModal               *settingsModalState
 	sshModal                    *sshModalState
@@ -209,6 +220,7 @@ func NewUI(cfg *fm.Config) *UI {
 		configPath:                 resolveUIConfigPath(),
 		typeface:                   font.Typeface(cfg.General.Typeface),
 		textSize:                   fontSizeFromConfig(cfg),
+		customCommandMenuSelected:  -1,
 		functionBarToolsSelected:   -1,
 		functionBarSliderPrevIndex: -1,
 		functionBarSliderIndex:     -1,
@@ -373,7 +385,7 @@ func (ui *UI) setActiveTab(key string, now time.Time) {
 	if ui == nil || key == "" || ui.Tabs.Value == key {
 		return
 	}
-	ui.closeFunctionBarToolsMenu()
+	ui.closeFunctionBarPopups()
 	ui.toolbarPrevTab = ui.Tabs.Value
 	ui.toolbarAnimAt = now
 	ui.Tabs.Value = key
@@ -686,10 +698,12 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.syncThemeRuntime(th)
 	ui.handleFunctionBarModifierKeys(gtx)
 	ui.handleGlobalFunctionKeys(gtx)
+	ui.handleCustomCommandMenuKeys(gtx)
 	ui.handleFunctionBarPopupKeys(gtx)
 	ui.handleGlobalEscapeToFileManager(gtx)
 	ui.handleEditorContextMenuGlobalPresses(gtx)
 	ui.handleEditorContextMenuClipboardEvents(gtx)
+	ui.handleCustomCommandEditorPreLayoutInput(gtx)
 
 	r := image.Rectangle{Max: gtx.Constraints.Max}
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 32, G: 32, B: 32, A: 255}, clip.Rect(r).Op())
@@ -728,7 +742,13 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 			return dims
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutCustomCommandMenuPopup(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFunctionBarPopup(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutCustomCommandEditor(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutHelpModal(th, gtx)
@@ -883,11 +903,12 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 	if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil {
 		return
 	}
-	if ui.Tabs.Value == "tab0" && !ui.functionBarToolsOpen {
+	if ui.Tabs.Value == "tab0" && !ui.customCommandMenuOpen && !ui.functionBarToolsOpen {
 		return
 	}
 	switched := false
 	closedProtoDropdown := false
+	closedCustom := false
 	closedTools := false
 	for {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
@@ -896,6 +917,11 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 		}
 		ke, ok := ev.(key.Event)
 		if !ok || ke.State != key.Press || ke.Name != key.NameEscape {
+			continue
+		}
+		if ui.customCommandMenuOpen {
+			ui.closeCustomCommandMenu()
+			closedCustom = true
 			continue
 		}
 		if ui.functionBarToolsOpen {
@@ -917,12 +943,15 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 		ui.resetKeys()
 		switched = true
 	}
-	if switched || closedProtoDropdown || closedTools {
+	if switched || closedProtoDropdown || closedCustom || closedTools {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 }
 
 func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
+	if ui != nil && ui.customCommandEditor != nil {
+		return
+	}
 	anyMods := ^key.Modifiers(0)
 	filters := []event.Filter{
 		key.Filter{Name: key.NameF1},
@@ -943,6 +972,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
 		key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
 	}
+	filters = append(filters, customCommandShortcutKeyFilters(anyMods)...)
 	for {
 		ev, ok := gtx.Event(filters...)
 		if !ok {
@@ -969,7 +999,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionWIP, gtx.Now) {
+			if ui.performFunctionBarAction(functionBarActionCustom, gtx.Now) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF3:
@@ -1022,6 +1052,12 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ke.State != key.Press {
 				continue
 			}
+			if customCommandShortcutModifier(ke.Modifiers) {
+				if ui.activateCustomCommandGlobalShortcut(ke, gtx.Now) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
+				continue
+			}
 			// Swallow Alt+1 globally to avoid platform dinging even when the
 			// drive picker can't be opened in the current context.
 			if ke.Modifiers != key.ModAlt {
@@ -1035,6 +1071,12 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			}
 		case "2":
 			if ke.State != key.Press {
+				continue
+			}
+			if customCommandShortcutModifier(ke.Modifiers) {
+				if ui.activateCustomCommandGlobalShortcut(ke, gtx.Now) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
 				continue
 			}
 			// Swallow Alt+2 globally to avoid platform dinging even when the
@@ -1091,6 +1133,10 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			}
 			ui.activateFunctionBarTool("settings", gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
+		default:
+			if ui.activateCustomCommandGlobalShortcut(ke, gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
 		}
 	}
 }
