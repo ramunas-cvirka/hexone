@@ -41,6 +41,18 @@ github.com/chzyer/logex v1.1.10/go.mod h1:+Ywpsq7O8HXn0nuIou7OrIPyXbp3wmkHB+jjWR
 github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e/go.mod h1:nSuG5e5PlCu98SY8svDHJxuZscDgtXS6KTTbou5AhLI=
 github.com/chzyer/test v0.0.0-20180213035817-a1ea475d72b1/go.mod h1:Q3SI9o4m/ZMnBNeIyt5eFwwo7qiLfzFZmjNmxjkiQlU=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
+github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
+github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
+github.com/danielgatis/go-ansicode v1.0.14 h1:DjMvGuCh6eHoOYOzKcCa4B+HxY1h8QfOQsOZNIXBxZ4=
+github.com/danielgatis/go-ansicode v1.0.14/go.mod h1:bQSArJFM0i5KrUsziqk5yrLryYSK30NNOzOTnTm2dGg=
+github.com/danielgatis/go-headless-term v1.0.9 h1:jvBuAcOjKThg5khzc0DH04bBXnvEnfiUaUBKVSmKOm4=
+github.com/danielgatis/go-headless-term v1.0.9/go.mod h1:/CvvIVVEJcRaoCaWxuwTB2AO5bA9vlURF/CZfl55u28=
+github.com/danielgatis/go-iterator v0.0.1 h1:pTptWDVAKzR0EUdtfmFMP3v+hSetqB091V9um1DTO8I=
+github.com/danielgatis/go-iterator v0.0.1/go.mod h1:+gTbPAMdVIKwmqw7kr/mo5IFIzz2MFiRyYylcRvgbHs=
+github.com/danielgatis/go-utf8 v1.0.1 h1:0tXC3eI9I+11X3DwF46Auqjcq1KrsQCQsaI8k/ymGhU=
+github.com/danielgatis/go-utf8 v1.0.1/go.mod h1:TGCny5E5wwT7AHD5cAj941LnjZLTqcHXlK4Zq0FqDPw=
+github.com/danielgatis/go-vte v1.0.11 h1:xcVrqdCqP08zhSW0rn7tETpz3QMEJOvkoLhd2VYU0SQ=
+github.com/danielgatis/go-vte v1.0.11/go.mod h1:ITnFCD8DqOM9TPhxvxcGABmbcUfC1yJsb3e+l2NCKJQ=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.11.5 h1:Q/sSnsKerHeCkc/jSTNq1oCm7KiVgUMZRDUoRu0JQZQ=
@@ -160,6 +172,8 @@ github.com/tetratelabs/wazero v1.11.0/go.mod h1:eV28rsN8Q+xwjogd7f4/Pp4xFxO7uOGb
 github.com/ulikunitz/xz v0.5.8/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
 github.com/ulikunitz/xz v0.5.15 h1:9DNdB5s+SgV3bQ2ApL10xRc35ck0DuIX/isZvIk+ubY=
 github.com/ulikunitz/xz v0.5.15/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
+github.com/unilibs/uniwidth v0.1.0 h1:pUidNlCVEchrbEG/C5kfsOx9gvZ6rOhzju+QyQNT3sM=
+github.com/unilibs/uniwidth v0.1.0/go.mod h1:NLplcdoNxAn5JTjjkI7v1Hasyf7PzYBe3GQ4d8lMpVs=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 go.opencensus.io v0.21.0/go.mod h1:mSImk1erAIZhrmZN+AvHh14ztQfjbGwt4TtuofqLduU=
 go.opencensus.io v0.22.0/go.mod h1:+kGneAE2xo2IficOXnaByMWTGM9T73dGwxeWcUqIpI8=

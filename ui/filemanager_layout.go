@@ -115,6 +115,9 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 	if ui.settingsModal != nil || ui.sshModal != nil {
 		return
 	}
+	if ui.terminalFocused(gtx) {
+		return
+	}
 	if ui.fileViewer != nil {
 		ui.handleFileViewerKeys(gtx)
 		return
@@ -853,7 +856,7 @@ func (ui *UI) layoutFilePaneContextMenu(th *material.Theme, gtx layout.Context, 
 	}
 	nextPath := append([]string(nil), pane.ctxMenuPath...)
 	for level, panelSpec := range visiblePanels {
-		panelSize := ui.fileContextMenuPanelSize(gtx, panelSpec)
+		panelSize := ui.fileContextMenuPanelSize(th, gtx, panelSpec)
 		anchor := pane.ctxMenuPos
 		if level == 0 {
 			anchor.Y += slideY
@@ -901,12 +904,16 @@ type fileContextMenuPanelState struct {
 	hoveredSubmenuID string
 }
 
-func (ui *UI) fileContextMenuPanelSize(gtx layout.Context, spec fileContextMenuSpec) image.Point {
+func (ui *UI) fileContextMenuPanelSize(th *material.Theme, gtx layout.Context, spec fileContextMenuSpec) image.Point {
 	widthDp := spec.WidthDp
 	if widthDp <= 0 {
 		widthDp = filePaneContextMenuRootWidthDp
 	}
-	width := gtx.Dp(unit.Dp(widthDp))
+	maxWidth := gtx.Dp(unit.Dp(widthDp))
+	width := ui.measuredFileContextMenuPanelWidth(th, gtx, spec)
+	if width > maxWidth {
+		width = maxWidth
+	}
 	if width > gtx.Constraints.Max.X {
 		width = gtx.Constraints.Max.X
 	}
@@ -928,6 +935,41 @@ func (ui *UI) fileContextMenuPanelSize(gtx layout.Context, spec fileContextMenuS
 		height = 1
 	}
 	return image.Pt(width, height)
+}
+
+func (ui *UI) measuredFileContextMenuPanelWidth(th *material.Theme, gtx layout.Context, spec fileContextMenuSpec) int {
+	width := gtx.Dp(unit.Dp(86))
+	measureBody := func(txt string) int {
+		lbl := material.Body2(th, txt)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.TextSize = ui.functionBarTextSize()
+		lbl.Font.Weight = font.Medium
+		lbl.MaxLines = 1
+		return measureLabelUnconstrained(gtx, lbl).Size.X
+	}
+	if title := strings.TrimSpace(spec.Title); title != "" {
+		lbl := material.Caption(th, title)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
+		lbl.Font.Weight = font.Medium
+		lbl.MaxLines = 1
+		if measured := measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(14)); measured > width {
+			width = measured
+		}
+	}
+	for _, item := range spec.Items {
+		if item.Separator {
+			continue
+		}
+		measured := measureBody(item.Label) + gtx.Dp(unit.Dp(13))
+		if item.hasSubmenu() {
+			measured += gtx.Dp(unit.Dp(15))
+		}
+		if measured > width {
+			width = measured
+		}
+	}
+	return width
 }
 
 func (ui *UI) fileContextMenuTitleHeight(gtx layout.Context) int {
@@ -990,7 +1032,7 @@ func fileContextMenuHoveredItemID(pane *filePaneState, panels []fileContextMenuS
 }
 
 func (ui *UI) layoutFilePaneContextMenuPanel(th *material.Theme, gtx layout.Context, pane *filePaneState, spec fileContextMenuSpec, anchor image.Point, alpha float32, level int) fileContextMenuPanelState {
-	panelSize := ui.fileContextMenuPanelSize(gtx, spec)
+	panelSize := ui.fileContextMenuPanelSize(th, gtx, spec)
 	panelRect := image.Rectangle{Min: anchor, Max: anchor.Add(panelSize)}
 	pane.ctxMenuRects = append(pane.ctxMenuRects, panelRect)
 
@@ -1099,31 +1141,21 @@ func (ui *UI) layoutFilePaneContextMenuItem(th *material.Theme, gtx layout.Conte
 			detailColor = fg
 		}
 		if active {
-			bg = scaleColorAlpha(theme.ActiveBg, alpha)
-			fg = scaleColorAlpha(theme.ActiveText, alpha)
-			detailColor = scaleColorAlpha(mixNRGBA(theme.ActiveText, theme.ActiveBg, 0.48), alpha)
+			bg = scaleColorAlpha(theme.HoverBg, alpha)
+			fg = scaleColorAlpha(theme.HoverText, alpha)
+			detailColor = scaleColorAlpha(mixNRGBA(theme.HoverText, theme.HoverBg, 0.48), alpha)
 		} else if !item.Disabled && hoverT > 0 {
 			bg = scaleColorAlpha(theme.HoverBg, alpha*hoverT)
 			fg = scaleColorAlpha(mixNRGBA(theme.Text, theme.HoverText, hoverT), alpha)
 			detailColor = scaleColorAlpha(mixNRGBA(theme.Muted, mixNRGBA(theme.HoverText, theme.HoverBg, 0.48), hoverT), alpha)
 		}
-		return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
-			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							if item.Detail == "" {
-								lbl := material.Body2(th, item.Label)
-								lbl.Font.Typeface = ui.mainTypeface()
-								lbl.TextSize = ui.functionBarTextSize()
-								lbl.Font.Weight = font.Medium
-								lbl.Color = fg
-								lbl.MaxLines = 1
-								lbl.Truncator = "…"
-								return layoutVCenteredLabel(gtx, lbl)
-							}
-							return layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceStart}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return fixedWidth(gtx, gtx.Constraints.Max.X, func(gtx layout.Context) layout.Dimensions {
+			return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(4), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								if item.Detail == "" {
 									lbl := material.Body2(th, item.Label)
 									lbl.Font.Typeface = ui.mainTypeface()
 									lbl.TextSize = ui.functionBarTextSize()
@@ -1131,34 +1163,46 @@ func (ui *UI) layoutFilePaneContextMenuItem(th *material.Theme, gtx layout.Conte
 									lbl.Color = fg
 									lbl.MaxLines = 1
 									lbl.Truncator = "…"
-									return lbl.Layout(gtx)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Caption(th, item.Detail)
+									return layoutVCenteredLabel(gtx, lbl)
+								}
+								return layout.Flex{Axis: layout.Vertical, Spacing: layout.SpaceStart}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										lbl := material.Body2(th, item.Label)
+										lbl.Font.Typeface = ui.mainTypeface()
+										lbl.TextSize = ui.functionBarTextSize()
+										lbl.Font.Weight = font.Medium
+										lbl.Color = fg
+										lbl.MaxLines = 1
+										lbl.Truncator = "…"
+										return lbl.Layout(gtx)
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										lbl := material.Caption(th, item.Detail)
+										lbl.Font.Typeface = ui.mainTypeface()
+										lbl.TextSize = scaleConfigFontSize(ui.fmCfg, unit.Sp(filePaneContextMenuItemDetailTextSp))
+										lbl.Color = detailColor
+										lbl.MaxLines = 1
+										lbl.Truncator = "…"
+										return lbl.Layout(gtx)
+									}),
+								)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if !item.hasSubmenu() {
+									return layout.Dimensions{}
+								}
+								return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(th, ">")
 									lbl.Font.Typeface = ui.mainTypeface()
-									lbl.TextSize = scaleConfigFontSize(ui.fmCfg, unit.Sp(filePaneContextMenuItemDetailTextSp))
-									lbl.Color = detailColor
+									lbl.TextSize = ui.functionBarTextSize()
+									lbl.Font.Weight = font.Medium
+									lbl.Color = fg
 									lbl.MaxLines = 1
-									lbl.Truncator = "…"
-									return lbl.Layout(gtx)
-								}),
-							)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							if !item.hasSubmenu() {
-								return layout.Dimensions{}
-							}
-							return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body2(th, ">")
-								lbl.Font.Typeface = ui.mainTypeface()
-								lbl.TextSize = ui.functionBarTextSize()
-								lbl.Font.Weight = font.Medium
-								lbl.Color = fg
-								lbl.MaxLines = 1
-								return layoutVCenteredLabel(gtx, lbl)
-							})
-						}),
-					)
+									return layoutVCenteredLabel(gtx, lbl)
+								})
+							}),
+						)
+					})
 				})
 			})
 		})

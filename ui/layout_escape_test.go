@@ -76,6 +76,27 @@ func TestGlobalShortcutOpensSettings(t *testing.T) {
 	}
 }
 
+func TestGlobalShortcutOpensSettingsWhenTerminalFocused(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	ui.terminal = newTerminalSession(nil)
+	ui.terminal.setActive(true)
+
+	gtx, router := testKeyContext()
+	gtx.Execute(key.FocusCmd{Tag: &ui.terminal.keyTag})
+	if !ui.terminalFocused(gtx) {
+		t.Fatal("terminal should be focused for this shortcut test")
+	}
+	anyMods := ^key.Modifiers(0)
+	router.Event(key.Filter{Name: "S", Required: key.ModCtrl, Optional: anyMods})
+	router.Queue(key.Event{Name: "S", Modifiers: key.ModCtrl, State: key.Press})
+
+	ui.handleGlobalFunctionKeys(gtx)
+	if ui.settingsModal == nil {
+		t.Fatal("ctrl+s should open settings when terminal is focused")
+	}
+}
+
 func TestGlobalShortcutLeavesViewerCtrlFForViewer(t *testing.T) {
 	ui := &UI{
 		Tabs: widget.Enum{Value: "tab0"},

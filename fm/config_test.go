@@ -97,6 +97,39 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	}
 }
 
+func TestConfigNormalizesTerminalHeightAndSortPerDir(t *testing.T) {
+	raw := `
+sort:
+  default_key: name
+  descending: false
+  per_dir:
+    /tmp/by-date: date:desc
+    /tmp/default: n+
+    /tmp/bad: sideways
+terminal:
+  height_rows: 2
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.Terminal.HeightRows, 4; got != want {
+		t.Fatalf("Terminal.HeightRows=%d want %d", got, want)
+	}
+	if got, want := cfg.Sort.PerDir[filepath.Clean("/tmp/by-date")], "d-"; got != want {
+		t.Fatalf("sort per dir code=%q want %q", got, want)
+	}
+	if _, ok := cfg.Sort.PerDir[filepath.Clean("/tmp/default")]; ok {
+		t.Fatalf("default sort override should be omitted: %#v", cfg.Sort.PerDir)
+	}
+	if _, ok := cfg.Sort.PerDir[filepath.Clean("/tmp/bad")]; ok {
+		t.Fatalf("invalid sort override should be omitted: %#v", cfg.Sort.PerDir)
+	}
+}
+
 func TestLegacyColumnWidthsMigrateToChars(t *testing.T) {
 	raw := `
 columns:
@@ -685,6 +718,8 @@ func TestNormalizeColors(t *testing.T) {
 	cfg.Colors.FilePaneText = "badtext"
 	cfg.Colors.Hover = "hover"
 	cfg.Colors.HoverText = "hovertext"
+	cfg.Colors.PopupHover = "popuphover"
+	cfg.Colors.PopupHoverText = "popuphovertext"
 	cfg.Colors.Selection = "bad"
 	cfg.Colors.SelectionText = "oops"
 	cfg.Colors.SelectedFiles = "selected"
@@ -709,6 +744,12 @@ func TestNormalizeColors(t *testing.T) {
 	}
 	if cfg.Colors.HoverText != DefaultFilePaneHoverTextHex {
 		t.Fatalf("HoverText=%q, want %q", cfg.Colors.HoverText, DefaultFilePaneHoverTextHex)
+	}
+	if cfg.Colors.PopupHover != DefaultPopupHoverHex {
+		t.Fatalf("PopupHover=%q, want %q", cfg.Colors.PopupHover, DefaultPopupHoverHex)
+	}
+	if cfg.Colors.PopupHoverText != DefaultPopupHoverTextHex {
+		t.Fatalf("PopupHoverText=%q, want %q", cfg.Colors.PopupHoverText, DefaultPopupHoverTextHex)
 	}
 	if cfg.Colors.Selection != DefaultFilePaneSelectionHex {
 		t.Fatalf("Selection=%q, want %q", cfg.Colors.Selection, DefaultFilePaneSelectionHex)

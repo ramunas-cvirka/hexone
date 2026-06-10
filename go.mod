@@ -5,6 +5,9 @@ go 1.26.0
 require (
 	gioui.org v0.9.0
 	github.com/alecthomas/chroma/v2 v2.23.1
+	github.com/creack/pty v1.1.24
+	github.com/danielgatis/go-ansicode v1.0.14
+	github.com/danielgatis/go-headless-term v1.0.9
 	github.com/klippa-app/go-pdfium v1.18.1
 	github.com/mholt/archives v0.1.5
 	github.com/nwaples/rardecode/v2 v2.2.0
@@ -20,6 +23,9 @@ require (
 	github.com/bodgit/plumbing v1.3.0 // indirect
 	github.com/bodgit/sevenzip v1.6.1 // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
+	github.com/danielgatis/go-iterator v0.0.1 // indirect
+	github.com/danielgatis/go-utf8 v1.0.1 // indirect
+	github.com/danielgatis/go-vte v1.0.11 // indirect
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/fatih/color v1.13.0 // indirect
@@ -44,6 +50,7 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
+	github.com/unilibs/uniwidth v0.1.0 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	golang.org/x/exp/shiny v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/image v0.35.0 // indirect

@@ -92,6 +92,8 @@ type settingsModalState struct {
 	colorPaneText               string
 	colorHover                  string
 	colorHoverText              string
+	colorPopupHover             string
+	colorPopupHoverText         string
 	colorSelection              string
 	colorSelectionText          string
 	colorSelectedFiles          string
@@ -292,6 +294,7 @@ type settingsColorOption struct {
 var settingsPaneColorOptions = []settingsColorOption{
 	{key: "normal", label: "Normal"},
 	{key: "hover", label: "Hover"},
+	{key: "popup_hover", label: "Popup Hover"},
 	{key: "selection", label: "Focused"},
 	{key: "selected_files", label: "Selected Files"},
 	{key: "focused_selected", label: "Focused + Selected Files"},
@@ -454,7 +457,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 		return
 	}
 	switch st.colorCategory {
-	case "normal", "hover", "selection", "selected_files", "focused_selected", "current_dir", "scrollbar":
+	case "normal", "hover", "popup_hover", "selection", "selected_files", "focused_selected", "current_dir", "scrollbar":
 	default:
 		st.colorCategory = "selection"
 	}
@@ -467,6 +470,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorPaneText = cfg.Colors.FilePaneText
 	st.colorHover = cfg.Colors.Hover
 	st.colorHoverText = cfg.Colors.HoverText
+	st.colorPopupHover = cfg.Colors.PopupHover
+	st.colorPopupHoverText = cfg.Colors.PopupHoverText
 	st.colorSelection = cfg.Colors.Selection
 	st.colorSelectionText = cfg.Colors.SelectionText
 	st.colorSelectedFiles = cfg.Colors.SelectedFiles
@@ -596,6 +601,8 @@ func (st *settingsModalState) colorValue(key string) string {
 		return st.colorScrollbarThumb
 	case "hover":
 		return st.colorHover
+	case "popup_hover":
+		return st.colorPopupHover
 	case "selected_files":
 		return st.colorSelectedFiles
 	case "normal":
@@ -627,6 +634,8 @@ func (st *settingsModalState) setColorValue(key, value string) {
 		st.colorScrollbarThumb = value
 	case "hover":
 		st.colorHover = value
+	case "popup_hover":
+		st.colorPopupHover = value
 	case "selected_files":
 		st.colorSelectedFiles = value
 	case "normal":
@@ -652,6 +661,8 @@ func (st *settingsModalState) colorTextValue(key string) string {
 		return st.colorScrollbarTrack
 	case "hover":
 		return st.colorHoverText
+	case "popup_hover":
+		return st.colorPopupHoverText
 	case "selected_files":
 		return st.colorSelectedFilesText
 	case "normal":
@@ -678,6 +689,8 @@ func (st *settingsModalState) setColorTextValue(key, value string) {
 		st.colorScrollbarTrack = value
 	case "hover":
 		st.colorHoverText = value
+	case "popup_hover":
+		st.colorPopupHoverText = value
 	case "selected_files":
 		st.colorSelectedFilesText = value
 	case "normal":
@@ -1115,6 +1128,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	paneTextFallback := fm.DefaultFilePaneTextHex
 	hoverFallback := fm.DefaultFilePaneHoverHex
 	hoverTextFallback := fm.DefaultFilePaneHoverTextHex
+	popupHoverFallback := fm.DefaultPopupHoverHex
+	popupHoverTextFallback := fm.DefaultPopupHoverTextHex
 	selectionFallback := fm.DefaultFilePaneSelectionHex
 	selectionTextFallback := fm.DefaultFilePaneSelectionTextHex
 	selectedFilesFallback := fm.DefaultFilePaneSelectedFilesHex
@@ -1128,6 +1143,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		paneTextFallback = cfg.Colors.FilePaneText
 		hoverFallback = cfg.Colors.Hover
 		hoverTextFallback = cfg.Colors.HoverText
+		popupHoverFallback = cfg.Colors.PopupHover
+		popupHoverTextFallback = cfg.Colors.PopupHoverText
 		selectionFallback = cfg.Colors.Selection
 		selectionTextFallback = cfg.Colors.SelectionText
 		selectedFilesFallback = cfg.Colors.SelectedFiles
@@ -1141,6 +1158,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	paneTextRaw := strings.TrimSpace(st.colorPaneText)
 	hoverRaw := strings.TrimSpace(st.colorHover)
 	hoverTextRaw := strings.TrimSpace(st.colorHoverText)
+	popupHoverRaw := strings.TrimSpace(st.colorPopupHover)
+	popupHoverTextRaw := strings.TrimSpace(st.colorPopupHoverText)
 	selectionRaw := strings.TrimSpace(st.colorSelection)
 	selectionTextRaw := strings.TrimSpace(st.colorSelectionText)
 	selectedFilesRaw := strings.TrimSpace(st.colorSelectedFiles)
@@ -1161,6 +1180,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		{label: "Pane text", value: paneTextRaw},
 		{label: "Hover background", value: hoverRaw},
 		{label: "Hover text", value: hoverTextRaw},
+		{label: "Popup hover background", value: popupHoverRaw},
+		{label: "Popup hover text", value: popupHoverTextRaw},
 		{label: "Focused selection background", value: selectionRaw},
 		{label: "Focused selection text", value: selectionTextRaw},
 		{label: "Selected files background", value: selectedFilesRaw},
@@ -1186,6 +1207,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	draft.Colors.FilePaneText = fm.NormalizeHexColor(paneTextRaw, paneTextFallback)
 	draft.Colors.Hover = fm.NormalizeHexColor(hoverRaw, hoverFallback)
 	draft.Colors.HoverText = fm.NormalizeHexColor(hoverTextRaw, hoverTextFallback)
+	draft.Colors.PopupHover = fm.NormalizeHexColor(popupHoverRaw, popupHoverFallback)
+	draft.Colors.PopupHoverText = fm.NormalizeHexColor(popupHoverTextRaw, popupHoverTextFallback)
 	draft.Colors.Selection = fm.NormalizeHexColor(selectionRaw, selectionFallback)
 	draft.Colors.SelectionText = fm.NormalizeHexColor(selectionTextRaw, selectionTextFallback)
 	draft.Colors.SelectedFiles = fm.NormalizeHexColor(selectedFilesRaw, selectedFilesFallback)
@@ -1205,6 +1228,8 @@ func filePanePaletteToConfigColors(palette filePanePalette) fm.ColorsConfig {
 		FilePaneText:        fm.FormatHexColor(palette.PaneFg),
 		Hover:               fm.FormatHexColor(palette.HoverBg),
 		HoverText:           fm.FormatHexColor(palette.HoverFg),
+		PopupHover:          fm.FormatHexColor(palette.PopupHoverBg),
+		PopupHoverText:      fm.FormatHexColor(palette.PopupHoverFg),
 		Selection:           fm.FormatHexColor(palette.SelectedBg),
 		SelectionText:       fm.FormatHexColor(palette.SelectedFg),
 		SelectedFiles:       fm.FormatHexColor(palette.MarkedBg),
@@ -2644,6 +2669,16 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 		return fmt.Errorf("hover text color must use #RRGGBB")
 	} else {
 		ui.fmCfg.Colors.HoverText = fm.FormatHexColor(c)
+	}
+	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorPopupHover)); !ok {
+		return fmt.Errorf("popup hover color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.PopupHover = fm.FormatHexColor(c)
+	}
+	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorPopupHoverText)); !ok {
+		return fmt.Errorf("popup hover text color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.PopupHoverText = fm.FormatHexColor(c)
 	}
 	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorSelection)); !ok {
 		return fmt.Errorf("focused selection color must use #RRGGBB")
@@ -4786,8 +4821,8 @@ func (st *settingsModalState) previewViewerContentHeight(ui *UI, th *material.Th
 }
 
 func settingsColorsPreviewHostHeight(gtx layout.Context) int {
-	height := gtx.Dp(unit.Dp(168))
-	if minHeight := gtx.Dp(unit.Dp(148)); height < minHeight {
+	height := gtx.Dp(unit.Dp(188))
+	if minHeight := gtx.Dp(unit.Dp(164)); height < minHeight {
 		height = minHeight
 	}
 	if height < 1 {
@@ -5079,7 +5114,7 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			note := "Use the same category for both background and text. Hover and Focused + Selected Files are tuned separately."
+			note := "Use the same category for both background and text. Popup Hover controls menu and submenu row hover colors."
 			if st.colorScope == "viewer" {
 				note = "Viewer background/text and selection are saved separately from pane colors. Selection only needs a background override."
 			} else if st.colorCategory == "scrollbar" {
@@ -5676,6 +5711,10 @@ func (ui *UI) layoutSettingsColorPreviewRows(th *material.Theme, gtx layout.Cont
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.PopupHoverBg, palette.PopupHoverFg, "Popup Hover", "menu item")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.SelectedBg, palette.SelectedFg, "Focused", "gamma.txt")
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
@@ -5817,6 +5856,7 @@ func settingsColorPreviewStateWidth(th *material.Theme, gtx layout.Context, cfg 
 	labels := []string{
 		"Normal",
 		"Hover",
+		"Popup Hover",
 		"Focused",
 		"Selected Files",
 		"Focused + Selected Files",
@@ -5857,6 +5897,11 @@ func settingsPreviewColorForCategory(palette filePanePalette, key, part string) 
 			return palette.HoverFg
 		}
 		return palette.HoverBg
+	case "popup_hover":
+		if part == "text" {
+			return palette.PopupHoverFg
+		}
+		return palette.PopupHoverBg
 	case "selected_files":
 		if part == "text" {
 			return palette.MarkedFg

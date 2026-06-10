@@ -47,9 +47,9 @@ func (ui *UI) filePanePopupTheme() filePanePopupTheme {
 	muted.A = 220
 	title := mixNRGBA(text, bg, 0.52)
 	title.A = 228
-	hoverBg := mixNRGBA(bg, palette.HoverBg, 0.82)
+	hoverBg := palette.PopupHoverBg
 	hoverBg.A = 246
-	hoverText := bestContrastColor(hoverBg, palette.HoverFg, palette.SelectedFg, text)
+	hoverText := palette.PopupHoverFg
 	activeBg := mixNRGBA(bg, palette.SelectedBg, 0.72)
 	activeBg.A = 246
 	activeText := bestContrastColor(activeBg, palette.SelectedFg, palette.HoverFg, text)

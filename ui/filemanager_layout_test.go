@@ -309,6 +309,34 @@ func TestHandleFileManagerCtrlEMatchesExtension(t *testing.T) {
 	}
 }
 
+func TestFileContextMenuPanelWidthShrinksToMeasuredItems(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(420, 240)},
+	}
+	spec := fileContextMenuSpec{
+		Title:   "File Ops",
+		WidthDp: filePaneContextMenuCompactWidthDp,
+		Items: []fileContextMenuItem{
+			fileContextMenuActionItem("copy", "Copy..", filePaneMenuActionCopyDialog),
+			fileContextMenuActionItem("move", "Move..", filePaneMenuActionMoveDialog),
+			fileContextMenuActionItem("delete", "Delete..", filePaneMenuActionDeleteDialog),
+		},
+	}
+
+	got := ui.fileContextMenuPanelSize(th, gtx, spec).X
+	oldCap := gtx.Dp(unit.Dp(filePaneContextMenuCompactWidthDp))
+	if got >= oldCap {
+		t.Fatalf("compact menu width=%d should shrink below cap %d", got, oldCap)
+	}
+	if got < gtx.Dp(unit.Dp(80)) {
+		t.Fatalf("compact menu width=%d is too narrow", got)
+	}
+}
+
 func TestGlobalFunctionKeysAlt1OpensLeftDrivePicker(t *testing.T) {
 	drives := platform.AvailableLocalDrives()
 	if len(drives) == 0 {

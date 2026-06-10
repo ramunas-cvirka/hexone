@@ -43,6 +43,21 @@ func TestFileViewerThemeUsesScrollbarOverrides(t *testing.T) {
 	}
 }
 
+func TestPopupThemeUsesPopupHoverOverrides(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Colors.PopupHover = "#123456"
+	cfg.Colors.PopupHoverText = "#FEDCBA"
+
+	theme := (&UI{fmCfg: cfg}).filePanePopupTheme()
+
+	if got := fm.FormatHexColor(theme.HoverBg); got != "#123456" {
+		t.Fatalf("HoverBg=%q want %q", got, "#123456")
+	}
+	if got := fm.FormatHexColor(theme.HoverText); got != "#FEDCBA" {
+		t.Fatalf("HoverText=%q want %q", got, "#FEDCBA")
+	}
+}
+
 func TestFileViewerSelectionContrastIsStrongerThanBefore(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	theme := (&UI{fmCfg: cfg}).fileViewerTheme()

@@ -119,6 +119,7 @@ func run(window *app.Window) error {
 
 	var ops op.Ops
 	mainUI := ui.NewUI(cfg)
+	mainUI.SetInvalidateFunc(window.Invalidate)
 	setNativeInsertInvalidate(window.Invalidate)
 	windowTracker := windowstate.NewTracker(session, window.Run)
 	iconSetter := appicon.NewSetter()
@@ -132,6 +133,7 @@ func run(window *app.Window) error {
 			if nativeInsertMonitorInstalled {
 				removeNativeInsertMonitor(window.Run)
 			}
+			mainUI.Close()
 			snapshot := mainUI.SnapshotSession()
 			windowTracker.ApplyToSession(snapshot)
 			if err := fm.SaveSession(sessionPath, snapshot); err != nil {

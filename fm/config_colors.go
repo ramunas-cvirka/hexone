@@ -15,6 +15,8 @@ const (
 	DefaultFilePaneTextHex                = "#D2D2D2"
 	DefaultFilePaneHoverHex               = "#2D2D2D"
 	DefaultFilePaneHoverTextHex           = "#E8E8E8"
+	DefaultPopupHoverHex                  = "#485F96"
+	DefaultPopupHoverTextHex              = "#F6F9FF"
 	DefaultFilePaneSelectionHex           = "#3C3C50"
 	DefaultFilePaneSelectionTextHex       = "#F4F4F4"
 	DefaultFilePaneSelectedFilesHex       = "#4A4A4A"
@@ -30,6 +32,8 @@ type ColorsConfig struct {
 	FilePaneText        string               `yaml:"file_pane_text"`
 	Hover               string               `yaml:"hover"`
 	HoverText           string               `yaml:"hover_text"`
+	PopupHover          string               `yaml:"popup_hover"`
+	PopupHoverText      string               `yaml:"popup_hover_text"`
 	Selection           string               `yaml:"selection"`
 	SelectionText       string               `yaml:"selection_text"`
 	SelectedFiles       string               `yaml:"selected_files"`
