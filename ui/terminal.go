@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"hexone/fm"
+	"hexone/ui/platform"
 	"image"
 	"image/color"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	uitheme "hexone/ui/theme"
@@ -28,6 +30,7 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
+	"gioui.org/io/transfer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -36,7 +39,6 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-	"github.com/creack/pty"
 	"github.com/danielgatis/go-ansicode"
 	headlessterm "github.com/danielgatis/go-headless-term"
 	"golang.org/x/image/math/fixed"
@@ -66,6 +68,7 @@ const (
 	terminalSmoothSnapEpsilon  = 0.02
 	terminalSmoothJumpMinLines = 6
 	terminalCwdProbeTimeout    = 150 * time.Millisecond
+	terminalPasteReadTimeout   = 2 * time.Second
 )
 
 var (
@@ -74,6 +77,12 @@ var (
 	terminalCursor = color.NRGBA{R: 230, G: 238, B: 248, A: 140}
 	terminalError  = color.NRGBA{R: 255, G: 132, B: 132, A: 255}
 	terminalSelect = color.NRGBA{R: 61, G: 132, B: 220, A: 110}
+)
+
+var (
+	terminalLookPath          = exec.LookPath
+	terminalGetenv            = os.Getenv
+	readTerminalClipboardText = platform.ReadClipboardTextNow
 )
 
 type TerminalCell struct {
@@ -106,6 +115,14 @@ type terminalPoint struct {
 	Col int
 }
 
+type terminalProcess interface {
+	io.ReadWriteCloser
+	Resize(rows, cols int) error
+	Wait() error
+	Kill() error
+	PID() int
+}
+
 type terminalSession struct {
 	State TerminalState
 
@@ -117,8 +134,7 @@ type terminalSession struct {
 
 	procMu         sync.Mutex
 	writeMu        sync.Mutex
-	pty            *os.File
-	cmd            *exec.Cmd
+	pty            terminalProcess
 	running        bool
 	startAttempted bool
 	closing        bool
@@ -144,6 +160,8 @@ type terminalSession struct {
 	resizeDragStartY    int
 	resizeDragStartRows int
 	resizeHover         bool
+	paneHeight          int
+	paneCellHeight      int
 	selectionActive     bool
 	selectionSelecting  bool
 	selectionMoved      bool
@@ -160,6 +178,8 @@ type terminalSession struct {
 	menuOpenedAt        time.Time
 	menuHoverID         string
 	menuHoverAnim       segmentedAnimState
+	pastePending        bool
+	pastePendingAt      time.Time
 
 	invalidateMu sync.RWMutex
 	invalidate   func()
@@ -169,9 +189,11 @@ type terminalSession struct {
 	resizeTag     uiEventTag
 	menuTag       uiEventTag
 	menuActionTag uiEventTag
+	pasteTag      uiEventTag
 	wantFocus     bool
 
 	menuCopy      widget.Clickable
+	menuPaste     widget.Clickable
 	menuSelectAll widget.Clickable
 	menuGoPane1   widget.Clickable
 	menuGoPane2   widget.Clickable
@@ -300,6 +322,7 @@ type terminalModes struct {
 	mouseUTF8       bool
 	mouseSGR        bool
 	alternateScroll bool
+	bracketedPaste  bool
 	mousePressed    bool
 	mousePointer    pointer.ID
 	mouseButton     int
@@ -326,6 +349,8 @@ func (s *terminalSession) setTerminalMode(mode ansicode.TerminalMode, enabled bo
 		s.modes.mouseSGR = enabled
 	case ansicode.TerminalModeAlternateScroll:
 		s.modes.alternateScroll = enabled
+	case ansicode.TerminalModeBracketedPaste:
+		s.modes.bracketedPaste = enabled
 	}
 	s.modeMu.Unlock()
 }
@@ -357,6 +382,15 @@ func (s *terminalSession) terminalMouseModes() terminalMouseReportModes {
 func (s *terminalSession) terminalMouseReporting() bool {
 	modes := s.terminalMouseModes()
 	return modes.reporting()
+}
+
+func (s *terminalSession) bracketedPasteMode() bool {
+	if s == nil {
+		return false
+	}
+	s.modeMu.RLock()
+	defer s.modeMu.RUnlock()
+	return s.modes.bracketedPaste
 }
 
 func (s *terminalSession) beginTerminalMousePress(id pointer.ID, button int) {
@@ -614,6 +648,60 @@ func (ui *UI) toggleTerminal() bool {
 	return true
 }
 
+func (ui *UI) handleTerminalFocusToggleKey(gtx layout.Context) bool {
+	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+		return false
+	}
+	terminalFocused := gtx.Focused(&ui.terminal.keyTag)
+	if ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
+		return false
+	}
+	if !terminalFocused && (ui.Tabs.Value != "tab0" || ui.fileViewer != nil || ui.pathEditActive()) {
+		return false
+	}
+	anyMods := ^key.Modifiers(0)
+	handled := false
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameTab, Required: key.ModShift, Optional: anyMods})
+		if !ok {
+			return handled
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		handled = true
+		if ke.Modifiers != key.ModShift {
+			continue
+		}
+		if ui.toggleTerminalKeyboardFocus(gtx, terminalFocused) {
+			terminalFocused = !terminalFocused
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+}
+
+func (ui *UI) toggleTerminalKeyboardFocus(gtx layout.Context, terminalFocused bool) bool {
+	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+		return false
+	}
+	ui.closeFunctionBarPopups()
+	ui.resetKeys()
+	if terminalFocused {
+		ui.terminal.wantFocus = false
+		if ui.Tabs.Value != "tab0" {
+			ui.setActiveTab("tab0", gtx.Now)
+		}
+		gtx.Execute(key.FocusCmd{})
+		gtx.Execute(key.SoftKeyboardCmd{Show: false})
+		return true
+	}
+	ui.terminal.focusKeyboard()
+	gtx.Execute(key.FocusCmd{Tag: &ui.terminal.keyTag})
+	gtx.Execute(key.SoftKeyboardCmd{Show: true})
+	return true
+}
+
 func (ui *UI) terminalFocused(gtx layout.Context) bool {
 	return ui != nil && ui.terminal != nil && ui.terminal.active() && gtx.Focused(&ui.terminal.keyTag)
 }
@@ -700,22 +788,18 @@ func (s *terminalSession) Close() {
 	}
 	s.procMu.Lock()
 	s.closing = true
-	f := s.pty
-	cmd := s.cmd
+	proc := s.pty
 	s.pty = nil
-	s.cmd = nil
 	s.running = false
 	s.procMu.Unlock()
 
-	if f != nil {
-		_ = f.Close()
-	}
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+	if proc != nil {
+		_ = proc.Close()
+		_ = proc.Kill()
 	}
 }
 
-func (s *terminalSession) start(cwd string) {
+func (s *terminalSession) start(cwd, shell string) {
 	if s == nil {
 		return
 	}
@@ -735,45 +819,37 @@ func (s *terminalSession) start(cwd string) {
 		cols = terminalDefaultCols
 	}
 
-	name, args := defaultTerminalCommand()
-	cmd := exec.Command(name, args...)
-	cmd.Env = terminalEnv(os.Environ(), rows, cols)
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
-	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
+	name, args := terminalCommandForShell(shell, cwd)
+	proc, err := startTerminalProcess(name, args, cwd, terminalEnv(os.Environ(), rows, cols), rows, cols)
 	if err != nil {
 		s.setError(terminalStartError(err))
 		return
 	}
 
 	s.parserMu.Lock()
-	s.term.SetPTYWriter(f)
+	s.term.SetPTYWriter(proc)
 	s.parserMu.Unlock()
 
 	s.procMu.Lock()
 	if s.closing {
 		s.procMu.Unlock()
-		_ = f.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
+		_ = proc.Close()
+		_ = proc.Kill()
 		return
 	}
-	s.pty = f
-	s.cmd = cmd
+	s.pty = proc
 	s.running = true
 	s.startDir = cwd
 	s.procMu.Unlock()
 
 	s.setError("")
-	go s.readLoop(f, cmd)
+	go s.readLoop(proc)
 }
 
-func (s *terminalSession) readLoop(f *os.File, cmd *exec.Cmd) {
+func (s *terminalSession) readLoop(proc terminalProcess) {
 	buf := make([]byte, terminalReadBufSize)
 	for {
-		n, err := f.Read(buf)
+		n, err := proc.Read(buf)
 		if n > 0 {
 			s.writeOutput(buf[:n])
 			s.invalidateNow()
@@ -785,19 +861,18 @@ func (s *terminalSession) readLoop(f *os.File, cmd *exec.Cmd) {
 			break
 		}
 	}
-	if cmd != nil {
-		_ = cmd.Wait()
+	if proc != nil {
+		_ = proc.Wait()
 	}
 
 	s.procMu.Lock()
 	closing := s.closing
-	if s.pty == f {
+	if s.pty == proc {
 		s.pty = nil
-		s.cmd = nil
 		s.running = false
 	}
 	s.procMu.Unlock()
-	_ = f.Close()
+	_ = proc.Close()
 
 	if !closing {
 		s.setError("terminal exited; close and reopen the drawer to start a new shell")
@@ -923,7 +998,7 @@ func (s *terminalSession) resize(rows, cols int) {
 	}
 	s.rows = rows
 	s.cols = cols
-	f := s.pty
+	proc := s.pty
 	running := s.running
 	s.procMu.Unlock()
 
@@ -931,8 +1006,8 @@ func (s *terminalSession) resize(rows, cols int) {
 	s.term.Resize(rows, cols)
 	s.parserMu.Unlock()
 
-	if f != nil && running {
-		_ = pty.Setsize(f, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
+	if proc != nil && running {
+		_ = proc.Resize(rows, cols)
 	}
 	s.snapshot()
 }
@@ -945,14 +1020,14 @@ func (s *terminalSession) write(data []byte) {
 		s.snapshot()
 	}
 	s.procMu.Lock()
-	f := s.pty
+	proc := s.pty
 	running := s.running
 	s.procMu.Unlock()
-	if f == nil || !running {
+	if proc == nil || !running {
 		return
 	}
 	s.writeMu.Lock()
-	_, err := f.Write(data)
+	_, err := proc.Write(data)
 	s.writeMu.Unlock()
 	if err != nil {
 		s.setError(err.Error())
@@ -1451,6 +1526,13 @@ func (ui *UI) copyTerminalText(gtx layout.Context, fallbackAll bool) bool {
 	return ui.terminal.copyText(gtx, fallbackAll)
 }
 
+func (ui *UI) pasteTerminalText(gtx layout.Context) bool {
+	if ui == nil || ui.terminal == nil {
+		return false
+	}
+	return ui.terminal.pasteText(gtx)
+}
+
 func (s *terminalSession) copyText(gtx layout.Context, fallbackAll bool) bool {
 	if s == nil {
 		return false
@@ -1465,6 +1547,139 @@ func (s *terminalSession) copyText(gtx layout.Context, fallbackAll bool) bool {
 		Data: io.NopCloser(strings.NewReader(text)),
 	})
 	return true
+}
+
+func (s *terminalSession) pasteText(gtx layout.Context) bool {
+	if s == nil {
+		return false
+	}
+	gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
+	if text, err := readTerminalClipboardText(); err == nil {
+		return s.writePastedText(text)
+	}
+	s.beginPasteRead(gtx.Now)
+	gtx.Execute(clipboard.ReadCmd{Tag: &s.pasteTag})
+	return true
+}
+
+func (s *terminalSession) handleClipboardEvents(gtx layout.Context) bool {
+	if s == nil || !s.pasteReadPending(gtx.Now) {
+		return false
+	}
+	handled := false
+	for {
+		ev, ok := gtx.Event(transfer.TargetFilter{
+			Target: &s.pasteTag,
+			Type:   "application/text",
+		})
+		if !ok {
+			break
+		}
+		s.setPastePending(false)
+		de, ok := ev.(transfer.DataEvent)
+		if !ok {
+			continue
+		}
+		data := de.Open()
+		if data == nil {
+			continue
+		}
+		content, err := io.ReadAll(data)
+		_ = data.Close()
+		if err != nil {
+			continue
+		}
+		if s.writePastedText(string(content)) {
+			handled = true
+		}
+	}
+	return handled
+}
+
+func (ui *UI) handleTerminalClipboardEvents(gtx layout.Context) {
+	if ui == nil || ui.terminal == nil {
+		return
+	}
+	if ui.terminal.handleClipboardEvents(gtx) {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+}
+
+func (ui *UI) registerTerminalClipboardTarget(gtx layout.Context) {
+	if ui == nil || ui.terminal == nil || !ui.terminal.pasteReadPending(gtx.Now) {
+		return
+	}
+	event.Op(gtx.Ops, &ui.terminal.pasteTag)
+}
+
+func (s *terminalSession) beginPasteRead(now time.Time) {
+	if s == nil {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	s.viewMu.Lock()
+	s.pastePending = true
+	s.pastePendingAt = now
+	s.viewMu.Unlock()
+}
+
+func (s *terminalSession) setPastePending(pending bool) {
+	if s == nil {
+		return
+	}
+	s.viewMu.Lock()
+	s.pastePending = pending
+	if !pending {
+		s.pastePendingAt = time.Time{}
+	}
+	s.viewMu.Unlock()
+}
+
+func (s *terminalSession) pasteReadPending(now time.Time) bool {
+	if s == nil {
+		return false
+	}
+	s.viewMu.Lock()
+	defer s.viewMu.Unlock()
+	if s.pastePending && !s.pastePendingAt.IsZero() && !now.IsZero() && now.Sub(s.pastePendingAt) > terminalPasteReadTimeout {
+		s.pastePending = false
+		s.pastePendingAt = time.Time{}
+	}
+	return s.pastePending
+}
+
+func (s *terminalSession) writePastedText(text string) bool {
+	data := terminalPasteBytes(text, s.bracketedPasteMode())
+	if len(data) == 0 {
+		return false
+	}
+	s.clearSelection()
+	s.write(data)
+	return true
+}
+
+func terminalPasteBytes(text string, bracketed bool) []byte {
+	text = strings.ReplaceAll(text, "\x00", "")
+	if text == "" {
+		return nil
+	}
+	if bracketed {
+		text = normalizeTerminalPasteLineEndings(text, "\n")
+		return []byte("\x1b[200~" + text + "\x1b[201~")
+	}
+	text = normalizeTerminalPasteLineEndings(text, "\r")
+	return []byte(text)
+}
+
+func normalizeTerminalPasteLineEndings(text, newline string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	if newline != "\n" {
+		text = strings.ReplaceAll(text, "\n", newline)
+	}
+	return text
 }
 
 func (s *terminalSession) hasActiveSelection() bool {
@@ -1706,20 +1921,286 @@ func terminalColor(c color.Color, fg bool) color.NRGBA {
 	return color.NRGBA{R: rgba.R, G: rgba.G, B: rgba.B, A: rgba.A}
 }
 
-func defaultTerminalCommand() (string, []string) {
-	if runtime.GOOS == "windows" {
-		if shell := strings.TrimSpace(os.Getenv("COMSPEC")); shell != "" {
-			return shell, nil
-		}
-		if _, err := exec.LookPath("pwsh.exe"); err == nil {
-			return "pwsh.exe", []string{"-NoLogo"}
-		}
-		return "powershell.exe", []string{"-NoLogo"}
+type terminalShellOption struct {
+	Key   string
+	Label string
+}
+
+func terminalDetectedShellOptions() []terminalShellOption {
+	return terminalShellOptionsFor(runtime.GOOS, terminalLookPath, terminalDetectedWSLDistros())
+}
+
+func terminalShellOptionsFor(goos string, lookPath func(string) (string, error), wslDistros []string) []terminalShellOption {
+	if lookPath == nil {
+		lookPath = exec.LookPath
 	}
-	if shell := strings.TrimSpace(os.Getenv("SHELL")); shell != "" {
+	options := []terminalShellOption{{Key: "auto", Label: "Auto"}}
+	add := func(key, label string) {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return
+		}
+		if normalized, ok := fm.NormalizeKnownViewerShell(key); ok {
+			key = normalized
+		}
+		for _, opt := range options {
+			if strings.EqualFold(opt.Key, key) {
+				return
+			}
+		}
+		options = append(options, terminalShellOption{Key: key, Label: label})
+	}
+
+	if goos == "windows" {
+		if terminalFirstLookPath(lookPath, "pwsh.exe", "pwsh") != "" {
+			add("pwsh", "PS 7")
+		}
+		if terminalFirstLookPath(lookPath, "powershell.exe", "powershell") != "" {
+			add("powershell", "Win PS")
+		}
+		if terminalFirstLookPath(lookPath, "wsl.exe", "wsl") != "" {
+			for _, distro := range wslDistros {
+				distro = strings.TrimSpace(distro)
+				if distro != "" {
+					add("wsl:"+distro, terminalWSLDistroLabel(distro))
+				}
+			}
+		}
+		if strings.TrimSpace(terminalGetenv("COMSPEC")) != "" || terminalFirstLookPath(lookPath, "cmd.exe", "cmd") != "" {
+			add("cmd", "Cmd")
+		}
+		if terminalFirstLookPath(lookPath, "sh.exe", "sh") != "" {
+			add("sh", "sh")
+		}
+		return options
+	}
+
+	add("sh", "sh")
+	if terminalFirstLookPath(lookPath, "pwsh") != "" {
+		add("pwsh", "PS 7")
+	}
+	return options
+}
+
+func terminalWSLDistroLabel(distro string) string {
+	distro = strings.TrimSpace(distro)
+	if distro == "" {
+		return "WSL"
+	}
+	return "WSL " + distro
+}
+
+func terminalDetectedWSLDistros() []string {
+	if runtime.GOOS != "windows" || terminalFirstLookPath(terminalLookPath, "wsl.exe", "wsl") == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "wsl.exe", "--list", "--quiet")
+	configureViewerCommandProcess(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	return parseTerminalWSLDistros(out)
+}
+
+func parseTerminalWSLDistros(data []byte) []string {
+	text := decodeTerminalWSLOutput(data)
+	lines := strings.FieldsFunc(text, func(r rune) bool {
+		return r == '\r' || r == '\n'
+	})
+	out := make([]string, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.Trim(line, "\ufeff\x00"))
+		line = strings.ReplaceAll(line, "\x00", "")
+		if line == "" {
+			continue
+		}
+		key := strings.ToLower(line)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, line)
+	}
+	return out
+}
+
+func decodeTerminalWSLOutput(data []byte) string {
+	if len(data) < 2 || !terminalLooksUTF16(data) {
+		return string(data)
+	}
+	littleEndian := true
+	if data[0] == 0xfe && data[1] == 0xff {
+		littleEndian = false
+		data = data[2:]
+	} else if data[0] == 0xff && data[1] == 0xfe {
+		data = data[2:]
+	}
+	if len(data)%2 == 1 {
+		data = data[:len(data)-1]
+	}
+	u16 := make([]uint16, 0, len(data)/2)
+	for i := 0; i+1 < len(data); i += 2 {
+		if littleEndian {
+			u16 = append(u16, uint16(data[i])|uint16(data[i+1])<<8)
+		} else {
+			u16 = append(u16, uint16(data[i])<<8|uint16(data[i+1]))
+		}
+	}
+	return string(utf16.Decode(u16))
+}
+
+func terminalLooksUTF16(data []byte) bool {
+	if len(data) >= 2 {
+		if (data[0] == 0xff && data[1] == 0xfe) || (data[0] == 0xfe && data[1] == 0xff) {
+			return true
+		}
+	}
+	nulCount := 0
+	for _, b := range data {
+		if b == 0 {
+			nulCount++
+		}
+	}
+	return nulCount > 0 && nulCount*3 >= len(data)
+}
+
+func terminalCommandForShell(raw, cwd string) (string, []string) {
+	return terminalCommandForShellOnGOOS(runtime.GOOS, raw, cwd)
+}
+
+func terminalCommandForShellOnGOOS(goos, raw, cwd string) (string, []string) {
+	shell := fm.NormalizeViewerShell(raw)
+	if shell == "auto" {
+		return defaultTerminalCommandForGOOS(goos, cwd)
+	}
+	switch {
+	case shell == "pwsh":
+		return terminalPowerShellCommand(goos, true, false)
+	case shell == "powershell":
+		return terminalPowerShellCommand(goos, false, false)
+	case shell == "cmd":
+		if goos == "windows" {
+			return terminalCmdCommand()
+		}
+		return defaultTerminalCommandForGOOS(goos, cwd)
+	case shell == "sh":
+		return terminalShCommand(goos)
+	case fm.ViewerShellIsWSL(shell):
+		if goos == "windows" {
+			return terminalWSLCommand(shell, cwd)
+		}
+		return defaultTerminalCommandForGOOS(goos, cwd)
+	default:
+		return defaultTerminalCommandForGOOS(goos, cwd)
+	}
+}
+
+func defaultTerminalCommandForGOOS(goos, cwd string) (string, []string) {
+	if goos == "windows" {
+		if terminalFirstLookPath(terminalLookPath, "pwsh.exe", "pwsh") != "" {
+			return terminalPowerShellCommand(goos, true, false)
+		}
+		if terminalFirstLookPath(terminalLookPath, "powershell.exe", "powershell") != "" {
+			return terminalPowerShellCommand(goos, false, false)
+		}
+		if terminalFirstLookPath(terminalLookPath, "wsl.exe", "wsl") != "" {
+			return terminalWSLCommand("wsl", cwd)
+		}
+		return terminalCmdCommand()
+	}
+	if shell := strings.TrimSpace(terminalGetenv("SHELL")); shell != "" {
 		return shell, nil
 	}
 	return "/bin/sh", nil
+}
+
+func terminalPowerShellCommand(goos string, modern, nonInteractive bool) (string, []string) {
+	var program string
+	if modern {
+		if goos == "windows" {
+			program = terminalFirstLookPath(terminalLookPath, "pwsh.exe", "pwsh")
+			if program == "" {
+				program = "pwsh.exe"
+			}
+		} else {
+			program = terminalFirstLookPath(terminalLookPath, "pwsh")
+			if program == "" {
+				program = "pwsh"
+			}
+		}
+	} else if goos == "windows" {
+		program = terminalFirstLookPath(terminalLookPath, "powershell.exe", "powershell")
+		if program == "" {
+			program = "powershell.exe"
+		}
+	} else {
+		program = terminalFirstLookPath(terminalLookPath, "pwsh")
+		if program == "" {
+			program = "pwsh"
+		}
+	}
+	args := []string{"-NoLogo"}
+	if nonInteractive {
+		args = append(args, "-NoProfile", "-NonInteractive", "-Command")
+	}
+	return program, args
+}
+
+func terminalCmdCommand() (string, []string) {
+	if shell := strings.TrimSpace(terminalGetenv("COMSPEC")); shell != "" {
+		return shell, nil
+	}
+	if program := terminalFirstLookPath(terminalLookPath, "cmd.exe", "cmd"); program != "" {
+		return program, nil
+	}
+	return "cmd.exe", nil
+}
+
+func terminalShCommand(goos string) (string, []string) {
+	if goos == "windows" {
+		if program := terminalFirstLookPath(terminalLookPath, "sh.exe", "sh"); program != "" {
+			return program, nil
+		}
+		return "sh.exe", nil
+	}
+	if program := terminalFirstLookPath(terminalLookPath, "sh"); program != "" {
+		return program, nil
+	}
+	return "/bin/sh", nil
+}
+
+func terminalWSLCommand(shell, cwd string) (string, []string) {
+	program := terminalFirstLookPath(terminalLookPath, "wsl.exe", "wsl")
+	if program == "" {
+		program = "wsl.exe"
+	}
+	args := []string{}
+	if distro := fm.ViewerShellWSLDistro(shell); distro != "" {
+		args = append(args, "--distribution", distro)
+	}
+	if strings.TrimSpace(cwd) != "" {
+		args = append(args, "--cd", cwd)
+	}
+	return program, args
+}
+
+func terminalFirstLookPath(lookPath func(string) (string, error), names ...string) string {
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if path, err := lookPath(name); err == nil && strings.TrimSpace(path) != "" {
+			return path
+		}
+	}
+	return ""
 }
 
 func terminalEnv(base []string, rows, cols int) []string {
@@ -1803,10 +2284,17 @@ func strconvItoa(v int) string {
 }
 
 func terminalStartError(err error) string {
-	if errors.Is(err, pty.ErrUnsupported) {
+	if terminalProcessUnsupported(err) {
 		return "terminal PTY is not supported by the selected backend on this platform yet"
 	}
 	return "terminal start failed: " + err.Error()
+}
+
+func (ui *UI) terminalShell() string {
+	if ui != nil && ui.fmCfg != nil {
+		return ui.fmCfg.Viewer.Shell
+	}
+	return "auto"
 }
 
 func (ui *UI) terminalStartDir() string {
@@ -1912,8 +2400,8 @@ func (s *terminalSession) currentDir() (string, bool) {
 	}
 	s.procMu.Lock()
 	pid := 0
-	if s.cmd != nil && s.cmd.Process != nil && s.running {
-		pid = s.cmd.Process.Pid
+	if s.pty != nil && s.running {
+		pid = s.pty.PID()
 	}
 	startDir := strings.TrimSpace(s.startDir)
 	s.procMu.Unlock()
@@ -2054,6 +2542,17 @@ func terminalPaneHeight(gtx layout.Context, cellH int, preferredRows ...int) int
 	return terminalPaneHeightForRows(gtx, cellH, rows)
 }
 
+func terminalRowsForPaneHeight(gtx layout.Context, cellH, height int) int {
+	if cellH <= 0 || height <= 0 {
+		return 0
+	}
+	rows := (height - terminalPaneVerticalOverhead(gtx)) / cellH
+	if rows < 1 {
+		return 0
+	}
+	return terminalClampPaneRows(gtx, cellH, rows)
+}
+
 func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	st := ui.ensureTerminalSession()
 	if st == nil || !st.active() {
@@ -2068,8 +2567,10 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 	}
 	h := terminalPaneHeight(gtx, cellH, terminalConfiguredRows(ui.fmCfg))
 	if h <= 0 {
+		st.setPaneMetrics(0, cellH)
 		return layout.Dimensions{}
 	}
+	st.setPaneMetrics(h, cellH)
 	return fixedHeight(gtx, h, func(gtx layout.Context) layout.Dimensions {
 		size := gtx.Constraints.Max
 		if size.X <= 0 || size.Y <= 0 {
@@ -2106,7 +2607,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 			rows = 1
 		}
 		st.resize(rows, cols)
-		st.start(ui.terminalStartDir())
+		st.start(ui.terminalStartDir(), ui.terminalShell())
 		st.layoutScrollbar(gtx, content)
 
 		if st.handlePointer(gtx, content, cellW, cellH) {
@@ -2162,18 +2663,8 @@ func (ui *UI) layoutTerminalResizeHandle(th *material.Theme, gtx layout.Context)
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 	st := ui.terminal
-	_, cellH := ui.terminalCellSize(th, gtx)
-	if cellH <= 0 {
-		cellH = 16
-	}
-	rows := terminalConfiguredRows(ui.fmCfg)
-	h := terminalPaneHeight(gtx, cellH, rows)
-	if h <= 0 || gtx.Constraints.Max.X <= 0 || gtx.Constraints.Max.Y <= 0 {
-		return layout.Dimensions{Size: gtx.Constraints.Max}
-	}
-	top := gtx.Constraints.Max.Y - h
-	rect := terminalResizeHandleRect(gtx, top)
-	if rect.Empty() {
+	rect, cellH, rows, ok := ui.terminalResizeHandleGeometry(th, gtx)
+	if !ok {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 
@@ -2195,10 +2686,36 @@ func (ui *UI) layoutTerminalResizeHandle(th *material.Theme, gtx layout.Context)
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
+func (ui *UI) terminalResizeHandleGeometry(th *material.Theme, gtx layout.Context) (image.Rectangle, int, int, bool) {
+	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+		return image.Rectangle{}, 0, 0, false
+	}
+	st := ui.terminal
+	h, cellH, ok := st.paneMetrics()
+	rows := terminalRowsForPaneHeight(gtx, cellH, h)
+	if !ok || rows <= 0 {
+		_, cellH = ui.terminalCellSize(th, gtx)
+		if cellH <= 0 {
+			cellH = 16
+		}
+		rows = terminalConfiguredRows(ui.fmCfg)
+		h = terminalPaneHeight(gtx, cellH, rows)
+	}
+	if h <= 0 || gtx.Constraints.Max.X <= 0 || gtx.Constraints.Max.Y <= 0 {
+		return image.Rectangle{}, 0, 0, false
+	}
+	rect := terminalResizeHandleRect(gtx, gtx.Constraints.Max.Y-h)
+	if rect.Empty() {
+		return image.Rectangle{}, 0, 0, false
+	}
+	return rect, cellH, rows, true
+}
+
 func (ui *UI) terminalCellSize(th *material.Theme, gtx layout.Context) (int, int) {
-	face := ui.viewerMonospaceTypeface()
-	cellW := measureTypefaceCharWidth(ui, th, gtx, face)
-	cellH := measureTypefaceLineHeight(ui, th, gtx, face)
+	face := ui.terminalBaseTypeface()
+	size := ui.terminalTextSize()
+	cellW := int(math.Ceil(float64(measureTypefaceCharAdvanceAt(th, gtx, face, size))))
+	cellH := measureTypefaceLineHeightAt(th, gtx, face, size)
 	if cellW < 4 {
 		cellW = 4
 	}
@@ -2208,8 +2725,19 @@ func (ui *UI) terminalCellSize(th *material.Theme, gtx layout.Context) (int, int
 	return cellW, cellH
 }
 
+func (ui *UI) terminalBaseTypeface() font.Typeface {
+	return ui.mainTypeface()
+}
+
+func (ui *UI) terminalTextSize() unit.Sp {
+	if ui == nil {
+		return scaleConfigFontSize(nil, 13)
+	}
+	return scaleConfigFontSize(ui.fmCfg, 13)
+}
+
 func (ui *UI) terminalTypeface() font.Typeface {
-	base := strings.TrimSpace(string(ui.viewerMonospaceTypeface()))
+	base := strings.TrimSpace(string(ui.terminalBaseTypeface()))
 	fallbacks := "Apple Braille, Apple Symbols, Apple Color Emoji, Segoe UI Symbol, Segoe UI Emoji, Noto Sans Symbols, Noto Color Emoji, Menlo, Consolas, monospace"
 	if base == "" {
 		return font.Typeface(fallbacks)
@@ -2486,6 +3014,34 @@ func (s *terminalSession) setResizeHover(hover bool) bool {
 	old := s.resizeHover
 	s.resizeHover = hover
 	return old != s.resizeHover
+}
+
+func (s *terminalSession) setPaneMetrics(height, cellH int) {
+	if s == nil {
+		return
+	}
+	if height < 0 {
+		height = 0
+	}
+	if cellH < 0 {
+		cellH = 0
+	}
+	s.viewMu.Lock()
+	s.paneHeight = height
+	s.paneCellHeight = cellH
+	s.viewMu.Unlock()
+}
+
+func (s *terminalSession) paneMetrics() (height, cellH int, ok bool) {
+	if s == nil {
+		return 0, 0, false
+	}
+	s.viewMu.Lock()
+	defer s.viewMu.Unlock()
+	if s.paneHeight <= 0 || s.paneCellHeight <= 0 {
+		return 0, 0, false
+	}
+	return s.paneHeight, s.paneCellHeight, true
 }
 
 func (s *terminalSession) clearResizeHover() bool {
@@ -2783,6 +3339,8 @@ func (ui *UI) activateTerminalContextMenuItem(gtx layout.Context, st *terminalSe
 	switch id {
 	case "copy":
 		_ = ui.copyTerminalText(gtx, true)
+	case "paste":
+		_ = ui.pasteTerminalText(gtx)
 	case "select-all":
 		_ = st.selectAll()
 	case "go-pane-1":
@@ -2981,6 +3539,7 @@ func (ui *UI) terminalContextMenuItems(st *terminalSession) []terminalContextMen
 	}
 	return []terminalContextMenuItem{
 		{id: "copy", label: "Copy", click: &st.menuCopy},
+		{id: "paste", label: "Paste", click: &st.menuPaste},
 		{id: "select-all", label: "Select All", click: &st.menuSelectAll},
 		{id: "sep-pane", separator: true},
 		{id: "go-pane-1", label: "Go to Pane 1 Dir", click: &st.menuGoPane1, disabled: !paneDirAvailable(0)},
@@ -3451,6 +4010,12 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 				}
 				continue
 			}
+			if terminalPasteKey(ev) {
+				if s.pasteText(gtx) {
+					handled = true
+				}
+				continue
+			}
 			if terminalSelectAllKey(ev) {
 				if s.selectAll() {
 					handled = true
@@ -3467,6 +4032,13 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 
 func terminalCopyKey(ev key.Event) bool {
 	if ev.Name != "C" && ev.Name != "c" {
+		return false
+	}
+	return ev.Modifiers.Contain(key.ModCtrl) || ev.Modifiers.Contain(key.ModShortcut)
+}
+
+func terminalPasteKey(ev key.Event) bool {
+	if ev.Name != "V" && ev.Name != "v" {
 		return false
 	}
 	return ev.Modifiers.Contain(key.ModCtrl) || ev.Modifiers.Contain(key.ModShortcut)
@@ -3741,8 +4313,8 @@ func (ui *UI) drawTerminalRune(th *material.Theme, gtx layout.Context, pos image
 	if bold {
 		weight = font.Bold
 	}
-	size := ui.viewerTextSize()
-	face := ui.viewerMonospaceTypeface()
+	size := ui.terminalTextSize()
+	face := ui.terminalBaseTypeface()
 	yOff := uitheme.OpticalTextYOffsetPx(gtx, face, size)
 	params := text.Parameters{
 		Font: font.Font{

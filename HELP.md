@@ -65,8 +65,11 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F9` opens the Tools menu (`Hex to ASCII`, `Protocol Analyzer`, `Settings`).
 - `F10` exits the app.
 - `F11` hides or shows the function key bar.
+- `F12` opens or closes the terminal drawer.
 
 If the function key bar is auto-hidden in the viewer, `F11` can still bring it back.
+
+When the terminal drawer is open, `Shift+Tab` toggles keyboard focus between the terminal and the file panes. Plain `Tab` stays available to the terminal for shell completion while the terminal is focused.
 
 ## Custom Commands
 
@@ -218,7 +221,7 @@ Useful things to adjust:
 - fallback command
 - exact target overrides
 - filename regex rules
-- shell selection
+- shell selection for viewer commands and the terminal drawer
 - remote search utility command for SSH hex find
 - viewer smooth scrolling
 - file encoding defaults
@@ -258,7 +261,7 @@ custom_commands:
 
 Notes:
 
-- `shell: auto` picks a sensible shell automatically
+- `shell: auto` picks a sensible shell automatically; Windows can also use `pwsh`, `powershell`, `cmd`, `wsl`, or `wsl:<distro>`
 - Priority 1: `command_by_target` matches one exact full path and overrides any regex-selected command
 - Priority 2: `command_rules` match the filename only; later matches override earlier ones
 - Priority 3: `command` is the generic fallback

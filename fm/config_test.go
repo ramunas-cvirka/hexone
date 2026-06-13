@@ -130,6 +130,28 @@ terminal:
 	}
 }
 
+func TestNormalizeViewerShellSupportsPowerShellCmdAndWSL(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{raw: "", want: "auto"},
+		{raw: " AUTO ", want: "auto"},
+		{raw: "bash", want: "sh"},
+		{raw: "pwsh.exe", want: "pwsh"},
+		{raw: "PowerShell.EXE", want: "powershell"},
+		{raw: "cmd.exe", want: "cmd"},
+		{raw: "wsl.exe", want: "wsl"},
+		{raw: "wsl:Ubuntu-24.04", want: "wsl:Ubuntu-24.04"},
+		{raw: "unknown", want: "auto"},
+	}
+	for _, tc := range cases {
+		if got := NormalizeViewerShell(tc.raw); got != tc.want {
+			t.Fatalf("NormalizeViewerShell(%q)=%q want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
 func TestLegacyColumnWidthsMigrateToChars(t *testing.T) {
 	raw := `
 columns:

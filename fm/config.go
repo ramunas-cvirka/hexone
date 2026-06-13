@@ -143,6 +143,61 @@ type TerminalConfig struct {
 	HeightRows int `yaml:"height_rows"`
 }
 
+func NormalizeViewerShell(raw string) string {
+	shell, ok := NormalizeKnownViewerShell(raw)
+	if !ok {
+		return "auto"
+	}
+	return shell
+}
+
+func NormalizeKnownViewerShell(raw string) (string, bool) {
+	shell := strings.TrimSpace(raw)
+	lower := strings.ToLower(shell)
+	switch lower {
+	case "", "auto":
+		return "auto", true
+	case "sh", "bash":
+		return "sh", true
+	case "pwsh", "pwsh.exe":
+		return "pwsh", true
+	case "powershell", "powershell.exe":
+		return "powershell", true
+	case "cmd", "cmd.exe":
+		return "cmd", true
+	case "wsl", "wsl.exe":
+		return "wsl", true
+	}
+	if strings.HasPrefix(lower, "wsl:") {
+		distro := strings.TrimSpace(shell[len("wsl:"):])
+		if distro == "" {
+			return "wsl", true
+		}
+		return "wsl:" + distro, true
+	}
+	return "", false
+}
+
+func ViewerShellIsWSL(shell string) bool {
+	normalized, ok := NormalizeKnownViewerShell(shell)
+	if !ok {
+		return false
+	}
+	lower := strings.ToLower(normalized)
+	return lower == "wsl" || strings.HasPrefix(lower, "wsl:")
+}
+
+func ViewerShellWSLDistro(shell string) string {
+	normalized, ok := NormalizeKnownViewerShell(shell)
+	if !ok {
+		return ""
+	}
+	if !strings.HasPrefix(strings.ToLower(normalized), "wsl:") {
+		return ""
+	}
+	return strings.TrimSpace(normalized[len("wsl:"):])
+}
+
 func NormalizeSortKey(raw string) string {
 	key, ok := normalizeSortKey(raw)
 	if !ok {
@@ -781,16 +836,7 @@ func (c *Config) normalize() {
 	c.CustomCommands = NormalizeCustomCommands(c.CustomCommands)
 
 	c.Viewer.FileEncoding = NormalizeViewerFileEncoding(c.Viewer.FileEncoding)
-	switch strings.ToLower(strings.TrimSpace(c.Viewer.Shell)) {
-	case "", "auto":
-		c.Viewer.Shell = "auto"
-	case "sh":
-		c.Viewer.Shell = "sh"
-	case "pwsh", "powershell":
-		c.Viewer.Shell = "powershell"
-	default:
-		c.Viewer.Shell = "auto"
-	}
+	c.Viewer.Shell = NormalizeViewerShell(c.Viewer.Shell)
 	if c.Viewer.Command == "" {
 		c.Viewer.Command = "cat {path}"
 	}

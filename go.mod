@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	gioui.org v0.9.0
 	github.com/alecthomas/chroma/v2 v2.23.1
+	github.com/aymanbagabas/go-pty v0.2.3
 	github.com/creack/pty v1.1.24
 	github.com/danielgatis/go-ansicode v1.0.14
 	github.com/danielgatis/go-headless-term v1.0.9
@@ -13,7 +14,7 @@ require (
 	github.com/nwaples/rardecode/v2 v2.2.0
 	github.com/pkg/sftp v1.13.10
 	go.yaml.in/yaml/v4 v4.0.0-rc.4
-	golang.org/x/crypto v0.50.0
+	golang.org/x/crypto v0.51.0
 )
 
 require (
@@ -41,7 +42,7 @@ require (
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.12 // indirect
-	github.com/mattn/go-isatty v0.0.17 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mikelolasagasti/xz v1.0.1 // indirect
 	github.com/minio/minlz v1.0.1 // indirect
 	github.com/oklog/run v1.1.0 // indirect
@@ -49,14 +50,15 @@ require (
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
+	github.com/u-root/u-root v0.16.0 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/unilibs/uniwidth v0.1.0 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
 	golang.org/x/exp/shiny v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/image v0.35.0 // indirect
 	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260406210006-6f92a3bedf2d // indirect
 	google.golang.org/grpc v1.79.3 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect

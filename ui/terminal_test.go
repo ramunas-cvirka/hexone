@@ -4,9 +4,13 @@
 package ui
 
 import (
+	"bytes"
+	"errors"
 	"hexone/fm"
 	"image"
 	"image/color"
+	"io"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +119,20 @@ func TestTerminalTracksMouseModes(t *testing.T) {
 	}
 }
 
+func TestTerminalTracksBracketedPasteMode(t *testing.T) {
+	st := newTerminalSession(nil)
+
+	st.writeOutput([]byte("\x1b[?2004h"))
+	if !st.bracketedPasteMode() {
+		t.Fatal("bracketed paste should be enabled after CSI ? 2004 h")
+	}
+
+	st.writeOutput([]byte("\x1b[?2004l"))
+	if st.bracketedPasteMode() {
+		t.Fatal("bracketed paste should be disabled after CSI ? 2004 l")
+	}
+}
+
 func TestTerminalMouseReportBytes(t *testing.T) {
 	sgr := terminalMouseReportModes{clicks: true, sgr: true}
 	if got, want := string(terminalMouseReportBytes(0, 4, 9, false, false, 0, sgr)), "\x1b[<0;10;5M"; got != want {
@@ -160,6 +178,36 @@ func TestTerminalCopyKey(t *testing.T) {
 	}
 	if terminalCopyKey(key.Event{Name: "C", State: key.Press}) {
 		t.Fatal("plain C should not copy")
+	}
+}
+
+func TestTerminalPasteKey(t *testing.T) {
+	if !terminalPasteKey(key.Event{Name: "V", State: key.Press, Modifiers: key.ModCtrl}) {
+		t.Fatal("Ctrl+V should paste")
+	}
+	if !terminalPasteKey(key.Event{Name: "v", State: key.Press, Modifiers: key.ModShortcut}) {
+		t.Fatal("Shortcut+V should paste")
+	}
+	if terminalPasteKey(key.Event{Name: "V", State: key.Press}) {
+		t.Fatal("plain V should not paste")
+	}
+}
+
+func TestTerminalPasteBytesNormalizeLineEndings(t *testing.T) {
+	got := string(terminalPasteBytes("one\r\ntwo\nthree\rfour", false))
+	want := "one\rtwo\rthree\rfour"
+	if got != want {
+		t.Fatalf("plain paste bytes=%q want %q", got, want)
+	}
+
+	got = string(terminalPasteBytes("one\r\ntwo\nthree\rfour", true))
+	want = "\x1b[200~one\ntwo\nthree\nfour\x1b[201~"
+	if got != want {
+		t.Fatalf("bracketed paste bytes=%q want %q", got, want)
+	}
+
+	if got := terminalPasteBytes("\x00", false); got != nil {
+		t.Fatalf("empty sanitized paste=%q want nil", string(got))
 	}
 }
 
@@ -530,6 +578,19 @@ func TestTerminalContextMenuPressDoesNotCloseFromTerminalPointer(t *testing.T) {
 	}
 }
 
+func TestTerminalContextMenuIncludesPaste(t *testing.T) {
+	ui := &UI{}
+	st := newTerminalSession(nil)
+
+	items := ui.terminalContextMenuItems(st)
+	for _, item := range items {
+		if item.id == "paste" && item.label == "Paste" && item.click == &st.menuPaste {
+			return
+		}
+	}
+	t.Fatalf("terminal context menu missing Paste item: %+v", items)
+}
+
 func TestTerminalCellFromHeadlessMapsStyle(t *testing.T) {
 	src := headlessterm.Cell{
 		Char: 'X',
@@ -789,17 +850,104 @@ func TestTerminalSelectAllTextIncludesScrollback(t *testing.T) {
 	}
 }
 
-func TestTerminalTypefaceIncludesSymbolFallback(t *testing.T) {
-	ui := &UI{}
-	got := string(ui.terminalTypeface())
-	if !strings.Contains(got, "Fira Code") {
-		t.Fatalf("terminalTypeface=%q missing base monospace face", got)
+func TestTerminalPasteWritesClipboardToProcess(t *testing.T) {
+	oldRead := readTerminalClipboardText
+	readTerminalClipboardText = func() (string, error) {
+		return "echo one\r\necho two", nil
 	}
-	if !strings.Contains(got, "Apple Symbols") || !strings.Contains(got, "Segoe UI Symbol") {
-		t.Fatalf("terminalTypeface=%q missing symbol fallbacks", got)
+	defer func() {
+		readTerminalClipboardText = oldRead
+	}()
+
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+	ui := &UI{terminal: st}
+	gtx := testTerminalPaneHeightContext(image.Pt(640, 120))
+
+	if !ui.pasteTerminalText(gtx) {
+		t.Fatal("pasteTerminalText returned false")
 	}
-	if !strings.Contains(got, "Apple Braille") || !strings.Contains(got, "Apple Color Emoji") {
-		t.Fatalf("terminalTypeface=%q missing braille/emoji fallbacks", got)
+	if got, want := proc.String(), "echo one\recho two"; got != want {
+		t.Fatalf("pasted bytes=%q want %q", got, want)
+	}
+	if st.pasteReadPending(gtx.Now) {
+		t.Fatal("synchronous paste should not leave async paste pending")
+	}
+}
+
+func TestTerminalPasteAsyncReadPendingExpires(t *testing.T) {
+	oldRead := readTerminalClipboardText
+	readTerminalClipboardText = func() (string, error) {
+		return "", errors.New("force async paste")
+	}
+	defer func() {
+		readTerminalClipboardText = oldRead
+	}()
+
+	st := newTerminalSession(nil)
+	gtx := testTerminalPaneHeightContext(image.Pt(640, 120))
+	gtx.Now = time.Now()
+
+	if !st.pasteText(gtx) {
+		t.Fatal("pasteText returned false")
+	}
+	if !st.pasteReadPending(gtx.Now) {
+		t.Fatal("async paste should be pending after clipboard read request")
+	}
+	if st.pasteReadPending(gtx.Now.Add(terminalPasteReadTimeout + time.Millisecond)) {
+		t.Fatal("async paste pending state should expire")
+	}
+}
+
+func TestTerminalTypefaceUsesPaneFontWithSymbolFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ui   *UI
+		want string
+	}{
+		{name: "default", ui: &UI{}, want: "Fira Code"},
+		{name: "pane font", ui: &UI{typeface: "Consolas"}, want: "Consolas"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(tc.ui.terminalTypeface())
+			if !strings.HasPrefix(got, tc.want+", ") {
+				t.Fatalf("terminalTypeface=%q want base pane face %q", got, tc.want)
+			}
+			if !strings.Contains(got, "Apple Symbols") || !strings.Contains(got, "Segoe UI Symbol") {
+				t.Fatalf("terminalTypeface=%q missing symbol fallbacks", got)
+			}
+			if !strings.Contains(got, "Apple Braille") || !strings.Contains(got, "Apple Color Emoji") {
+				t.Fatalf("terminalTypeface=%q missing braille/emoji fallbacks", got)
+			}
+		})
+	}
+}
+
+func TestTerminalTextSizeTracksPaneTableSize(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.FontSizeSp = 18
+	ui := &UI{fmCfg: cfg}
+
+	if got, want := ui.terminalTextSize(), scaleConfigFontSize(cfg, 13); got != want {
+		t.Fatalf("terminalTextSize=%v want pane table size %v", got, want)
+	}
+}
+
+func TestTerminalCellWidthUsesTypefaceAdvance(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.Typeface = "Consolas"
+	ui := &UI{fmCfg: cfg, typeface: "Consolas"}
+	th := material.NewTheme()
+	gtx := testTerminalPaneHeightContext(image.Pt(640, 120))
+
+	got, _ := ui.terminalCellSize(th, gtx)
+	want := int(math.Ceil(float64(measureTypefaceCharAdvanceAt(th, gtx, ui.terminalBaseTypeface(), ui.terminalTextSize()))))
+	if got != want {
+		t.Fatalf("terminal cell width=%d want measured advance %d", got, want)
 	}
 }
 
@@ -850,6 +998,45 @@ func TestTerminalResizeDragSnapsByRows(t *testing.T) {
 	}
 	if got, want := st.resizeRowsFromDrag(gtx, image.Pt(10, 25), 20), 9; got != want {
 		t.Fatalf("resize rows after downward drag=%d want %d", got, want)
+	}
+}
+
+func TestTerminalResizeHandleGeometryUsesLaidOutPaneHeight(t *testing.T) {
+	rootGtx := testTerminalPaneHeightContext(image.Pt(1200, 800))
+	paneGtx := testTerminalPaneHeightContext(image.Pt(1200, 680))
+	cellH := 22
+	rows := terminalConfiguredRows(fm.DefaultConfig())
+	paneH := terminalPaneHeight(paneGtx, cellH, rows)
+	fullWindowH := terminalPaneHeight(rootGtx, cellH, rows)
+	if paneH == fullWindowH {
+		t.Fatalf("test setup should clamp pane/full-window heights differently, both=%d", paneH)
+	}
+
+	st := newTerminalSession(nil)
+	st.setActive(true)
+	st.setPaneMetrics(paneH, cellH)
+	ui := &UI{
+		fmCfg:    fm.DefaultConfig(),
+		terminal: st,
+	}
+
+	rect, gotCellH, gotRows, ok := ui.terminalResizeHandleGeometry(material.NewTheme(), rootGtx)
+	if !ok {
+		t.Fatal("resize handle geometry missing")
+	}
+	wantRect := terminalResizeHandleRect(rootGtx, rootGtx.Constraints.Max.Y-paneH)
+	staleRect := terminalResizeHandleRect(rootGtx, rootGtx.Constraints.Max.Y-fullWindowH)
+	if rect != wantRect {
+		t.Fatalf("resize handle rect=%v want laid-out pane rect %v", rect, wantRect)
+	}
+	if rect == staleRect {
+		t.Fatalf("resize handle used full-window fallback rect %v instead of pane rect %v", staleRect, wantRect)
+	}
+	if gotCellH != cellH {
+		t.Fatalf("resize handle cellH=%d want %d", gotCellH, cellH)
+	}
+	if wantRows := terminalRowsForPaneHeight(rootGtx, cellH, paneH); gotRows != wantRows {
+		t.Fatalf("resize handle rows=%d want %d", gotRows, wantRows)
 	}
 }
 
@@ -989,6 +1176,95 @@ func TestTerminalEnvFixesLCTypeOverridingUTF8Lang(t *testing.T) {
 	}
 }
 
+func TestTerminalCommandForWindowsShellSelection(t *testing.T) {
+	oldLookPath := terminalLookPath
+	oldGetenv := terminalGetenv
+	terminalLookPath = func(name string) (string, error) {
+		switch name {
+		case "pwsh.exe", "powershell.exe", "wsl.exe":
+			return name, nil
+		default:
+			return "", errors.New("not found")
+		}
+	}
+	terminalGetenv = func(string) string { return "" }
+	defer func() {
+		terminalLookPath = oldLookPath
+		terminalGetenv = oldGetenv
+	}()
+
+	name, args := terminalCommandForShellOnGOOS("windows", "auto", `C:\Users\me`)
+	if name != "pwsh.exe" || strings.Join(args, " ") != "-NoLogo" {
+		t.Fatalf("auto command=%q %v, want pwsh.exe -NoLogo", name, args)
+	}
+
+	name, args = terminalCommandForShellOnGOOS("windows", "powershell", `C:\Users\me`)
+	if name != "powershell.exe" || strings.Join(args, " ") != "-NoLogo" {
+		t.Fatalf("powershell command=%q %v, want powershell.exe -NoLogo", name, args)
+	}
+
+	name, args = terminalCommandForShellOnGOOS("windows", "wsl:Ubuntu-24.04", `C:\Users\me`)
+	wantArgs := []string{"--distribution", "Ubuntu-24.04", "--cd", `C:\Users\me`}
+	if name != "wsl.exe" || strings.Join(args, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("wsl command=%q %v, want wsl.exe %v", name, args, wantArgs)
+	}
+}
+
+func TestTerminalShellOptionsIncludeDetectedWindowsShells(t *testing.T) {
+	oldGetenv := terminalGetenv
+	terminalGetenv = func(string) string { return "" }
+	defer func() { terminalGetenv = oldGetenv }()
+
+	lookPath := func(name string) (string, error) {
+		switch name {
+		case "pwsh.exe", "powershell.exe", "wsl.exe":
+			return name, nil
+		default:
+			return "", errors.New("not found")
+		}
+	}
+	options := terminalShellOptionsFor("windows", lookPath, []string{"Ubuntu", "Debian"})
+	got := make([]string, 0, len(options))
+	for _, opt := range options {
+		got = append(got, opt.Key)
+	}
+	want := []string{"auto", "pwsh", "powershell", "wsl:Ubuntu", "wsl:Debian"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("shell options=%v want %v", got, want)
+	}
+
+	options = terminalShellOptionsFor("windows", lookPath, nil)
+	got = got[:0]
+	for _, opt := range options {
+		got = append(got, opt.Key)
+	}
+	want = []string{"auto", "pwsh", "powershell"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("shell options without distros=%v want %v", got, want)
+	}
+}
+
+func TestParseTerminalWSLDistrosUTF16(t *testing.T) {
+	data := []byte{
+		0xff, 0xfe,
+		'U', 0, 'b', 0, 'u', 0, 'n', 0, 't', 0, 'u', 0, '\r', 0, '\n', 0,
+		'D', 0, 'e', 0, 'b', 0, 'i', 0, 'a', 0, 'n', 0, '\r', 0, '\n', 0,
+	}
+	got := parseTerminalWSLDistros(data)
+	want := []string{"Ubuntu", "Debian"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("distros=%v want %v", got, want)
+	}
+}
+
+func TestWindowsPathToWSLPath(t *testing.T) {
+	got := windowsPathToWSLPath(`C:\Users\me\My File.txt`)
+	want := "/mnt/c/Users/me/My File.txt"
+	if got != want {
+		t.Fatalf("windowsPathToWSLPath=%q want %q", got, want)
+	}
+}
+
 func lookupEnvValue(env []string, key string) string {
 	prefix := key + "="
 	for _, entry := range env {
@@ -997,4 +1273,40 @@ func lookupEnvValue(env []string, key string) string {
 		}
 	}
 	return ""
+}
+
+type terminalWriteProcess struct {
+	buf bytes.Buffer
+}
+
+func (p *terminalWriteProcess) Read([]byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (p *terminalWriteProcess) Write(data []byte) (int, error) {
+	return p.buf.Write(data)
+}
+
+func (p *terminalWriteProcess) Close() error {
+	return nil
+}
+
+func (p *terminalWriteProcess) Resize(int, int) error {
+	return nil
+}
+
+func (p *terminalWriteProcess) Wait() error {
+	return nil
+}
+
+func (p *terminalWriteProcess) Kill() error {
+	return nil
+}
+
+func (p *terminalWriteProcess) PID() int {
+	return 1
+}
+
+func (p *terminalWriteProcess) String() string {
+	return p.buf.String()
 }

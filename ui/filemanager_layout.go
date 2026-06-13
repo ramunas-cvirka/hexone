@@ -537,13 +537,14 @@ func (ui *UI) layoutFilePaneSeams(gtx layout.Context, visible []visiblePane) {
 	height := gtx.Constraints.Max.Y
 	base := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
 	highlight := filePaneActiveBorderColor(palette.PaneBg)
+	terminalFocused := ui.terminalFocused(gtx)
 	for i := 0; i < len(visible)-1; i++ {
 		x += widths[i]
 		if x <= 0 || x >= gtx.Constraints.Max.X {
 			continue
 		}
 		col := base
-		if visible[i].idx == ui.activeFilePane || visible[i+1].idx == ui.activeFilePane {
+		if !terminalFocused && (visible[i].idx == ui.activeFilePane || visible[i+1].idx == ui.activeFilePane) {
 			col = highlight
 		}
 		drawVLine(gtx, x, height, col)
@@ -552,6 +553,9 @@ func (ui *UI) layoutFilePaneSeams(gtx layout.Context, visible []visiblePane) {
 
 func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context, visible []visiblePane) layout.Dimensions {
 	if len(visible) == 0 {
+		return layout.Dimensions{Size: gtx.Constraints.Max}
+	}
+	if ui.terminalFocused(gtx) {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 	widths := paneColumnWidths(gtx.Constraints.Max.X, len(visible))
@@ -579,7 +583,7 @@ func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context,
 }
 
 func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
-	active := idx == ui.activeFilePane
+	active := idx == ui.activeFilePane && !ui.terminalFocused(gtx)
 	palette := filePanePaletteFromConfig(ui.fmCfg)
 	accent := filePaneActiveBorderColor(palette.PaneBg)
 	shade := filePaneInactiveShadeColor(ui.fmCfg, palette.PaneBg)
@@ -1277,6 +1281,11 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 		pe, ok := ev.(pointer.Event)
 		if !ok {
 			continue
+		}
+		if ui.terminalFocused(gtx) {
+			ui.terminal.wantFocus = false
+			gtx.Execute(key.FocusCmd{})
+			gtx.Execute(key.SoftKeyboardCmd{Show: false})
 		}
 		if idx != ui.activeFilePane {
 			ui.setActiveFilePane(idx)

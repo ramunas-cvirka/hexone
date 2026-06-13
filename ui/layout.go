@@ -706,6 +706,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleGlobalEscapeToFileManager(gtx)
 	ui.handleEditorContextMenuGlobalPresses(gtx)
 	ui.handleEditorContextMenuClipboardEvents(gtx)
+	ui.handleTerminalClipboardEvents(gtx)
 	ui.handleCustomCommandEditorPreLayoutInput(gtx)
 
 	r := image.Rectangle{Max: gtx.Constraints.Max}
@@ -778,6 +779,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleProtocolDropdownOutsideClick(gtx)
 	ui.registerEditorContextMenuGlobalPointer(gtx)
 	ui.registerEditorContextMenuClipboardTarget(gtx)
+	ui.registerTerminalClipboardTarget(gtx)
 	if ui != nil && ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		pass := pointer.PassOp{}.Push(gtx.Ops)
@@ -966,6 +968,9 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 	if ui != nil && ui.customCommandEditor != nil {
 		return
+	}
+	if ui != nil {
+		ui.handleTerminalFocusToggleKey(gtx)
 	}
 	if ui != nil && ui.terminalFocused(gtx) {
 		ui.handleTerminalToggleKey(gtx)

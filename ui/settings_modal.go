@@ -191,6 +191,9 @@ type settingsModalState struct {
 	filenameSizeInfoText        string
 	viewCommandEdit             widget.Editor
 	viewShellEdit               widget.Editor
+	viewShellOptions            []terminalShellOption
+	viewShellClicks             []widget.Clickable
+	viewShellAnim               settingsChoiceAnim
 	viewRemoteSearchCommandEdit widget.Editor
 	paneFontSizeEdit            widget.Editor
 	viewFontSizeEdit            widget.Editor
@@ -442,6 +445,7 @@ func (ui *UI) openSettingsModal() {
 		st.configEdit.SingleLine = false
 		st.configEdit.Submit = false
 	}
+	st.viewShellOptions = terminalDetectedShellOptions()
 	st.loadFromConfig(ui.fmCfg)
 	st.keyFocus.focusKeyboard()
 	st.normalizeKeyboardFocus()
@@ -498,6 +502,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.filenameIconPickerTarget = ""
 	st.viewCommandEdit.SetText(cfg.Viewer.Command)
 	st.viewShellEdit.SetText(normalizeViewerShellInput(cfg.Viewer.Shell))
+	st.viewShellAnim = settingsChoiceAnim{}
 	st.viewRemoteSearchCommandEdit.SetText(fm.NormalizeViewerRemoteSearchCommand(cfg.Viewer.RemoteSearchCommand))
 	st.paneFontSizeEdit.SetText(formatConfigFloat(cfg.General.FontSizeSp))
 	st.viewFontSizeEdit.SetText(formatConfigFloat(cfg.Viewer.FontSizeSp))
@@ -2745,10 +2750,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 		cmd = "cat {path}"
 	}
 	shell := normalizeViewerShellInput(st.viewShellEdit.Text())
-	switch shell {
-	case "auto", "sh", "powershell":
-	default:
-		return fmt.Errorf("viewer shell must be auto, sh, or powershell")
+	if _, ok := fm.NormalizeKnownViewerShell(shell); !ok {
+		return fmt.Errorf("viewer shell must be auto, sh, pwsh, powershell, cmd, wsl, or wsl:<distro>")
 	}
 	viewerBgRaw := strings.TrimSpace(st.colorViewerBackground)
 	c, ok := fm.ParseHexColor(viewerBgRaw)
@@ -3697,6 +3700,82 @@ func (ui *UI) layoutSettingsFontFamilyPicker(th *material.Theme, gtx layout.Cont
 	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, textSize, specs)
 }
 
+func (ui *UI) layoutSettingsShellPicker(th *material.Theme, gtx layout.Context, options []terminalShellOption, clicks []widget.Clickable, active string, anim *settingsChoiceAnim, focused bool) layout.Dimensions {
+	if len(options) == 0 || len(clicks) < len(options) {
+		return layout.Dimensions{}
+	}
+	textSize := scaleModalThemeFontSize(th, 10)
+	keys := make([]string, len(options))
+	hoverKey := ""
+	for i, opt := range options {
+		keys[i] = opt.Key
+		if i < len(clicks) && clicks[i].Hovered() {
+			hoverKey = opt.Key
+		}
+	}
+	if anim != nil {
+		anim.anim.setHover(hoverKey, gtx.Now)
+	}
+	pos := float32(0)
+	animating := false
+	if anim != nil {
+		pos, animating = anim.position(gtx.Now, active, keys)
+	} else {
+		for i, key := range keys {
+			if key == active {
+				pos = float32(i)
+				break
+			}
+		}
+	}
+	stripH := gtx.Dp(unit.Dp(22))
+	if stripH < 1 {
+		stripH = 1
+	}
+	specs := make([]slidingTabSpec, 0, len(options))
+	for i, opt := range options {
+		activeFill := float32(0)
+		hoverFill := float32(0)
+		pulseFill := float32(0)
+		focusFill := float32(0)
+		if anim != nil {
+			activeFill, _ = anim.fill(gtx.Now, active, opt.Key)
+			hoverFill, _ = anim.anim.hoverFill(gtx.Now, opt.Key)
+			pulseFill, _ = anim.anim.pulseFill(gtx.Now, opt.Key)
+		} else if opt.Key == active {
+			activeFill = 1
+		}
+		if focused && opt.Key == active {
+			focusFill = 1
+		}
+		specs = append(specs, slidingTabSpec{
+			Label:      opt.Label,
+			Click:      &clicks[i],
+			ActiveFill: activeFill,
+			HoverFill:  hoverFill,
+			PulseFill:  pulseFill,
+			FocusFill:  focusFill,
+		})
+	}
+	for _, opt := range options {
+		if anim != nil {
+			if _, ok := anim.fill(gtx.Now, active, opt.Key); ok {
+				animating = true
+			}
+			if _, ok := anim.anim.hoverFill(gtx.Now, opt.Key); ok {
+				animating = true
+			}
+			if _, ok := anim.anim.pulseFill(gtx.Now, opt.Key); ok {
+				animating = true
+			}
+		}
+	}
+	if animating {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, textSize, specs)
+}
+
 func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	fillViewer, animViewer := st.tabFill(gtx.Now, "viewer")
 	fillAssoc, animAssoc := st.tabFill(gtx.Now, "associations")
@@ -3848,6 +3927,26 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	rowLabel := func(txt string, enabled bool) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, enabled)
 	}
+	shellOptions := st.viewShellOptions
+	if len(shellOptions) == 0 {
+		shellOptions = terminalShellOptionsFor(runtime.GOOS, terminalLookPath, nil)
+	}
+	st.ensureViewShellClicks(len(shellOptions))
+	activeShell := normalizeViewerShellInput(st.viewShellEdit.Text())
+	for i, opt := range shellOptions {
+		if i >= len(st.viewShellClicks) {
+			break
+		}
+		for st.viewShellClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusViewerShell)
+			current := activeShell
+			st.viewShellAnim.setValue(&current, opt.Key, gtx.Now)
+			st.viewShellAnim.anim.setPulse(opt.Key, gtx.Now)
+			st.viewShellEdit.SetText(current)
+			activeShell = current
+			st.errText = ""
+		}
+	}
 
 	savedTargetCount := 0
 	pendingTargetCount := 0
@@ -3973,8 +4072,12 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	sections := []layout.Widget{
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(rowLabel("Shell (all viewer commands)", true)),
+				layout.Rigid(rowLabel("Shell (viewer commands and terminal)", true)),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsShellPicker(th, gtx, shellOptions, st.viewShellClicks, activeShell, &st.viewShellAnim, st.focus == settingsKeyboardFocusViewerShell)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					ed := material.Editor(th, &st.viewShellEdit, "auto")
 					ed.Font.Typeface = ui.mainTypeface()
@@ -6473,6 +6576,16 @@ func (st *settingsModalState) ensureViewFontFamilyClicks(n int) {
 	copy(st.viewFontFamilyClicks, old)
 }
 
+func (st *settingsModalState) ensureViewShellClicks(n int) {
+	if n <= cap(st.viewShellClicks) {
+		st.viewShellClicks = st.viewShellClicks[:n]
+		return
+	}
+	old := st.viewShellClicks
+	st.viewShellClicks = make([]widget.Clickable, n)
+	copy(st.viewShellClicks, old)
+}
+
 func viewerAssociationDisplayExtension(ext string) string {
 	ext = strings.TrimSpace(ext)
 	ext = strings.TrimPrefix(ext, ".")
@@ -6528,17 +6641,10 @@ func parseViewerAssociationFields(extRaw, appRaw string) (fm.ViewerAssociation, 
 }
 
 func normalizeViewerShellInput(raw string) string {
-	shell := strings.ToLower(strings.TrimSpace(raw))
-	switch shell {
-	case "", "auto":
-		return "auto"
-	case "sh":
-		return "sh"
-	case "pwsh", "powershell":
-		return "powershell"
-	default:
+	if shell, ok := fm.NormalizeKnownViewerShell(raw); ok {
 		return shell
 	}
+	return strings.ToLower(strings.TrimSpace(raw))
 }
 
 func (ui *UI) applyConfigRuntime(now time.Time) {
