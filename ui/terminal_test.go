@@ -6,6 +6,7 @@ package ui
 import (
 	"bytes"
 	"errors"
+	"hexone/filesys"
 	"hexone/fm"
 	"image"
 	"image/color"
@@ -25,6 +26,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 	headlessterm "github.com/danielgatis/go-headless-term"
+	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestTerminalKeyBytesSpecialKeys(t *testing.T) {
@@ -264,6 +267,24 @@ func TestTerminalC1CursorDownDoesNotPrintFinalByte(t *testing.T) {
 	}
 }
 
+func TestTerminalSplitC1CursorDownDoesNotPrintFinalByte(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.parserMu.Lock()
+	st.term.Resize(3, 24)
+	st.parserMu.Unlock()
+
+	st.writeOutput([]byte("top\r\nmid"))
+	st.writeOutput([]byte{0x9b})
+	st.writeOutput([]byte("Bdown"))
+
+	if got := st.term.LineContent(1); strings.Contains(got, "B") {
+		t.Fatalf("split C1 CSI final byte leaked into line: %q", got)
+	}
+	if got := st.term.LineContent(2); !strings.Contains(got, "down") {
+		t.Fatalf("split C1 CSI B did not move cursor down, row2=%q", got)
+	}
+}
+
 func TestTerminalC1ProgressRedrawStaysInPlace(t *testing.T) {
 	st := newTerminalSession(nil)
 	st.parserMu.Lock()
@@ -280,6 +301,26 @@ func TestTerminalC1ProgressRedrawStaysInPlace(t *testing.T) {
 	}
 	if scrollback := st.term.ScrollbackLen(); scrollback != 0 {
 		t.Fatalf("progress redraw should not create scrollback, got %d lines", scrollback)
+	}
+}
+
+func TestTerminalCursorVisibilityCSI(t *testing.T) {
+	st := newTerminalSession(nil)
+
+	st.writeOutput([]byte("\x1b[?25l"))
+	st.State.Mu.RLock()
+	hidden := !st.State.CursorVisible
+	st.State.Mu.RUnlock()
+	if !hidden {
+		t.Fatal("CSI ?25l should hide the cursor")
+	}
+
+	st.writeOutput([]byte("\x1b[?25h"))
+	st.State.Mu.RLock()
+	visible := st.State.CursorVisible
+	st.State.Mu.RUnlock()
+	if !visible {
+		t.Fatal("CSI ?25h should show the cursor")
 	}
 }
 
@@ -589,6 +630,306 @@ func TestTerminalContextMenuIncludesPaste(t *testing.T) {
 		}
 	}
 	t.Fatalf("terminal context menu missing Paste item: %+v", items)
+}
+
+func TestTerminalContextMenuPaneLabels(t *testing.T) {
+	ui := &UI{}
+	st := newTerminalSession(nil)
+
+	items := ui.terminalContextMenuItems(st)
+	want := map[string]string{
+		"go-pane-1":  "cd to Left Pane",
+		"go-pane-2":  "cd to Right Pane",
+		"set-pane-1": "Set Left Pane to Terminal Dir",
+		"set-pane-2": "Set Right Pane to Terminal Dir",
+	}
+	for id, label := range want {
+		found := false
+		for _, item := range items {
+			if item.id == id {
+				found = true
+				if item.label != label {
+					t.Fatalf("%s label=%q want %q", id, item.label, label)
+				}
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing terminal context menu item %s", id)
+		}
+	}
+}
+
+func TestTerminalOSC7LocationParsesFileURI(t *testing.T) {
+	loc, ok := parseTerminalOSC7Location("file://alice@srv.test:2200/var/log/app%20one")
+	if !ok {
+		t.Fatal("expected OSC 7 file URI to parse")
+	}
+	if loc.User != "alice" || loc.Host != "srv.test" || loc.Port != 2200 || !loc.HasPort || loc.Dir != "/var/log/app one" {
+		t.Fatalf("loc=%+v", loc)
+	}
+}
+
+func TestFindSSHSetupForTerminalOSC7RequiresUniqueMatch(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.SSH.Setups = []fm.SSHSetup{
+		{Host: "srv.test", Port: 22, User: "alice", Password: "a"},
+		{Host: "srv.test", Port: 2222, User: "bob", Password: "b"},
+	}
+
+	if _, found, ambiguous := findSSHSetupForTerminalOSC7(cfg, terminalOSC7Location{Host: "srv.test", Dir: "/tmp"}); found || !ambiguous {
+		t.Fatalf("host-only lookup should be ambiguous, found=%v ambiguous=%v", found, ambiguous)
+	}
+	setup, found, ambiguous := findSSHSetupForTerminalOSC7(cfg, terminalOSC7Location{User: "bob", Host: "srv.test", Port: 2222, HasPort: true, Dir: "/tmp"})
+	if !found || ambiguous {
+		t.Fatalf("specific lookup found=%v ambiguous=%v", found, ambiguous)
+	}
+	if setup.User != "bob" || setup.Port != 2222 {
+		t.Fatalf("setup=%+v", setup)
+	}
+}
+
+func TestParseTerminalSSHCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want terminalSSHTarget
+	}{
+		{
+			name: "user host",
+			cmd:  "/usr/bin/ssh root@157.180.68.247",
+			want: terminalSSHTarget{User: "root", Host: "157.180.68.247", Port: 22},
+		},
+		{
+			name: "port and login",
+			cmd:  "ssh -p 2200 -l deploy srv.test",
+			want: terminalSSHTarget{User: "deploy", Host: "srv.test", Port: 2200, HasPort: true},
+		},
+		{
+			name: "uri",
+			cmd:  "ssh ssh://alice@example.test:2022",
+			want: terminalSSHTarget{User: "alice", Host: "example.test", Port: 2022, HasPort: true},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseTerminalSSHCommand(tc.cmd)
+			if !ok {
+				t.Fatalf("parseTerminalSSHCommand(%q) failed", tc.cmd)
+			}
+			if got != tc.want {
+				t.Fatalf("target=%+v want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTerminalSSHTargetFromPSFindsDescendantSSH(t *testing.T) {
+	ps := `
+100 1 /bin/zsh -l
+101 100 fish
+202 101 ssh root@157.180.68.247
+`
+	got, ok := terminalSSHTargetFromPS(100, ps)
+	if !ok {
+		t.Fatal("expected ssh target from process tree")
+	}
+	want := terminalSSHTarget{User: "root", Host: "157.180.68.247", Port: 22}
+	if got != want {
+		t.Fatalf("target=%+v want %+v", got, want)
+	}
+}
+
+func TestSetPaneDirToTerminalOSC7RemoteDir(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldOpen := openSSHClientsFunc
+	oldCloseSFTP := closeSFTPClientFunc
+	oldCloseSSH := closeSSHClientFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		openSSHClientsFunc = oldOpen
+		closeSFTPClientFunc = oldCloseSFTP
+		closeSSHClientFunc = oldCloseSSH
+	})
+
+	closeSFTPClientFunc = func(*sftp.Client) {}
+	closeSSHClientFunc = func(*ssh.Client) {}
+
+	cfg := fm.DefaultConfig()
+	cfg.SSH.Setups = []fm.SSHSetup{
+		{Host: "srv.test", Port: 2222, User: "alice", Password: "secret"},
+	}
+	ui := &UI{
+		fmCfg: cfg,
+		filePanes: []*filePaneState{
+			newFilePaneState(t.TempDir(), cfg),
+		},
+		terminal: newTerminalSession(nil),
+	}
+
+	remoteClient := new(sftp.Client)
+	openSSHClientsFunc = func(got fm.SSHSetup) (sshClientBundle, error) {
+		if got.Host != "srv.test" || got.Port != 2222 || got.User != "alice" {
+			t.Fatalf("unexpected terminal SSH setup: %+v", got)
+		}
+		return sshClientBundle{
+			sshClient: new(ssh.Client),
+			sftpBase:  new(ssh.Client),
+			sftp:      remoteClient,
+		}, nil
+	}
+	readDirSFTPFunc = func(client *sftp.Client, dir string) (filesys.Listing, error) {
+		if client != remoteClient {
+			t.Fatalf("unexpected readDir client %p", client)
+		}
+		if dir != "/var/log/app" {
+			t.Fatalf("readDir dir=%q want /var/log/app", dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	ui.terminal.writeOutput([]byte("\x1b]7;file://alice@srv.test:2222/var/log/app\x07"))
+	if !ui.setPaneDirToTerminalDir(0, time.Now()) {
+		t.Fatal("setPaneDirToTerminalDir returned false")
+	}
+	pane := ui.filePanes[0]
+	if pane == nil || pane.remote == nil {
+		t.Fatal("pane should be connected to terminal SSH host")
+	}
+	if pane.dir != "/var/log/app" {
+		t.Fatalf("pane dir=%q want /var/log/app", pane.dir)
+	}
+}
+
+func TestSetPaneDirToTerminalOSC7RemoteDirUsesActiveSSHCommandTarget(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldOpen := openSSHClientsFunc
+	oldCloseSFTP := closeSFTPClientFunc
+	oldCloseSSH := closeSSHClientFunc
+	oldSSHTarget := terminalProcessSSHTarget
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		openSSHClientsFunc = oldOpen
+		closeSFTPClientFunc = oldCloseSFTP
+		closeSSHClientFunc = oldCloseSSH
+		terminalProcessSSHTarget = oldSSHTarget
+	})
+
+	closeSFTPClientFunc = func(*sftp.Client) {}
+	closeSSHClientFunc = func(*ssh.Client) {}
+	terminalProcessSSHTarget = func(pid int) (terminalSSHTarget, bool) {
+		if pid != 1 {
+			t.Fatalf("unexpected terminal pid %d", pid)
+		}
+		return terminalSSHTarget{User: "root", Host: "157.180.68.247", Port: 22}, true
+	}
+
+	cfg := fm.DefaultConfig()
+	cfg.SSH.Setups = []fm.SSHSetup{
+		{Host: "157.180.68.247", Port: 22, User: "root", Password: "secret"},
+	}
+	st := newTerminalSession(nil)
+	st.procMu.Lock()
+	st.pty = &terminalWriteProcess{}
+	st.running = true
+	st.procMu.Unlock()
+	ui := &UI{
+		fmCfg: cfg,
+		filePanes: []*filePaneState{
+			newFilePaneState(t.TempDir(), cfg),
+		},
+		terminal: st,
+	}
+
+	remoteClient := new(sftp.Client)
+	openSSHClientsFunc = func(got fm.SSHSetup) (sshClientBundle, error) {
+		if got.Host != "157.180.68.247" || got.Port != 22 || got.User != "root" {
+			t.Fatalf("unexpected terminal SSH setup: %+v", got)
+		}
+		return sshClientBundle{
+			sshClient: new(ssh.Client),
+			sftpBase:  new(ssh.Client),
+			sftp:      remoteClient,
+		}, nil
+	}
+	readDirSFTPFunc = func(client *sftp.Client, dir string) (filesys.Listing, error) {
+		if client != remoteClient {
+			t.Fatalf("unexpected readDir client %p", client)
+		}
+		if dir != "/opt/gpstrack" {
+			t.Fatalf("readDir dir=%q want /opt/gpstrack", dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	ui.terminal.writeOutput([]byte("\x1b]7;file://rocky-8gb-hel1-6/opt/gpstrack\x07"))
+	if !ui.setPaneDirToTerminalDir(0, time.Now()) {
+		t.Fatal("setPaneDirToTerminalDir returned false")
+	}
+	if pane := ui.filePanes[0]; pane == nil || pane.remote == nil || pane.dir != "/opt/gpstrack" {
+		t.Fatalf("pane not connected to OSC7 remote dir: %+v", pane)
+	}
+}
+
+func TestSetPaneDirToTerminalOSC7RemoteDirRequiresSSHSetup(t *testing.T) {
+	oldOpen := openSSHClientsFunc
+	t.Cleanup(func() {
+		openSSHClientsFunc = oldOpen
+	})
+	openSSHClientsFunc = func(fm.SSHSetup) (sshClientBundle, error) {
+		t.Fatal("missing terminal SSH setup should not dial")
+		return sshClientBundle{}, nil
+	}
+
+	cfg := fm.DefaultConfig()
+	ui := &UI{
+		fmCfg: cfg,
+		filePanes: []*filePaneState{
+			newFilePaneState(t.TempDir(), cfg),
+		},
+		terminal: newTerminalSession(nil),
+	}
+
+	ui.terminal.writeOutput([]byte("\x1b]7;file://srv.test/var/log/app\x07"))
+	if ui.setPaneDirToTerminalDir(0, time.Now()) {
+		t.Fatal("setPaneDirToTerminalDir should fail without a saved SSH setup")
+	}
+	if pane := ui.filePanes[0]; pane == nil || pane.remote != nil {
+		t.Fatalf("pane should remain local, pane=%+v", pane)
+	}
+}
+
+func TestSetPaneDirToTerminalSSHWithoutRemoteOSC7DoesNotUseLocalFallback(t *testing.T) {
+	oldSSHTarget := terminalProcessSSHTarget
+	t.Cleanup(func() {
+		terminalProcessSSHTarget = oldSSHTarget
+	})
+	terminalProcessSSHTarget = func(pid int) (terminalSSHTarget, bool) {
+		return terminalSSHTarget{User: "root", Host: "157.180.68.247", Port: 22}, true
+	}
+
+	localDir := t.TempDir()
+	cfg := fm.DefaultConfig()
+	st := newTerminalSession(nil)
+	st.writeOutput([]byte("\x1b]7;file://localhost" + localDir + "\x07"))
+	st.procMu.Lock()
+	st.pty = &terminalWriteProcess{}
+	st.running = true
+	st.procMu.Unlock()
+	ui := &UI{
+		fmCfg: cfg,
+		filePanes: []*filePaneState{
+			newFilePaneState(t.TempDir(), cfg),
+		},
+		terminal: st,
+	}
+
+	if ui.setPaneDirToTerminalDir(0, time.Now()) {
+		t.Fatal("active SSH without remote OSC7 should not use local OSC7 fallback")
+	}
+	if pane := ui.filePanes[0]; pane == nil || pane.dir == localDir {
+		t.Fatalf("pane should not move to local OSC7 dir, pane=%+v", pane)
+	}
 }
 
 func TestTerminalCellFromHeadlessMapsStyle(t *testing.T) {

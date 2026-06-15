@@ -1797,6 +1797,11 @@ func remoteFavoriteFromPane(pane *filePaneState) (string, bool) {
 }
 
 func paneMatchesRemoteFavorite(pane *filePaneState, loc remoteFavoriteLocation) bool {
+	return paneMatchesRemoteFavoriteTarget(pane, loc) &&
+		normalizeRemoteFavoriteDir(pane.dir) == loc.Dir
+}
+
+func paneMatchesRemoteFavoriteTarget(pane *filePaneState, loc remoteFavoriteLocation) bool {
 	if pane == nil || !pane.remoteConnected() || pane.remote == nil {
 		return false
 	}
@@ -1807,8 +1812,7 @@ func paneMatchesRemoteFavorite(pane *filePaneState, loc remoteFavoriteLocation) 
 	}
 	return strings.TrimSpace(setup.User) == loc.User &&
 		strings.EqualFold(strings.TrimSpace(setup.Host), loc.Host) &&
-		port == loc.Port &&
-		normalizeRemoteFavoriteDir(pane.dir) == loc.Dir
+		port == loc.Port
 }
 
 func findSSHSetupForRemoteFavorite(cfg *fm.Config, loc remoteFavoriteLocation) (fm.SSHSetup, bool) {
@@ -2007,6 +2011,9 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 			if normalizeRemoteFavoriteDir(pane.dir) == remoteLoc.Dir {
 				return true
 			}
+			return ui.loadPaneDir(idx, remoteLoc.Dir)
+		}
+		if paneMatchesRemoteFavoriteTarget(pane, remoteLoc) {
 			return ui.loadPaneDir(idx, remoteLoc.Dir)
 		}
 

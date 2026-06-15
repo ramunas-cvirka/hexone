@@ -71,6 +71,25 @@ If the function key bar is auto-hidden in the viewer, `F11` can still bring it b
 
 When the terminal drawer is open, `Shift+Tab` toggles keyboard focus between the terminal and the file panes. Plain `Tab` stays available to the terminal for shell completion while the terminal is focused.
 
+## Terminal Drawer
+
+The terminal drawer is a real PTY-backed terminal. Its context menu can copy or paste terminal text, select all visible terminal text, send `cd` commands to the terminal for the left or right pane, and set the left or right pane to the terminal's current directory.
+
+For local shells, Hexone can usually read the terminal process current directory directly.
+
+For SSH shells, Hexone needs the remote shell to emit OSC 7 working-directory updates. Hexone can parse OSC 7 and use it to open the matching remote directory in a file pane, but it cannot infer the remote directory from a prompt alone.
+
+If your remote shell does not already emit OSC 7, add something like this to the remote `~/.bashrc`:
+
+```sh
+__osc7() {
+  printf '\033]7;file://%s%s\007' "$(hostname)" "$PWD"
+}
+PROMPT_COMMAND="__osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+```
+
+After reconnecting, `Set Left Pane to Terminal Dir` and `Set Right Pane to Terminal Dir` can use that OSC 7 value. If the remote OSC 7 hostname differs from the saved SSH setup host, Hexone also checks the active `ssh` process target to map the terminal session back to a saved SSH setup.
+
 ## Custom Commands
 
 `F2` is for saved shell snippets that are not tied to a single file. The editor stores up to 10 fixed slots, each with a short name and multi-line command body.

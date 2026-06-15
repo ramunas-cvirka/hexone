@@ -12,6 +12,7 @@ import (
 	"image/color"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -83,6 +84,7 @@ var (
 	terminalLookPath          = exec.LookPath
 	terminalGetenv            = os.Getenv
 	readTerminalClipboardText = platform.ReadClipboardTextNow
+	terminalProcessSSHTarget  = detectTerminalProcessSSHTarget
 )
 
 type TerminalCell struct {
@@ -884,8 +886,8 @@ func (s *terminalSession) writeOutput(data []byte) {
 	if s == nil || s.term == nil || len(data) == 0 {
 		return
 	}
-	normalized := s.outputNorm.normalize(data)
 	s.parserMu.Lock()
+	normalized := s.outputNorm.normalize(data)
 	_, _ = s.term.Write(normalized)
 	s.parserMu.Unlock()
 	s.snapshot()
@@ -2352,9 +2354,40 @@ func (ui *UI) setPaneDirToTerminalDir(idx int, now time.Time) bool {
 	if pane == nil {
 		return false
 	}
+	if loc, ok := ui.terminal.osc7Location(); ok {
+		if !terminalOSC7HostIsLocal(loc.Host) {
+			return ui.setPaneDirToTerminalRemoteDir(idx, loc, now)
+		}
+		if _, sshOK := ui.terminal.activeSSHTarget(); sshOK {
+			pane.setNotice("terminal SSH dir unavailable; remote shell must emit OSC 7", now)
+			return false
+		}
+		if ui.setPaneDirToLocalTerminalDir(idx, terminalOSC7LocalDir(loc.Dir), now) {
+			return true
+		}
+		pane = ui.filePanes[idx]
+		if pane == nil {
+			return false
+		}
+	}
+	if _, sshOK := ui.terminal.activeSSHTarget(); sshOK {
+		pane.setNotice("terminal SSH dir unavailable; remote shell must emit OSC 7", now)
+		return false
+	}
 	dir, ok := ui.terminal.currentDir()
 	if !ok {
 		pane.setNotice("terminal current dir unavailable", now)
+		return false
+	}
+	return ui.setPaneDirToLocalTerminalDir(idx, dir, now)
+}
+
+func (ui *UI) setPaneDirToLocalTerminalDir(idx int, dir string, now time.Time) bool {
+	if ui == nil || idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
 		return false
 	}
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
@@ -2376,6 +2409,51 @@ func (ui *UI) setPaneDirToTerminalDir(idx int, now time.Time) bool {
 	return false
 }
 
+func (ui *UI) setPaneDirToTerminalRemoteDir(idx int, loc terminalOSC7Location, now time.Time) bool {
+	if ui == nil || idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return false
+	}
+	setup, found, ambiguous := findSSHSetupForTerminalOSC7(ui.fmCfg, loc)
+	if (!found || ambiguous) && ui.terminal != nil {
+		if target, ok := ui.terminal.activeSSHTarget(); ok {
+			if targetSetup, targetFound, targetAmbiguous := findSSHSetupForTerminalSSHTarget(ui.fmCfg, target); targetFound {
+				setup = targetSetup
+				found = true
+				ambiguous = false
+			} else if !found && targetAmbiguous {
+				ambiguous = true
+			}
+		}
+	}
+	if ambiguous {
+		pane.setNotice("multiple SSH setups match terminal host: "+terminalOSC7DisplayHost(loc), now)
+		return false
+	}
+	if !found {
+		pane.setNotice("missing SSH setup for terminal host: "+terminalOSC7DisplayHost(loc), now)
+		return false
+	}
+	if pane.remoteConnected() && pane.remote != nil && sameSSHRemoteTarget(pane.remote.setup, setup) {
+		if ui.loadPaneDir(idx, loc.Dir) {
+			pane.setNotice("pane set to terminal dir", now)
+			return true
+		}
+		return false
+	}
+	if err := ui.connectPaneSSH(idx, setup, loc.Dir, now); err != nil {
+		pane.setNotice("ssh connect failed: "+err.Error(), now)
+		return false
+	}
+	if pane = ui.filePanes[idx]; pane != nil {
+		pane.setNotice("pane set to terminal dir", now)
+	}
+	return true
+}
+
 func terminalChangeDirCommand(dir string) string {
 	if runtime.GOOS == "windows" {
 		return "cd " + terminalWindowsQuotePath(dir) + "\r"
@@ -2392,6 +2470,389 @@ func terminalPosixQuotePath(dir string) string {
 
 func terminalWindowsQuotePath(dir string) string {
 	return `"` + strings.ReplaceAll(dir, `"`, `""`) + `"`
+}
+
+type terminalOSC7Location struct {
+	User    string
+	Host    string
+	Port    int
+	HasPort bool
+	Dir     string
+}
+
+type terminalSSHTarget struct {
+	User    string
+	Host    string
+	Port    int
+	HasPort bool
+}
+
+func (s *terminalSession) osc7Location() (terminalOSC7Location, bool) {
+	if s == nil || s.term == nil {
+		return terminalOSC7Location{}, false
+	}
+	s.parserMu.Lock()
+	raw := s.term.WorkingDirectory()
+	s.parserMu.Unlock()
+	return parseTerminalOSC7Location(raw)
+}
+
+func (s *terminalSession) activeSSHTarget() (terminalSSHTarget, bool) {
+	if s == nil {
+		return terminalSSHTarget{}, false
+	}
+	s.procMu.Lock()
+	pid := 0
+	if s.pty != nil && s.running {
+		pid = s.pty.PID()
+	}
+	s.procMu.Unlock()
+	if pid <= 0 {
+		return terminalSSHTarget{}, false
+	}
+	return terminalProcessSSHTarget(pid)
+}
+
+func parseTerminalOSC7Location(raw string) (terminalOSC7Location, bool) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u == nil || !strings.EqualFold(u.Scheme, "file") {
+		return terminalOSC7Location{}, false
+	}
+	dir := strings.TrimSpace(u.Path)
+	if dir == "" {
+		return terminalOSC7Location{}, false
+	}
+	host := strings.TrimSpace(u.Hostname())
+	port := 0
+	hasPort := false
+	if rawPort := strings.TrimSpace(u.Port()); rawPort != "" {
+		parsed, ok := parseTerminalOSC7Port(rawPort)
+		if !ok {
+			return terminalOSC7Location{}, false
+		}
+		port = parsed
+		hasPort = true
+	}
+	user := ""
+	if u.User != nil {
+		user = strings.TrimSpace(u.User.Username())
+	}
+	if terminalOSC7HostIsLocal(host) {
+		dir = terminalOSC7LocalDir(dir)
+	} else {
+		dir = normalizeRemoteFavoriteDir(dir)
+	}
+	return terminalOSC7Location{
+		User:    user,
+		Host:    host,
+		Port:    port,
+		HasPort: hasPort,
+		Dir:     dir,
+	}, true
+}
+
+func parseTerminalOSC7Port(raw string) (int, bool) {
+	return terminalParsePositiveInt(raw, 65535)
+}
+
+func terminalParsePositiveInt(raw string, max int) (int, bool) {
+	if raw == "" {
+		return 0, false
+	}
+	n := 0
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+		n = n*10 + int(r-'0')
+		if max > 0 && n > max {
+			return 0, false
+		}
+	}
+	return n, n > 0
+}
+
+func terminalOSC7LocalDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if runtime.GOOS == "windows" && len(dir) >= 3 && dir[0] == '/' && dir[2] == ':' {
+		dir = dir[1:]
+	}
+	return dir
+}
+
+func terminalOSC7HostIsLocal(host string) bool {
+	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
+	if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	local, err := os.Hostname()
+	if err != nil {
+		return false
+	}
+	local = strings.ToLower(strings.TrimSpace(local))
+	if local == "" {
+		return false
+	}
+	if host == local {
+		return true
+	}
+	hostShort := strings.SplitN(host, ".", 2)[0]
+	localShort := strings.SplitN(local, ".", 2)[0]
+	return hostShort != "" && localShort != "" && hostShort == localShort
+}
+
+func findSSHSetupForTerminalOSC7(cfg *fm.Config, loc terminalOSC7Location) (fm.SSHSetup, bool, bool) {
+	if cfg == nil || strings.TrimSpace(loc.Host) == "" {
+		return fm.SSHSetup{}, false, false
+	}
+	matches := make([]fm.SSHSetup, 0, 1)
+	for _, raw := range cfg.SSH.Setups {
+		host := strings.TrimSpace(raw.Host)
+		if !strings.EqualFold(host, loc.Host) {
+			continue
+		}
+		user := strings.TrimSpace(raw.User)
+		if loc.User != "" && user != loc.User {
+			continue
+		}
+		port := raw.Port
+		if port <= 0 {
+			port = 22
+		}
+		if loc.HasPort && port != loc.Port {
+			continue
+		}
+		setup := raw
+		setup.Host = host
+		setup.User = user
+		setup.Port = port
+		matches = append(matches, setup)
+	}
+	if len(matches) == 1 {
+		return matches[0], true, false
+	}
+	return fm.SSHSetup{}, false, len(matches) > 1
+}
+
+func findSSHSetupForTerminalSSHTarget(cfg *fm.Config, target terminalSSHTarget) (fm.SSHSetup, bool, bool) {
+	if cfg == nil || strings.TrimSpace(target.Host) == "" {
+		return fm.SSHSetup{}, false, false
+	}
+	targetPort := target.Port
+	if targetPort <= 0 {
+		targetPort = 22
+	}
+	matches := make([]fm.SSHSetup, 0, 1)
+	for _, raw := range cfg.SSH.Setups {
+		host := strings.TrimSpace(raw.Host)
+		if !strings.EqualFold(host, target.Host) {
+			continue
+		}
+		user := strings.TrimSpace(raw.User)
+		if target.User != "" && user != target.User {
+			continue
+		}
+		port := raw.Port
+		if port <= 0 {
+			port = 22
+		}
+		if port != targetPort {
+			continue
+		}
+		setup := raw
+		setup.Host = host
+		setup.User = user
+		setup.Port = port
+		matches = append(matches, setup)
+	}
+	if len(matches) == 1 {
+		return matches[0], true, false
+	}
+	return fm.SSHSetup{}, false, len(matches) > 1
+}
+
+func terminalOSC7DisplayHost(loc terminalOSC7Location) string {
+	host := strings.TrimSpace(loc.Host)
+	if loc.User != "" {
+		host = loc.User + "@" + host
+	}
+	if loc.HasPort {
+		host += ":" + strconvItoa(loc.Port)
+	}
+	if host == "" {
+		return "?"
+	}
+	return host
+}
+
+func detectTerminalProcessSSHTarget(pid int) (terminalSSHTarget, bool) {
+	if pid <= 0 || runtime.GOOS == "windows" {
+		return terminalSSHTarget{}, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), terminalCwdProbeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "axww", "-o", "pid=", "-o", "ppid=", "-o", "command=").Output()
+	if err != nil {
+		return terminalSSHTarget{}, false
+	}
+	return terminalSSHTargetFromPS(pid, string(out))
+}
+
+type terminalProcessInfo struct {
+	pid     int
+	ppid    int
+	command string
+}
+
+func terminalSSHTargetFromPS(rootPID int, psOutput string) (terminalSSHTarget, bool) {
+	if rootPID <= 0 {
+		return terminalSSHTarget{}, false
+	}
+	children := make(map[int][]terminalProcessInfo)
+	for _, line := range strings.Split(psOutput, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 3 {
+			continue
+		}
+		pid, ok := terminalParsePositiveInt(fields[0], 0)
+		if !ok {
+			continue
+		}
+		ppid, ok := terminalParsePositiveInt(fields[1], 0)
+		if !ok {
+			continue
+		}
+		children[ppid] = append(children[ppid], terminalProcessInfo{
+			pid:     pid,
+			ppid:    ppid,
+			command: strings.Join(fields[2:], " "),
+		})
+	}
+	stack := append([]terminalProcessInfo(nil), children[rootPID]...)
+	var found terminalSSHTarget
+	ok := false
+	for len(stack) > 0 {
+		proc := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if target, targetOK := parseTerminalSSHCommand(proc.command); targetOK {
+			found = target
+			ok = true
+		}
+		stack = append(stack, children[proc.pid]...)
+	}
+	return found, ok
+}
+
+func parseTerminalSSHCommand(command string) (terminalSSHTarget, bool) {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) < 2 || terminalCommandBase(fields[0]) != "ssh" {
+		return terminalSSHTarget{}, false
+	}
+	target := terminalSSHTarget{Port: 22}
+	targetText := ""
+	for i := 1; i < len(fields); i++ {
+		arg := fields[i]
+		if arg == "" {
+			continue
+		}
+		if arg == "--" {
+			if i+1 < len(fields) {
+				targetText = fields[i+1]
+			}
+			break
+		}
+		if arg == "-p" {
+			if i+1 >= len(fields) {
+				return terminalSSHTarget{}, false
+			}
+			port, ok := parseTerminalOSC7Port(fields[i+1])
+			if !ok {
+				return terminalSSHTarget{}, false
+			}
+			target.Port = port
+			target.HasPort = true
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "-p") && len(arg) > 2 {
+			port, ok := parseTerminalOSC7Port(arg[2:])
+			if !ok {
+				return terminalSSHTarget{}, false
+			}
+			target.Port = port
+			target.HasPort = true
+			continue
+		}
+		if arg == "-l" {
+			if i+1 >= len(fields) {
+				return terminalSSHTarget{}, false
+			}
+			target.User = strings.TrimSpace(fields[i+1])
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "-l") && len(arg) > 2 {
+			target.User = strings.TrimSpace(arg[2:])
+			continue
+		}
+		if terminalSSHOptionConsumesNext(arg) {
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		targetText = arg
+		break
+	}
+	if targetText == "" {
+		return terminalSSHTarget{}, false
+	}
+	if strings.HasPrefix(targetText, "ssh://") {
+		if u, err := url.Parse(targetText); err == nil && u != nil {
+			if u.User != nil && target.User == "" {
+				target.User = strings.TrimSpace(u.User.Username())
+			}
+			target.Host = strings.TrimSpace(u.Hostname())
+			if rawPort := strings.TrimSpace(u.Port()); rawPort != "" {
+				port, ok := parseTerminalOSC7Port(rawPort)
+				if !ok {
+					return terminalSSHTarget{}, false
+				}
+				target.Port = port
+				target.HasPort = true
+			}
+			return target, target.Host != ""
+		}
+	}
+	if at := strings.LastIndex(targetText, "@"); at >= 0 {
+		if target.User == "" {
+			target.User = strings.TrimSpace(targetText[:at])
+		}
+		targetText = targetText[at+1:]
+	}
+	target.Host = strings.Trim(strings.TrimSpace(targetText), "[]")
+	return target, target.Host != ""
+}
+
+func terminalCommandBase(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	if idx := strings.LastIndexAny(command, `/\`); idx >= 0 {
+		command = command[idx+1:]
+	}
+	return command
+}
+
+func terminalSSHOptionConsumesNext(arg string) bool {
+	switch arg {
+	case "-B", "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m", "-O", "-o", "-P", "-Q", "-R", "-S", "-W", "-w":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *terminalSession) currentDir() (string, bool) {
@@ -3542,10 +4003,10 @@ func (ui *UI) terminalContextMenuItems(st *terminalSession) []terminalContextMen
 		{id: "paste", label: "Paste", click: &st.menuPaste},
 		{id: "select-all", label: "Select All", click: &st.menuSelectAll},
 		{id: "sep-pane", separator: true},
-		{id: "go-pane-1", label: "Go to Pane 1 Dir", click: &st.menuGoPane1, disabled: !paneDirAvailable(0)},
-		{id: "go-pane-2", label: "Go to Pane 2 Dir", click: &st.menuGoPane2, disabled: !paneDirAvailable(1)},
-		{id: "set-pane-1", label: "Set Pane 1 Here", click: &st.menuSetPane1, disabled: ui == nil || len(ui.filePanes) <= 0 || ui.filePanes[0] == nil},
-		{id: "set-pane-2", label: "Set Pane 2 Here", click: &st.menuSetPane2, disabled: ui == nil || len(ui.filePanes) <= 1 || ui.filePanes[1] == nil},
+		{id: "go-pane-1", label: "cd to Left Pane", click: &st.menuGoPane1, disabled: !paneDirAvailable(0)},
+		{id: "go-pane-2", label: "cd to Right Pane", click: &st.menuGoPane2, disabled: !paneDirAvailable(1)},
+		{id: "set-pane-1", label: "Set Left Pane to Terminal Dir", click: &st.menuSetPane1, disabled: ui == nil || len(ui.filePanes) <= 0 || ui.filePanes[0] == nil},
+		{id: "set-pane-2", label: "Set Right Pane to Terminal Dir", click: &st.menuSetPane2, disabled: ui == nil || len(ui.filePanes) <= 1 || ui.filePanes[1] == nil},
 	}
 }
 
