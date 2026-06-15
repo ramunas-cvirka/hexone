@@ -121,7 +121,7 @@ func TestGlobalFixedCustomCommandShortcutOpensCommandViewer(t *testing.T) {
 	}
 
 	gtx, router := testKeyContext()
-	router.Event(key.Filter{Name: "1", Required: key.ModCtrl})
+	router.Event(key.Filter{Name: "1", Required: key.ModCtrl, Optional: ^key.Modifiers(0)})
 	router.Queue(key.Event{Name: "1", Modifiers: key.ModCtrl | key.ModShortcut, State: key.Press})
 
 	ui.handleGlobalFunctionKeys(gtx)

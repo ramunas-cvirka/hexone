@@ -177,3 +177,27 @@ func TestCustomCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 		t.Fatalf("custom command name=%q want %q", got, want)
 	}
 }
+
+func TestTerminalHeightRuntimeSavePreservesUnrelatedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = path
+	ui.fmCfg.Terminal.HeightRows = 32
+	if err := ui.saveFMConfigWithOptions("terminal-height", false); err != nil {
+		t.Fatalf("saveFMConfigWithOptions(terminal-height): %v", err)
+	}
+
+	saved := fm.LoadConfig(path)
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+	if got, want := saved.Terminal.HeightRows, 32; got != want {
+		t.Fatalf("terminal height rows=%d want %d", got, want)
+	}
+}

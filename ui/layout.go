@@ -178,8 +178,11 @@ type UI struct {
 	configPath                  string
 	typeface                    font.Typeface
 	textSize                    unit.Sp
+	invalidate                  func()
 	fileKeys                    fileKeyMap
 	activeFilePane              int
+	sortDirPrunedAt             time.Time
+	terminal                    *terminalSession
 	pendingFileOpen             *fileOpenRequest
 	fileCopy                    *fileCopyState
 	archiveExtract              *archiveExtractState
@@ -703,6 +706,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleGlobalEscapeToFileManager(gtx)
 	ui.handleEditorContextMenuGlobalPresses(gtx)
 	ui.handleEditorContextMenuClipboardEvents(gtx)
+	ui.handleTerminalClipboardEvents(gtx)
 	ui.handleCustomCommandEditorPreLayoutInput(gtx)
 
 	r := image.Rectangle{Max: gtx.Constraints.Max}
@@ -737,9 +741,18 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 						return ui.layoutTab1(th, gtx)
 					}
 				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+						return layout.Dimensions{}
+					}
+					return ui.layoutTerminalPane(th, gtx)
+				}),
 			)
 			ui.applyFunctionBarCursor(gtx)
 			return dims
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutTerminalResizeHandle(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutCustomCommandMenuPopup(th, gtx)
@@ -766,6 +779,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleProtocolDropdownOutsideClick(gtx)
 	ui.registerEditorContextMenuGlobalPointer(gtx)
 	ui.registerEditorContextMenuClipboardTarget(gtx)
+	ui.registerTerminalClipboardTarget(gtx)
 	if ui != nil && ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		pass := pointer.PassOp{}.Push(gtx.Ops)
@@ -903,6 +917,9 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 	if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil {
 		return
 	}
+	if ui.terminalFocused(gtx) {
+		return
+	}
 	if ui.Tabs.Value == "tab0" && !ui.customCommandMenuOpen && !ui.functionBarToolsOpen {
 		return
 	}
@@ -952,6 +969,14 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 	if ui != nil && ui.customCommandEditor != nil {
 		return
 	}
+	if ui != nil {
+		ui.handleTerminalFocusToggleKey(gtx)
+	}
+	if ui != nil && ui.terminalFocused(gtx) {
+		ui.handleTerminalToggleKey(gtx)
+		ui.handleGlobalSettingsShortcut(gtx)
+		return
+	}
 	anyMods := ^key.Modifiers(0)
 	filters := []event.Filter{
 		key.Filter{Name: key.NameF1},
@@ -961,6 +986,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		key.Filter{Name: key.NameF9, Optional: anyMods},
 		key.Filter{Name: key.NameF10, Optional: anyMods},
 		key.Filter{Name: key.NameF11, Optional: anyMods},
+		key.Filter{Name: key.NameF12, Optional: anyMods},
 		key.Filter{Name: "1", Required: key.ModAlt, Optional: anyMods},
 		key.Filter{Name: "2", Required: key.ModAlt, Optional: anyMods},
 		key.Filter{Name: "F", Required: key.ModCtrl, Optional: anyMods},
@@ -1046,6 +1072,13 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				continue
 			}
 			if ui.toggleFunctionBarVisibility(gtx.Now) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF12:
+			if ke.State != key.Press || ke.Modifiers != 0 {
+				continue
+			}
+			if ui.toggleTerminal() {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case "1":
@@ -1138,6 +1171,41 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		}
+	}
+}
+
+func (ui *UI) handleGlobalSettingsShortcut(gtx layout.Context) bool {
+	if ui == nil {
+		return false
+	}
+	anyMods := ^key.Modifiers(0)
+	handled := false
+	for {
+		ev, ok := gtx.Event(
+			key.Filter{Name: "S", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "s", Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
+			key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
+		)
+		if !ok {
+			return handled
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		handled = true
+		if ke.Modifiers != key.ModCtrl && ke.Modifiers != key.ModShortcut {
+			continue
+		}
+		if ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
+			continue
+		}
+		if ui.pathEditActive() {
+			continue
+		}
+		ui.activateFunctionBarTool("settings", gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
 	}
 }
 

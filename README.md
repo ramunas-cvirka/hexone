@@ -60,7 +60,9 @@ Download a package from the [Releases](../../releases) page for macOS, Linux, or
 | `F6` | Move / Rename |
 | `F7` | New folder |
 | `F8` | Delete |
+| `F12` | Toggle terminal drawer |
 | `Tab` | Switch pane |
+| `Shift+Tab` | Toggle terminal/file-pane focus when the terminal drawer is open |
 | `Enter` | Open file or directory |
 | `Ctrl+F` | Find in viewer |
 | `Esc` | Close popup / cancel |

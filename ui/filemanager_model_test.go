@@ -7,6 +7,7 @@ import (
 	"hexone/filesys"
 	"hexone/fm"
 	"hexone/ui/widget/table"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -104,5 +105,78 @@ func TestFilePaneModelBrokenSymlinkSuffixIsRed(t *testing.T) {
 	}
 	if st.SuffixColor.R <= st.SuffixColor.G || st.SuffixColor.R <= st.SuffixColor.B {
 		t.Fatalf("broken symlink suffix color = %#v, want red-tinted color", st.SuffixColor)
+	}
+}
+
+func TestFilePaneAppliesConfiguredSortPerDirectory(t *testing.T) {
+	root := filepath.Clean(t.TempDir())
+	other := filepath.Clean(t.TempDir())
+	cfg := fm.DefaultConfig()
+	cfg.Sort.PerDir = map[string]string{root: "s-"}
+	pane := newFilePaneState(root, cfg)
+
+	pane.applyListing(filesys.Listing{
+		Dir: root,
+		Entries: []filesys.Entry{
+			{Name: "small.txt", Path: filepath.Join(root, "small.txt"), SizeBytes: 1},
+			{Name: "large.txt", Path: filepath.Join(root, "large.txt"), SizeBytes: 10},
+		},
+	}, "", "", 0)
+
+	if pane.sortKey != fileSortSize || !pane.sortDesc {
+		t.Fatalf("sort for configured dir = %v desc=%v, want size desc", pane.sortKey, pane.sortDesc)
+	}
+
+	pane.applyListing(filesys.Listing{
+		Dir: other,
+		Entries: []filesys.Entry{
+			{Name: "b.txt", Path: filepath.Join(other, "b.txt")},
+			{Name: "a.txt", Path: filepath.Join(other, "a.txt")},
+		},
+	}, "", "", 0)
+
+	if pane.sortKey != fileSortName || pane.sortDesc {
+		t.Fatalf("sort for unconfigured dir = %v desc=%v, want name asc", pane.sortKey, pane.sortDesc)
+	}
+}
+
+func TestRememberPaneSortForDirectorySavesOnlyOverrides(t *testing.T) {
+	dir := filepath.Clean(t.TempDir())
+	configPath := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{dir}
+	if err := fm.SaveConfig(configPath, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	cfg := fm.DefaultConfig()
+	pane := newFilePaneState(dir, cfg)
+	pane.dir = dir
+	ui := &UI{
+		fmCfg:      cfg,
+		configPath: configPath,
+		filePanes:  []*filePaneState{pane},
+	}
+
+	pane.sortKey = fileSortDate
+	pane.sortDesc = true
+	ui.rememberPaneSortForDirectory(0)
+
+	saved := fm.LoadConfig(configPath)
+	if got, want := saved.Sort.PerDir[dir], "d-"; got != want {
+		t.Fatalf("saved per-dir sort=%q want %q", got, want)
+	}
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+
+	ui.fmCfg = saved
+	pane.sortKey = fileSortName
+	pane.sortDesc = false
+	ui.rememberPaneSortForDirectory(0)
+
+	saved = fm.LoadConfig(configPath)
+	if len(saved.Sort.PerDir) != 0 {
+		t.Fatalf("default sort should remove per-dir override, got %#v", saved.Sort.PerDir)
 	}
 }

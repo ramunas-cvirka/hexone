@@ -149,6 +149,10 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 		rebased.Viewer.WordWrap = next.Viewer.WordWrap
 	case "viewer-encoding":
 		rebased.Viewer.FileEncoding = next.Viewer.FileEncoding
+	case "terminal-height":
+		rebased.Terminal.HeightRows = next.Terminal.HeightRows
+	case "sort-dir":
+		rebased.Sort.PerDir = cloneStringMap(next.Sort.PerDir)
 	case "viewer-command":
 		rebased.Viewer.Command = next.Viewer.Command
 		rebased.Viewer.CommandByTarget = cloneStringMap(next.Viewer.CommandByTarget)
@@ -173,6 +177,7 @@ func cloneFMConfigForRuntimeSave(cfg *fm.Config) *fm.Config {
 	out.DateFormats = cloneStringSlice(cfg.DateFormats)
 	out.FavoriteLocations = cloneStringSlice(cfg.FavoriteLocations)
 	out.Columns.FullDropPriority = cloneStringSlice(cfg.Columns.FullDropPriority)
+	out.Sort.PerDir = cloneStringMap(cfg.Sort.PerDir)
 	out.Associations = cloneAssociationPrograms(cfg.Associations)
 	out.CustomCommands = cloneCustomCommands(cfg.CustomCommands)
 	out.Viewer.Associations = cloneViewerAssociations(cfg.Viewer.Associations)

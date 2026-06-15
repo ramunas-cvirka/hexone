@@ -26,16 +26,19 @@ const (
 	defaultColumnPadDp        = 4
 	// Brief mode already has left/right cell padding; keep the explicit
 	// inter-column gap at zero so the visible separation stays near 1ch.
-	defaultBriefGapDp        = 0
-	defaultNameIconReserveDp = 14
-	defaultNameChars         = 20.0
-	defaultBriefChars        = 16.0
-	defaultNameMinWidthDp    = 52
-	defaultPermWidthChars    = 10.5
-	defaultSizeWidthChars    = 10.5
-	defaultDateWidthChars    = 15.0
-	defaultNameTextReserveDp = defaultApproxCharPx/2 + 2
-	configBackupSuffix       = ".bak"
+	defaultBriefGapDp         = 0
+	defaultNameIconReserveDp  = 14
+	defaultNameChars          = 20.0
+	defaultBriefChars         = 16.0
+	defaultNameMinWidthDp     = 52
+	defaultPermWidthChars     = 10.5
+	defaultSizeWidthChars     = 10.5
+	defaultDateWidthChars     = 15.0
+	defaultNameTextReserveDp  = defaultApproxCharPx/2 + 2
+	configBackupSuffix        = ".bak"
+	defaultTerminalHeightRows = 24
+	minTerminalHeightRows     = 4
+	maxTerminalHeightRows     = 80
 )
 
 const (
@@ -130,9 +133,195 @@ func (c *ColumnWidths) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type SortConfig struct {
-	DefaultKey       string `yaml:"default_key"`
-	Descending       bool   `yaml:"descending"`
-	DirectoriesFirst bool   `yaml:"directories_first"`
+	DefaultKey       string            `yaml:"default_key"`
+	Descending       bool              `yaml:"descending"`
+	DirectoriesFirst bool              `yaml:"directories_first"`
+	PerDir           map[string]string `yaml:"per_dir,omitempty"`
+}
+
+type TerminalConfig struct {
+	HeightRows int `yaml:"height_rows"`
+}
+
+func NormalizeViewerShell(raw string) string {
+	shell, ok := NormalizeKnownViewerShell(raw)
+	if !ok {
+		return "auto"
+	}
+	return shell
+}
+
+func NormalizeKnownViewerShell(raw string) (string, bool) {
+	shell := strings.TrimSpace(raw)
+	lower := strings.ToLower(shell)
+	switch lower {
+	case "", "auto":
+		return "auto", true
+	case "sh", "bash":
+		return "sh", true
+	case "pwsh", "pwsh.exe":
+		return "pwsh", true
+	case "powershell", "powershell.exe":
+		return "powershell", true
+	case "cmd", "cmd.exe":
+		return "cmd", true
+	case "wsl", "wsl.exe":
+		return "wsl", true
+	}
+	if strings.HasPrefix(lower, "wsl:") {
+		distro := strings.TrimSpace(shell[len("wsl:"):])
+		if distro == "" {
+			return "wsl", true
+		}
+		return "wsl:" + distro, true
+	}
+	return "", false
+}
+
+func ViewerShellIsWSL(shell string) bool {
+	normalized, ok := NormalizeKnownViewerShell(shell)
+	if !ok {
+		return false
+	}
+	lower := strings.ToLower(normalized)
+	return lower == "wsl" || strings.HasPrefix(lower, "wsl:")
+}
+
+func ViewerShellWSLDistro(shell string) string {
+	normalized, ok := NormalizeKnownViewerShell(shell)
+	if !ok {
+		return ""
+	}
+	if !strings.HasPrefix(strings.ToLower(normalized), "wsl:") {
+		return ""
+	}
+	return strings.TrimSpace(normalized[len("wsl:"):])
+}
+
+func NormalizeSortKey(raw string) string {
+	key, ok := normalizeSortKey(raw)
+	if !ok {
+		return "name"
+	}
+	return key
+}
+
+func normalizeSortKey(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "name", "filename", "file":
+		return "name", true
+	case "ext", "extension", "type":
+		return "ext", true
+	case "size":
+		return "size", true
+	case "date", "time", "datetime":
+		return "date", true
+	default:
+		return "", false
+	}
+}
+
+func SortOrderCode(key string, descending bool) string {
+	prefix := "n"
+	switch NormalizeSortKey(key) {
+	case "ext":
+		prefix = "e"
+	case "size":
+		prefix = "s"
+	case "date":
+		prefix = "d"
+	}
+	if descending {
+		return prefix + "-"
+	}
+	return prefix + "+"
+}
+
+func ParseSortOrderCode(raw string) (key string, descending bool, ok bool) {
+	token := strings.ToLower(strings.TrimSpace(raw))
+	if token == "" {
+		return "", false, false
+	}
+	if len(token) == 2 && (token[1] == '+' || token[1] == '-') {
+		switch token[0] {
+		case 'n':
+			key = "name"
+		case 'e':
+			key = "ext"
+		case 's':
+			key = "size"
+		case 'd':
+			key = "date"
+		default:
+			return "", false, false
+		}
+		return key, token[1] == '-', true
+	}
+
+	parts := strings.FieldsFunc(token, func(r rune) bool {
+		return r == ':' || r == ',' || r == ' '
+	})
+	if len(parts) == 0 {
+		return "", false, false
+	}
+	key, ok = normalizeSortKey(parts[0])
+	if !ok {
+		return "", false, false
+	}
+	if len(parts) == 1 {
+		return key, false, true
+	}
+	switch parts[1] {
+	case "desc", "descending", "down", "-":
+		return key, true, true
+	case "asc", "ascending", "up", "+":
+		return key, false, true
+	default:
+		return "", false, false
+	}
+}
+
+func SortOrderIsDefault(cfg SortConfig, key string, descending bool) bool {
+	return NormalizeSortKey(cfg.DefaultKey) == NormalizeSortKey(key) && cfg.Descending == descending
+}
+
+func NormalizeSortPerDir(raw map[string]string, cfg SortConfig) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for rawDir, rawOrder := range raw {
+		dir := strings.TrimSpace(rawDir)
+		if dir == "" {
+			continue
+		}
+		dir = filepath.Clean(dir)
+		if dir == "." {
+			continue
+		}
+		key, descending, ok := ParseSortOrderCode(rawOrder)
+		if !ok || SortOrderIsDefault(cfg, key, descending) {
+			continue
+		}
+		out[dir] = SortOrderCode(key, descending)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func NormalizeTerminalHeightRows(rows int) int {
+	if rows <= 0 {
+		return defaultTerminalHeightRows
+	}
+	if rows < minTerminalHeightRows {
+		return minTerminalHeightRows
+	}
+	if rows > maxTerminalHeightRows {
+		return maxTerminalHeightRows
+	}
+	return rows
 }
 
 type GeneralConfig struct {
@@ -237,6 +426,7 @@ type Config struct {
 	NameCompact       NameCompact          `yaml:"name_compact"`
 	Columns           ColumnWidths         `yaml:"columns"`
 	Sort              SortConfig           `yaml:"sort"`
+	Terminal          TerminalConfig       `yaml:"terminal"`
 	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
@@ -254,6 +444,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		NameCompact       NameCompact          `yaml:"name_compact"`
 		Columns           *ColumnWidths        `yaml:"columns"`
 		Sort              SortConfig           `yaml:"sort"`
+		Terminal          TerminalConfig       `yaml:"terminal"`
 		Font              legacyFontConfig     `yaml:"font"`
 		General           GeneralConfig        `yaml:"general"`
 		Colors            ColorsConfig         `yaml:"colors"`
@@ -285,6 +476,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		NameCompact:       raw.NameCompact,
 		Columns:           columns,
 		Sort:              raw.Sort,
+		Terminal:          raw.Terminal,
 		General:           raw.General,
 		Colors:            raw.Colors,
 		Associations:      raw.Associations,
@@ -315,6 +507,9 @@ func DefaultConfig() *Config {
 			Descending:       false,
 			DirectoriesFirst: true,
 		},
+		Terminal: TerminalConfig{
+			HeightRows: defaultTerminalHeightRows,
+		},
 		General: GeneralConfig{
 			Typeface:         resources.BundledFontFamilyFiraCode,
 			FontSizeSp:       14,
@@ -325,6 +520,8 @@ func DefaultConfig() *Config {
 			FilePaneText:        DefaultFilePaneTextHex,
 			Hover:               DefaultFilePaneHoverHex,
 			HoverText:           DefaultFilePaneHoverTextHex,
+			PopupHover:          DefaultPopupHoverHex,
+			PopupHoverText:      DefaultPopupHoverTextHex,
 			Selection:           DefaultFilePaneSelectionHex,
 			SelectionText:       DefaultFilePaneSelectionTextHex,
 			SelectedFiles:       DefaultFilePaneSelectedFilesHex,
@@ -595,9 +792,9 @@ func (c *Config) normalize() {
 		c.Columns.PermissionFormat = "auto"
 	}
 
-	if c.Sort.DefaultKey == "" {
-		c.Sort.DefaultKey = "name"
-	}
+	c.Sort.DefaultKey = NormalizeSortKey(c.Sort.DefaultKey)
+	c.Sort.PerDir = NormalizeSortPerDir(c.Sort.PerDir, c.Sort)
+	c.Terminal.HeightRows = NormalizeTerminalHeightRows(c.Terminal.HeightRows)
 
 	if c.General.Typeface == "" || !resources.IsBundledFontFamily(c.General.Typeface) {
 		c.General.Typeface = resources.BundledFontFamilyFiraCode
@@ -618,6 +815,8 @@ func (c *Config) normalize() {
 	c.Colors.FilePaneText = NormalizeHexColor(c.Colors.FilePaneText, DefaultFilePaneTextHex)
 	c.Colors.Hover = NormalizeHexColor(c.Colors.Hover, DefaultFilePaneHoverHex)
 	c.Colors.HoverText = NormalizeHexColor(c.Colors.HoverText, DefaultFilePaneHoverTextHex)
+	c.Colors.PopupHover = NormalizeHexColor(c.Colors.PopupHover, DefaultPopupHoverHex)
+	c.Colors.PopupHoverText = NormalizeHexColor(c.Colors.PopupHoverText, DefaultPopupHoverTextHex)
 	c.Colors.Selection = NormalizeHexColor(c.Colors.Selection, DefaultFilePaneSelectionHex)
 	c.Colors.SelectionText = NormalizeHexColor(c.Colors.SelectionText, DefaultFilePaneSelectionTextHex)
 	c.Colors.SelectedFiles = NormalizeHexColor(c.Colors.SelectedFiles, DefaultFilePaneSelectedFilesHex)
@@ -637,16 +836,7 @@ func (c *Config) normalize() {
 	c.CustomCommands = NormalizeCustomCommands(c.CustomCommands)
 
 	c.Viewer.FileEncoding = NormalizeViewerFileEncoding(c.Viewer.FileEncoding)
-	switch strings.ToLower(strings.TrimSpace(c.Viewer.Shell)) {
-	case "", "auto":
-		c.Viewer.Shell = "auto"
-	case "sh":
-		c.Viewer.Shell = "sh"
-	case "pwsh", "powershell":
-		c.Viewer.Shell = "powershell"
-	default:
-		c.Viewer.Shell = "auto"
-	}
+	c.Viewer.Shell = NormalizeViewerShell(c.Viewer.Shell)
 	if c.Viewer.Command == "" {
 		c.Viewer.Command = "cat {path}"
 	}

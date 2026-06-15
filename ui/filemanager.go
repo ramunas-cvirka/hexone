@@ -46,9 +46,10 @@ const (
 	fileSortExt
 	fileSortSize
 	fileSortDate
-	filePaneApproxCharPx  = 8
-	filePaneNameTailRunes = 3
-	filePaneDirWatchPoll  = 900 * time.Millisecond
+	filePaneApproxCharPx         = 8
+	filePaneNameTailRunes        = 3
+	filePaneDirWatchPoll         = 900 * time.Millisecond
+	filePaneSortDirPruneInterval = 30 * time.Minute
 )
 
 func (m *filePaneModel) Len() int {
@@ -641,6 +642,7 @@ func (p *filePaneState) applyListingWithOptions(listing filesys.Listing, opts fi
 		p.clearMarkedRows()
 	}
 	p.model.entries = listing.Entries
+	p.applyConfiguredSortForCurrentDir()
 	p.applySort("")
 	p.table.Selected = 0
 	if opts.restoreScroll {
@@ -1795,6 +1797,11 @@ func remoteFavoriteFromPane(pane *filePaneState) (string, bool) {
 }
 
 func paneMatchesRemoteFavorite(pane *filePaneState, loc remoteFavoriteLocation) bool {
+	return paneMatchesRemoteFavoriteTarget(pane, loc) &&
+		normalizeRemoteFavoriteDir(pane.dir) == loc.Dir
+}
+
+func paneMatchesRemoteFavoriteTarget(pane *filePaneState, loc remoteFavoriteLocation) bool {
 	if pane == nil || !pane.remoteConnected() || pane.remote == nil {
 		return false
 	}
@@ -1805,8 +1812,7 @@ func paneMatchesRemoteFavorite(pane *filePaneState, loc remoteFavoriteLocation) 
 	}
 	return strings.TrimSpace(setup.User) == loc.User &&
 		strings.EqualFold(strings.TrimSpace(setup.Host), loc.Host) &&
-		port == loc.Port &&
-		normalizeRemoteFavoriteDir(pane.dir) == loc.Dir
+		port == loc.Port
 }
 
 func findSSHSetupForRemoteFavorite(cfg *fm.Config, loc remoteFavoriteLocation) (fm.SSHSetup, bool) {
@@ -2005,6 +2011,9 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 			if normalizeRemoteFavoriteDir(pane.dir) == remoteLoc.Dir {
 				return true
 			}
+			return ui.loadPaneDir(idx, remoteLoc.Dir)
+		}
+		if paneMatchesRemoteFavoriteTarget(pane, remoteLoc) {
 			return ui.loadPaneDir(idx, remoteLoc.Dir)
 		}
 
@@ -2402,6 +2411,37 @@ func (p *filePaneState) sessionMode() string {
 		return "brief"
 	}
 	return "full"
+}
+
+func (p *filePaneState) sortDirConfigKey() string {
+	if p == nil || p.remoteConnected() || filesys.ArchivePathActive(p.dir) {
+		return ""
+	}
+	dir := strings.TrimSpace(p.dir)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Clean(dir)
+}
+
+func (p *filePaneState) applyConfiguredSortForCurrentDir() {
+	if p == nil || p.model == nil || p.model.cfg == nil {
+		return
+	}
+	cfg := p.model.cfg
+	key := fm.NormalizeSortKey(cfg.Sort.DefaultKey)
+	desc := cfg.Sort.Descending
+	if dir := p.sortDirConfigKey(); dir != "" {
+		if raw, ok := cfg.Sort.PerDir[dir]; ok {
+			if savedKey, savedDesc, savedOK := fm.ParseSortOrderCode(raw); savedOK {
+				key = savedKey
+				desc = savedDesc
+			}
+		}
+	}
+	p.sortKey = parseFileSortKey(key)
+	p.sortDesc = desc
+	p.dirsFirst = cfg.Sort.DirectoriesFirst
 }
 
 func (p *filePaneState) cycleSortKey() {
@@ -3011,6 +3051,7 @@ func (ui *UI) cyclePaneSort(idx int) {
 	pane.applySort(preserve)
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
+	ui.rememberPaneSortForDirectory(idx)
 }
 
 func (ui *UI) togglePaneSortDirection(idx int) {
@@ -3031,6 +3072,7 @@ func (ui *UI) togglePaneSortDirection(idx int) {
 	pane.closeSortMenu()
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
+	ui.rememberPaneSortForDirectory(idx)
 }
 
 func (ui *UI) choosePaneSort(idx int, key fileSortKey) {
@@ -3053,6 +3095,100 @@ func (ui *UI) choosePaneSort(idx int, key fileSortKey) {
 	pane.closeSortMenu()
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
+	ui.rememberPaneSortForDirectory(idx)
+}
+
+func (ui *UI) rememberPaneSortForDirectory(idx int) {
+	if ui == nil || idx < 0 || idx >= len(ui.filePanes) {
+		return
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return
+	}
+	dir := pane.sortDirConfigKey()
+	if dir == "" {
+		return
+	}
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		pane.setNotice("failed to load config for sort: "+err.Error(), time.Now())
+		return
+	}
+	if ui.fmCfg == nil {
+		return
+	}
+
+	changed := ui.pruneSortPerDirOverrides(time.Now(), false)
+	key := pane.sessionSortKey()
+	desc := pane.sortDesc
+	if fm.SortOrderIsDefault(ui.fmCfg.Sort, key, desc) {
+		if _, ok := ui.fmCfg.Sort.PerDir[dir]; ok {
+			delete(ui.fmCfg.Sort.PerDir, dir)
+			changed = true
+		}
+	} else {
+		code := fm.SortOrderCode(key, desc)
+		if ui.fmCfg.Sort.PerDir == nil {
+			ui.fmCfg.Sort.PerDir = make(map[string]string, 8)
+		}
+		if ui.fmCfg.Sort.PerDir[dir] != code {
+			ui.fmCfg.Sort.PerDir[dir] = code
+			changed = true
+		}
+	}
+	if len(ui.fmCfg.Sort.PerDir) == 0 {
+		ui.fmCfg.Sort.PerDir = nil
+	}
+	if !changed {
+		return
+	}
+	if err := ui.saveFMConfigWithOptions("sort-dir", false); err != nil {
+		pane.setNotice("failed to save sort: "+err.Error(), time.Now())
+		return
+	}
+	ui.refreshFilePaneConfigRefs()
+}
+
+func (ui *UI) refreshFilePaneConfigRefs() {
+	if ui == nil || ui.fmCfg == nil {
+		return
+	}
+	for _, pane := range ui.filePanes {
+		if pane != nil && pane.model != nil {
+			pane.model.cfg = ui.fmCfg
+		}
+	}
+}
+
+func (ui *UI) pruneSortPerDirOverrides(now time.Time, force bool) bool {
+	if ui == nil || ui.fmCfg == nil || len(ui.fmCfg.Sort.PerDir) == 0 {
+		return false
+	}
+	if !force && !ui.sortDirPrunedAt.IsZero() && now.Sub(ui.sortDirPrunedAt) < filePaneSortDirPruneInterval {
+		return false
+	}
+	ui.sortDirPrunedAt = now
+	changed := false
+	for dir, raw := range ui.fmCfg.Sort.PerDir {
+		key, desc, ok := fm.ParseSortOrderCode(raw)
+		if !ok || fm.SortOrderIsDefault(ui.fmCfg.Sort, key, desc) || !localSortDirExists(dir) {
+			delete(ui.fmCfg.Sort.PerDir, dir)
+			changed = true
+		}
+	}
+	if len(ui.fmCfg.Sort.PerDir) == 0 {
+		ui.fmCfg.Sort.PerDir = nil
+	}
+	return changed
+}
+
+func localSortDirExists(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" || filesys.ArchivePathActive(dir) {
+		return false
+	}
+	info, err := os.Stat(dir)
+	return err == nil && info.IsDir()
 }
 
 func (ui *UI) togglePaneMode(idx int) {

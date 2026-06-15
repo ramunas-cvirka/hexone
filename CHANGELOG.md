@@ -46,3 +46,8 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Improved Unix link handling and warmed up the viewer for faster initial loads
 - Removed the default viewer mode setting
 - Replaced the `F2` WIP behavior with custom commands, including a fixed-size command builder with 10 command slots
+
+## v0.6.0 - 2026-06-15
+
+- New integrated terminal drawer on `F12`, with `Shift+Tab` to jump between the terminal and file panes.
+- Added terminal folder shortcuts for the left and right panes, including supported SSH sessions.

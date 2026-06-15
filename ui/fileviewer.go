@@ -3451,12 +3451,16 @@ type viewerShellSpec struct {
 }
 
 func resolveViewerShell(raw string, remote bool) viewerShellSpec {
-	mode := strings.ToLower(strings.TrimSpace(raw))
-	if mode == "" || mode == "auto" {
+	mode := fm.NormalizeViewerShell(raw)
+	if mode == "auto" {
 		if remote {
 			mode = "sh"
 		} else if runtime.GOOS == "windows" {
-			mode = "powershell"
+			if terminalFirstLookPath(terminalLookPath, "pwsh.exe", "pwsh") != "" {
+				mode = "pwsh"
+			} else {
+				mode = "powershell"
+			}
 		} else {
 			mode = "sh"
 		}
@@ -3469,20 +3473,99 @@ func resolveViewerShell(raw string, remote bool) viewerShellSpec {
 			args:    []string{"-lc"},
 			quoteFn: shellQuote,
 		}
-	case "pwsh", "powershell":
-		program := "pwsh"
-		if runtime.GOOS == "windows" {
-			program = "powershell"
+	case "pwsh":
+		program, args := terminalPowerShellCommand(runtime.GOOS, true, true)
+		return viewerShellSpec{
+			name:    "pwsh",
+			program: program,
+			args:    args,
+			quoteFn: powerShellQuote,
 		}
+	case "powershell":
+		program, args := terminalPowerShellCommand(runtime.GOOS, false, true)
 		return viewerShellSpec{
 			name:    "powershell",
 			program: program,
-			args:    []string{"-NoProfile", "-NonInteractive", "-Command"},
+			args:    args,
 			quoteFn: powerShellQuote,
 		}
+	case "cmd":
+		program := "cmd.exe"
+		if runtime.GOOS != "windows" {
+			program = "cmd"
+		} else if found := terminalFirstLookPath(terminalLookPath, "cmd.exe", "cmd"); found != "" {
+			program = found
+		}
+		return viewerShellSpec{
+			name:    "cmd",
+			program: program,
+			args:    []string{"/d", "/s", "/c"},
+			quoteFn: cmdShellQuote,
+		}
 	default:
+		if fm.ViewerShellIsWSL(mode) {
+			if remote {
+				return resolveViewerShell("sh", true)
+			}
+			program := terminalFirstLookPath(terminalLookPath, "wsl.exe", "wsl")
+			if program == "" {
+				program = "wsl.exe"
+			}
+			args := []string{}
+			if distro := fm.ViewerShellWSLDistro(mode); distro != "" {
+				args = append(args, "--distribution", distro)
+			}
+			args = append(args, "--exec", "sh", "-lc")
+			return viewerShellSpec{
+				name:    "wsl",
+				program: program,
+				args:    args,
+				quoteFn: wslShellQuote,
+			}
+		}
 		return resolveViewerShell("auto", remote)
 	}
+}
+
+func cmdShellQuote(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(s, " \t&()[]{}^=;!'+,`~|<>\"") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for _, r := range s {
+		if r == '"' {
+			b.WriteString(`\"`)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+func wslShellQuote(s string) string {
+	return shellQuote(windowsPathToWSLPath(s))
+}
+
+func windowsPathToWSLPath(path string) string {
+	if len(path) >= 2 && path[1] == ':' && ((path[0] >= 'a' && path[0] <= 'z') || (path[0] >= 'A' && path[0] <= 'Z')) {
+		drive := path[0]
+		if drive >= 'A' && drive <= 'Z' {
+			drive += 'a' - 'A'
+		}
+		rest := strings.ReplaceAll(path[2:], `\`, "/")
+		rest = strings.TrimPrefix(rest, "/")
+		if rest == "" {
+			return "/mnt/" + string(drive)
+		}
+		return "/mnt/" + string(drive) + "/" + rest
+	}
+	return strings.ReplaceAll(path, `\`, "/")
 }
 
 func expandViewerCommandTemplate(template, fullpath, filename string, quoteFn func(string) string) string {
