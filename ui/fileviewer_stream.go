@@ -1211,7 +1211,12 @@ func runeIndexAtByte(s string, byteIdx int) int {
 }
 
 func measureTypefaceCharWidth(ui *UI, th *material.Theme, gtx layout.Context, face font.Typeface) int {
-	fallback := int(float32(gtx.Sp(ui.viewerTextSize()))*0.62 + 0.5)
+	return measureTypefaceCharWidthAt(th, gtx, face, ui.viewerTextSize())
+}
+
+func measureTypefaceCharWidthAt(th *material.Theme, gtx layout.Context, face font.Typeface, size unit.Sp) int {
+	size = normalizeUIFontSize(size)
+	fallback := int(float32(gtx.Sp(size))*0.62 + 0.5)
 	if fallback < 5 {
 		fallback = 5
 	}
@@ -1223,7 +1228,7 @@ func measureTypefaceCharWidth(ui *UI, th *material.Theme, gtx layout.Context, fa
 		lbl := material.Body2(th, sample)
 		lbl.Font.Typeface = face
 		lbl.Font.Weight = font.Normal
-		lbl.TextSize = ui.viewerTextSize()
+		lbl.TextSize = size
 		lbl.MaxLines = 1
 		lbl.Truncator = ""
 		return measureLabelUnconstrained(gtx, lbl).Size.X
@@ -1252,7 +1257,12 @@ func measureStreamCharWidth(ui *UI, th *material.Theme, gtx layout.Context) int 
 }
 
 func measureTypefaceCharAdvance(ui *UI, th *material.Theme, gtx layout.Context, face font.Typeface) float32 {
-	fallback := float32(gtx.Sp(ui.viewerTextSize())) * 0.62
+	return measureTypefaceCharAdvanceAt(th, gtx, face, ui.viewerTextSize())
+}
+
+func measureTypefaceCharAdvanceAt(th *material.Theme, gtx layout.Context, face font.Typeface, size unit.Sp) float32 {
+	size = normalizeUIFontSize(size)
+	fallback := float32(gtx.Sp(size)) * 0.62
 	if fallback < 5 {
 		fallback = 5
 	}
@@ -1264,7 +1274,7 @@ func measureTypefaceCharAdvance(ui *UI, th *material.Theme, gtx layout.Context, 
 		lbl := material.Body2(th, sample)
 		lbl.Font.Typeface = face
 		lbl.Font.Weight = font.Normal
-		lbl.TextSize = ui.viewerTextSize()
+		lbl.TextSize = size
 		lbl.MaxLines = 1
 		lbl.Truncator = ""
 		return measureLabelUnconstrained(gtx, lbl).Size.X
@@ -1285,7 +1295,12 @@ func measureStreamCharAdvance(ui *UI, th *material.Theme, gtx layout.Context) fl
 }
 
 func measureTypefaceLineHeight(ui *UI, th *material.Theme, gtx layout.Context, face font.Typeface) int {
-	fallback := gtx.Sp(ui.viewerTextSize()) + gtx.Dp(unit.Dp(3))
+	return measureTypefaceLineHeightAt(th, gtx, face, ui.viewerTextSize())
+}
+
+func measureTypefaceLineHeightAt(th *material.Theme, gtx layout.Context, face font.Typeface, size unit.Sp) int {
+	size = normalizeUIFontSize(size)
+	fallback := gtx.Sp(size) + gtx.Dp(unit.Dp(3))
 	if fallback < 12 {
 		fallback = 12
 	}
@@ -1295,7 +1310,7 @@ func measureTypefaceLineHeight(ui *UI, th *material.Theme, gtx layout.Context, f
 	lbl := material.Body2(th, "Mg")
 	lbl.Font.Typeface = face
 	lbl.Font.Weight = font.Normal
-	lbl.TextSize = ui.viewerTextSize()
+	lbl.TextSize = size
 	lbl.MaxLines = 1
 	lbl.Truncator = ""
 	h := measureLabelUnconstrained(gtx, lbl).Size.Y + gtx.Dp(unit.Dp(2))

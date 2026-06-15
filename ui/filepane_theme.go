@@ -14,6 +14,8 @@ type filePanePalette struct {
 	PaneFg       color.NRGBA
 	HoverBg      color.NRGBA
 	HoverFg      color.NRGBA
+	PopupHoverBg color.NRGBA
+	PopupHoverFg color.NRGBA
 	SelectedBg   color.NRGBA
 	SelectedFg   color.NRGBA
 	MarkedBg     color.NRGBA
@@ -34,6 +36,8 @@ func filePanePaletteFromConfig(cfg *fm.Config) filePanePalette {
 	fg := parseConfigColorHexFallback("", fm.DefaultFilePaneTextHex)
 	hover := parseConfigColorHexFallback("", fm.DefaultFilePaneHoverHex)
 	hoverFg := parseConfigColorHexFallback("", fm.DefaultFilePaneHoverTextHex)
+	popupHover := parseConfigColorHexFallback("", fm.DefaultPopupHoverHex)
+	popupHoverFg := parseConfigColorHexFallback("", fm.DefaultPopupHoverTextHex)
 	selected := parseConfigColorHexFallback("", fm.DefaultFilePaneSelectionHex)
 	selectedFg := parseConfigColorHexFallback("", fm.DefaultFilePaneSelectionTextHex)
 	marked := parseConfigColorHexFallback("", fm.DefaultFilePaneSelectedFilesHex)
@@ -49,6 +53,8 @@ func filePanePaletteFromConfig(cfg *fm.Config) filePanePalette {
 		fg = parseConfigColorHexFallback(cfg.Colors.FilePaneText, fm.DefaultFilePaneTextHex)
 		hover = parseConfigColorHexFallback(cfg.Colors.Hover, fm.DefaultFilePaneHoverHex)
 		hoverFg = parseConfigColorHexFallback(cfg.Colors.HoverText, fm.DefaultFilePaneHoverTextHex)
+		popupHover = parseConfigColorHexFallback(cfg.Colors.PopupHover, fm.DefaultPopupHoverHex)
+		popupHoverFg = parseConfigColorHexFallback(cfg.Colors.PopupHoverText, fm.DefaultPopupHoverTextHex)
 		selected = parseConfigColorHexFallback(cfg.Colors.Selection, fm.DefaultFilePaneSelectionHex)
 		selectedFg = parseConfigColorHexFallback(cfg.Colors.SelectionText, fm.DefaultFilePaneSelectionTextHex)
 		marked = parseConfigColorHexFallback(cfg.Colors.SelectedFiles, fm.DefaultFilePaneSelectedFilesHex)
@@ -66,6 +72,8 @@ func filePanePaletteFromConfig(cfg *fm.Config) filePanePalette {
 		PaneFg:       fg,
 		HoverBg:      hover,
 		HoverFg:      hoverFg,
+		PopupHoverBg: popupHover,
+		PopupHoverFg: popupHoverFg,
 		SelectedBg:   selected,
 		SelectedFg:   selectedFg,
 		MarkedBg:     marked,

@@ -35,9 +35,9 @@ const (
 	filePaneMenuActionOpenWithSystem    = "open-with-system"
 	filePaneMenuActionSystemFileManager = "system-file-manager"
 	filePaneMenuActionOpenWithAppPrefix = "open-with-app:"
-	filePaneContextMenuRootWidthDp      = 180
-	filePaneContextMenuCompactWidthDp   = 124
-	filePaneContextMenuOpenWithWidthDp  = 176
+	filePaneContextMenuRootWidthDp      = 162
+	filePaneContextMenuCompactWidthDp   = 116
+	filePaneContextMenuOpenWithWidthDp  = 168
 	filePaneContextMenuItemDetailTextSp = 9
 )
 

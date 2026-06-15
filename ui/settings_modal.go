@@ -92,6 +92,8 @@ type settingsModalState struct {
 	colorPaneText               string
 	colorHover                  string
 	colorHoverText              string
+	colorPopupHover             string
+	colorPopupHoverText         string
 	colorSelection              string
 	colorSelectionText          string
 	colorSelectedFiles          string
@@ -189,6 +191,9 @@ type settingsModalState struct {
 	filenameSizeInfoText        string
 	viewCommandEdit             widget.Editor
 	viewShellEdit               widget.Editor
+	viewShellOptions            []terminalShellOption
+	viewShellClicks             []widget.Clickable
+	viewShellAnim               settingsChoiceAnim
 	viewRemoteSearchCommandEdit widget.Editor
 	paneFontSizeEdit            widget.Editor
 	viewFontSizeEdit            widget.Editor
@@ -292,6 +297,7 @@ type settingsColorOption struct {
 var settingsPaneColorOptions = []settingsColorOption{
 	{key: "normal", label: "Normal"},
 	{key: "hover", label: "Hover"},
+	{key: "popup_hover", label: "Popup Hover"},
 	{key: "selection", label: "Focused"},
 	{key: "selected_files", label: "Selected Files"},
 	{key: "focused_selected", label: "Focused + Selected Files"},
@@ -439,6 +445,7 @@ func (ui *UI) openSettingsModal() {
 		st.configEdit.SingleLine = false
 		st.configEdit.Submit = false
 	}
+	st.viewShellOptions = terminalDetectedShellOptions()
 	st.loadFromConfig(ui.fmCfg)
 	st.keyFocus.focusKeyboard()
 	st.normalizeKeyboardFocus()
@@ -454,7 +461,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 		return
 	}
 	switch st.colorCategory {
-	case "normal", "hover", "selection", "selected_files", "focused_selected", "current_dir", "scrollbar":
+	case "normal", "hover", "popup_hover", "selection", "selected_files", "focused_selected", "current_dir", "scrollbar":
 	default:
 		st.colorCategory = "selection"
 	}
@@ -467,6 +474,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorPaneText = cfg.Colors.FilePaneText
 	st.colorHover = cfg.Colors.Hover
 	st.colorHoverText = cfg.Colors.HoverText
+	st.colorPopupHover = cfg.Colors.PopupHover
+	st.colorPopupHoverText = cfg.Colors.PopupHoverText
 	st.colorSelection = cfg.Colors.Selection
 	st.colorSelectionText = cfg.Colors.SelectionText
 	st.colorSelectedFiles = cfg.Colors.SelectedFiles
@@ -493,6 +502,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.filenameIconPickerTarget = ""
 	st.viewCommandEdit.SetText(cfg.Viewer.Command)
 	st.viewShellEdit.SetText(normalizeViewerShellInput(cfg.Viewer.Shell))
+	st.viewShellAnim = settingsChoiceAnim{}
 	st.viewRemoteSearchCommandEdit.SetText(fm.NormalizeViewerRemoteSearchCommand(cfg.Viewer.RemoteSearchCommand))
 	st.paneFontSizeEdit.SetText(formatConfigFloat(cfg.General.FontSizeSp))
 	st.viewFontSizeEdit.SetText(formatConfigFloat(cfg.Viewer.FontSizeSp))
@@ -596,6 +606,8 @@ func (st *settingsModalState) colorValue(key string) string {
 		return st.colorScrollbarThumb
 	case "hover":
 		return st.colorHover
+	case "popup_hover":
+		return st.colorPopupHover
 	case "selected_files":
 		return st.colorSelectedFiles
 	case "normal":
@@ -627,6 +639,8 @@ func (st *settingsModalState) setColorValue(key, value string) {
 		st.colorScrollbarThumb = value
 	case "hover":
 		st.colorHover = value
+	case "popup_hover":
+		st.colorPopupHover = value
 	case "selected_files":
 		st.colorSelectedFiles = value
 	case "normal":
@@ -652,6 +666,8 @@ func (st *settingsModalState) colorTextValue(key string) string {
 		return st.colorScrollbarTrack
 	case "hover":
 		return st.colorHoverText
+	case "popup_hover":
+		return st.colorPopupHoverText
 	case "selected_files":
 		return st.colorSelectedFilesText
 	case "normal":
@@ -678,6 +694,8 @@ func (st *settingsModalState) setColorTextValue(key, value string) {
 		st.colorScrollbarTrack = value
 	case "hover":
 		st.colorHoverText = value
+	case "popup_hover":
+		st.colorPopupHoverText = value
 	case "selected_files":
 		st.colorSelectedFilesText = value
 	case "normal":
@@ -1115,6 +1133,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	paneTextFallback := fm.DefaultFilePaneTextHex
 	hoverFallback := fm.DefaultFilePaneHoverHex
 	hoverTextFallback := fm.DefaultFilePaneHoverTextHex
+	popupHoverFallback := fm.DefaultPopupHoverHex
+	popupHoverTextFallback := fm.DefaultPopupHoverTextHex
 	selectionFallback := fm.DefaultFilePaneSelectionHex
 	selectionTextFallback := fm.DefaultFilePaneSelectionTextHex
 	selectedFilesFallback := fm.DefaultFilePaneSelectedFilesHex
@@ -1128,6 +1148,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		paneTextFallback = cfg.Colors.FilePaneText
 		hoverFallback = cfg.Colors.Hover
 		hoverTextFallback = cfg.Colors.HoverText
+		popupHoverFallback = cfg.Colors.PopupHover
+		popupHoverTextFallback = cfg.Colors.PopupHoverText
 		selectionFallback = cfg.Colors.Selection
 		selectionTextFallback = cfg.Colors.SelectionText
 		selectedFilesFallback = cfg.Colors.SelectedFiles
@@ -1141,6 +1163,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	paneTextRaw := strings.TrimSpace(st.colorPaneText)
 	hoverRaw := strings.TrimSpace(st.colorHover)
 	hoverTextRaw := strings.TrimSpace(st.colorHoverText)
+	popupHoverRaw := strings.TrimSpace(st.colorPopupHover)
+	popupHoverTextRaw := strings.TrimSpace(st.colorPopupHoverText)
 	selectionRaw := strings.TrimSpace(st.colorSelection)
 	selectionTextRaw := strings.TrimSpace(st.colorSelectionText)
 	selectedFilesRaw := strings.TrimSpace(st.colorSelectedFiles)
@@ -1161,6 +1185,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		{label: "Pane text", value: paneTextRaw},
 		{label: "Hover background", value: hoverRaw},
 		{label: "Hover text", value: hoverTextRaw},
+		{label: "Popup hover background", value: popupHoverRaw},
+		{label: "Popup hover text", value: popupHoverTextRaw},
 		{label: "Focused selection background", value: selectionRaw},
 		{label: "Focused selection text", value: selectionTextRaw},
 		{label: "Selected files background", value: selectedFilesRaw},
@@ -1186,6 +1212,8 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	draft.Colors.FilePaneText = fm.NormalizeHexColor(paneTextRaw, paneTextFallback)
 	draft.Colors.Hover = fm.NormalizeHexColor(hoverRaw, hoverFallback)
 	draft.Colors.HoverText = fm.NormalizeHexColor(hoverTextRaw, hoverTextFallback)
+	draft.Colors.PopupHover = fm.NormalizeHexColor(popupHoverRaw, popupHoverFallback)
+	draft.Colors.PopupHoverText = fm.NormalizeHexColor(popupHoverTextRaw, popupHoverTextFallback)
 	draft.Colors.Selection = fm.NormalizeHexColor(selectionRaw, selectionFallback)
 	draft.Colors.SelectionText = fm.NormalizeHexColor(selectionTextRaw, selectionTextFallback)
 	draft.Colors.SelectedFiles = fm.NormalizeHexColor(selectedFilesRaw, selectedFilesFallback)
@@ -1205,6 +1233,8 @@ func filePanePaletteToConfigColors(palette filePanePalette) fm.ColorsConfig {
 		FilePaneText:        fm.FormatHexColor(palette.PaneFg),
 		Hover:               fm.FormatHexColor(palette.HoverBg),
 		HoverText:           fm.FormatHexColor(palette.HoverFg),
+		PopupHover:          fm.FormatHexColor(palette.PopupHoverBg),
+		PopupHoverText:      fm.FormatHexColor(palette.PopupHoverFg),
 		Selection:           fm.FormatHexColor(palette.SelectedBg),
 		SelectionText:       fm.FormatHexColor(palette.SelectedFg),
 		SelectedFiles:       fm.FormatHexColor(palette.MarkedBg),
@@ -2645,6 +2675,16 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	} else {
 		ui.fmCfg.Colors.HoverText = fm.FormatHexColor(c)
 	}
+	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorPopupHover)); !ok {
+		return fmt.Errorf("popup hover color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.PopupHover = fm.FormatHexColor(c)
+	}
+	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorPopupHoverText)); !ok {
+		return fmt.Errorf("popup hover text color must use #RRGGBB")
+	} else {
+		ui.fmCfg.Colors.PopupHoverText = fm.FormatHexColor(c)
+	}
 	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorSelection)); !ok {
 		return fmt.Errorf("focused selection color must use #RRGGBB")
 	} else {
@@ -2710,10 +2750,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 		cmd = "cat {path}"
 	}
 	shell := normalizeViewerShellInput(st.viewShellEdit.Text())
-	switch shell {
-	case "auto", "sh", "powershell":
-	default:
-		return fmt.Errorf("viewer shell must be auto, sh, or powershell")
+	if _, ok := fm.NormalizeKnownViewerShell(shell); !ok {
+		return fmt.Errorf("viewer shell must be auto, sh, pwsh, powershell, cmd, wsl, or wsl:<distro>")
 	}
 	viewerBgRaw := strings.TrimSpace(st.colorViewerBackground)
 	c, ok := fm.ParseHexColor(viewerBgRaw)
@@ -3662,6 +3700,82 @@ func (ui *UI) layoutSettingsFontFamilyPicker(th *material.Theme, gtx layout.Cont
 	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, textSize, specs)
 }
 
+func (ui *UI) layoutSettingsShellPicker(th *material.Theme, gtx layout.Context, options []terminalShellOption, clicks []widget.Clickable, active string, anim *settingsChoiceAnim, focused bool) layout.Dimensions {
+	if len(options) == 0 || len(clicks) < len(options) {
+		return layout.Dimensions{}
+	}
+	textSize := scaleModalThemeFontSize(th, 10)
+	keys := make([]string, len(options))
+	hoverKey := ""
+	for i, opt := range options {
+		keys[i] = opt.Key
+		if i < len(clicks) && clicks[i].Hovered() {
+			hoverKey = opt.Key
+		}
+	}
+	if anim != nil {
+		anim.anim.setHover(hoverKey, gtx.Now)
+	}
+	pos := float32(0)
+	animating := false
+	if anim != nil {
+		pos, animating = anim.position(gtx.Now, active, keys)
+	} else {
+		for i, key := range keys {
+			if key == active {
+				pos = float32(i)
+				break
+			}
+		}
+	}
+	stripH := gtx.Dp(unit.Dp(22))
+	if stripH < 1 {
+		stripH = 1
+	}
+	specs := make([]slidingTabSpec, 0, len(options))
+	for i, opt := range options {
+		activeFill := float32(0)
+		hoverFill := float32(0)
+		pulseFill := float32(0)
+		focusFill := float32(0)
+		if anim != nil {
+			activeFill, _ = anim.fill(gtx.Now, active, opt.Key)
+			hoverFill, _ = anim.anim.hoverFill(gtx.Now, opt.Key)
+			pulseFill, _ = anim.anim.pulseFill(gtx.Now, opt.Key)
+		} else if opt.Key == active {
+			activeFill = 1
+		}
+		if focused && opt.Key == active {
+			focusFill = 1
+		}
+		specs = append(specs, slidingTabSpec{
+			Label:      opt.Label,
+			Click:      &clicks[i],
+			ActiveFill: activeFill,
+			HoverFill:  hoverFill,
+			PulseFill:  pulseFill,
+			FocusFill:  focusFill,
+		})
+	}
+	for _, opt := range options {
+		if anim != nil {
+			if _, ok := anim.fill(gtx.Now, active, opt.Key); ok {
+				animating = true
+			}
+			if _, ok := anim.anim.hoverFill(gtx.Now, opt.Key); ok {
+				animating = true
+			}
+			if _, ok := anim.anim.pulseFill(gtx.Now, opt.Key); ok {
+				animating = true
+			}
+		}
+	}
+	if animating {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, textSize, specs)
+}
+
 func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	fillViewer, animViewer := st.tabFill(gtx.Now, "viewer")
 	fillAssoc, animAssoc := st.tabFill(gtx.Now, "associations")
@@ -3813,6 +3927,26 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	rowLabel := func(txt string, enabled bool) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, enabled)
 	}
+	shellOptions := st.viewShellOptions
+	if len(shellOptions) == 0 {
+		shellOptions = terminalShellOptionsFor(runtime.GOOS, terminalLookPath, nil)
+	}
+	st.ensureViewShellClicks(len(shellOptions))
+	activeShell := normalizeViewerShellInput(st.viewShellEdit.Text())
+	for i, opt := range shellOptions {
+		if i >= len(st.viewShellClicks) {
+			break
+		}
+		for st.viewShellClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusViewerShell)
+			current := activeShell
+			st.viewShellAnim.setValue(&current, opt.Key, gtx.Now)
+			st.viewShellAnim.anim.setPulse(opt.Key, gtx.Now)
+			st.viewShellEdit.SetText(current)
+			activeShell = current
+			st.errText = ""
+		}
+	}
 
 	savedTargetCount := 0
 	pendingTargetCount := 0
@@ -3938,8 +4072,12 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	sections := []layout.Widget{
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(rowLabel("Shell (all viewer commands)", true)),
+				layout.Rigid(rowLabel("Shell (viewer commands and terminal)", true)),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsShellPicker(th, gtx, shellOptions, st.viewShellClicks, activeShell, &st.viewShellAnim, st.focus == settingsKeyboardFocusViewerShell)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					ed := material.Editor(th, &st.viewShellEdit, "auto")
 					ed.Font.Typeface = ui.mainTypeface()
@@ -4786,8 +4924,8 @@ func (st *settingsModalState) previewViewerContentHeight(ui *UI, th *material.Th
 }
 
 func settingsColorsPreviewHostHeight(gtx layout.Context) int {
-	height := gtx.Dp(unit.Dp(168))
-	if minHeight := gtx.Dp(unit.Dp(148)); height < minHeight {
+	height := gtx.Dp(unit.Dp(188))
+	if minHeight := gtx.Dp(unit.Dp(164)); height < minHeight {
 		height = minHeight
 	}
 	if height < 1 {
@@ -5079,7 +5217,7 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			note := "Use the same category for both background and text. Hover and Focused + Selected Files are tuned separately."
+			note := "Use the same category for both background and text. Popup Hover controls menu and submenu row hover colors."
 			if st.colorScope == "viewer" {
 				note = "Viewer background/text and selection are saved separately from pane colors. Selection only needs a background override."
 			} else if st.colorCategory == "scrollbar" {
@@ -5676,6 +5814,10 @@ func (ui *UI) layoutSettingsColorPreviewRows(th *material.Theme, gtx layout.Cont
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.PopupHoverBg, palette.PopupHoverFg, "Popup Hover", "menu item")
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.SelectedBg, palette.SelectedFg, "Focused", "gamma.txt")
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
@@ -5817,6 +5959,7 @@ func settingsColorPreviewStateWidth(th *material.Theme, gtx layout.Context, cfg 
 	labels := []string{
 		"Normal",
 		"Hover",
+		"Popup Hover",
 		"Focused",
 		"Selected Files",
 		"Focused + Selected Files",
@@ -5857,6 +6000,11 @@ func settingsPreviewColorForCategory(palette filePanePalette, key, part string) 
 			return palette.HoverFg
 		}
 		return palette.HoverBg
+	case "popup_hover":
+		if part == "text" {
+			return palette.PopupHoverFg
+		}
+		return palette.PopupHoverBg
 	case "selected_files":
 		if part == "text" {
 			return palette.MarkedFg
@@ -6428,6 +6576,16 @@ func (st *settingsModalState) ensureViewFontFamilyClicks(n int) {
 	copy(st.viewFontFamilyClicks, old)
 }
 
+func (st *settingsModalState) ensureViewShellClicks(n int) {
+	if n <= cap(st.viewShellClicks) {
+		st.viewShellClicks = st.viewShellClicks[:n]
+		return
+	}
+	old := st.viewShellClicks
+	st.viewShellClicks = make([]widget.Clickable, n)
+	copy(st.viewShellClicks, old)
+}
+
 func viewerAssociationDisplayExtension(ext string) string {
 	ext = strings.TrimSpace(ext)
 	ext = strings.TrimPrefix(ext, ".")
@@ -6483,17 +6641,10 @@ func parseViewerAssociationFields(extRaw, appRaw string) (fm.ViewerAssociation, 
 }
 
 func normalizeViewerShellInput(raw string) string {
-	shell := strings.ToLower(strings.TrimSpace(raw))
-	switch shell {
-	case "", "auto":
-		return "auto"
-	case "sh":
-		return "sh"
-	case "pwsh", "powershell":
-		return "powershell"
-	default:
+	if shell, ok := fm.NormalizeKnownViewerShell(raw); ok {
 		return shell
 	}
+	return strings.ToLower(strings.TrimSpace(raw))
 }
 
 func (ui *UI) applyConfigRuntime(now time.Time) {

@@ -1549,6 +1549,8 @@ func TestSettingsColorSwatchGroupsIncludeNearbyCurrentColor(t *testing.T) {
 func TestSettingsColorCategoriesSeparateFocusedStates(t *testing.T) {
 	st := &settingsModalState{
 		colorScope:               "panes",
+		colorPopupHover:          "#485F96",
+		colorPopupHoverText:      "#F6F9FF",
 		colorSelection:           "#3456AA",
 		colorSelectionText:       "#F2F7FF",
 		colorFocusedSelected:     "#447F9C",
@@ -1559,6 +1561,15 @@ func TestSettingsColorCategoriesSeparateFocusedStates(t *testing.T) {
 	}
 	if got := settingsColorLabel("panes", "focused_selected"); got != "Focused + Selected Files" {
 		t.Fatalf("focused_selected label=%q want %q", got, "Focused + Selected Files")
+	}
+	if got := settingsColorLabel("panes", "popup_hover"); got != "Popup Hover" {
+		t.Fatalf("popup_hover label=%q want %q", got, "Popup Hover")
+	}
+	if got := st.colorValue("popup_hover"); got != "#485F96" {
+		t.Fatalf("popup_hover background=%q want %q", got, "#485F96")
+	}
+	if got := st.colorTextValue("popup_hover"); got != "#F6F9FF" {
+		t.Fatalf("popup_hover text=%q want %q", got, "#F6F9FF")
 	}
 	if got := st.colorValue("selection"); got != "#3456AA" {
 		t.Fatalf("selection background=%q want %q", got, "#3456AA")
@@ -1580,6 +1591,8 @@ func TestDraftFilePanePaletteAppliesExplicitTextColors(t *testing.T) {
 		colorPaneText:            "#C8D0D8",
 		colorHover:               "#20354F",
 		colorHoverText:           "#EAF3FF",
+		colorPopupHover:          "#485F96",
+		colorPopupHoverText:      "#F6F9FF",
 		colorSelection:           "#3456AA",
 		colorSelectionText:       "#F2F7FF",
 		colorSelectedFiles:       "#286F57",
@@ -1600,6 +1613,12 @@ func TestDraftFilePanePaletteAppliesExplicitTextColors(t *testing.T) {
 	}
 	if got := fm.FormatHexColor(palette.HoverFg); got != "#EAF3FF" {
 		t.Fatalf("HoverFg=%q want %q", got, "#EAF3FF")
+	}
+	if got := fm.FormatHexColor(palette.PopupHoverBg); got != "#485F96" {
+		t.Fatalf("PopupHoverBg=%q want %q", got, "#485F96")
+	}
+	if got := fm.FormatHexColor(palette.PopupHoverFg); got != "#F6F9FF" {
+		t.Fatalf("PopupHoverFg=%q want %q", got, "#F6F9FF")
 	}
 	if got := fm.FormatHexColor(palette.SelectedFg); got != "#F2F7FF" {
 		t.Fatalf("SelectedFg=%q want %q", got, "#F2F7FF")
@@ -1761,7 +1780,7 @@ func TestSettingsColorsPreviewHostHeightUsesSharedValue(t *testing.T) {
 		},
 	}
 
-	if got, want := settingsColorsPreviewHostHeight(gtx), 168; got != want {
+	if got, want := settingsColorsPreviewHostHeight(gtx), 188; got != want {
 		t.Fatalf("preview host height=%d want %d", got, want)
 	}
 }
