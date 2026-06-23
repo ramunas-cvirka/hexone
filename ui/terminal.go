@@ -690,12 +690,10 @@ func (ui *UI) toggleTerminalKeyboardFocus(gtx layout.Context, terminalFocused bo
 	ui.closeFunctionBarPopups()
 	ui.resetKeys()
 	if terminalFocused {
-		ui.terminal.wantFocus = false
 		if ui.Tabs.Value != "tab0" {
 			ui.setActiveTab("tab0", gtx.Now)
 		}
-		gtx.Execute(key.FocusCmd{})
-		gtx.Execute(key.SoftKeyboardCmd{Show: false})
+		ui.releaseTerminalKeyboardFocus(gtx)
 		return true
 	}
 	ui.terminal.focusKeyboard()
@@ -706,6 +704,108 @@ func (ui *UI) toggleTerminalKeyboardFocus(gtx layout.Context, terminalFocused bo
 
 func (ui *UI) terminalFocused(gtx layout.Context) bool {
 	return ui != nil && ui.terminal != nil && ui.terminal.active() && gtx.Focused(&ui.terminal.keyTag)
+}
+
+func (ui *UI) releaseTerminalKeyboardFocus(gtx layout.Context) bool {
+	if ui == nil || ui.terminal == nil {
+		return false
+	}
+	ui.terminal.wantFocus = false
+	gtx.Execute(key.FocusCmd{})
+	gtx.Execute(key.SoftKeyboardCmd{Show: false})
+	return true
+}
+
+func (ui *UI) handleTerminalOutsidePointerFocus(gtx layout.Context) bool {
+	if ui == nil {
+		return false
+	}
+	terminalActive := ui.terminal != nil && ui.terminal.active()
+	terminalFocused := terminalActive && gtx.Focused(&ui.terminal.keyTag)
+	changed := false
+	for {
+		ev, ok := gtx.Event(pointer.Filter{
+			Target: &ui.terminalFocusPointerTag,
+			Kinds:  pointer.Press,
+		})
+		if !ok {
+			return changed
+		}
+		pe, ok := ev.(pointer.Event)
+		if !ok || !terminalOutsideFocusPointerEvent(pe) {
+			continue
+		}
+		if !terminalActive {
+			continue
+		}
+		if !terminalFocused {
+			continue
+		}
+		pos := pe.Position.Round()
+		if ui.terminalPointerOnTerminalSurface(gtx, pos) {
+			continue
+		}
+		if ui.releaseTerminalKeyboardFocus(gtx) {
+			terminalFocused = false
+			changed = true
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+}
+
+func terminalOutsideFocusPointerEvent(pe pointer.Event) bool {
+	return pe.Kind == pointer.Press && terminalPointerPressButton(pe.Buttons)
+}
+
+func terminalSurfaceFocusPointerEvent(pe pointer.Event) bool {
+	switch pe.Kind {
+	case pointer.Press:
+		return terminalPointerPressButton(pe.Buttons)
+	case pointer.Scroll:
+		return pe.Scroll.X != 0 || pe.Scroll.Y != 0
+	default:
+		return false
+	}
+}
+
+func terminalPointerPressButton(buttons pointer.Buttons) bool {
+	return buttons.Contain(pointer.ButtonPrimary) ||
+		buttons.Contain(pointer.ButtonSecondary) ||
+		buttons.Contain(pointer.ButtonTertiary)
+}
+
+func (ui *UI) terminalPointerOnTerminalSurface(gtx layout.Context, pos image.Point) bool {
+	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+		return false
+	}
+	if ui.terminal.contextMenuConsumesPointer(pos) {
+		return true
+	}
+	height, _, ok := ui.terminal.paneMetrics()
+	if !ok {
+		height = terminalPaneHeight(gtx, 16, terminalConfiguredRows(ui.fmCfg))
+	}
+	if height <= 0 {
+		return false
+	}
+	bounds := gtx.Constraints.Max
+	if bounds.X <= 0 || bounds.Y <= 0 {
+		return false
+	}
+	if height > bounds.Y {
+		height = bounds.Y
+	}
+	return viewerPointInRect(pos, image.Rect(0, bounds.Y-height, bounds.X, bounds.Y))
+}
+
+func (ui *UI) registerTerminalOutsidePointerFocus(gtx layout.Context) {
+	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+		return
+	}
+	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &ui.terminalFocusPointerTag)
+	pass.Pop()
 }
 
 func (ui *UI) handleTerminalToggleKey(gtx layout.Context) bool {
@@ -3014,6 +3114,20 @@ func terminalRowsForPaneHeight(gtx layout.Context, cellH, height int) int {
 	return terminalClampPaneRows(gtx, cellH, rows)
 }
 
+func terminalPaneCols(width int, cellW int) int {
+	if cellW <= 0 {
+		return 2
+	}
+	cols := width / cellW
+	if cols < 2 {
+		return 2
+	}
+	if cols > 2 {
+		cols--
+	}
+	return cols
+}
+
 func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	st := ui.ensureTerminalSession()
 	if st == nil || !st.active() {
@@ -3059,11 +3173,8 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 			return layout.Dimensions{Size: size}
 		}
 
-		cols := content.Dx() / cellW
+		cols := terminalPaneCols(content.Dx(), cellW)
 		rows := content.Dy() / cellH
-		if cols < 2 {
-			cols = 2
-		}
 		if rows < 1 {
 			rows = 1
 		}
@@ -4105,6 +4216,9 @@ func (s *terminalSession) handlePointer(gtx layout.Context, content image.Rectan
 		pos := pe.Position.Round()
 		switch pe.Kind {
 		case pointer.Scroll:
+			if viewerPointInRect(pos, content) {
+				gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
+			}
 			if s.terminalMouseReporting() && viewerPointInRect(pos, content) {
 				if s.reportTerminalMouseWheel(pe, content, cellW, cellH) {
 					handled = true

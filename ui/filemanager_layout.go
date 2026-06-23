@@ -1282,10 +1282,8 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 		if !ok {
 			continue
 		}
-		if ui.terminalFocused(gtx) {
-			ui.terminal.wantFocus = false
-			gtx.Execute(key.FocusCmd{})
-			gtx.Execute(key.SoftKeyboardCmd{Show: false})
+		if ui.terminalFocused(gtx) && terminalSurfaceFocusPointerEvent(pe) {
+			ui.releaseTerminalKeyboardFocus(gtx)
 		}
 		if idx != ui.activeFilePane {
 			ui.setActiveFilePane(idx)

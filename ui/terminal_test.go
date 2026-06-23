@@ -619,6 +619,93 @@ func TestTerminalContextMenuPressDoesNotCloseFromTerminalPointer(t *testing.T) {
 	}
 }
 
+func TestOutsidePointerPressReleasesTerminalFocus(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.terminal = newTerminalSession(nil)
+	ui.terminal.setActive(true)
+	ui.terminal.setPaneMetrics(60, 16)
+
+	gtx, router := testPointerContext()
+	gtx.Constraints = layout.Constraints{Max: image.Pt(200, 200)}
+	registerPointerTag(router, gtx.Ops, &ui.terminalFocusPointerTag)
+	primePointerFilter(router, &ui.terminalFocusPointerTag)
+	gtx.Execute(key.FocusCmd{Tag: &ui.terminal.keyTag})
+	if !ui.terminalFocused(gtx) {
+		t.Fatal("terminal should start focused")
+	}
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonPrimary,
+		Position: f32.Pt(40, 80),
+	})
+
+	if !ui.handleTerminalOutsidePointerFocus(gtx) {
+		t.Fatal("outside pointer press should release terminal focus")
+	}
+	if ui.terminalFocused(gtx) {
+		t.Fatal("terminal should lose focus after an outside pointer press")
+	}
+}
+
+func TestTerminalPointerPressKeepsTerminalFocus(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.terminal = newTerminalSession(nil)
+	ui.terminal.setActive(true)
+	ui.terminal.setPaneMetrics(60, 16)
+
+	gtx, router := testPointerContext()
+	gtx.Constraints = layout.Constraints{Max: image.Pt(200, 200)}
+	registerPointerTag(router, gtx.Ops, &ui.terminalFocusPointerTag)
+	primePointerFilter(router, &ui.terminalFocusPointerTag)
+	gtx.Execute(key.FocusCmd{Tag: &ui.terminal.keyTag})
+	if !ui.terminalFocused(gtx) {
+		t.Fatal("terminal should start focused")
+	}
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonPrimary,
+		Position: f32.Pt(40, 170),
+	})
+
+	if ui.handleTerminalOutsidePointerFocus(gtx) {
+		t.Fatal("inside terminal press should not release terminal focus")
+	}
+	if !ui.terminalFocused(gtx) {
+		t.Fatal("terminal should stay focused after a pointer press inside the drawer")
+	}
+}
+
+func TestTerminalWheelFocusesTerminal(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.parserMu.Lock()
+	st.term.Resize(3, 12)
+	if _, err := st.term.Write([]byte("line0\r\nline1\r\nline2\r\nline3\r\nline4\r\nline5")); err != nil {
+		st.parserMu.Unlock()
+		t.Fatalf("Write lines: %v", err)
+	}
+	st.parserMu.Unlock()
+	st.snapshot()
+
+	gtx, router := testPointerContext()
+	primePointerScrollFilter(router, &st.pointerTag, pointer.ScrollRange{}, pointer.ScrollRange{Min: -terminalScrollRange, Max: terminalScrollRange})
+	registerPointerTag(router, gtx.Ops, &st.pointerTag)
+	if gtx.Focused(&st.keyTag) {
+		t.Fatal("terminal should start unfocused")
+	}
+	router.Queue(pointer.Event{
+		Kind:     pointer.Scroll,
+		Scroll:   f32.Pt(0, -1),
+		Position: f32.Pt(40, 40),
+	})
+
+	if !st.handlePointer(gtx, image.Rect(0, 0, 240, 160), 8, 16) {
+		t.Fatal("terminal wheel event should be handled")
+	}
+	if !gtx.Focused(&st.keyTag) {
+		t.Fatal("terminal should focus when wheeled")
+	}
+}
+
 func TestTerminalContextMenuIncludesPaste(t *testing.T) {
 	ui := &UI{}
 	st := newTerminalSession(nil)
@@ -1289,6 +1376,18 @@ func TestTerminalCellWidthUsesTypefaceAdvance(t *testing.T) {
 	want := int(math.Ceil(float64(measureTypefaceCharAdvanceAt(th, gtx, ui.terminalBaseTypeface(), ui.terminalTextSize()))))
 	if got != want {
 		t.Fatalf("terminal cell width=%d want measured advance %d", got, want)
+	}
+}
+
+func TestTerminalPaneColsKeepsRightEdgeGuard(t *testing.T) {
+	if got := terminalPaneCols(800, 8); got != 99 {
+		t.Fatalf("terminalPaneCols(800, 8)=%d want 99", got)
+	}
+	if got := terminalPaneCols(16, 8); got != 2 {
+		t.Fatalf("terminalPaneCols(16, 8)=%d want 2", got)
+	}
+	if got := terminalPaneCols(1, 0); got != 2 {
+		t.Fatalf("terminalPaneCols(1, 0)=%d want 2", got)
 	}
 }
 

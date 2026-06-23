@@ -183,6 +183,7 @@ type UI struct {
 	activeFilePane              int
 	sortDirPrunedAt             time.Time
 	terminal                    *terminalSession
+	terminalFocusPointerTag     uiEventTag
 	pendingFileOpen             *fileOpenRequest
 	fileCopy                    *fileCopyState
 	archiveExtract              *archiveExtractState
@@ -707,6 +708,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleEditorContextMenuGlobalPresses(gtx)
 	ui.handleEditorContextMenuClipboardEvents(gtx)
 	ui.handleTerminalClipboardEvents(gtx)
+	ui.handleTerminalOutsidePointerFocus(gtx)
 	ui.handleCustomCommandEditorPreLayoutInput(gtx)
 
 	r := image.Rectangle{Max: gtx.Constraints.Max}
@@ -780,6 +782,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.registerEditorContextMenuGlobalPointer(gtx)
 	ui.registerEditorContextMenuClipboardTarget(gtx)
 	ui.registerTerminalClipboardTarget(gtx)
+	ui.registerTerminalOutsidePointerFocus(gtx)
 	if ui != nil && ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		pass := pointer.PassOp{}.Push(gtx.Ops)

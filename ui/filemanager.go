@@ -2016,6 +2016,16 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 		if paneMatchesRemoteFavoriteTarget(pane, remoteLoc) {
 			return ui.loadPaneDir(idx, remoteLoc.Dir)
 		}
+		if shared := ui.findReusableRemoteSessionForFavorite(idx, remoteLoc); shared != nil {
+			next := shared.clone()
+			if next != nil {
+				if err := ui.attachPaneSSHSession(idx, next, remoteLoc.Dir, time.Now(), false); err != nil {
+					pane.setNotice("ssh connect failed: "+err.Error(), time.Now())
+					return false
+				}
+				return true
+			}
+		}
 
 		setup, found := findSSHSetupForRemoteFavorite(ui.fmCfg, remoteLoc)
 		if !found {
