@@ -26,6 +26,16 @@ Each pane has a mode badge in its header:
 
 Click the mode badge to switch between `full` and `brief`.
 
+## Pane Tabs
+
+Each file pane has its own compact tab strip above the current-dir line.
+
+- `+` opens a new tab in the pane's current directory.
+- `x` closes a tab; the last tab in a pane stays open.
+- `<` and `>` appear when the tab row overflows.
+
+Tab titles use the current directory and trim to fit. Configure `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, `tabs.active_color`, and `tabs.alternating_colors` in `hexone.yaml`.
+
 ## Current Dir Line
 
 The current-dir line at the top of each pane is interactive.
@@ -74,6 +84,8 @@ When the terminal drawer is open, `Shift+Tab` toggles keyboard focus between the
 ## Terminal Drawer
 
 The terminal drawer is a real PTY-backed terminal. Its context menu can copy or paste terminal text, select all visible terminal text, send `cd` commands to the terminal for the left or right pane, and set the left or right pane to the terminal's current directory.
+
+The terminal drawer also has tabs. Use `+` for a new terminal tab, `x` to close one, and `<` or `>` when the tab row overflows.
 
 For local shells, Hexone can usually read the terminal process current directory directly.
 

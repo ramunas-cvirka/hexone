@@ -459,6 +459,7 @@ func (ui *UI) handleFileManagerEscape(gtx layout.Context) {
 }
 
 func (ui *UI) layoutFilePanes(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	ui.ensureFilePaneTabs()
 	if len(ui.filePanes) == 0 {
 		lbl := material.Body1(th, "No panes.")
 		lbl.Font.Typeface = ui.mainTypeface()
@@ -598,6 +599,9 @@ func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pa
 								return layout.Stack{}.Layout(gtx,
 									layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 										return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												return ui.layoutFilePaneTabStrip(th, gtx, idx)
+											}),
 											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 												dims := ui.layoutFilePaneHeader(th, gtx, idx, pane, active)
 												pane.headerHeight = dims.Size.Y

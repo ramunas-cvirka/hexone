@@ -19,6 +19,7 @@ const (
 	settingsKeyboardFocusNone settingsKeyboardFocus = iota
 	settingsKeyboardFocusNav
 	settingsKeyboardFocusGeneralDimInactive
+	settingsKeyboardFocusGeneralFavoritesNewTab
 	settingsKeyboardFocusGeneralPaneFont
 	settingsKeyboardFocusGeneralPaneFontSize
 	settingsKeyboardFocusGeneralViewFont
@@ -141,6 +142,7 @@ func (st *settingsModalState) showColorTextField() bool {
 func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) bool {
 	switch target {
 	case settingsKeyboardFocusGeneralDimInactive,
+		settingsKeyboardFocusGeneralFavoritesNewTab,
 		settingsKeyboardFocusGeneralPaneFontSize,
 		settingsKeyboardFocusGeneralViewFontSize,
 		settingsKeyboardFocusViewerShell,
@@ -187,6 +189,8 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 	switch {
 	case gtx.Focused(&st.generalDimInactiveBool):
 		st.focus = settingsKeyboardFocusGeneralDimInactive
+	case gtx.Focused(&st.generalFavoritesNewTabBool):
+		st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
 	case gtx.Focused(&st.paneFontSizeEdit):
 		st.focus = settingsKeyboardFocusGeneralPaneFontSize
 	case gtx.Focused(&st.viewFontSizeEdit):
@@ -271,6 +275,7 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 	switch st.activeTab {
 	case "general":
 		order = append(order, settingsKeyboardFocusGeneralDimInactive)
+		order = append(order, settingsKeyboardFocusGeneralFavoritesNewTab)
 		if len(resources.BundledFontFamilies()) > 0 {
 			order = append(order, settingsKeyboardFocusGeneralPaneFont)
 		}
@@ -456,6 +461,9 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 	switch st.focus {
 	case settingsKeyboardFocusGeneralDimInactive:
 		st.generalDimInactiveBool.Value = !st.generalDimInactiveBool.Value
+		return true
+	case settingsKeyboardFocusGeneralFavoritesNewTab:
+		st.generalFavoritesNewTabBool.Value = !st.generalFavoritesNewTabBool.Value
 		return true
 	case settingsKeyboardFocusViewerSmoothScrolling:
 		st.viewSmoothScrollingBool.Value = !st.viewSmoothScrollingBool.Value

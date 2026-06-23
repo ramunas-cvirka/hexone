@@ -147,6 +147,7 @@ func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
 	want := []settingsKeyboardFocus{
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusGeneralDimInactive,
+		settingsKeyboardFocusGeneralFavoritesNewTab,
 		settingsKeyboardFocusGeneralPaneFont,
 		settingsKeyboardFocusGeneralPaneFontSize,
 		settingsKeyboardFocusGeneralViewFont,
@@ -290,6 +291,39 @@ func TestSettingsModalKeyboardSpaceTogglesFocusedCheckbox(t *testing.T) {
 	}
 }
 
+func TestSettingsModalKeyboardSpaceTogglesFavoritesNewTab(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "general"
+	st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
+	st.keyFocus.wantFocus = true
+	st.generalFavoritesNewTabBool.Value = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameSpace, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if st.generalFavoritesNewTabBool.Value {
+		t.Fatal("Space should toggle the focused favorites new-tab checkbox")
+	}
+}
+
 func TestSettingsModalKeyboardSpaceTogglesViewerSmoothScrolling(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	ui.openSettingsModal()
@@ -360,7 +394,7 @@ func TestSettingsModalKeyboardTabIncludesEditorTargets(t *testing.T) {
 	}
 
 	frame(now)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		router.Queue(key.Event{Name: key.NameTab, State: key.Press})
 		frame(now.Add(time.Duration(i+1) * time.Millisecond))
 	}

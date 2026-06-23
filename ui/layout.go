@@ -181,8 +181,10 @@ type UI struct {
 	invalidate                  func()
 	fileKeys                    fileKeyMap
 	activeFilePane              int
+	filePaneTabs                []filePaneTabSet
 	sortDirPrunedAt             time.Time
 	terminal                    *terminalSession
+	terminalTabs                terminalTabSet
 	terminalFocusPointerTag     uiEventTag
 	pendingFileOpen             *fileOpenRequest
 	fileCopy                    *fileCopyState
@@ -253,19 +255,11 @@ func NewUI(cfg *fm.Config) *UI {
 		newFilePaneState(cwd, ui.fmCfg),
 	}
 	ui.activeFilePane = 0
+	ui.filePaneTabs = make([]filePaneTabSet, len(ui.filePanes))
 	for i, pane := range ui.filePanes {
-		idx := i
-		pane.table.OnClick = func(row int) {
-			_ = row
-			ui.setActiveFilePane(idx)
-		}
-		pane.table.OnDoubleClick = func(row int) {
-			ui.queueFilePaneSystemOpen(idx, row)
-		}
-		pane.table.OnActivate = func(row int) {
-			ui.queueFilePaneOpen(idx, row)
-		}
-		ui.requestPaneLoadWithSelection(idx, cwd, "", "", 0)
+		ui.installFilePaneHandlers(i, pane)
+		ui.filePaneTabs[i].tabs = []*filePaneState{pane}
+		ui.requestPaneLoadWithSelection(i, cwd, "", "", 0)
 	}
 	return ui
 }

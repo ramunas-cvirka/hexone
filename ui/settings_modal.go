@@ -204,6 +204,7 @@ type settingsModalState struct {
 	paneFontPickerAnim          settingsChoiceAnim
 	viewFontPickerAnim          settingsChoiceAnim
 	generalDimInactiveBool      widget.Bool
+	generalFavoritesNewTabBool  widget.Bool
 	viewSmoothScrollingBool     widget.Bool
 	viewHideFunctionBarBool     widget.Bool
 	viewerTabList               widget.List
@@ -511,6 +512,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.paneFontPickerAnim = settingsChoiceAnim{}
 	st.viewFontPickerAnim = settingsChoiceAnim{}
 	st.generalDimInactiveBool.Value = cfg.General.DimInactivePanes
+	st.generalFavoritesNewTabBool.Value = cfg.General.OpenFavoritesInNewTab
 	st.viewSmoothScrollingBool.Value = cfg.Viewer.SmoothScrolling
 	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
 	st.viewerTabList.Position.First = 0
@@ -2797,6 +2799,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.Selection = viewerSelection
 	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
+	ui.fmCfg.General.OpenFavoritesInNewTab = st.generalFavoritesNewTabBool.Value
 	ui.fmCfg.Viewer.SmoothScrolling = st.viewSmoothScrollingBool.Value
 	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value
 	ui.fmCfg.Viewer.CommandByTarget = viewerCommandTargetMap(st.viewTargetEntries)
@@ -3559,6 +3562,16 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 				st.focus = settingsKeyboardFocusGeneralDimInactive
 			}
 			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralDimInactive, &st.generalDimInactiveBool)
+			return dims
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			before := st.generalFavoritesNewTabBool.Value
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalFavoritesNewTabBool, "Open favorites in a new tab", scaleModalThemeFontSize(th, 10))
+			if st.generalFavoritesNewTabBool.Value != before {
+				st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
+			}
+			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralFavoritesNewTab, &st.generalFavoritesNewTabBool)
 			return dims
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),

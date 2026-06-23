@@ -221,6 +221,7 @@ func TestNavigateRemoteFavoriteReusesCurrentPaneSSHSession(t *testing.T) {
 	}
 
 	cfg := fm.DefaultConfig()
+	cfg.General.OpenFavoritesInNewTab = false
 	setup := fm.SSHSetup{Host: "example.test", Port: 2222, User: "ramunas", Password: "secret"}
 	client := new(sftp.Client)
 	pane := newFilePaneState("/", cfg)
@@ -280,6 +281,7 @@ func TestNavigateRemoteFavoriteReusesOtherPaneSSHSessionBeforeSavedSetup(t *test
 	}
 
 	cfg := fm.DefaultConfig()
+	cfg.General.OpenFavoritesInNewTab = false
 	setup := fm.SSHSetup{Host: "example.test", Port: 2222, User: "ramunas"}
 	client := new(sftp.Client)
 	left := newFilePaneState("/", cfg)

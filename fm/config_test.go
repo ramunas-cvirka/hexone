@@ -130,6 +130,65 @@ terminal:
 	}
 }
 
+func TestConfigNormalizesTabs(t *testing.T) {
+	raw := `
+tabs:
+  width_mode: fixed
+  min_width_dp: 12
+  fixed_width_dp: 999
+  max_width_dp: 90
+  alternating_colors: true
+  color: aa3366
+  alt_color: nope
+  active_color: '#112233'
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.Tabs.WidthMode, "fixed"; got != want {
+		t.Fatalf("Tabs.WidthMode=%q want %q", got, want)
+	}
+	if got, want := cfg.Tabs.MinWidthDp, 44; got != want {
+		t.Fatalf("Tabs.MinWidthDp=%d want %d", got, want)
+	}
+	if got, want := cfg.Tabs.MaxWidthDp, 90; got != want {
+		t.Fatalf("Tabs.MaxWidthDp=%d want %d", got, want)
+	}
+	if got, want := cfg.Tabs.FixedWidthDp, 90; got != want {
+		t.Fatalf("Tabs.FixedWidthDp=%d want %d", got, want)
+	}
+	if !cfg.Tabs.AlternatingColors {
+		t.Fatal("Tabs.AlternatingColors should preserve true")
+	}
+	if got, want := cfg.Tabs.Color, "#AA3366"; got != want {
+		t.Fatalf("Tabs.Color=%q want %q", got, want)
+	}
+	if cfg.Tabs.AltColor != "" {
+		t.Fatalf("Tabs.AltColor=%q want empty invalid color", cfg.Tabs.AltColor)
+	}
+	if got, want := cfg.Tabs.ActiveColor, "#112233"; got != want {
+		t.Fatalf("Tabs.ActiveColor=%q want %q", got, want)
+	}
+}
+
+func TestDefaultConfigSerializesTabs(t *testing.T) {
+	out := string(mustMarshalConfig(t, DefaultConfig()))
+
+	for _, want := range []string{
+		"tabs:",
+		"width_mode: variable",
+		"max_width_dp:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("serialized config missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestNormalizeViewerShellSupportsPowerShellCmdAndWSL(t *testing.T) {
 	cases := []struct {
 		raw  string
@@ -600,6 +659,52 @@ func TestDefaultConfigDimsInactivePanes(t *testing.T) {
 	out := string(mustMarshalConfig(t, cfg))
 	if !strings.Contains(out, "dim_inactive_panes: true") {
 		t.Fatalf("serialized config missing general dim_inactive_panes:\n%s", out)
+	}
+}
+
+func TestDefaultConfigOpensFavoritesInNewTab(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if !cfg.General.OpenFavoritesInNewTab {
+		t.Fatal("general open_favorites_in_new_tab should default to true")
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "open_favorites_in_new_tab: true") {
+		t.Fatalf("serialized config missing general open_favorites_in_new_tab:\n%s", out)
+	}
+}
+
+func TestLoadConfigDefaultsFavoritesNewTabWhenFieldMissing(t *testing.T) {
+	raw := `
+general:
+  dim_inactive_panes: true
+`
+	cfg := DefaultConfig()
+	cfg.General.OpenFavoritesInNewTab = false
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if !cfg.General.OpenFavoritesInNewTab {
+		t.Fatal("general open_favorites_in_new_tab should stay enabled when yaml omits the field")
+	}
+}
+
+func TestLoadConfigAllowsFavoritesNewTabOptOut(t *testing.T) {
+	raw := `
+general:
+  open_favorites_in_new_tab: false
+`
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if cfg.General.OpenFavoritesInNewTab {
+		t.Fatal("general open_favorites_in_new_tab=false should be preserved")
 	}
 }
 

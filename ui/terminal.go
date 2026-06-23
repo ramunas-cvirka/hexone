@@ -619,19 +619,17 @@ func (ui *UI) SetInvalidateFunc(fn func()) {
 }
 
 func (ui *UI) Close() {
-	if ui == nil || ui.terminal == nil {
+	if ui == nil {
 		return
 	}
-	ui.terminal.Close()
+	ui.closeAllTerminalTabs()
 }
 
 func (ui *UI) ensureTerminalSession() *terminalSession {
 	if ui == nil {
 		return nil
 	}
-	if ui.terminal == nil {
-		ui.terminal = newTerminalSession(ui.invalidate, terminalConfiguredRows(ui.fmCfg))
-	}
+	ui.ensureTerminalTabs()
 	return ui.terminal
 }
 
@@ -3166,9 +3164,12 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		}
 
 		padX := gtx.Dp(unit.Dp(6))
-		padTop := gtx.Dp(unit.Dp(5))
+		padTop := gtx.Dp(unit.Dp(4))
 		padBottom := gtx.Dp(unit.Dp(4))
-		content := image.Rect(padX, padTop, size.X-padX, size.Y-padBottom)
+		tabH := gtx.Dp(unit.Dp(tabStripHeightDp))
+		tabRect := image.Rect(padX, padTop, size.X-padX, padTop+tabH)
+		contentTop := tabRect.Max.Y + gtx.Dp(unit.Dp(3))
+		content := image.Rect(padX, contentTop, size.X-padX, size.Y-padBottom)
 		if content.Dx() <= 0 || content.Dy() <= 0 {
 			return layout.Dimensions{Size: size}
 		}
@@ -3206,9 +3207,18 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		off.Pop()
 		ui.drawTerminalScrollbar(gtx, st)
 		event.Op(gtx.Ops, &st.keyTag)
+		pointerStack := clip.Rect(content).Push(gtx.Ops)
 		event.Op(gtx.Ops, &st.pointerTag)
+		pointerStack.Pop()
 		st.applyTerminalCursor(gtx, content)
 		ui.layoutTerminalContextMenu(th, gtx, st)
+		if tabRect.Dx() > 0 && tabRect.Dy() > 0 {
+			tabGtx := gtx
+			tabGtx.Constraints = layout.Exact(tabRect.Size())
+			off := op.Offset(tabRect.Min).Push(gtx.Ops)
+			ui.layoutTerminalTabStrip(th, tabGtx)
+			off.Pop()
+		}
 
 		return layout.Dimensions{Size: size}
 	})

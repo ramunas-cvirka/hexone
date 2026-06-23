@@ -29,11 +29,17 @@ type SessionPane struct {
 	Mode           string `yaml:"mode"`
 }
 
+type SessionPaneTabs struct {
+	Active int           `yaml:"active"`
+	Tabs   []SessionPane `yaml:"tabs"`
+}
+
 type SessionState struct {
-	Window     SessionWindow `yaml:"window"`
-	ActiveTab  string        `yaml:"active_tab"`
-	ActivePane int           `yaml:"active_pane"`
-	Panes      []SessionPane `yaml:"panes"`
+	Window       SessionWindow     `yaml:"window"`
+	ActiveTab    string            `yaml:"active_tab"`
+	ActivePane   int               `yaml:"active_pane"`
+	Panes        []SessionPane     `yaml:"panes"`
+	FilePaneTabs []SessionPaneTabs `yaml:"file_pane_tabs,omitempty"`
 }
 
 func DefaultSession() *SessionState {
@@ -106,19 +112,49 @@ func (s *SessionState) normalize() {
 
 	out := make([]SessionPane, 0, len(s.Panes))
 	for _, p := range s.Panes {
-		dir := strings.TrimSpace(p.Dir)
-		if dir != "" {
-			dir = filepath.Clean(dir)
-		}
-		out = append(out, SessionPane{
-			Dir:            dir,
-			SelectedPath:   strings.TrimSpace(p.SelectedPath),
-			SortKey:        normalizeSessionPaneSortKey(p.SortKey),
-			SortDescending: p.SortDescending,
-			Mode:           normalizeSessionPaneMode(p.Mode),
-		})
+		out = append(out, normalizeSessionPane(p))
 	}
 	s.Panes = out
+
+	groups := make([]SessionPaneTabs, 0, len(s.FilePaneTabs))
+	for _, group := range s.FilePaneTabs {
+		tabs := make([]SessionPane, 0, len(group.Tabs))
+		for _, tab := range group.Tabs {
+			tabs = append(tabs, normalizeSessionPane(tab))
+		}
+		if len(tabs) == 0 {
+			continue
+		}
+		active := group.Active
+		if active < 0 {
+			active = 0
+		}
+		if active >= len(tabs) {
+			active = len(tabs) - 1
+		}
+		groups = append(groups, SessionPaneTabs{
+			Active: active,
+			Tabs:   tabs,
+		})
+	}
+	if len(groups) == 0 {
+		groups = nil
+	}
+	s.FilePaneTabs = groups
+}
+
+func normalizeSessionPane(p SessionPane) SessionPane {
+	dir := strings.TrimSpace(p.Dir)
+	if dir != "" {
+		dir = filepath.Clean(dir)
+	}
+	return SessionPane{
+		Dir:            dir,
+		SelectedPath:   strings.TrimSpace(p.SelectedPath),
+		SortKey:        normalizeSessionPaneSortKey(p.SortKey),
+		SortDescending: p.SortDescending,
+		Mode:           normalizeSessionPaneMode(p.Mode),
+	}
 }
 
 func normalizeSessionPaneSortKey(raw string) string {

@@ -20,6 +20,7 @@ The viewer handles text, syntax-highlighted code, hex dumps, images, PDFs, and b
 
 **Browse**
 - Dual-pane layout — one pane for source, one for destination, or use both independently
+- Per-pane tabs, plus terminal tabs, with compact overflow controls
 - `brief` and `full` listing modes
 - Sort by name, date, extension, or size — flip direction with a single click
 - Favorites for instant access to frequent locations
