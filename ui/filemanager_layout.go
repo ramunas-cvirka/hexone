@@ -1286,7 +1286,9 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 		if !ok {
 			continue
 		}
-		if ui.terminalFocused(gtx) && terminalSurfaceFocusPointerEvent(pe) {
+		terminalFocusedBeforeEvent := ui.terminalFocused(gtx)
+		paneFocusedBeforeEvent := idx == ui.activeFilePane && !terminalFocusedBeforeEvent
+		if terminalFocusedBeforeEvent && terminalSurfaceFocusPointerEvent(pe) {
 			ui.releaseTerminalKeyboardFocus(gtx)
 		}
 		if idx != ui.activeFilePane {
@@ -1342,6 +1344,11 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 					continue
 				}
 				if row == selectedBefore && col == 0 && !pane.hasMarkedRows() {
+					if !paneFocusedBeforeEvent {
+						pane.clearPendingInlineNameEdit()
+						pane.clearTableClickState()
+						continue
+					}
 					if pane.registerTablePrimaryClick(row, col, gtx.Now, filePaneTableDoubleClickWindow) {
 						pane.clearPendingInlineNameEdit()
 						if col == pane.permissionColumnIndex() {

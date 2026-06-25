@@ -14,9 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -36,6 +38,64 @@ func TestLayoutFilePaneModeGlyphKeepsSameCanvasAcrossModes(t *testing.T) {
 
 	if full.Size != brief.Size {
 		t.Fatalf("mode glyph size should stay stable across modes, got full=%v brief=%v", full.Size, brief.Size)
+	}
+}
+
+func TestLayoutFilePaneTableSelectedRowClickQueuesInlineNameEditWhenPaneFocused(t *testing.T) {
+	ui, pane, router, gtx, th := testFilePaneTableClickSetup(t, 0)
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+	testQueueFilePaneTablePress(t, router, pane)
+
+	gtx.Now = gtx.Now.Add(time.Millisecond)
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+
+	if got := pane.inlineNamePendingRow; got != 0 {
+		t.Fatalf("pending inline name row=%d want selected row 0", got)
+	}
+	if pane.inlineNameEditing {
+		t.Fatal("selected-row click should queue inline rename after the double-click window, not start immediately")
+	}
+}
+
+func TestLayoutFilePaneTableSelectedRowClickActivatesInactivePaneWithoutInlineNameEdit(t *testing.T) {
+	ui, pane, router, gtx, th := testFilePaneTableClickSetup(t, 1)
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+	testQueueFilePaneTablePress(t, router, pane)
+
+	gtx.Now = gtx.Now.Add(time.Millisecond)
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+
+	if got := ui.activeFilePane; got != 0 {
+		t.Fatalf("active pane=%d want clicked pane 0", got)
+	}
+	if pane.inlineNamePendingRow >= 0 || pane.inlineNameEditing {
+		t.Fatalf("activation click should not start or queue inline rename, pending=%d editing=%v", pane.inlineNamePendingRow, pane.inlineNameEditing)
+	}
+	if pane.tableClickRow >= 0 || pane.tableClickCol >= 0 || !pane.tableClickAt.IsZero() {
+		t.Fatal("activation click should not become the first click of a later double-click")
+	}
+}
+
+func TestLayoutFilePaneTableSelectedRowClickReleasesTerminalFocusWithoutInlineNameEdit(t *testing.T) {
+	ui, pane, router, gtx, th := testFilePaneTableClickSetup(t, 0)
+	ui.terminal = newTerminalSession(nil)
+	ui.terminal.setActive(true)
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+
+	gtx.Execute(key.FocusCmd{Tag: &ui.terminal.keyTag})
+	if !ui.terminalFocused(gtx) {
+		t.Fatal("terminal should start focused")
+	}
+	testQueueFilePaneTablePress(t, router, pane)
+
+	gtx.Now = gtx.Now.Add(time.Millisecond)
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+
+	if ui.terminalFocused(gtx) {
+		t.Fatal("selected-row activation click should release terminal focus")
+	}
+	if pane.inlineNamePendingRow >= 0 || pane.inlineNameEditing {
+		t.Fatalf("terminal focus transfer click should not start or queue inline rename, pending=%d editing=%v", pane.inlineNamePendingRow, pane.inlineNameEditing)
 	}
 }
 
@@ -588,6 +648,58 @@ func favoriteMenuColorDistance(a, b color.NRGBA) int {
 		return v
 	}
 	return abs(int(a.R)-int(b.R)) + abs(int(a.G)-int(b.G)) + abs(int(a.B)-int(b.B))
+}
+
+func testFilePaneTableClickSetup(t *testing.T, activePane int) (*UI, *filePaneState, *input.Router, layout.Context, *material.Theme) {
+	t.Helper()
+	cfg := fm.DefaultConfig()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alpha.txt")
+	pane := newFilePaneState(dir, cfg)
+	pane.applyListing(filesys.Listing{
+		Dir: dir,
+		Entries: []filesys.Entry{
+			{Name: "alpha.txt", DisplayName: "alpha.txt", Path: path},
+		},
+	}, path, "", 0)
+	other := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{
+		fmCfg:          cfg,
+		filePanes:      []*filePaneState{pane, other},
+		activeFilePane: activePane,
+		held:           make(map[string]bool),
+	}
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Now:    time.Date(2026, time.March, 13, 12, 0, 0, 0, time.UTC),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(640, 260),
+		},
+	}
+	return ui, pane, router, gtx, material.NewTheme()
+}
+
+func testFilePaneTableFrame(ui *UI, th *material.Theme, router *input.Router, gtx *layout.Context, idx int, pane *filePaneState) {
+	gtx.Ops.Reset()
+	gtx.Source = router.Source()
+	ui.layoutFilePaneTable(th, *gtx, idx, pane)
+	router.Frame(gtx.Ops)
+}
+
+func testQueueFilePaneTablePress(t *testing.T, router *input.Router, pane *filePaneState) {
+	t.Helper()
+	rect, ok := pane.table.CellRect(0, 0, pane.model.Len())
+	if !ok {
+		t.Fatal("selected table cell should be visible after layout")
+	}
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonPrimary,
+		Position: f32.Pt(float32(rect.Min.X+rect.Dx()/2), float32(rect.Min.Y+rect.Dy()/2)),
+	})
 }
 
 func testFavoriteMenuLayoutContext(size image.Point, now time.Time) layout.Context {
