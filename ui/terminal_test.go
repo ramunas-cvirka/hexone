@@ -242,6 +242,12 @@ func TestTerminalNormalizeC1Controls(t *testing.T) {
 	if got, want := string(split), "✔\x1b[B"; got != want {
 		t.Fatalf("split UTF-8/C1 normalized=%q want %q", got, want)
 	}
+	var utf8C1Norm terminalOutputNormalizer
+	splitC1 := append([]byte{}, utf8C1Norm.normalize([]byte{0xc2})...)
+	splitC1 = append(splitC1, utf8C1Norm.normalize([]byte{0x9b, 'B'})...)
+	if got, want := string(splitC1), "\x1b[B"; got != want {
+		t.Fatalf("split UTF-8 encoded C1 normalized=%q want %q", got, want)
+	}
 	var boxNorm terminalOutputNormalizer
 	splitBox := append([]byte{}, boxNorm.normalize([]byte{0xe2})...)
 	splitBox = append(splitBox, boxNorm.normalize([]byte{0x95})...)
@@ -264,6 +270,22 @@ func TestTerminalC1CursorDownDoesNotPrintFinalByte(t *testing.T) {
 	}
 	if got := st.term.LineContent(2); !strings.Contains(got, "down") {
 		t.Fatalf("C1 CSI B did not move cursor down, row2=%q", got)
+	}
+}
+
+func TestTerminalUTF8EncodedC1CursorDownDoesNotPrintFinalByte(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.parserMu.Lock()
+	st.term.Resize(3, 24)
+	st.parserMu.Unlock()
+
+	st.writeOutput([]byte("top\r\nmid\xc2\x9bBdown"))
+
+	if got := st.term.LineContent(1); strings.Contains(got, "B") {
+		t.Fatalf("UTF-8 encoded C1 CSI final byte leaked into line: %q", got)
+	}
+	if got := st.term.LineContent(2); !strings.Contains(got, "down") {
+		t.Fatalf("UTF-8 encoded C1 CSI B did not move cursor down, row2=%q", got)
 	}
 }
 
@@ -380,6 +402,23 @@ func TestTerminalScrollRegionIncludesBottomRow(t *testing.T) {
 	}
 	if got := st.term.LineContent(23); !strings.HasPrefix(got, "status") {
 		t.Fatalf("delete-lines should not affect row24 outside scroll region, row24=%q", got)
+	}
+}
+
+func TestTerminalHomebrewCheckmarkLineFitsReportedWidth(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.parserMu.Lock()
+	st.term.Resize(3, 40)
+	st.parserMu.Unlock()
+
+	line := "✔ " + strings.Repeat("x", 36) + "KB"
+	st.writeOutput([]byte(line))
+
+	if got := st.term.LineContent(0); !strings.HasSuffix(got, "KB") {
+		t.Fatalf("status line should keep trailing KB on row 0: %q", got)
+	}
+	if got := st.term.LineContent(1); strings.Contains(got, "B") {
+		t.Fatalf("status line leaked trailing B to row 1: %q", got)
 	}
 }
 

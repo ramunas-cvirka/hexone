@@ -229,6 +229,12 @@ func newTerminalSession(invalidate func(), preferredRows ...int) *terminalSessio
 
 func (s *terminalSession) terminalMiddleware() *headlessterm.Middleware {
 	return &headlessterm.Middleware{
+		Input: func(r rune, next func(rune)) {
+			if s.inputTerminalNarrowRune(r, next) {
+				return
+			}
+			next(r)
+		},
 		SetMode: func(mode ansicode.TerminalMode, next func(ansicode.TerminalMode)) {
 			s.setTerminalMode(mode, true)
 			next(mode)
@@ -286,6 +292,48 @@ func (s *terminalSession) terminalMiddleware() *headlessterm.Middleware {
 			s.resetTerminalModes()
 			next()
 		},
+	}
+}
+
+func (s *terminalSession) inputTerminalNarrowRune(r rune, next func(rune)) bool {
+	if !terminalNarrowStatusRune(r) || s == nil || s.term == nil {
+		return false
+	}
+	// Homebrew emits these as one-cell text symbols; write a one-cell glyph
+	// with current attributes, then restore the original rune in that cell.
+	beforeRow, beforeCol := s.term.CursorPos()
+	next(' ')
+	row, col := s.term.CursorPos()
+	writeRow, writeCol := row, col-1
+	if writeCol < 0 {
+		writeRow, writeCol = beforeRow, beforeCol
+		if cols := s.term.Cols(); cols > 0 && writeCol >= cols {
+			writeCol = cols - 1
+		}
+	}
+	cell := s.term.Cell(writeRow, writeCol)
+	if cell == nil {
+		return true
+	}
+	cell.Char = r
+	cell.ClearFlag(headlessterm.CellFlagWideChar | headlessterm.CellFlagWideCharSpacer)
+	cell.MarkDirty()
+	if nextCell := s.term.Cell(writeRow, writeCol+1); nextCell != nil && nextCell.HasFlag(headlessterm.CellFlagWideCharSpacer) {
+		blank := cell.Copy()
+		blank.Char = ' '
+		blank.ClearFlag(headlessterm.CellFlagWideChar | headlessterm.CellFlagWideCharSpacer)
+		*nextCell = blank
+		nextCell.MarkDirty()
+	}
+	return true
+}
+
+func terminalNarrowStatusRune(r rune) bool {
+	switch r {
+	case '✔', '✘':
+		return true
+	default:
+		return false
 	}
 }
 
@@ -992,7 +1040,7 @@ func (s *terminalSession) writeOutput(data []byte) {
 }
 
 type terminalOutputNormalizer struct {
-	utf8Cont int
+	pending []byte
 }
 
 func terminalNormalizeC1Controls(data []byte) []byte {
@@ -1002,31 +1050,50 @@ func terminalNormalizeC1Controls(data []byte) []byte {
 
 func (n *terminalOutputNormalizer) normalize(data []byte) []byte {
 	var out []byte
-	for i := 0; i < len(data); i++ {
+	if len(n.pending) > 0 {
+		merged := make([]byte, 0, len(n.pending)+len(data))
+		merged = append(merged, n.pending...)
+		merged = append(merged, data...)
+		data = merged
+		n.pending = n.pending[:0]
+	}
+	for i := 0; i < len(data); {
 		b := data[i]
-		if n.utf8Cont > 0 {
-			if out != nil {
-				out = append(out, b)
-			}
-			if b&0xc0 == 0x80 {
-				n.utf8Cont--
-			} else {
-				n.utf8Cont = 0
-			}
-			continue
-		}
 		if cont := terminalUTF8ContinuationCount(b); cont > 0 {
-			if out != nil {
-				out = append(out, b)
+			size := cont + 1
+			if i+size > len(data) {
+				n.pending = append(n.pending[:0], data[i:]...)
+				if out == nil {
+					return data[:i]
+				}
+				return out
 			}
-			n.utf8Cont = cont
-			continue
+			seq := data[i : i+size]
+			if utf8.Valid(seq) {
+				if size == 2 && b == 0xc2 {
+					if repl, ok := terminalC1Replacement(seq[1]); ok {
+						if out == nil {
+							out = make([]byte, 0, len(data)+2)
+							out = append(out, data[:i]...)
+						}
+						out = append(out, repl...)
+						i += size
+						continue
+					}
+				}
+				if out != nil {
+					out = append(out, seq...)
+				}
+				i += size
+				continue
+			}
 		}
 		repl, ok := terminalC1Replacement(b)
 		if !ok {
 			if out != nil {
 				out = append(out, b)
 			}
+			i++
 			continue
 		}
 		if out == nil {
@@ -1034,6 +1101,7 @@ func (n *terminalOutputNormalizer) normalize(data []byte) []byte {
 			out = append(out, data[:i]...)
 		}
 		out = append(out, repl...)
+		i++
 	}
 	if out == nil {
 		return data
