@@ -58,8 +58,9 @@ const (
 )
 
 const (
-	terminalSelectAutoScrollDelay = 120 * time.Millisecond
-	terminalSelectAutoScrollTick  = 55 * time.Millisecond
+	terminalSelectAutoScrollTick   = 50 * time.Millisecond
+	terminalSelectAutoScrollNearPx = 20
+	terminalSelectAutoScrollMidPx  = 64
 )
 
 const (
@@ -172,6 +173,7 @@ type terminalSession struct {
 	selectionPointer    pointer.ID
 	selectionLastPos    image.Point
 	autoScrollDir       int
+	autoScrollStep      int
 	autoScrollAt        time.Time
 	menuOpen            bool
 	menuPos             image.Point
@@ -1476,6 +1478,7 @@ func (s *terminalSession) beginSelection(pos image.Point, content image.Rectangl
 	s.selectionPointer = id
 	s.selectionLastPos = pos
 	s.autoScrollDir = 0
+	s.autoScrollStep = 0
 	s.autoScrollAt = time.Time{}
 	s.viewMu.Unlock()
 	return true
@@ -1500,33 +1503,73 @@ func (s *terminalSession) updateSelection(pos image.Point, content image.Rectang
 }
 
 func (s *terminalSession) updateSelectionAutoScrollLocked(pos image.Point, content image.Rectangle, now time.Time) bool {
-	margin := content.Dy() / 6
+	dir, step := terminalSelectionAutoScrollParams(pos, content)
+	prevDir := s.autoScrollDir
+	prevStep := s.autoScrollStep
+	prevAt := s.autoScrollAt
+	s.autoScrollDir = dir
+	s.autoScrollStep = step
+	if dir == 0 || step <= 0 {
+		s.autoScrollAt = time.Time{}
+		return prevDir != 0 || prevStep != 0 || !prevAt.IsZero()
+	}
+	if prevDir != dir || prevStep != step {
+		s.autoScrollAt = now
+		return true
+	}
+	if s.autoScrollAt.IsZero() {
+		s.autoScrollAt = now.Add(terminalSelectAutoScrollTick)
+		return true
+	}
+	return false
+}
+
+func terminalSelectionAutoScrollParams(pos image.Point, content image.Rectangle) (dir, step int) {
+	if content.Dx() <= 0 || content.Dy() <= 0 {
+		return 0, 0
+	}
+	margin := terminalSelectionAutoScrollMargin(content.Dy())
+	if margin <= 0 {
+		return 0, 0
+	}
+	topEdge := content.Min.Y + margin
+	bottomEdge := content.Max.Y - margin
+	dist := 0
+	switch {
+	case pos.Y < topEdge:
+		dir = 1
+		dist = topEdge - pos.Y
+	case pos.Y >= bottomEdge:
+		dir = -1
+		dist = pos.Y - bottomEdge + 1
+	default:
+		return 0, 0
+	}
+	return dir, terminalSelectionAutoScrollStep(dist)
+}
+
+func terminalSelectionAutoScrollMargin(height int) int {
+	margin := height / 6
 	if margin < 18 {
 		margin = 18
 	}
 	if margin > 48 {
 		margin = 48
 	}
-	dir := 0
-	if pos.Y < content.Min.Y+margin {
-		dir = 1
-	} else if pos.Y >= content.Max.Y-margin {
-		dir = -1
+	if height > 0 && margin*2 >= height {
+		margin = height / 2
 	}
-	if dir == s.autoScrollDir {
-		if dir != 0 && s.autoScrollAt.IsZero() {
-			s.autoScrollAt = now.Add(terminalSelectAutoScrollDelay)
-			return true
-		}
-		return false
+	return margin
+}
+
+func terminalSelectionAutoScrollStep(dist int) int {
+	if dist > terminalSelectAutoScrollMidPx {
+		return 7
 	}
-	s.autoScrollDir = dir
-	if dir == 0 {
-		s.autoScrollAt = time.Time{}
-	} else {
-		s.autoScrollAt = now.Add(terminalSelectAutoScrollDelay)
+	if dist > terminalSelectAutoScrollNearPx {
+		return 4
 	}
-	return true
+	return 2
 }
 
 func (s *terminalSession) endSelection(id pointer.ID) bool {
@@ -1546,6 +1589,7 @@ func (s *terminalSession) endSelection(id pointer.ID) bool {
 	s.selectionSelecting = false
 	s.selectionMoved = false
 	s.autoScrollDir = 0
+	s.autoScrollStep = 0
 	s.autoScrollAt = time.Time{}
 	return changed
 }
@@ -1556,7 +1600,7 @@ func (s *terminalSession) selectionAutoScrollNext() (time.Time, bool) {
 	}
 	s.viewMu.Lock()
 	defer s.viewMu.Unlock()
-	if !s.selectionSelecting || s.autoScrollDir == 0 || s.autoScrollAt.IsZero() {
+	if !s.selectionSelecting || s.autoScrollDir == 0 || s.autoScrollStep <= 0 || s.autoScrollAt.IsZero() {
 		return time.Time{}, false
 	}
 	return s.autoScrollAt, true
@@ -1567,18 +1611,20 @@ func (s *terminalSession) runSelectionAutoScroll(now time.Time, content image.Re
 		return false
 	}
 	s.viewMu.Lock()
-	if !s.selectionSelecting || s.autoScrollDir == 0 || s.autoScrollAt.IsZero() || now.Before(s.autoScrollAt) {
+	if !s.selectionSelecting || s.autoScrollDir == 0 || s.autoScrollStep <= 0 || s.autoScrollAt.IsZero() || now.Before(s.autoScrollAt) {
 		s.viewMu.Unlock()
 		return false
 	}
 	dir := s.autoScrollDir
+	step := s.autoScrollStep
 	lastPos := s.selectionLastPos
 	s.autoScrollAt = now.Add(terminalSelectAutoScrollTick)
 	s.viewMu.Unlock()
 
-	if !s.scrollByLines(dir) {
+	if !s.scrollByLines(dir * step) {
 		s.viewMu.Lock()
 		s.autoScrollDir = 0
+		s.autoScrollStep = 0
 		s.autoScrollAt = time.Time{}
 		s.viewMu.Unlock()
 		return false
@@ -1614,6 +1660,7 @@ func (s *terminalSession) selectAll() bool {
 	s.selectionStart = terminalPoint{Row: startRow, Col: 0}
 	s.selectionEnd = terminalPoint{Row: endRow, Col: cols - 1}
 	s.autoScrollDir = 0
+	s.autoScrollStep = 0
 	s.autoScrollAt = time.Time{}
 	changed := !prevActive || prevStart != s.selectionStart || prevEnd != s.selectionEnd
 	s.viewMu.Unlock()
@@ -1630,6 +1677,7 @@ func (s *terminalSession) clearSelection() bool {
 	s.selectionSelecting = false
 	s.selectionMoved = false
 	s.autoScrollDir = 0
+	s.autoScrollStep = 0
 	s.autoScrollAt = time.Time{}
 	s.viewMu.Unlock()
 	return changed
@@ -3217,6 +3265,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		if size.X <= 0 || size.Y <= 0 {
 			return layout.Dimensions{Size: size}
 		}
+		terminalFocused := gtx.Focused(&st.keyTag)
 		paint.FillShape(gtx.Ops, terminalBG, clip.Rect(image.Rectangle{Max: size}).Op())
 		paint.FillShape(gtx.Ops, terminalBorder, clip.Rect(image.Rect(0, 0, size.X, 1)).Op())
 		if st.resizeHandleActive() {
@@ -3226,6 +3275,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
 		key.InputHintOp{Tag: &st.keyTag, Hint: key.HintText}.Add(gtx.Ops)
 		if st.wantFocus {
+			terminalFocused = true
 			st.wantFocus = false
 			gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
 			gtx.Execute(key.SoftKeyboardCmd{Show: true})
@@ -3271,7 +3321,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		contentGtx := gtx
 		contentGtx.Constraints = layout.Constraints{Max: content.Size()}
 		off := op.Offset(content.Min).Push(gtx.Ops)
-		ui.drawTerminalGrid(th, contentGtx, st, cellW, cellH, gtx.Focused(&st.keyTag))
+		ui.drawTerminalGrid(th, contentGtx, st, cellW, cellH, terminalFocused)
 		off.Pop()
 		ui.drawTerminalScrollbar(gtx, st)
 		event.Op(gtx.Ops, &st.keyTag)
@@ -3279,7 +3329,6 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		event.Op(gtx.Ops, &st.pointerTag)
 		pointerStack.Pop()
 		st.applyTerminalCursor(gtx, content)
-		ui.layoutTerminalContextMenu(th, gtx, st)
 		if tabRect.Dx() > 0 && tabRect.Dy() > 0 {
 			tabGtx := gtx
 			tabGtx.Constraints = layout.Exact(tabRect.Size())
@@ -3287,6 +3336,12 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 			ui.layoutTerminalTabStrip(th, tabGtx)
 			off.Pop()
 		}
+		if !terminalFocused {
+			if shade := filePaneInactiveShadeColor(ui.fmCfg, terminalBG); shade.A != 0 {
+				paint.FillShape(gtx.Ops, shade, clip.Rect(image.Rectangle{Max: size}).Op())
+			}
+		}
+		ui.layoutTerminalContextMenu(th, gtx, st)
 
 		return layout.Dimensions{Size: size}
 	})

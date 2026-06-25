@@ -1480,6 +1480,86 @@ func TestTerminalResizeDragSnapsByRows(t *testing.T) {
 	}
 }
 
+func TestTerminalSelectionAutoScrollParamsUseDistanceTiers(t *testing.T) {
+	content := image.Rect(0, 0, 120, 120)
+
+	nearDir, nearStep := terminalSelectionAutoScrollParams(image.Pt(40, 105), content)
+	farDir, farStep := terminalSelectionAutoScrollParams(image.Pt(40, 170), content)
+	topDir, topStep := terminalSelectionAutoScrollParams(image.Pt(40, -70), content)
+
+	if nearDir != -1 || farDir != -1 {
+		t.Fatalf("bottom autoscroll dirs near=%d far=%d want both -1", nearDir, farDir)
+	}
+	if nearStep >= farStep {
+		t.Fatalf("bottom autoscroll steps near=%d far=%d want far > near", nearStep, farStep)
+	}
+	if topDir != 1 || topStep != farStep {
+		t.Fatalf("top autoscroll dir/step=%d/%d want 1/%d", topDir, topStep, farStep)
+	}
+}
+
+func TestTerminalSelectionAutoScrollDoesNotDelayDueTickOnMove(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	later := now.Add(2 * terminalSelectAutoScrollTick)
+	content := image.Rect(0, 0, 120, 120)
+	st := newTerminalSession(nil)
+
+	st.viewMu.Lock()
+	st.selectionSelecting = true
+	st.autoScrollDir = -1
+	st.autoScrollStep = 4
+	st.autoScrollAt = now
+	st.updateSelectionAutoScrollLocked(image.Pt(40, 130), content, later)
+	got := st.autoScrollAt
+	st.viewMu.Unlock()
+
+	if got.After(later) {
+		t.Fatalf("terminal autoScrollAt=%v should stay due at or before %v", got, later)
+	}
+}
+
+func TestTerminalSelectionAutoScrollSpeedChangeIsImmediate(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	later := now.Add(2 * terminalSelectAutoScrollTick)
+	content := image.Rect(0, 0, 120, 120)
+	st := newTerminalSession(nil)
+
+	st.viewMu.Lock()
+	st.selectionSelecting = true
+	st.autoScrollDir = -1
+	st.autoScrollStep = 2
+	st.autoScrollAt = now
+	st.updateSelectionAutoScrollLocked(image.Pt(40, 170), content, later)
+	gotDir, gotStep, gotAt := st.autoScrollDir, st.autoScrollStep, st.autoScrollAt
+	st.viewMu.Unlock()
+
+	if gotDir != -1 || gotStep != 7 {
+		t.Fatalf("terminal autoscroll dir/step=%d/%d want -1/7", gotDir, gotStep)
+	}
+	if !gotAt.Equal(later) {
+		t.Fatalf("terminal autoScrollAt after speed change=%v want %v", gotAt, later)
+	}
+}
+
+func TestTerminalSelectionAutoScrollStopsOnReentry(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	content := image.Rect(0, 0, 120, 120)
+	st := newTerminalSession(nil)
+
+	st.viewMu.Lock()
+	st.selectionSelecting = true
+	st.autoScrollDir = -1
+	st.autoScrollStep = 7
+	st.autoScrollAt = now
+	st.updateSelectionAutoScrollLocked(image.Pt(40, 60), content, now.Add(terminalSelectAutoScrollTick))
+	gotDir, gotStep, gotAt := st.autoScrollDir, st.autoScrollStep, st.autoScrollAt
+	st.viewMu.Unlock()
+
+	if gotDir != 0 || gotStep != 0 || !gotAt.IsZero() {
+		t.Fatalf("terminal autoscroll should stop on reentry, got dir=%d step=%d at=%v", gotDir, gotStep, gotAt)
+	}
+}
+
 func TestTerminalResizeHandleGeometryUsesLaidOutPaneHeight(t *testing.T) {
 	rootGtx := testTerminalPaneHeightContext(image.Pt(1200, 800))
 	paneGtx := testTerminalPaneHeightContext(image.Pt(1200, 680))
