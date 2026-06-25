@@ -56,6 +56,28 @@ func TestFilePaneTabsAddActivateAndClose(t *testing.T) {
 	}
 }
 
+func TestActivateFilePaneTabPreservesScrollAnchor(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	tabs := []*filePaneState{
+		newFilePaneState(filepath.Join(t.TempDir(), "alpha"), cfg),
+		newFilePaneState(filepath.Join(t.TempDir(), "beta"), cfg),
+		newFilePaneState(filepath.Join(t.TempDir(), "gamma"), cfg),
+		newFilePaneState(filepath.Join(t.TempDir(), "delta"), cfg),
+	}
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{tabs[3]},
+		filePaneTabs: []filePaneTabSet{{tabs: tabs, active: 3, scroll: 3}},
+	}
+
+	if !ui.activateFilePaneTab(0, 2) {
+		t.Fatal("activateFilePaneTab should switch tabs")
+	}
+	if got, want := ui.filePaneTabs[0].scroll, 3; got != want {
+		t.Fatalf("scroll anchor=%d want preserved %d", got, want)
+	}
+}
+
 func TestFilePaneTabCloseButtonDoesNotSelectInactiveTab(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	first := newFilePaneState(filepath.Join(t.TempDir(), "alpha"), cfg)
@@ -198,6 +220,100 @@ func TestTabStripPlanUsesScrollControlsWhenOverflowing(t *testing.T) {
 	}
 }
 
+func TestTabStripPlanBackfillsWhenAnchoredAtEnd(t *testing.T) {
+	plan := tabStripPlan([]int{80, 80, 80, 80}, 320, 22, 3)
+
+	if !plan.overflow {
+		t.Fatal("plan should overflow")
+	}
+	if got, want := plan.start, 1; got != want {
+		t.Fatalf("plan start=%d want %d to show a filled suffix", got, want)
+	}
+	if got, want := plan.end, 4; got != want {
+		t.Fatalf("plan end=%d want %d", got, want)
+	}
+}
+
+func TestTabStripPlanNextAnchorAdvancesAfterBackfilledStart(t *testing.T) {
+	widths := []int{80, 80, 80, 80, 80}
+	first := tabStripPlan(widths, 320, 22, 0)
+	if got, want := first.start, 0; got != want {
+		t.Fatalf("first start=%d want %d", got, want)
+	}
+	if got, want := first.end, 3; got != want {
+		t.Fatalf("first end=%d want %d", got, want)
+	}
+
+	nextAnchor := tabStripNextScrollAnchor(first, len(widths))
+	if got, want := nextAnchor, 1; got != want {
+		t.Fatalf("next anchor=%d want %d", got, want)
+	}
+	next := tabStripPlan(widths, 320, 22, nextAnchor)
+	if got, want := next.start, 1; got != want {
+		t.Fatalf("next start=%d want %d", got, want)
+	}
+	if got, want := next.end, 4; got != want {
+		t.Fatalf("next end=%d want %d", got, want)
+	}
+
+	secondAnchor := tabStripNextScrollAnchor(next, len(widths))
+	if got, want := secondAnchor, 2; got != want {
+		t.Fatalf("second next anchor=%d want %d", got, want)
+	}
+	second := tabStripPlan(widths, 320, 22, secondAnchor)
+	if got, want := second.start, 2; got != want {
+		t.Fatalf("second start=%d want %d", got, want)
+	}
+	if got, want := second.end, 5; got != want {
+		t.Fatalf("second end=%d want %d", got, want)
+	}
+}
+
+func TestTabStripPlanShrinksTabsBeforeOverflowing(t *testing.T) {
+	plan := tabStripPlanWithMin([]int{100, 100, 100}, []int{44, 44, 44}, 280, 22, 2)
+
+	if plan.overflow {
+		t.Fatal("tabs should moderately shrink to fit before scroll controls appear")
+	}
+	if got, want := plan.start, 0; got != want {
+		t.Fatalf("plan start=%d want %d", got, want)
+	}
+	if got, want := plan.end, 3; got != want {
+		t.Fatalf("plan end=%d want %d", got, want)
+	}
+	if len(plan.widths) != 3 {
+		t.Fatalf("fit width count=%d want 3", len(plan.widths))
+	}
+	for i, w := range plan.widths {
+		if w < 80 || w > 100 {
+			t.Fatalf("fit width[%d]=%d want between comfortable min and preferred", i, w)
+		}
+	}
+}
+
+func TestTabStripPlanOverflowsBeforeOverShrinkingTabs(t *testing.T) {
+	plan := tabStripPlanWithMin([]int{100, 100, 100}, []int{44, 44, 44}, 240, 22, 2)
+
+	if !plan.overflow {
+		t.Fatal("tabs should overflow instead of shrinking all the way to the hard minimum")
+	}
+}
+
+func TestTabStripPlanOverflowWidthsFillAvailableStrip(t *testing.T) {
+	available := 320
+	controlW := 22
+	plan := tabStripPlan([]int{80, 80, 80, 80}, available, controlW, 3)
+
+	used := 3 * controlW
+	used += (len(plan.widths) + 2) * tabStripSeparatorWidth(layout.Context{})
+	for _, w := range plan.widths {
+		used += w
+	}
+	if got, want := used, available; got != want {
+		t.Fatalf("overflow strip used width=%d want %d", got, want)
+	}
+}
+
 func TestNavigateFavoriteOpensNewFilePaneTabByDefault(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	ui := NewUI(cfg)
@@ -294,5 +410,31 @@ func TestTerminalPaneTabStripAddButtonHandlesPointerClick(t *testing.T) {
 	}
 	if got, want := ui.terminalTabs.active, 1; got != want {
 		t.Fatalf("active terminal tab=%d want %d", got, want)
+	}
+}
+
+func TestActivateTerminalTabPreservesScrollAnchor(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	sessions := []*terminalSession{
+		newTerminalSession(nil),
+		newTerminalSession(nil),
+		newTerminalSession(nil),
+		newTerminalSession(nil),
+	}
+	ui := &UI{
+		fmCfg: cfg,
+		terminalTabs: terminalTabSet{
+			sessions: sessions,
+			active:   3,
+			scroll:   3,
+		},
+		terminal: sessions[3],
+	}
+
+	if !ui.activateTerminalTab(2) {
+		t.Fatal("activateTerminalTab should switch tabs")
+	}
+	if got, want := ui.terminalTabs.scroll, 3; got != want {
+		t.Fatalf("terminal scroll anchor=%d want preserved %d", got, want)
 	}
 }

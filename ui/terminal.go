@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -61,6 +62,8 @@ const (
 	terminalSelectAutoScrollTick   = 50 * time.Millisecond
 	terminalSelectAutoScrollNearPx = 20
 	terminalSelectAutoScrollMidPx  = 64
+	terminalDoubleClickDur         = 420 * time.Millisecond
+	terminalDoubleClickDist        = 6
 )
 
 const (
@@ -86,6 +89,7 @@ var (
 	terminalGetenv            = os.Getenv
 	readTerminalClipboardText = platform.ReadClipboardTextNow
 	terminalProcessSSHTarget  = detectTerminalProcessSSHTarget
+	terminalWordSelectRE      = regexp.MustCompile(`[A-Za-z0-9_./\\~:@%+=-]+`)
 )
 
 type TerminalCell struct {
@@ -172,6 +176,9 @@ type terminalSession struct {
 	selectionEnd        terminalPoint
 	selectionPointer    pointer.ID
 	selectionLastPos    image.Point
+	lastPrimaryPressed  bool
+	lastPrimaryPressAt  time.Time
+	lastPrimaryPressPos image.Point
 	autoScrollDir       int
 	autoScrollStep      int
 	autoScrollAt        time.Time
@@ -1482,6 +1489,132 @@ func (s *terminalSession) beginSelection(pos image.Point, content image.Rectangl
 	s.autoScrollAt = time.Time{}
 	s.viewMu.Unlock()
 	return true
+}
+
+func (s *terminalSession) registerPrimaryPress(now time.Time, pos image.Point) bool {
+	if s == nil {
+		return false
+	}
+	s.viewMu.Lock()
+	defer s.viewMu.Unlock()
+	if s.lastPrimaryPressed {
+		dt := now.Sub(s.lastPrimaryPressAt)
+		if dt < 0 {
+			dt = -dt
+		}
+		dx := pos.X - s.lastPrimaryPressPos.X
+		if dx < 0 {
+			dx = -dx
+		}
+		dy := pos.Y - s.lastPrimaryPressPos.Y
+		if dy < 0 {
+			dy = -dy
+		}
+		if dt <= terminalDoubleClickDur && dx <= terminalDoubleClickDist && dy <= terminalDoubleClickDist {
+			s.lastPrimaryPressed = false
+			return true
+		}
+	}
+	s.lastPrimaryPressed = true
+	s.lastPrimaryPressAt = now
+	s.lastPrimaryPressPos = pos
+	return false
+}
+
+func (s *terminalSession) selectWordAtPosition(pos image.Point, content image.Rectangle, cellW, cellH int) bool {
+	pt, ok := s.terminalPointFromPosition(pos, content, cellW, cellH)
+	if !ok {
+		return false
+	}
+	return s.selectWordAtPoint(pt)
+}
+
+func (s *terminalSession) selectWordAtPoint(pt terminalPoint) bool {
+	if s == nil || s.term == nil {
+		return false
+	}
+	s.parserMu.Lock()
+	rows, cols := s.term.Rows(), s.term.Cols()
+	scrollback := s.term.ScrollbackLen()
+	alternate := s.term.IsAlternateScreen()
+	maxRow := rows - 1
+	if !alternate {
+		maxRow = scrollback + rows - 1
+	}
+	if rows <= 0 || cols <= 0 || pt.Row < 0 || pt.Row > maxRow || pt.Col < 0 || pt.Col >= cols {
+		s.parserMu.Unlock()
+		return false
+	}
+	lineText, byteCols := s.virtualLineTextWithColumnMap(pt.Row, cols, scrollback, alternate)
+	s.parserMu.Unlock()
+	if lineText == "" || len(byteCols) == 0 {
+		return false
+	}
+
+	targetStart, targetEnd := -1, -1
+	for _, loc := range terminalWordSelectRE.FindAllStringIndex(lineText, -1) {
+		if len(loc) != 2 || loc[0] < 0 || loc[1] <= loc[0] || loc[1] > len(byteCols) {
+			continue
+		}
+		startCol := byteCols[loc[0]]
+		endCol := byteCols[loc[1]-1]
+		if terminalWordSpanContainsCol(startCol, endCol, pt.Col) ||
+			(pt.Col > 0 && terminalWordSpanContainsCol(startCol, endCol, pt.Col-1)) {
+			targetStart = startCol
+			targetEnd = endCol
+			break
+		}
+	}
+	if targetStart < 0 || targetEnd < targetStart {
+		return false
+	}
+
+	s.viewMu.Lock()
+	s.selectionActive = true
+	s.selectionSelecting = false
+	s.selectionMoved = false
+	s.selectionStart = terminalPoint{Row: pt.Row, Col: targetStart}
+	s.selectionEnd = terminalPoint{Row: pt.Row, Col: targetEnd}
+	s.selectionPointer = 0
+	s.autoScrollDir = 0
+	s.autoScrollStep = 0
+	s.autoScrollAt = time.Time{}
+	s.viewMu.Unlock()
+	return true
+}
+
+func (s *terminalSession) virtualLineTextWithColumnMap(row, cols, scrollback int, alternate bool) (string, []int) {
+	if s == nil || cols <= 0 {
+		return "", nil
+	}
+	var b strings.Builder
+	byteCols := make([]int, 0, cols)
+	lastNonSpaceByte := -1
+	for col := 0; col < cols; col++ {
+		r := ' '
+		if cell, ok := s.virtualCell(row, col, scrollback, alternate); ok {
+			tc := terminalCellFromHeadless(cell)
+			if tc.Rune != 0 {
+				r = tc.Rune
+			}
+		}
+		start := b.Len()
+		b.WriteRune(r)
+		for i := start; i < b.Len(); i++ {
+			byteCols = append(byteCols, col)
+		}
+		if !unicode.IsSpace(r) {
+			lastNonSpaceByte = b.Len()
+		}
+	}
+	if lastNonSpaceByte <= 0 {
+		return "", nil
+	}
+	return b.String()[:lastNonSpaceByte], byteCols[:lastNonSpaceByte]
+}
+
+func terminalWordSpanContainsCol(start, end, col int) bool {
+	return col >= start && col <= end
 }
 
 func (s *terminalSession) updateSelection(pos image.Point, content image.Rectangle, cellW, cellH int, now time.Time) bool {
@@ -4374,6 +4507,14 @@ func (s *terminalSession) handlePointer(gtx layout.Context, content image.Rectan
 					continue
 				}
 			}
+			if pe.Buttons.Contain(pointer.ButtonTertiary) {
+				s.closeContextMenu()
+				if viewerPointInRect(pos, content) {
+					_ = s.pasteText(gtx)
+				}
+				handled = true
+				continue
+			}
 			if pe.Buttons.Contain(pointer.ButtonSecondary) {
 				s.openContextMenu(pos, gtx.Now)
 				handled = true
@@ -4390,6 +4531,11 @@ func (s *terminalSession) handlePointer(gtx layout.Context, content image.Rectan
 			if pe.Buttons.Contain(pointer.ButtonPrimary) {
 				s.closeContextMenu()
 				if viewerPointInRect(pos, content) {
+					doubleClick := s.registerPrimaryPress(gtx.Now, pos)
+					if doubleClick && s.selectWordAtPosition(pos, content, cellW, cellH) {
+						handled = true
+						continue
+					}
 					if s.beginSelection(pos, content, cellW, cellH, pe.PointerID) {
 						gtx.Execute(pointer.GrabCmd{Tag: &s.pointerTag, ID: pe.PointerID})
 					}

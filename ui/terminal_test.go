@@ -745,6 +745,101 @@ func TestTerminalWheelFocusesTerminal(t *testing.T) {
 	}
 }
 
+func TestTerminalMiddleClickPastesClipboardToProcess(t *testing.T) {
+	oldRead := readTerminalClipboardText
+	readTerminalClipboardText = func() (string, error) {
+		return "echo middle", nil
+	}
+	defer func() {
+		readTerminalClipboardText = oldRead
+	}()
+
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testPointerContext()
+	registerPointerTag(router, gtx.Ops, &st.pointerTag)
+	primePointerFilter(router, &st.pointerTag)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonTertiary,
+		Position: f32.Pt(40, 40),
+	})
+
+	if !st.handlePointer(gtx, image.Rect(0, 0, 240, 160), 8, 16) {
+		t.Fatal("middle click should be handled")
+	}
+	if got, want := proc.String(), "echo middle"; got != want {
+		t.Fatalf("middle click pasted bytes=%q want %q", got, want)
+	}
+}
+
+func TestTerminalMiddleClickReportsMouseWhenEnabled(t *testing.T) {
+	oldRead := readTerminalClipboardText
+	readTerminalClipboardText = func() (string, error) {
+		return "should-not-paste", nil
+	}
+	defer func() {
+		readTerminalClipboardText = oldRead
+	}()
+
+	st := newTerminalSession(nil)
+	st.writeOutput([]byte("\x1b[?1000h\x1b[?1006h"))
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testPointerContext()
+	registerPointerTag(router, gtx.Ops, &st.pointerTag)
+	primePointerFilter(router, &st.pointerTag)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonTertiary,
+		Position: f32.Pt(20, 20),
+	})
+
+	if !st.handlePointer(gtx, image.Rect(0, 0, 240, 160), 8, 16) {
+		t.Fatal("middle click mouse report should be handled")
+	}
+	if got, want := proc.String(), "\x1b[<1;3;2M"; got != want {
+		t.Fatalf("middle click mouse report=%q want %q", got, want)
+	}
+}
+
+func TestTerminalPrimaryDoubleClickSelectsShellToken(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.writeOutput([]byte("open ~/src/hexone/path-1.2 and user@host:22"))
+
+	gtx, router := testPointerContext()
+	gtx.Now = time.Date(2026, time.March, 13, 12, 0, 0, 0, time.UTC)
+	registerPointerTag(router, gtx.Ops, &st.pointerTag)
+	primePointerFilter(router, &st.pointerTag)
+	pos := f32.Pt(float32(10*8+1), float32(8))
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonPrimary,
+		Position: pos,
+	})
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonPrimary,
+		Position: pos,
+	})
+
+	if !st.handlePointer(gtx, image.Rect(0, 0, 240, 160), 8, 16) {
+		t.Fatal("double click should be handled")
+	}
+	if got, want := st.selectedText(false), "~/src/hexone/path-1.2"; got != want {
+		t.Fatalf("double-click selected text=%q want %q", got, want)
+	}
+}
+
 func TestTerminalContextMenuIncludesPaste(t *testing.T) {
 	ui := &UI{}
 	st := newTerminalSession(nil)
@@ -1295,6 +1390,21 @@ func TestTerminalSelectedTextRange(t *testing.T) {
 
 	if got := st.selectedText(false); got != "bcd" {
 		t.Fatalf("selectedText=%q want bcd", got)
+	}
+}
+
+func TestTerminalSelectWordAtPointStopsAtPunctuation(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.writeOutput([]byte(`echo "alpha,beta"`))
+
+	if st.selectWordAtPoint(terminalPoint{Row: 0, Col: 5}) {
+		t.Fatal("quote should not be selected as part of a terminal word")
+	}
+	if !st.selectWordAtPoint(terminalPoint{Row: 0, Col: 13}) {
+		t.Fatal("word selection should find beta after punctuation")
+	}
+	if got, want := st.selectedText(false), "beta"; got != want {
+		t.Fatalf("selected terminal word=%q want %q", got, want)
 	}
 }
 

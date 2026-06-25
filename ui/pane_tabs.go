@@ -5,6 +5,7 @@ package ui
 
 import (
 	"hexone/fm"
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"path"
@@ -176,7 +177,7 @@ func (ui *UI) activateFilePaneTab(paneIdx, tabIdx int) bool {
 		closeFilePaneTabTransient(ui.filePanes[paneIdx])
 	}
 	set.active = tabIdx
-	set.scroll = tabScrollToActive(set.scroll, set.active)
+	set.scroll = clampTabScrollAnchor(set.scroll, len(set.tabs))
 	ui.filePanes[paneIdx] = set.tabs[tabIdx]
 	ui.setActiveFilePane(paneIdx)
 	return true
@@ -246,7 +247,7 @@ func (ui *UI) closeFilePaneTab(paneIdx, tabIdx int) bool {
 		set.active--
 	}
 	set.active = clampTabIndex(set.active, len(set.tabs))
-	set.scroll = tabScrollToActive(set.scroll, set.active)
+	set.scroll = tabScrollAfterClose(set.scroll, tabIdx, len(set.tabs))
 	ui.filePanes[paneIdx] = set.tabs[set.active]
 	ui.setActiveFilePane(paneIdx)
 	return true
@@ -323,7 +324,7 @@ func (ui *UI) activateTerminalTab(tabIdx int) bool {
 		ui.terminal.setActive(false)
 	}
 	ui.terminalTabs.active = tabIdx
-	ui.terminalTabs.scroll = tabScrollToActive(ui.terminalTabs.scroll, tabIdx)
+	ui.terminalTabs.scroll = clampTabScrollAnchor(ui.terminalTabs.scroll, len(ui.terminalTabs.sessions))
 	ui.terminal = ui.terminalTabs.sessions[tabIdx]
 	ui.terminal.setActive(wasActive)
 	if wasActive {
@@ -377,7 +378,7 @@ func (ui *UI) closeTerminalTab(tabIdx int) bool {
 		set.active--
 	}
 	set.active = clampTabIndex(set.active, len(set.sessions))
-	set.scroll = tabScrollToActive(set.scroll, set.active)
+	set.scroll = tabScrollAfterClose(set.scroll, tabIdx, len(set.sessions))
 	ui.terminal = set.sessions[set.active]
 	ui.terminal.setActive(wasActive)
 	if wasActive {
@@ -466,26 +467,31 @@ func (ui *UI) layoutAppTabStrip(
 		actions.selectIdx = -1
 	}
 	widths := tabStripWidths(gtx, ui.fmCfg, items)
+	minWidths := tabStripMinWidths(gtx, ui.fmCfg, len(items))
 	available := gtx.Constraints.Max.X
 	if available < 1 {
 		available = 1
 	}
-	plan := tabStripPlan(widths, available, tabStripControlWidth(gtx), *scroll)
-	*scroll = plan.start
-	if prevClick.Clicked(gtx) && plan.overflow && *scroll > 0 {
-		*scroll--
-		plan = tabStripPlan(widths, available, tabStripControlWidth(gtx), *scroll)
+	controlW := tabStripControlWidth(gtx)
+	plan := tabStripPlanWithMin(widths, minWidths, available, controlW, *scroll)
+	*scroll = clampTabScrollAnchor(*scroll, len(items))
+	if !plan.overflow {
+		*scroll = 0
+	}
+	if prevClick.Clicked(gtx) && plan.overflow && plan.start > 0 {
+		*scroll = tabStripPrevScrollAnchor(plan)
+		plan = tabStripPlanWithMin(widths, minWidths, available, controlW, *scroll)
 	}
 	if nextClick.Clicked(gtx) && plan.overflow && plan.end < len(items) {
-		*scroll++
-		plan = tabStripPlan(widths, available, tabStripControlWidth(gtx), *scroll)
+		*scroll = tabStripNextScrollAnchor(plan, len(items))
+		plan = tabStripPlanWithMin(widths, minWidths, available, controlW, *scroll)
 	}
 
 	return actions, fixedHeight(gtx, gtx.Dp(unit.Dp(tabStripHeightDp)), func(gtx layout.Context) layout.Dimensions {
 		children := make([]layout.FlexChild, 0, len(items)+4)
 		if plan.overflow {
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutTabStripButton(th, gtx, prevClick, "<", *scroll > 0)
+				return ui.layoutTabStripButton(th, gtx, prevClick, uitheme.ChevronLeftIcon(), plan.start > 0)
 			}))
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutTabStripSeparator(gtx)
@@ -493,8 +499,12 @@ func (ui *UI) layoutAppTabStrip(
 		}
 		for i := plan.start; i < plan.end; i++ {
 			idx := i
+			tabW := widths[idx]
+			if planIdx := i - plan.start; planIdx >= 0 && planIdx < len(plan.widths) {
+				tabW = plan.widths[planIdx]
+			}
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return fixedWidth(gtx, widths[idx], func(gtx layout.Context) layout.Dimensions {
+				return fixedWidth(gtx, tabW, func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutTabStripTab(th, gtx, items[idx], &(*tabClicks)[idx], &(*closeClicks)[idx], idx, len(items) > 1)
 				})
 			}))
@@ -506,7 +516,7 @@ func (ui *UI) layoutAppTabStrip(
 		}
 		if plan.overflow {
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutTabStripButton(th, gtx, nextClick, ">", plan.end < len(items))
+				return ui.layoutTabStripButton(th, gtx, nextClick, uitheme.ChevronRightIcon(), plan.end < len(items))
 			}))
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutTabStripSeparator(gtx)
@@ -517,7 +527,7 @@ func (ui *UI) layoutAppTabStrip(
 			}))
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutTabStripButton(th, gtx, addClick, "+", true)
+			return ui.layoutTabStripButton(th, gtx, addClick, uitheme.AddIcon(), true)
 		}))
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 	})
@@ -597,7 +607,7 @@ func (ui *UI) drawTabStripCloseSpot(gtx layout.Context, highlighted bool) {
 	paint.FillShape(gtx.Ops, accent, clip.Rect(image.Rect(0, size.Y-1, size.X, size.Y)).Op())
 }
 
-func (ui *UI) layoutTabStripButton(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, enabled bool) layout.Dimensions {
+func (ui *UI) layoutTabStripButton(_ *material.Theme, gtx layout.Context, click *widget.Clickable, icon *widget.Icon, enabled bool) layout.Dimensions {
 	return fixedWidth(gtx, tabStripControlWidth(gtx), func(gtx layout.Context) layout.Dimensions {
 		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			if enabled {
@@ -607,13 +617,18 @@ func (ui *UI) layoutTabStripButton(th *material.Theme, gtx layout.Context, click
 			if bg.A != 0 {
 				paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 			}
-			lbl := material.Body2(th, label)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.Font.Weight = font.Bold
-			lbl.TextSize = scaleThemeFontSize(th, 10)
-			lbl.Color = fg
-			lbl.MaxLines = 1
-			return layout.Center.Layout(gtx, lbl.Layout)
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				size := gtx.Dp(unit.Dp(15))
+				if size < 10 {
+					size = 10
+				}
+				if icon != nil {
+					iconGtx := gtx
+					iconGtx.Constraints = layout.Exact(image.Pt(size, size))
+					icon.Layout(iconGtx, fg)
+				}
+				return layout.Dimensions{Size: image.Pt(size, size)}
+			})
 		})
 	})
 }
@@ -681,9 +696,14 @@ func (ui *UI) tabStripButtonColors(enabled, hovered bool) (bg, fg color.NRGBA) {
 	palette := filePanePaletteFromConfig(ui.fmCfg)
 	bg = color.NRGBA{}
 	fg = tabStripInactiveColor()
+	if !enabled {
+		fg = mixNRGBA(palette.PaneFg, palette.PaneBg, 0.72)
+		fg.A = 72
+		return bg, fg
+	}
 	if enabled {
 		fg = mixNRGBA(fg, ui.tabStripAccentColor(0), 0.25)
-		fg.A = 184
+		fg.A = 214
 	}
 	if enabled && hovered {
 		bg = mixNRGBA(palette.PaneBg, palette.HoverBg, 0.64)
@@ -754,51 +774,202 @@ type tabPlan struct {
 	start    int
 	end      int
 	overflow bool
+	widths   []int
 }
 
 func tabStripPlan(widths []int, available, controlW, scroll int) tabPlan {
+	return tabStripPlanWithMin(widths, widths, available, controlW, scroll)
+}
+
+func tabStripPlanWithMin(widths, minWidths []int, available, controlW, scroll int) tabPlan {
 	if len(widths) == 0 {
 		return tabPlan{}
 	}
-	total := 0
+	minWidths = tabStripNormalizeMinWidths(widths, minWidths)
+	compactWidths := tabStripCompactWidths(widths, minWidths)
 	gap := 1
+	total := tabStripTotalWidth(widths, gap)
+	addW := controlW + gap
+	if total+addW <= available {
+		return tabPlan{start: 0, end: len(widths), widths: tabStripCopyWidths(widths, 0, len(widths))}
+	}
+	totalCompact := tabStripTotalWidth(compactWidths, gap)
+	if totalCompact+addW <= available {
+		budget := available - controlW - len(widths)*gap
+		return tabPlan{start: 0, end: len(widths), widths: tabStripFitWidths(widths, compactWidths, 0, len(widths), budget)}
+	}
+	scroll = clampTabScrollAnchor(scroll, len(widths))
+	tabSpace := available - 3*controlW - 3*gap
+	if tabSpace < compactWidths[scroll] {
+		tabSpace = compactWidths[scroll]
+	}
+	start := scroll
+	end := scroll + 1
+	used := compactWidths[scroll]
+	for end < len(widths) {
+		next := gap + compactWidths[end]
+		if used+next > tabSpace {
+			break
+		}
+		used += next
+		end++
+	}
+	for start > 0 {
+		next := gap + compactWidths[start-1]
+		if used+next > tabSpace {
+			break
+		}
+		start--
+		used += next
+	}
+	visible := end - start
+	budget := available - 3*controlW - (visible+2)*gap
+	return tabPlan{
+		start:    start,
+		end:      end,
+		overflow: true,
+		widths:   tabStripFitWidths(widths, compactWidths, start, end, budget),
+	}
+}
+
+func tabStripNormalizeMinWidths(widths, minWidths []int) []int {
+	out := make([]int, len(widths))
+	for i, w := range widths {
+		minW := w
+		if i < len(minWidths) {
+			minW = minWidths[i]
+		}
+		if minW < 1 {
+			minW = 1
+		}
+		if w > 0 && minW > w {
+			minW = w
+		}
+		out[i] = minW
+	}
+	return out
+}
+
+func tabStripTotalWidth(widths []int, gap int) int {
+	total := 0
 	for i, w := range widths {
 		total += w
 		if i > 0 {
 			total += gap
 		}
 	}
-	addW := controlW + gap
-	if total+addW <= available {
-		return tabPlan{start: 0, end: len(widths)}
-	}
-	tabSpace := available - addW - 2*controlW - 3*gap
-	if tabSpace < widths[0] {
-		tabSpace = widths[0]
-	}
-	if scroll < 0 {
-		scroll = 0
-	}
-	if scroll >= len(widths) {
-		scroll = len(widths) - 1
-	}
-	used := 0
-	end := scroll
-	for end < len(widths) {
-		next := widths[end]
-		if end > scroll {
-			next += gap
+	return total
+}
+
+func tabStripCompactWidths(widths, minWidths []int) []int {
+	minWidths = tabStripNormalizeMinWidths(widths, minWidths)
+	out := make([]int, len(widths))
+	for i, w := range widths {
+		if w < 1 {
+			w = 1
 		}
-		if end > scroll && used+next > tabSpace {
-			break
+		compact := (w*4 + 4) / 5
+		if compact < minWidths[i] {
+			compact = minWidths[i]
 		}
-		used += next
-		end++
+		if compact > w {
+			compact = w
+		}
+		out[i] = compact
 	}
-	if end <= scroll {
-		end = scroll + 1
+	return out
+}
+
+func tabStripCopyWidths(widths []int, start, end int) []int {
+	if start < 0 {
+		start = 0
 	}
-	return tabPlan{start: scroll, end: end, overflow: true}
+	if end > len(widths) {
+		end = len(widths)
+	}
+	if start >= end {
+		return nil
+	}
+	out := make([]int, end-start)
+	copy(out, widths[start:end])
+	return out
+}
+
+func tabStripFitWidths(widths, minWidths []int, start, end, budget int) []int {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(widths) {
+		end = len(widths)
+	}
+	if start >= end {
+		return nil
+	}
+	minWidths = tabStripNormalizeMinWidths(widths, minWidths)
+	out := make([]int, end-start)
+	mins := make([]int, end-start)
+	total := 0
+	minTotal := 0
+	for i := start; i < end; i++ {
+		w := widths[i]
+		if w < 1 {
+			w = 1
+		}
+		out[i-start] = w
+		mins[i-start] = minWidths[i]
+		total += w
+		minTotal += minWidths[i]
+	}
+	if budget < minTotal {
+		copy(out, mins)
+		return out
+	}
+	if total > budget {
+		deficit := total - budget
+		for deficit > 0 {
+			adjustable := 0
+			for i := range out {
+				if out[i] > mins[i] {
+					adjustable++
+				}
+			}
+			if adjustable == 0 {
+				break
+			}
+			step := (deficit + adjustable - 1) / adjustable
+			for i := range out {
+				if deficit <= 0 {
+					break
+				}
+				room := out[i] - mins[i]
+				if room <= 0 {
+					continue
+				}
+				cut := step
+				if cut > room {
+					cut = room
+				}
+				if cut > deficit {
+					cut = deficit
+				}
+				out[i] -= cut
+				deficit -= cut
+			}
+		}
+		return out
+	}
+	if total < budget && len(out) > 0 {
+		extra := budget - total
+		add := extra / len(out)
+		rem := extra % len(out)
+		for i := range out {
+			out[i] += add
+			if i < rem {
+				out[i]++
+			}
+		}
+	}
+	return out
 }
 
 func tabStripWidths(gtx layout.Context, cfg *fm.Config, items []appTabItem) []int {
@@ -842,6 +1013,21 @@ func tabStripWidths(gtx layout.Context, cfg *fm.Config, items []appTabItem) []in
 	return out
 }
 
+func tabStripMinWidths(gtx layout.Context, cfg *fm.Config, count int) []int {
+	minW := gtx.Dp(unit.Dp(72))
+	if cfg != nil {
+		minW = gtx.Dp(unit.Dp(cfg.Tabs.MinWidthDp))
+	}
+	if minW < 44 {
+		minW = 44
+	}
+	out := make([]int, count)
+	for i := range out {
+		out[i] = minW
+	}
+	return out
+}
+
 func tabStripControlWidth(gtx layout.Context) int {
 	w := gtx.Dp(unit.Dp(tabStripButtonWidthDp))
 	if w < 18 {
@@ -856,6 +1042,33 @@ func tabStripSeparatorWidth(gtx layout.Context) int {
 		w = 1
 	}
 	return w
+}
+
+func clampTabScrollAnchor(idx, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if idx < 0 {
+		return 0
+	}
+	if idx >= n {
+		return n - 1
+	}
+	return idx
+}
+
+func tabStripPrevScrollAnchor(plan tabPlan) int {
+	if plan.start <= 0 {
+		return 0
+	}
+	return plan.start - 1
+}
+
+func tabStripNextScrollAnchor(plan tabPlan, n int) int {
+	if plan.end >= n {
+		return clampTabScrollAnchor(plan.start, n)
+	}
+	return clampTabScrollAnchor(plan.start+1, n)
 }
 
 func ensureClickableSlice(dst *[]widget.Clickable, n int) {
@@ -886,6 +1099,13 @@ func tabScrollToActive(scroll, active int) int {
 		return 0
 	}
 	return active
+}
+
+func tabScrollAfterClose(scroll, closed, count int) int {
+	if closed >= 0 && scroll > closed {
+		scroll--
+	}
+	return clampTabScrollAnchor(scroll, count)
 }
 
 func filePaneTabTitle(pane *filePaneState) string {
