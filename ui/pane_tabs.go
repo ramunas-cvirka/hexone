@@ -466,7 +466,7 @@ func (ui *UI) layoutAppTabStrip(
 	if actions.closeIdx >= 0 {
 		actions.selectIdx = -1
 	}
-	widths := tabStripWidths(gtx, ui.fmCfg, items)
+	widths := ui.tabStripWidths(th, gtx, ui.fmCfg, items)
 	minWidths := tabStripMinWidths(gtx, ui.fmCfg, len(items))
 	available := gtx.Constraints.Max.X
 	if available < 1 {
@@ -972,7 +972,19 @@ func tabStripFitWidths(widths, minWidths []int, start, end, budget int) []int {
 	return out
 }
 
+func (ui *UI) tabStripWidths(th *material.Theme, gtx layout.Context, cfg *fm.Config, items []appTabItem) []int {
+	face := font.Typeface("")
+	if ui != nil {
+		face = ui.mainTypeface()
+	}
+	return tabStripWidthsForTheme(th, gtx, cfg, items, face)
+}
+
 func tabStripWidths(gtx layout.Context, cfg *fm.Config, items []appTabItem) []int {
+	return tabStripWidthsForTheme(nil, gtx, cfg, items, "")
+}
+
+func tabStripWidthsForTheme(th *material.Theme, gtx layout.Context, cfg *fm.Config, items []appTabItem, face font.Typeface) []int {
 	out := make([]int, len(items))
 	minW := gtx.Dp(unit.Dp(72))
 	fixedW := gtx.Dp(unit.Dp(118))
@@ -999,8 +1011,12 @@ func tabStripWidths(gtx layout.Context, cfg *fm.Config, items []appTabItem) []in
 	for i, item := range items {
 		w := fixedW
 		if mode != "fixed" {
-			charW := gtx.Dp(unit.Dp(7))
-			w = gtx.Dp(unit.Dp(tabStripTitlePadDp*2+tabStripCloseWidthDp+8)) + utf8.RuneCountInString(item.title)*charW
+			closeW := tabStripCloseWidthDp
+			if len(items) <= 1 {
+				closeW = 2
+			}
+			padding := gtx.Dp(unit.Dp(tabStripTitlePadDp + 2 + closeW + 4))
+			w = padding + tabStripTitleTextWidth(th, gtx, face, item.title)
 			if w < minW {
 				w = minW
 			}
@@ -1011,6 +1027,22 @@ func tabStripWidths(gtx layout.Context, cfg *fm.Config, items []appTabItem) []in
 		out[i] = w
 	}
 	return out
+}
+
+func tabStripTitleTextWidth(th *material.Theme, gtx layout.Context, face font.Typeface, title string) int {
+	if th == nil || th.Shaper == nil {
+		charW := gtx.Dp(unit.Dp(7))
+		return utf8.RuneCountInString(title) * charW
+	}
+	lbl := material.Body2(th, title)
+	if face != "" {
+		lbl.Font.Typeface = face
+	}
+	lbl.Font.Weight = font.Medium
+	lbl.TextSize = scaleThemeFontSize(th, 10)
+	lbl.MaxLines = 1
+	lbl.Truncator = ""
+	return measureLabelUnconstrained(gtx, lbl).Size.X
 }
 
 func tabStripMinWidths(gtx layout.Context, cfg *fm.Config, count int) []int {

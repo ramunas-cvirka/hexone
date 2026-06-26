@@ -143,7 +143,9 @@ type SortConfig struct {
 }
 
 type TerminalConfig struct {
-	HeightRows int `yaml:"height_rows"`
+	HeightRows int     `yaml:"height_rows"`
+	Typeface   string  `yaml:"typeface"`
+	FontSizeSp float32 `yaml:"font_size_sp"`
 }
 
 type TabsConfig struct {
@@ -572,6 +574,8 @@ func DefaultConfig() *Config {
 		},
 		Terminal: TerminalConfig{
 			HeightRows: defaultTerminalHeightRows,
+			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
+			FontSizeSp: 13,
 		},
 		Tabs: TabsConfig{
 			WidthMode:    "variable",
@@ -580,7 +584,7 @@ func DefaultConfig() *Config {
 			MaxWidthDp:   defaultTabMaxWidthDp,
 		},
 		General: GeneralConfig{
-			Typeface:              resources.BundledFontFamilyFiraCode,
+			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp:            14,
 			DimInactivePanes:      true,
 			OpenFavoritesInNewTab: true,
@@ -605,7 +609,7 @@ func DefaultConfig() *Config {
 		CustomCommands: nil,
 		Viewer: ViewerConfig{
 			FileEncoding:            ViewerFileEncodingAuto,
-			Typeface:                resources.BundledFontFamilyFiraCode,
+			Typeface:                resources.BundledFontFamilyFiraCodeNerdFontMono,
 			Background:              DefaultFilePaneBackgroundHex,
 			Text:                    DefaultFilePaneTextHex,
 			Selection:               DefaultFilePaneSelectionHex,
@@ -883,10 +887,22 @@ func (c *Config) normalize() {
 	c.Tabs.ActiveColor = NormalizeOptionalHexColor(c.Tabs.ActiveColor)
 
 	if c.General.Typeface == "" || !resources.IsBundledFontFamily(c.General.Typeface) {
-		c.General.Typeface = resources.BundledFontFamilyFiraCode
+		c.General.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
 	}
 	if c.General.FontSizeSp <= 0 {
 		c.General.FontSizeSp = 14
+	}
+	if c.Terminal.Typeface == "" {
+		c.Terminal.Typeface = c.General.Typeface
+	}
+	if !resources.IsBundledMonospaceFontFamily(c.Terminal.Typeface) {
+		c.Terminal.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
+	}
+	if c.Terminal.FontSizeSp < 6 {
+		c.Terminal.FontSizeSp = c.General.FontSizeSp * (13.0 / 14.0)
+		if c.Terminal.FontSizeSp < 6 {
+			c.Terminal.FontSizeSp = 13
+		}
 	}
 	if c.Viewer.Typeface == "" {
 		c.Viewer.Typeface = c.General.Typeface

@@ -43,6 +43,7 @@ type settingsModalState struct {
 	keyFocus      dialogKeyboardFocusState
 
 	tabGeneralClick  widget.Clickable
+	tabFontsClick    widget.Clickable
 	tabColorsClick   widget.Clickable
 	tabViewerClick   widget.Clickable
 	tabAssocClick    widget.Clickable
@@ -195,14 +196,21 @@ type settingsModalState struct {
 	viewShellClicks             []widget.Clickable
 	viewShellAnim               settingsChoiceAnim
 	viewRemoteSearchCommandEdit widget.Editor
-	paneFontSizeEdit            widget.Editor
-	viewFontSizeEdit            widget.Editor
 	paneFontFamily              string
 	viewFontFamily              string
+	terminalFontFamily          string
+	paneFontSizeSp              float32
+	viewFontSizeSp              float32
+	terminalFontSizeSp          float32
+	paneFontSizeStepper         settingsNumberStepperState
+	viewFontSizeStepper         settingsNumberStepperState
+	terminalFontSizeStepper     settingsNumberStepperState
 	paneFontFamilyClicks        []widget.Clickable
 	viewFontFamilyClicks        []widget.Clickable
+	terminalFontFamilyClicks    []widget.Clickable
 	paneFontPickerAnim          settingsChoiceAnim
 	viewFontPickerAnim          settingsChoiceAnim
+	terminalFontPickerAnim      settingsChoiceAnim
 	generalDimInactiveBool      widget.Bool
 	generalFavoritesNewTabBool  widget.Bool
 	viewSmoothScrollingBool     widget.Bool
@@ -264,6 +272,17 @@ type settingsModalState struct {
 	assocInfoText  string
 }
 
+type settingsNumberStepperState struct {
+	valueClick widget.Clickable
+	upClick    widget.Clickable
+	downClick  widget.Clickable
+}
+
+const (
+	settingsFontSizeMin  float32 = 6
+	settingsFontSizeStep float32 = 1
+)
+
 type settingsChoiceAnim struct {
 	prev    string
 	hasPrev bool
@@ -313,6 +332,7 @@ var settingsViewerColorOptions = []settingsColorOption{
 
 var settingsTabOrder = []string{
 	"general",
+	"fonts",
 	"viewer",
 	"associations",
 	"colors",
@@ -423,10 +443,6 @@ func (ui *UI) openSettingsModal() {
 		st.viewShellEdit.Submit = false
 		st.viewRemoteSearchCommandEdit.SingleLine = true
 		st.viewRemoteSearchCommandEdit.Submit = false
-		st.paneFontSizeEdit.SingleLine = true
-		st.paneFontSizeEdit.Submit = false
-		st.viewFontSizeEdit.SingleLine = true
-		st.viewFontSizeEdit.Submit = false
 		st.viewerTabList.Axis = layout.Vertical
 		st.viewTargetKeyEdit.SingleLine = true
 		st.viewTargetKeyEdit.Submit = false
@@ -505,12 +521,15 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.viewShellEdit.SetText(normalizeViewerShellInput(cfg.Viewer.Shell))
 	st.viewShellAnim = settingsChoiceAnim{}
 	st.viewRemoteSearchCommandEdit.SetText(fm.NormalizeViewerRemoteSearchCommand(cfg.Viewer.RemoteSearchCommand))
-	st.paneFontSizeEdit.SetText(formatConfigFloat(cfg.General.FontSizeSp))
-	st.viewFontSizeEdit.SetText(formatConfigFloat(cfg.Viewer.FontSizeSp))
 	st.paneFontFamily = cfg.General.Typeface
 	st.viewFontFamily = cfg.Viewer.Typeface
+	st.terminalFontFamily = cfg.Terminal.Typeface
+	st.paneFontSizeSp = settingsNormalizedFontSize(cfg.General.FontSizeSp, 14)
+	st.viewFontSizeSp = settingsNormalizedFontSize(cfg.Viewer.FontSizeSp, 13)
+	st.terminalFontSizeSp = settingsNormalizedFontSize(cfg.Terminal.FontSizeSp, 13)
 	st.paneFontPickerAnim = settingsChoiceAnim{}
 	st.viewFontPickerAnim = settingsChoiceAnim{}
+	st.terminalFontPickerAnim = settingsChoiceAnim{}
 	st.generalDimInactiveBool.Value = cfg.General.DimInactivePanes
 	st.generalFavoritesNewTabBool.Value = cfg.General.OpenFavoritesInNewTab
 	st.viewSmoothScrollingBool.Value = cfg.Viewer.SmoothScrolling
@@ -2213,8 +2232,6 @@ func (st *settingsModalState) hasFocusedEditor(gtx layout.Context) bool {
 		gtx.Focused(&st.viewCommandEdit) ||
 		gtx.Focused(&st.viewShellEdit) ||
 		gtx.Focused(&st.viewRemoteSearchCommandEdit) ||
-		gtx.Focused(&st.paneFontSizeEdit) ||
-		gtx.Focused(&st.viewFontSizeEdit) ||
 		gtx.Focused(&st.viewTargetKeyEdit) ||
 		gtx.Focused(&st.viewTargetCommandEdit) ||
 		gtx.Focused(&st.viewRulePatternEdit) ||
@@ -2774,13 +2791,17 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	}
 	viewerSelection := fm.FormatHexColor(c)
 
-	viewerFontSize, err := strconv.ParseFloat(strings.TrimSpace(st.viewFontSizeEdit.Text()), 32)
-	if err != nil || viewerFontSize < 6 {
+	viewerFontSize := st.viewFontSizeSp
+	if viewerFontSize < settingsFontSizeMin {
 		return fmt.Errorf("viewer font size must be at least 6")
 	}
-	paneFontSize, err := strconv.ParseFloat(strings.TrimSpace(st.paneFontSizeEdit.Text()), 32)
-	if err != nil || paneFontSize < 6 {
+	paneFontSize := st.paneFontSizeSp
+	if paneFontSize < settingsFontSizeMin {
 		return fmt.Errorf("pane font size must be at least 6")
+	}
+	terminalFontSize := st.terminalFontSizeSp
+	if terminalFontSize < settingsFontSizeMin {
+		return fmt.Errorf("terminal font size must be at least 6")
 	}
 	if !resources.IsBundledFontFamily(st.paneFontFamily) && st.paneFontFamily != ui.fmCfg.General.Typeface {
 		return fmt.Errorf("pane font family is invalid")
@@ -2788,16 +2809,21 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if !resources.IsBundledFontFamily(st.viewFontFamily) && st.viewFontFamily != ui.fmCfg.Viewer.Typeface {
 		return fmt.Errorf("viewer font family is invalid")
 	}
+	if !resources.IsBundledMonospaceFontFamily(st.terminalFontFamily) && st.terminalFontFamily != ui.fmCfg.Terminal.Typeface {
+		return fmt.Errorf("terminal font family is invalid")
+	}
 	ui.fmCfg.General.Typeface = st.paneFontFamily
-	ui.fmCfg.General.FontSizeSp = float32(paneFontSize)
+	ui.fmCfg.General.FontSizeSp = paneFontSize
 	ui.fmCfg.Viewer.Typeface = st.viewFontFamily
+	ui.fmCfg.Terminal.Typeface = st.terminalFontFamily
+	ui.fmCfg.Terminal.FontSizeSp = terminalFontSize
 	ui.fmCfg.Viewer.Command = cmd
 	ui.fmCfg.Viewer.Shell = shell
 	ui.fmCfg.Viewer.RemoteSearchCommand = fm.NormalizeViewerRemoteSearchCommand(st.viewRemoteSearchCommandEdit.Text())
 	ui.fmCfg.Viewer.Background = viewerBg
 	ui.fmCfg.Viewer.Text = viewerText
 	ui.fmCfg.Viewer.Selection = viewerSelection
-	ui.fmCfg.Viewer.FontSizeSp = float32(viewerFontSize)
+	ui.fmCfg.Viewer.FontSizeSp = viewerFontSize
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
 	ui.fmCfg.General.OpenFavoritesInNewTab = st.generalFavoritesNewTabBool.Value
 	ui.fmCfg.Viewer.SmoothScrolling = st.viewSmoothScrollingBool.Value
@@ -3008,6 +3034,11 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 				}
 				continue
 			}
+			if st.stepFocusedNumber(1) {
+				st.errText = ""
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
 			if st.focus != settingsKeyboardFocusNav {
 				continue
 			}
@@ -3024,6 +3055,11 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 				if st.stepPopupKeyboardMove(0, 1, len(popupTargetEntries), len(popupRuleEntries), len(popupAssocPrograms), popupColorOptions, popupColorGroups, popupIconOptions) {
 					gtx.Execute(op.InvalidateCmd{})
 				}
+				continue
+			}
+			if st.stepFocusedNumber(-1) {
+				st.errText = ""
+				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			if st.focus != settingsKeyboardFocusNav {
@@ -3102,6 +3138,11 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 		st.setKeyboardFocus(settingsKeyboardFocusNav)
 		st.setActiveTab("general", gtx.Now)
 		st.setPulse("general", gtx.Now)
+	}
+	if st.tabFontsClick.Clicked(gtx) {
+		st.setKeyboardFocus(settingsKeyboardFocusNav)
+		st.setActiveTab("fonts", gtx.Now)
+		st.setPulse("fonts", gtx.Now)
 	}
 	if st.tabColorsClick.Clicked(gtx) {
 		st.setKeyboardFocus(settingsKeyboardFocusNav)
@@ -3203,6 +3244,7 @@ func (ui *UI) applySettingsNavCursor(gtx layout.Context, st *settingsModalState)
 		st.tabAssocClick.Hovered() ||
 		st.tabColorsClick.Hovered() ||
 		st.tabGeneralClick.Hovered() ||
+		st.tabFontsClick.Hovered() ||
 		st.tabConfigClick.Hovered() {
 		pointer.CursorPointer.Add(gtx.Ops)
 	}
@@ -3420,7 +3462,7 @@ func (ui *UI) layoutSettingsNavSliderSegment(th *material.Theme, gtx layout.Cont
 	return dims
 }
 
-func (ui *UI) layoutSettingsNavTabs(th *material.Theme, gtx layout.Context, st *settingsModalState, fillViewer, fillAssoc, fillColors, fillGeneral, fillConfig, hoverViewer, hoverAssoc, hoverColors, hoverGeneral, hoverConfig, pulseViewer, pulseAssoc, pulseColors, pulseGeneral, pulseConfig float32) layout.Dimensions {
+func (ui *UI) layoutSettingsNavTabs(th *material.Theme, gtx layout.Context, st *settingsModalState, fillViewer, fillAssoc, fillColors, fillGeneral, fillFonts, fillConfig, hoverViewer, hoverAssoc, hoverColors, hoverGeneral, hoverFonts, hoverConfig, pulseViewer, pulseAssoc, pulseColors, pulseGeneral, pulseFonts, pulseConfig float32) layout.Dimensions {
 	if st == nil {
 		return layout.Dimensions{}
 	}
@@ -3432,18 +3474,21 @@ func (ui *UI) layoutSettingsNavTabs(th *material.Theme, gtx layout.Context, st *
 	if sepH < 1 {
 		sepH = 1
 	}
-	totalH := stripH*5 + sepH*4
+	totalH := stripH*6 + sepH*5
 	pos, animPos := st.tabPosition(gtx.Now)
 	if animPos {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	focusGeneral := float32(0)
+	focusFonts := float32(0)
 	focusViewer := float32(0)
 	focusAssoc := float32(0)
 	focusColors := float32(0)
 	focusConfig := float32(0)
 	if st.focus == settingsKeyboardFocusNav {
 		switch st.activeTab {
+		case "fonts":
+			focusFonts = 1
 		case "viewer":
 			focusViewer = 1
 		case "associations":
@@ -3488,6 +3533,12 @@ func (ui *UI) layoutSettingsNavTabs(th *material.Theme, gtx layout.Context, st *
 					return layoutSettingsNavSeparator(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabFontsClick, "Fonts", fillFonts, hoverFonts, pulseFonts, focusFonts, stripH)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layoutSettingsNavSeparator(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabViewerClick, "Viewer", fillViewer, hoverViewer, pulseViewer, focusViewer, stripH)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -3519,6 +3570,8 @@ func (ui *UI) layoutSettingsTabContent(th *material.Theme, gtx layout.Context, s
 	switch tab {
 	case "general":
 		return ui.layoutSettingsGeneralTab(th, gtx, st)
+	case "fonts":
+		return ui.layoutSettingsFontsTab(th, gtx, st)
 	case "associations":
 		return ui.layoutSettingsAssociationsTab(th, gtx, st)
 	case "colors":
@@ -3533,23 +3586,6 @@ func (ui *UI) layoutSettingsTabContent(th *material.Theme, gtx layout.Context, s
 func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	rowLabel := func(txt string) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, true)
-	}
-	bundledFamilies := resources.BundledFontFamilies()
-	st.ensurePaneFontFamilyClicks(len(bundledFamilies))
-	st.ensureViewFontFamilyClicks(len(bundledFamilies))
-	for i, family := range bundledFamilies {
-		if st.paneFontFamilyClicks[i].Clicked(gtx) {
-			st.setKeyboardFocus(settingsKeyboardFocusGeneralPaneFont)
-			st.paneFontPickerAnim.setValue(&st.paneFontFamily, family.Name, gtx.Now)
-			st.paneFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
-			st.errText = ""
-		}
-		if st.viewFontFamilyClicks[i].Clicked(gtx) {
-			st.setKeyboardFocus(settingsKeyboardFocusGeneralViewFont)
-			st.viewFontPickerAnim.setValue(&st.viewFontFamily, family.Name, gtx.Now)
-			st.viewFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
-			st.errText = ""
-		}
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -3582,59 +3618,199 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
-		layout.Rigid(rowLabel("Fonts")),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-		layout.Rigid(settingsViewerRowLabel(ui, th, "Pane font face", true)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsFontFamilyPicker(th, gtx, bundledFamilies, st.paneFontFamilyClicks, st.paneFontFamily, &st.paneFontPickerAnim, st.focus == settingsKeyboardFocusGeneralPaneFont)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(settingsViewerRowLabel(ui, th, "Pane font size (sp)", true)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, &st.paneFontSizeEdit, "14")
-			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleModalThemeFontSize(th, 10)
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-pane-font-size", &st.paneFontSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.paneFontSizeEdit), true, ed.Layout)
-			})
-			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralPaneFontSize, &st.paneFontSizeEdit)
-			return dims
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-		layout.Rigid(settingsViewerRowLabel(ui, th, "Viewer font face", true)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsFontFamilyPicker(th, gtx, bundledFamilies, st.viewFontFamilyClicks, st.viewFontFamily, &st.viewFontPickerAnim, st.focus == settingsKeyboardFocusGeneralViewFont)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(settingsViewerRowLabel(ui, th, "Viewer font size (sp)", true)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, &st.viewFontSizeEdit, "13")
-			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleModalThemeFontSize(th, 10)
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-font", &st.viewFontSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, gtx.Focused(&st.viewFontSizeEdit), true, ed.Layout)
-			})
-			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralViewFontSize, &st.viewFontSizeEdit)
-			return dims
-		}),
+	)
+}
+
+func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	bundledFamilies := resources.BundledFontFamilies()
+	st.ensurePaneFontFamilyClicks(len(bundledFamilies))
+	st.ensureViewFontFamilyClicks(len(bundledFamilies))
+	st.ensureTerminalFontFamilyClicks(len(bundledFamilies))
+	for i, family := range bundledFamilies {
+		if st.paneFontFamilyClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusGeneralPaneFont)
+			st.paneFontPickerAnim.setValue(&st.paneFontFamily, family.Name, gtx.Now)
+			st.paneFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
+			st.errText = ""
+		}
+		if st.viewFontFamilyClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusGeneralViewFont)
+			st.viewFontPickerAnim.setValue(&st.viewFontFamily, family.Name, gtx.Now)
+			st.viewFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
+			st.errText = ""
+		}
+		if st.terminalFontFamilyClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusFontsTerminalFont)
+			st.terminalFontPickerAnim.setValue(&st.terminalFontFamily, family.Name, gtx.Now)
+			st.terminalFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
+			st.errText = ""
+		}
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(settingsViewerRowLabel(ui, th, "Fonts", true)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, "Viewer font is reused across file, hex, and command modes. Fira Code or Consolas are the practical choices for dense output.")
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 11)
-			lbl.Color = hintColor
-			return lbl.Layout(gtx)
+			return ui.layoutSettingsFontRow(th, gtx, st, "Pane", bundledFamilies, st.paneFontFamilyClicks, st.paneFontFamily, &st.paneFontPickerAnim, st.focus == settingsKeyboardFocusGeneralPaneFont, &st.paneFontSizeStepper, st.paneFontSizeSp, settingsKeyboardFocusGeneralPaneFontSize)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsFontRow(th, gtx, st, "Viewer", bundledFamilies, st.viewFontFamilyClicks, st.viewFontFamily, &st.viewFontPickerAnim, st.focus == settingsKeyboardFocusGeneralViewFont, &st.viewFontSizeStepper, st.viewFontSizeSp, settingsKeyboardFocusGeneralViewFontSize)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsFontRow(th, gtx, st, "Terminal", bundledFamilies, st.terminalFontFamilyClicks, st.terminalFontFamily, &st.terminalFontPickerAnim, st.focus == settingsKeyboardFocusFontsTerminalFont, &st.terminalFontSizeStepper, st.terminalFontSizeSp, settingsKeyboardFocusFontsTerminalFontSize)
 		}),
 	)
+}
+
+func (ui *UI) layoutSettingsFontRow(th *material.Theme, gtx layout.Context, st *settingsModalState, label string, families []resources.BundledFontFamily, clicks []widget.Clickable, active string, anim *settingsChoiceAnim, pickerFocused bool, stepper *settingsNumberStepperState, value float32, sizeFocus settingsKeyboardFocus) layout.Dimensions {
+	labelW := gtx.Dp(unit.Dp(66))
+	if labelW < 48 {
+		labelW = 48
+	}
+	sizeW := gtx.Dp(unit.Dp(74))
+	if sizeW < 62 {
+		sizeW = 62
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, labelW, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, label)
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Weight = font.Medium
+				lbl.TextSize = scaleModalThemeFontSize(th, 10)
+				lbl.Color = txtColor
+				lbl.MaxLines = 1
+				return layoutVCenteredLabel(gtx, lbl)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsFontFamilyPicker(th, gtx, families, clicks, active, anim, pickerFocused)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, sizeW, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutSettingsFontSizeStepper(th, gtx, st, stepper, value, sizeFocus)
+			})
+		}),
+	)
+}
+
+func (ui *UI) layoutSettingsFontSizeStepper(th *material.Theme, gtx layout.Context, st *settingsModalState, stepper *settingsNumberStepperState, value float32, focus settingsKeyboardFocus) layout.Dimensions {
+	if st == nil || stepper == nil {
+		return layout.Dimensions{}
+	}
+	for stepper.valueClick.Clicked(gtx) {
+		st.setKeyboardFocus(focus)
+	}
+	for stepper.upClick.Clicked(gtx) {
+		st.setKeyboardFocus(focus)
+		st.stepFontSize(focus, 1)
+		st.errText = ""
+	}
+	for stepper.downClick.Clicked(gtx) {
+		st.setKeyboardFocus(focus)
+		st.stepFontSize(focus, -1)
+		st.errText = ""
+	}
+	focused := st.focus == focus
+	textSize := scaleModalThemeFontSize(th, 10)
+	height := gtx.Dp(unit.Dp(22))
+	if height < 18 {
+		height = 18
+	}
+	if stepper.valueClick.Hovered() || stepper.upClick.Hovered() || stepper.downClick.Hovered() {
+		pointer.CursorPointer.Add(gtx.Ops)
+	}
+	return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutSettingsFontSizeValue(th, gtx, &stepper.valueClick, value, focused, textSize)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(2)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fixedWidth(gtx, gtx.Dp(unit.Dp(17)), func(gtx layout.Context) layout.Dimensions {
+					half := height / 2
+					if half < 1 {
+						half = 1
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, half, func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutSettingsFontSizeButton(gtx, &stepper.upClick, uitheme.ArrowUpIcon(), focused)
+							})
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, height-half, func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutSettingsFontSizeButton(gtx, &stepper.downClick, uitheme.ArrowDownIcon(), focused)
+							})
+						}),
+					)
+				})
+			}),
+		)
+	})
+}
+
+func (ui *UI) layoutSettingsFontSizeValue(th *material.Theme, gtx layout.Context, c *widget.Clickable, value float32, focused bool, textSize unit.Sp) layout.Dimensions {
+	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		bg := color.NRGBA{R: 34, G: 34, B: 34, A: 255}
+		border := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
+		fg := txtColor
+		if c.Hovered() {
+			bg = color.NRGBA{R: 42, G: 42, B: 42, A: 255}
+			border = color.NRGBA{R: 255, G: 255, B: 255, A: 36}
+		}
+		if focused {
+			bg = color.NRGBA{R: 48, G: 48, B: 48, A: 255}
+			border = color.NRGBA{R: 160, G: 148, B: 122, A: 190}
+			fg = color.NRGBA{R: 244, G: 238, B: 225, A: 255}
+		}
+		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp-1)), bg, border, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, formatConfigFloat(value))
+				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Weight = font.Medium
+				lbl.TextSize = textSize
+				lbl.Color = fg
+				lbl.MaxLines = 1
+				lbl.Alignment = text.Middle
+				return layoutVCenteredLabel(gtx, lbl)
+			})
+		})
+	})
+}
+
+func (ui *UI) layoutSettingsFontSizeButton(gtx layout.Context, c *widget.Clickable, icon *widget.Icon, focused bool) layout.Dimensions {
+	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		bg := color.NRGBA{R: 30, G: 30, B: 30, A: 255}
+		border := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
+		iconColor := hintColor
+		if c.Hovered() {
+			bg = color.NRGBA{R: 46, G: 46, B: 46, A: 255}
+			border = color.NRGBA{R: 255, G: 255, B: 255, A: 42}
+			iconColor = txtColor
+		}
+		if focused {
+			border = mixNRGBA(border, color.NRGBA{R: 160, G: 148, B: 122, A: 210}, 0.7)
+		}
+		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp-2)), bg, border, func(gtx layout.Context) layout.Dimensions {
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				size := gtx.Dp(unit.Dp(10))
+				if size < 1 {
+					size = 1
+				}
+				if icon != nil {
+					iconGtx := gtx
+					iconGtx.Constraints = layout.Exact(image.Pt(size, size))
+					icon.Layout(iconGtx, iconColor)
+				}
+				return layout.Dimensions{Size: image.Pt(size, size)}
+			})
+		})
+	})
 }
 
 func (ui *UI) layoutSettingsFontFamilyPicker(th *material.Theme, gtx layout.Context, families []resources.BundledFontFamily, clicks []widget.Clickable, active string, anim *settingsChoiceAnim, focused bool) layout.Dimensions {
@@ -3686,7 +3862,7 @@ func (ui *UI) layoutSettingsFontFamilyPicker(th *material.Theme, gtx layout.Cont
 			focusFill = 1
 		}
 		specs = append(specs, slidingTabSpec{
-			Label:      family.Name,
+			Label:      settingsFontFamilyLabel(family),
 			Click:      &clicks[i],
 			ActiveFill: activeFill,
 			HoverFill:  hoverFill,
@@ -3711,6 +3887,13 @@ func (ui *UI) layoutSettingsFontFamilyPicker(th *material.Theme, gtx layout.Cont
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, textSize, specs)
+}
+
+func settingsFontFamilyLabel(family resources.BundledFontFamily) string {
+	if strings.TrimSpace(family.Label) != "" {
+		return family.Label
+	}
+	return family.Name
 }
 
 func (ui *UI) layoutSettingsShellPicker(th *material.Theme, gtx layout.Context, options []terminalShellOption, clicks []widget.Clickable, active string, anim *settingsChoiceAnim, focused bool) layout.Dimensions {
@@ -3794,6 +3977,7 @@ func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st
 	fillAssoc, animAssoc := st.tabFill(gtx.Now, "associations")
 	fillColors, animColors := st.tabFill(gtx.Now, "colors")
 	fillGeneral, animGeneral := st.tabFill(gtx.Now, "general")
+	fillFonts, animFonts := st.tabFill(gtx.Now, "fonts")
 	fillConfig, animConfig := st.tabFill(gtx.Now, "config")
 	hoverKey := ""
 	if st.tabViewerClick.Hovered() {
@@ -3808,6 +3992,9 @@ func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st
 	if st.tabGeneralClick.Hovered() {
 		hoverKey = "general"
 	}
+	if st.tabFontsClick.Hovered() {
+		hoverKey = "fonts"
+	}
 	if st.tabConfigClick.Hovered() {
 		hoverKey = "config"
 	}
@@ -3816,15 +4003,17 @@ func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st
 	hoverAssoc, hoverAnimAssoc := st.hoverFill(gtx.Now, "associations")
 	hoverColors, hoverAnimColors := st.hoverFill(gtx.Now, "colors")
 	hoverGeneral, hoverAnimGeneral := st.hoverFill(gtx.Now, "general")
+	hoverFonts, hoverAnimFonts := st.hoverFill(gtx.Now, "fonts")
 	hoverConfig, hoverAnimConfig := st.hoverFill(gtx.Now, "config")
 	pulseViewer, pulseAnimViewer := st.pulseFill(gtx.Now, "viewer")
 	pulseAssoc, pulseAnimAssoc := st.pulseFill(gtx.Now, "associations")
 	pulseColors, pulseAnimColors := st.pulseFill(gtx.Now, "colors")
 	pulseGeneral, pulseAnimGeneral := st.pulseFill(gtx.Now, "general")
+	pulseFonts, pulseAnimFonts := st.pulseFill(gtx.Now, "fonts")
 	pulseConfig, pulseAnimConfig := st.pulseFill(gtx.Now, "config")
-	if animViewer || animAssoc || animColors || animGeneral || animConfig ||
-		hoverAnimViewer || hoverAnimAssoc || hoverAnimColors || hoverAnimGeneral || hoverAnimConfig ||
-		pulseAnimViewer || pulseAnimAssoc || pulseAnimColors || pulseAnimGeneral || pulseAnimConfig {
+	if animViewer || animAssoc || animColors || animGeneral || animFonts || animConfig ||
+		hoverAnimViewer || hoverAnimAssoc || hoverAnimColors || hoverAnimGeneral || hoverAnimFonts || hoverAnimConfig ||
+		pulseAnimViewer || pulseAnimAssoc || pulseAnimColors || pulseAnimGeneral || pulseAnimFonts || pulseAnimConfig {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
@@ -3833,9 +4022,9 @@ func (ui *UI) layoutSettingsModalBody(th *material.Theme, gtx layout.Context, st
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(146)), func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutSettingsNavTabs(
 					th, gtx, st,
-					fillViewer, fillAssoc, fillColors, fillGeneral, fillConfig,
-					hoverViewer, hoverAssoc, hoverColors, hoverGeneral, hoverConfig,
-					pulseViewer, pulseAssoc, pulseColors, pulseGeneral, pulseConfig,
+					fillViewer, fillAssoc, fillColors, fillGeneral, fillFonts, fillConfig,
+					hoverViewer, hoverAssoc, hoverColors, hoverGeneral, hoverFonts, hoverConfig,
+					pulseViewer, pulseAssoc, pulseColors, pulseGeneral, pulseFonts, pulseConfig,
 				)
 			})
 		}),
@@ -4707,8 +4896,8 @@ func (st *settingsModalState) previewViewerConfig(cfg *fm.Config) *fm.Config {
 	if strings.TrimSpace(st.viewFontFamily) != "" && resources.IsBundledFontFamily(st.viewFontFamily) {
 		draft.Viewer.Typeface = st.viewFontFamily
 	}
-	if size, err := strconv.ParseFloat(strings.TrimSpace(st.viewFontSizeEdit.Text()), 32); err == nil && size >= 6 {
-		draft.Viewer.FontSizeSp = float32(size)
+	if st.viewFontSizeSp >= settingsFontSizeMin {
+		draft.Viewer.FontSizeSp = st.viewFontSizeSp
 	}
 	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorViewerBackground)); ok {
 		draft.Viewer.Background = fm.FormatHexColor(c)
@@ -4734,7 +4923,7 @@ func (st *settingsModalState) previewViewerTypeface(ui *UI) font.Typeface {
 		if ui != nil {
 			return ui.viewerTypeface()
 		}
-		return font.Typeface(resources.BundledFontFamilyFiraCode)
+		return font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 	}
 	return font.Typeface(cfg.Viewer.Typeface)
 }
@@ -6587,6 +6776,16 @@ func (st *settingsModalState) ensureViewFontFamilyClicks(n int) {
 	old := st.viewFontFamilyClicks
 	st.viewFontFamilyClicks = make([]widget.Clickable, n)
 	copy(st.viewFontFamilyClicks, old)
+}
+
+func (st *settingsModalState) ensureTerminalFontFamilyClicks(n int) {
+	if n <= cap(st.terminalFontFamilyClicks) {
+		st.terminalFontFamilyClicks = st.terminalFontFamilyClicks[:n]
+		return
+	}
+	old := st.terminalFontFamilyClicks
+	st.terminalFontFamilyClicks = make([]widget.Clickable, n)
+	copy(st.terminalFontFamilyClicks, old)
 }
 
 func (st *settingsModalState) ensureViewShellClicks(n int) {

@@ -4,6 +4,7 @@
 package ui
 
 import (
+	resources "hexone"
 	"hexone/fm"
 	"image"
 	"path/filepath"
@@ -311,6 +312,36 @@ func TestTabStripPlanOverflowWidthsFillAvailableStrip(t *testing.T) {
 	}
 	if got, want := used, available; got != want {
 		t.Fatalf("overflow strip used width=%d want %d", got, want)
+	}
+}
+
+func TestTabStripWidthsUseMeasuredTitleText(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.Tabs.MinWidthDp = 44
+	cfg.Tabs.MaxWidthDp = 220
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(320, tabStripHeightDp),
+		},
+	}
+	items := []appTabItem{{title: "retranslator", active: true}, {title: "Downloads"}}
+
+	measured := ui.tabStripWidths(th, gtx, cfg, items)
+	estimated := tabStripWidths(gtx, cfg, items)
+
+	if len(measured) != len(estimated) || len(measured) == 0 {
+		t.Fatalf("width count measured=%d estimated=%d", len(measured), len(estimated))
+	}
+	if measured[0] >= estimated[0] {
+		t.Fatalf("measured tab width=%d should be tighter than rune estimate %d", measured[0], estimated[0])
+	}
+	if measured[0] < gtx.Dp(unit.Dp(cfg.Tabs.MinWidthDp)) {
+		t.Fatalf("measured tab width=%d below configured min", measured[0])
 	}
 }
 

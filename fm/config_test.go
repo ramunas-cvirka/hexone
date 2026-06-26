@@ -4,6 +4,7 @@
 package fm
 
 import (
+	resources "hexone"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,6 +109,8 @@ sort:
     /tmp/bad: sideways
 terminal:
   height_rows: 2
+  typeface: Imaginary Sans
+  font_size_sp: 1
 `
 
 	cfg := DefaultConfig()
@@ -118,6 +121,12 @@ terminal:
 
 	if got, want := cfg.Terminal.HeightRows, 4; got != want {
 		t.Fatalf("Terminal.HeightRows=%d want %d", got, want)
+	}
+	if got, want := cfg.Terminal.Typeface, resources.BundledFontFamilyFiraCodeNerdFontMono; got != want {
+		t.Fatalf("Terminal.Typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.Terminal.FontSizeSp, float32(13); got != want {
+		t.Fatalf("Terminal.FontSizeSp=%v want %v", got, want)
 	}
 	if got, want := cfg.Sort.PerDir[filepath.Clean("/tmp/by-date")], "d-"; got != want {
 		t.Fatalf("sort per dir code=%q want %q", got, want)
@@ -286,7 +295,7 @@ columns:
 func TestLegacyFontBlockMigratesToGeneral(t *testing.T) {
 	raw := `
 font:
-  typeface: Consolas
+  typeface: Hack Nerd Font Mono
   size_sp: 16
 general:
   dim_inactive_panes: true
@@ -301,11 +310,17 @@ viewer:
 	}
 	cfg.normalize()
 
-	if cfg.General.Typeface != "Consolas" {
-		t.Fatalf("General.Typeface=%q, want Consolas", cfg.General.Typeface)
+	if cfg.General.Typeface != resources.BundledFontFamilyHackNerdFontMono {
+		t.Fatalf("General.Typeface=%q, want %s", cfg.General.Typeface, resources.BundledFontFamilyHackNerdFontMono)
 	}
 	if cfg.General.FontSizeSp != 16 {
 		t.Fatalf("General.FontSizeSp=%v, want 16", cfg.General.FontSizeSp)
+	}
+	if cfg.Terminal.Typeface != resources.BundledFontFamilyHackNerdFontMono {
+		t.Fatalf("Terminal.Typeface=%q, want %s", cfg.Terminal.Typeface, resources.BundledFontFamilyHackNerdFontMono)
+	}
+	if got, want := cfg.Terminal.FontSizeSp, cfg.General.FontSizeSp*(13.0/14.0); got != want {
+		t.Fatalf("Terminal.FontSizeSp=%v, want %v", got, want)
 	}
 	if !cfg.General.DimInactivePanes {
 		t.Fatal("General.DimInactivePanes should preserve general block values")
@@ -315,7 +330,7 @@ viewer:
 	if strings.Contains(out, "\nfont:\n") {
 		t.Fatalf("serialized config should not contain legacy font block:\n%s", out)
 	}
-	if !strings.Contains(out, "general:") || !strings.Contains(out, "typeface: Consolas") || !strings.Contains(out, "font_size_sp: 16") {
+	if !strings.Contains(out, "general:") || !strings.Contains(out, "typeface: Hack Nerd Font Mono") || !strings.Contains(out, "font_size_sp: 16") {
 		t.Fatalf("serialized config missing migrated general font settings:\n%s", out)
 	}
 }

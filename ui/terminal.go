@@ -6,6 +6,7 @@ package ui
 import (
 	"context"
 	"errors"
+	resources "hexone"
 	"hexone/fm"
 	"hexone/ui/platform"
 	"image"
@@ -3564,19 +3565,51 @@ func (ui *UI) terminalCellSize(th *material.Theme, gtx layout.Context) (int, int
 }
 
 func (ui *UI) terminalBaseTypeface() font.Typeface {
-	return ui.mainTypeface()
+	if ui != nil && ui.fmCfg != nil {
+		face := strings.TrimSpace(ui.fmCfg.Terminal.Typeface)
+		if resources.IsBundledMonospaceFontFamily(face) {
+			return font.Typeface(face)
+		}
+	}
+	face := ui.mainTypeface()
+	if resources.IsBundledMonospaceFontFamily(string(face)) {
+		return face
+	}
+	return font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 }
 
 func (ui *UI) terminalTextSize() unit.Sp {
 	if ui == nil {
 		return scaleConfigFontSize(nil, 13)
 	}
+	if ui.fmCfg != nil && ui.fmCfg.Terminal.FontSizeSp >= 6 {
+		return normalizeUIFontSize(unit.Sp(ui.fmCfg.Terminal.FontSizeSp))
+	}
 	return scaleConfigFontSize(ui.fmCfg, 13)
 }
 
 func (ui *UI) terminalTypeface() font.Typeface {
 	base := strings.TrimSpace(string(ui.terminalBaseTypeface()))
-	fallbacks := "Apple Braille, Apple Symbols, Apple Color Emoji, Segoe UI Symbol, Segoe UI Emoji, Noto Sans Symbols, Noto Color Emoji, Menlo, Consolas, monospace"
+	fallbacks := strings.Join([]string{
+		resources.BundledFontFamilyFiraCodeNerdFontMono,
+		resources.BundledFontFamilyJetBrainsMonoNerdFontMono,
+		resources.BundledFontFamilyHackNerdFontMono,
+		resources.BundledFontFamilyIosevkaNerdFontMono,
+		"Symbols Nerd Font Mono",
+		"Symbols Nerd Font",
+		"Font Awesome 6 Free",
+		"Font Awesome 5 Free",
+		"FontAwesome",
+		"Font Awesome",
+		"Apple Braille",
+		"Apple Symbols",
+		"Apple Color Emoji",
+		"Segoe UI Symbol",
+		"Segoe UI Emoji",
+		"Noto Sans Symbols",
+		"Noto Color Emoji",
+		"monospace",
+	}, ", ")
 	if base == "" {
 		return font.Typeface(fallbacks)
 	}

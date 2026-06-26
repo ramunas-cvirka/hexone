@@ -28,10 +28,11 @@ func TestSettingsTabIndexOrder(t *testing.T) {
 		want int
 	}{
 		{key: "general", want: 0},
-		{key: "viewer", want: 1},
-		{key: "associations", want: 2},
-		{key: "colors", want: 3},
-		{key: "config", want: 4},
+		{key: "fonts", want: 1},
+		{key: "viewer", want: 2},
+		{key: "associations", want: 3},
+		{key: "colors", want: 4},
+		{key: "config", want: 5},
 	}
 	for _, tc := range cases {
 		if got := settingsTabIndex(tc.key); got != tc.want {
@@ -48,6 +49,7 @@ func TestSettingsShiftTabWraps(t *testing.T) {
 	}{
 		{key: "general", step: -1, want: "config"},
 		{key: "config", step: 1, want: "general"},
+		{key: "fonts", step: 1, want: "viewer"},
 		{key: "viewer", step: 1, want: "associations"},
 		{key: "colors", step: -1, want: "associations"},
 	}
@@ -96,14 +98,14 @@ func TestSettingsStepActiveTabSetsPulse(t *testing.T) {
 	if !st.stepActiveTab(1, now) {
 		t.Fatal("stepActiveTab should report a tab change")
 	}
-	if st.activeTab != "viewer" {
-		t.Fatalf("activeTab=%q want %q", st.activeTab, "viewer")
+	if st.activeTab != "fonts" {
+		t.Fatalf("activeTab=%q want %q", st.activeTab, "fonts")
 	}
 	if st.navPrevTab != "general" {
 		t.Fatalf("navPrevTab=%q want %q", st.navPrevTab, "general")
 	}
-	if st.navPulseKey != "viewer" {
-		t.Fatalf("navPulseKey=%q want %q", st.navPulseKey, "viewer")
+	if st.navPulseKey != "fonts" {
+		t.Fatalf("navPulseKey=%q want %q", st.navPulseKey, "fonts")
 	}
 	if st.navPulseAt != now {
 		t.Fatalf("navPulseAt=%v want %v", st.navPulseAt, now)
@@ -148,10 +150,25 @@ func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
+		settingsKeyboardFocusFooter,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsKeyboardFocusOrderIncludesFontControls(t *testing.T) {
+	st := &settingsModalState{activeTab: "fonts"}
+
+	got := st.focusOrder()
+	want := []settingsKeyboardFocus{
+		settingsKeyboardFocusNav,
 		settingsKeyboardFocusGeneralPaneFont,
 		settingsKeyboardFocusGeneralPaneFontSize,
 		settingsKeyboardFocusGeneralViewFont,
 		settingsKeyboardFocusGeneralViewFontSize,
+		settingsKeyboardFocusFontsTerminalFont,
+		settingsKeyboardFocusFontsTerminalFontSize,
 		settingsKeyboardFocusFooter,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -370,7 +387,7 @@ func TestViewerRemoteSearchCommandNoticeTextUsesMultipleLines(t *testing.T) {
 	}
 }
 
-func TestSettingsModalKeyboardTabIncludesEditorTargets(t *testing.T) {
+func TestSettingsModalKeyboardTabIncludesFontSizeStepper(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	ui.openSettingsModal()
 	th := material.NewTheme()
@@ -382,7 +399,7 @@ func TestSettingsModalKeyboardTabIncludesEditorTargets(t *testing.T) {
 	if st == nil {
 		t.Fatal("settings modal did not open")
 	}
-	st.activeTab = "general"
+	st.activeTab = "fonts"
 	st.focus = settingsKeyboardFocusNav
 	st.keyFocus.wantFocus = true
 
@@ -394,16 +411,61 @@ func TestSettingsModalKeyboardTabIncludesEditorTargets(t *testing.T) {
 	}
 
 	frame(now)
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 2; i++ {
 		router.Queue(key.Event{Name: key.NameTab, State: key.Press})
 		frame(now.Add(time.Duration(i+1) * time.Millisecond))
 	}
 
 	if st.focus != settingsKeyboardFocusGeneralPaneFontSize {
-		t.Fatalf("focus after tabbing = %v, want pane font size editor", st.focus)
+		t.Fatalf("focus after tabbing = %v, want pane font size stepper", st.focus)
 	}
 	if st.focusPending != settingsKeyboardFocusNone {
-		t.Fatalf("focusPending = %v, want none after targeting the editor", st.focusPending)
+		t.Fatalf("focusPending = %v, want none for keyboard-owned stepper focus", st.focusPending)
+	}
+}
+
+func TestSettingsModalKeyboardUpDownStepsFontSize(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "fonts"
+	st.focus = settingsKeyboardFocusGeneralPaneFontSize
+	st.paneFontSizeSp = 14
+	st.keyFocus.wantFocus = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameUpArrow, State: key.Press})
+	frame(now.Add(time.Millisecond))
+	if got, want := st.paneFontSizeSp, float32(15); got != want {
+		t.Fatalf("pane font size after UpArrow = %v, want %v", got, want)
+	}
+
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	frame(now.Add(2 * time.Millisecond))
+	if got, want := st.paneFontSizeSp, float32(14); got != want {
+		t.Fatalf("pane font size after DownArrow = %v, want %v", got, want)
+	}
+
+	st.paneFontSizeSp = settingsFontSizeMin
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	frame(now.Add(3 * time.Millisecond))
+	if got, want := st.paneFontSizeSp, settingsFontSizeMin; got != want {
+		t.Fatalf("pane font size should clamp at min = %v, want %v", got, want)
 	}
 }
 
@@ -900,16 +962,16 @@ func TestSettingsTabPositionSlidesToAssociations(t *testing.T) {
 	if !anim {
 		t.Fatal("tabPosition should still animate mid-transition")
 	}
-	if mid <= 0 || mid >= 2 {
-		t.Fatalf("mid position=%v want between 0 and 2", mid)
+	if mid <= 0 || mid >= 3 {
+		t.Fatalf("mid position=%v want between 0 and 3", mid)
 	}
 
 	end, anim := st.tabPosition(now.Add(toolbarAnimDur))
 	if anim {
 		t.Fatal("tabPosition should stop animating at the end of the transition")
 	}
-	if end != 2 {
-		t.Fatalf("end position=%v want 2", end)
+	if end != 3 {
+		t.Fatalf("end position=%v want 3", end)
 	}
 	if st.navPrevTab != "" {
 		t.Fatalf("navPrevTab should clear after transition, got %q", st.navPrevTab)

@@ -275,7 +275,7 @@ func (ui *UI) resetKeys() {
 
 func (ui *UI) mainTypeface() font.Typeface {
 	if ui == nil || ui.typeface == "" {
-		return font.Typeface("Fira Code")
+		return font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 	}
 	return ui.typeface
 }
@@ -288,12 +288,10 @@ func (ui *UI) viewerTypeface() font.Typeface {
 }
 
 func (ui *UI) viewerMonospaceTypeface() font.Typeface {
-	switch string(ui.viewerTypeface()) {
-	case resources.BundledFontFamilyFiraCode, resources.BundledFontFamilyConsolas:
+	if resources.IsBundledMonospaceFontFamily(string(ui.viewerTypeface())) {
 		return ui.viewerTypeface()
-	default:
-		return font.Typeface(resources.BundledFontFamilyFiraCode)
 	}
+	return font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 }
 
 func (ui *UI) mainTextSize() unit.Sp {

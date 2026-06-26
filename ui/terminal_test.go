@@ -6,6 +6,7 @@ package ui
 import (
 	"bytes"
 	"errors"
+	resources "hexone"
 	"hexone/filesys"
 	"hexone/fm"
 	"image"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -1179,7 +1181,7 @@ func TestTerminalCellFromHeadlessMapsStyle(t *testing.T) {
 
 func TestTerminalParserPreservesPromptGlyphs(t *testing.T) {
 	st := newTerminalSession(nil)
-	prompt := "~ \u276f \u279c \ue0b0"
+	prompt := "~ \uf023 \u276f \u279c \ue0b0"
 
 	st.parserMu.Lock()
 	if _, err := st.term.Write([]byte(prompt)); err != nil {
@@ -1481,13 +1483,16 @@ func TestTerminalPasteAsyncReadPendingExpires(t *testing.T) {
 }
 
 func TestTerminalTypefaceUsesPaneFontWithSymbolFallback(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
 	for _, tc := range []struct {
 		name string
 		ui   *UI
 		want string
 	}{
-		{name: "default", ui: &UI{}, want: "Fira Code"},
-		{name: "pane font", ui: &UI{typeface: "Consolas"}, want: "Consolas"},
+		{name: "default", ui: &UI{}, want: resources.BundledFontFamilyFiraCodeNerdFontMono},
+		{name: "pane font", ui: &UI{typeface: font.Typeface(resources.BundledFontFamilyHackNerdFontMono)}, want: resources.BundledFontFamilyHackNerdFontMono},
+		{name: "terminal font", ui: &UI{fmCfg: cfg, typeface: font.Typeface(resources.BundledFontFamilyHackNerdFontMono)}, want: resources.BundledFontFamilyIosevkaNerdFontMono},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := string(tc.ui.terminalTypeface())
@@ -1500,24 +1505,41 @@ func TestTerminalTypefaceUsesPaneFontWithSymbolFallback(t *testing.T) {
 			if !strings.Contains(got, "Apple Braille") || !strings.Contains(got, "Apple Color Emoji") {
 				t.Fatalf("terminalTypeface=%q missing braille/emoji fallbacks", got)
 			}
+			if !strings.Contains(got, "FiraCode Nerd Font Mono") || !strings.Contains(got, "Font Awesome 6 Free") {
+				t.Fatalf("terminalTypeface=%q missing private-use icon fallbacks", got)
+			}
+			nerdIdx := strings.Index(got, "FiraCode Nerd Font Mono")
+			appleIdx := strings.Index(got, "Apple Symbols")
+			if nerdIdx < 0 || appleIdx < 0 || nerdIdx > appleIdx {
+				t.Fatalf("terminalTypeface=%q should prefer Nerd Font before Apple private-use symbols", got)
+			}
 		})
 	}
 }
 
-func TestTerminalTextSizeTracksPaneTableSize(t *testing.T) {
+func TestTerminalTextSizeUsesTerminalConfig(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.General.FontSizeSp = 18
+	cfg.Terminal.FontSizeSp = 15.5
 	ui := &UI{fmCfg: cfg}
 
-	if got, want := ui.terminalTextSize(), scaleConfigFontSize(cfg, 13); got != want {
-		t.Fatalf("terminalTextSize=%v want pane table size %v", got, want)
+	if got, want := ui.terminalTextSize(), normalizeUIFontSize(unit.Sp(15.5)); got != want {
+		t.Fatalf("terminalTextSize=%v want terminal size %v", got, want)
+	}
+}
+
+func TestTerminalBaseTypefaceFallsBackToMonoFamily(t *testing.T) {
+	ui := &UI{typeface: font.Typeface("Some Proportional Face")}
+
+	if got, want := ui.terminalBaseTypeface(), font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono); got != want {
+		t.Fatalf("terminalBaseTypeface=%q want monospace fallback %q", got, want)
 	}
 }
 
 func TestTerminalCellWidthUsesTypefaceAdvance(t *testing.T) {
 	cfg := fm.DefaultConfig()
-	cfg.General.Typeface = "Consolas"
-	ui := &UI{fmCfg: cfg, typeface: "Consolas"}
+	cfg.Terminal.Typeface = resources.BundledFontFamilyJetBrainsMonoNerdFontMono
+	ui := &UI{fmCfg: cfg, typeface: font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)}
 	th := material.NewTheme()
 	gtx := testTerminalPaneHeightContext(image.Pt(640, 120))
 
