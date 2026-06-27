@@ -538,7 +538,7 @@ func (ui *UI) layoutFilePaneSeams(gtx layout.Context, visible []visiblePane) {
 	height := gtx.Constraints.Max.Y
 	base := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
 	highlight := filePaneActiveBorderColor(palette.PaneBg)
-	terminalFocused := ui.terminalFocused(gtx)
+	terminalFocused := ui.terminalVisuallyFocused(gtx)
 	for i := 0; i < len(visible)-1; i++ {
 		x += widths[i]
 		if x <= 0 || x >= gtx.Constraints.Max.X {
@@ -556,7 +556,7 @@ func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context,
 	if len(visible) == 0 {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
-	if ui.terminalFocused(gtx) {
+	if ui.filePaneVolumeBadgesHidden() {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 	widths := paneColumnWidths(gtx.Constraints.Max.X, len(visible))
@@ -583,8 +583,12 @@ func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context,
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
+func (ui *UI) filePaneVolumeBadgesHidden() bool {
+	return ui != nil && ui.terminal != nil && ui.terminal.active()
+}
+
 func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
-	active := idx == ui.activeFilePane && !ui.terminalFocused(gtx)
+	active := idx == ui.activeFilePane && !ui.terminalVisuallyFocused(gtx)
 	palette := filePanePaletteFromConfig(ui.fmCfg)
 	accent := filePaneActiveBorderColor(palette.PaneBg)
 	shade := filePaneInactiveShadeColor(ui.fmCfg, palette.PaneBg)

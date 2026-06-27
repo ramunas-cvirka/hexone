@@ -62,6 +62,7 @@ Download a package from the [Releases](../../releases) page for macOS, Linux, or
 | `F7` | New folder |
 | `F8` | Delete |
 | `F12` | Toggle terminal drawer |
+| `Cmd+K` (macOS), `Ctrl+Shift+K` (Windows/Linux) | Clear active terminal tab |
 | `Tab` | Switch pane |
 | `Shift+Tab` | Toggle terminal/file-pane focus when the terminal drawer is open |
 | `Enter` | Open file or directory |

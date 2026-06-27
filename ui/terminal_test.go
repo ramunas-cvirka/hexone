@@ -13,6 +13,7 @@ import (
 	"image/color"
 	"io"
 	"math"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -138,6 +139,67 @@ func TestTerminalTracksBracketedPasteMode(t *testing.T) {
 	}
 }
 
+func TestTerminalShellRuntimeChangeRecreatesOpenTabs(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	firstDir := t.TempDir()
+	secondDir := t.TempDir()
+	first := newTerminalSession(nil, 9)
+	second := newTerminalSession(nil, 15)
+	first.startDir = firstDir
+	second.startDir = secondDir
+	second.setActive(true)
+	ui.terminalTabs = terminalTabSet{
+		sessions: []*terminalSession{first, second},
+		active:   1,
+		scroll:   1,
+	}
+	ui.terminal = second
+
+	cfg.Viewer.Shell = "cmd"
+	if !ui.applyTerminalShellRuntime() {
+		t.Fatal("shell change should recreate existing terminal tabs")
+	}
+	if got, want := ui.runtimeTerminalShell, "cmd"; got != want {
+		t.Fatalf("runtime shell=%q want %q", got, want)
+	}
+	if got, want := len(ui.terminalTabs.sessions), 2; got != want {
+		t.Fatalf("terminal tab count=%d want %d", got, want)
+	}
+	if ui.terminalTabs.sessions[0] == first || ui.terminalTabs.sessions[1] == second {
+		t.Fatal("terminal sessions were not replaced")
+	}
+	if !first.closing || !second.closing {
+		t.Fatal("old terminal sessions were not closed")
+	}
+	if got, want := ui.terminalTabs.active, 1; got != want {
+		t.Fatalf("active terminal tab=%d want %d", got, want)
+	}
+	if ui.terminal != ui.terminalTabs.sessions[1] || !ui.terminal.active() {
+		t.Fatal("active terminal drawer state was not preserved")
+	}
+	if !ui.terminal.wantFocus {
+		t.Fatal("replacement terminal should reclaim keyboard focus")
+	}
+	if got, want := ui.terminal.rows, 15; got != want {
+		t.Fatalf("replacement rows=%d want %d", got, want)
+	}
+	if got, want := ui.terminalTabs.sessions[0].pendingDirectory(), firstDir; got != want {
+		t.Fatalf("first replacement dir=%q want %q", got, want)
+	}
+	if got, want := ui.terminalTabs.sessions[1].pendingDirectory(), secondDir; got != want {
+		t.Fatalf("second replacement dir=%q want %q", got, want)
+	}
+
+	current := ui.terminal
+	if ui.applyTerminalShellRuntime() {
+		t.Fatal("unchanged shell should not recreate terminal tabs")
+	}
+	if ui.terminal != current {
+		t.Fatal("unchanged shell replaced the active terminal")
+	}
+}
+
 func TestTerminalMouseReportBytes(t *testing.T) {
 	sgr := terminalMouseReportModes{clicks: true, sgr: true}
 	if got, want := string(terminalMouseReportBytes(0, 4, 9, false, false, 0, sgr)), "\x1b[<0;10;5M"; got != want {
@@ -195,6 +257,64 @@ func TestTerminalPasteKey(t *testing.T) {
 	}
 	if terminalPasteKey(key.Event{Name: "V", State: key.Press}) {
 		t.Fatal("plain V should not paste")
+	}
+}
+
+func TestTerminalClearBufferKeyUsesPlatformConvention(t *testing.T) {
+	if !terminalClearBufferKeyForGOOS(key.Event{Name: "K", State: key.Press, Modifiers: key.ModCommand}, "darwin") {
+		t.Fatal("Command+K should clear the terminal on macOS")
+	}
+	if !terminalClearBufferKeyForGOOS(key.Event{Name: "K", State: key.Press, Modifiers: key.ModCtrl | key.ModShift}, "windows") {
+		t.Fatal("Ctrl+Shift+K should clear the terminal on Windows")
+	}
+	if !terminalClearBufferKeyForGOOS(key.Event{Name: "k", State: key.Press, Modifiers: key.ModCtrl | key.ModShift}, "linux") {
+		t.Fatal("Ctrl+Shift+K should clear the terminal on Linux")
+	}
+	if terminalClearBufferKeyForGOOS(key.Event{Name: "K", State: key.Press, Modifiers: key.ModCtrl}, "linux") {
+		t.Fatal("plain Ctrl+K must remain available to the shell")
+	}
+	if got := terminalKeyBytes(key.Event{Name: "K", State: key.Press, Modifiers: key.ModCtrl}); !bytes.Equal(got, []byte{0x0b}) {
+		t.Fatalf("plain Ctrl+K=%v want shell kill-line byte", got)
+	}
+}
+
+func TestTerminalClearBufferClearsViewportAndScrollback(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.parserMu.Lock()
+	st.term.Resize(3, 20)
+	st.parserMu.Unlock()
+	st.writeOutput([]byte("one\r\ntwo\r\nthree\r\nfour\r\nPS C:\\repo> git st"))
+	if st.term.ScrollbackLen() == 0 {
+		t.Fatal("test setup did not produce scrollback")
+	}
+	st.viewMu.Lock()
+	st.scrollOffset = 1
+	st.selectionActive = true
+	st.viewMu.Unlock()
+
+	if !st.clearBuffer() {
+		t.Fatal("clearBuffer should report success")
+	}
+	if got := st.term.ScrollbackLen(); got != 0 {
+		t.Fatalf("scrollback length=%d want 0", got)
+	}
+	if got, want := st.term.LineContent(0), `PS C:\repo> git st`; got != want {
+		t.Fatalf("preserved prompt line=%q want %q", got, want)
+	}
+	for row := 1; row < st.term.Rows(); row++ {
+		if got := st.term.LineContent(row); got != "" {
+			t.Fatalf("row %d content=%q want empty", row, got)
+		}
+	}
+	if row, col := st.term.CursorPos(); row != 0 || col != len(`PS C:\repo> git st`) {
+		t.Fatalf("cursor=(%d,%d) want (0,%d)", row, col, len(`PS C:\repo> git st`))
+	}
+	st.viewMu.Lock()
+	scrollOffset := st.scrollOffset
+	selectionActive := st.selectionActive
+	st.viewMu.Unlock()
+	if scrollOffset != 0 || selectionActive {
+		t.Fatalf("scroll offset=%d selection active=%v after clear", scrollOffset, selectionActive)
 	}
 }
 
@@ -1885,19 +2005,38 @@ func TestTerminalCommandForWindowsShellSelection(t *testing.T) {
 	}()
 
 	name, args := terminalCommandForShellOnGOOS("windows", "auto", `C:\Users\me`)
-	if name != "pwsh.exe" || strings.Join(args, " ") != "-NoLogo" {
-		t.Fatalf("auto command=%q %v, want pwsh.exe -NoLogo", name, args)
+	if name != "pwsh.exe" || len(args) != 4 || args[0] != "-NoLogo" || args[1] != "-NoExit" || args[2] != "-Command" || args[3] != terminalPowerShellPromptHook {
+		t.Fatalf("auto command=%q %v, want interactive pwsh with prompt hook", name, args)
 	}
 
 	name, args = terminalCommandForShellOnGOOS("windows", "powershell", `C:\Users\me`)
-	if name != "powershell.exe" || strings.Join(args, " ") != "-NoLogo" {
-		t.Fatalf("powershell command=%q %v, want powershell.exe -NoLogo", name, args)
+	if name != "powershell.exe" || len(args) != 4 || args[3] != terminalPowerShellPromptHook {
+		t.Fatalf("powershell command=%q %v, want interactive powershell with prompt hook", name, args)
+	}
+
+	name, args = terminalCommandForShellOnGOOS("windows", "cmd", `C:\Users\me`)
+	if name != "cmd.exe" || strings.Join(args, "\x00") != strings.Join(terminalCmdPromptArgs(), "\x00") {
+		t.Fatalf("cmd command=%q %v, want cwd-reporting prompt", name, args)
 	}
 
 	name, args = terminalCommandForShellOnGOOS("windows", "wsl:Ubuntu-24.04", `C:\Users\me`)
 	wantArgs := []string{"--distribution", "Ubuntu-24.04", "--cd", `C:\Users\me`}
 	if name != "wsl.exe" || strings.Join(args, "\x00") != strings.Join(wantArgs, "\x00") {
 		t.Fatalf("wsl command=%q %v, want wsl.exe %v", name, args, wantArgs)
+	}
+}
+
+func TestParseTerminalOSC7LocationAcceptsWindowsPromptPath(t *testing.T) {
+	loc, ok := parseTerminalOSC7Location(`file://localhost/C:\Users\me\Downloads`)
+	if !ok {
+		t.Fatal("Windows OSC 7 path should parse")
+	}
+	want := `C:/Users/me/Downloads`
+	if runtime.GOOS != "windows" {
+		want = `/C:/Users/me/Downloads`
+	}
+	if loc.Dir != want {
+		t.Fatalf("OSC 7 dir=%q want %q", loc.Dir, want)
 	}
 }
 

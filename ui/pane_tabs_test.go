@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/io/input"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -317,7 +318,7 @@ func TestTabStripPlanOverflowWidthsFillAvailableStrip(t *testing.T) {
 
 func TestTabStripWidthsUseMeasuredTitleText(t *testing.T) {
 	cfg := fm.DefaultConfig()
-	cfg.General.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.Tabs.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
 	cfg.Tabs.MinWidthDp = 44
 	cfg.Tabs.MaxWidthDp = 220
 	ui := NewUI(cfg)
@@ -342,6 +343,59 @@ func TestTabStripWidthsUseMeasuredTitleText(t *testing.T) {
 	}
 	if measured[0] < gtx.Dp(unit.Dp(cfg.Tabs.MinWidthDp)) {
 		t.Fatalf("measured tab width=%d below configured min", measured[0])
+	}
+}
+
+func TestTabStripUsesConfiguredFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.Typeface = resources.BundledFontFamilyHackNerdFontMono
+	cfg.Tabs.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.Tabs.FontSizeSp = 12.5
+	ui := NewUI(cfg)
+
+	if got, want := ui.tabStripTypeface(), font.Typeface(cfg.Tabs.Typeface); got != want {
+		t.Fatalf("tab typeface=%q want %q", got, want)
+	}
+	if got, want := ui.tabStripTextSize(), unit.Sp(cfg.Tabs.FontSizeSp); got != want {
+		t.Fatalf("tab text size=%v want %v", got, want)
+	}
+}
+
+func TestTerminalTabTitleUsesOSC7WorkingDirectory(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.startDir = `C:\Users\me`
+	st.writeOutput([]byte("\x1b]7;file://localhost/C:/Users/me/Downloads\x07"))
+
+	if got, want := terminalTabTitle(st), "Downloads"; got != want {
+		t.Fatalf("terminal tab title=%q want %q", got, want)
+	}
+}
+
+func TestTerminalTabTitleUsesRemoteOSC7WorkingDirectory(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.writeOutput([]byte("\x1b]7;file://srv.test/var/log/app\x07"))
+
+	if got, want := terminalTabTitle(st), "srv.test:app"; got != want {
+		t.Fatalf("terminal tab title=%q want %q", got, want)
+	}
+}
+
+func TestTerminalTabTitleUsesShellReportedDirectoryTitle(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.startDir = `C:\Users\me`
+	st.writeOutput([]byte("\x1b]0;me@host: /var/log/app\x07"))
+
+	if got, want := terminalTabTitle(st), "app"; got != want {
+		t.Fatalf("terminal tab title=%q want %q", got, want)
+	}
+}
+
+func TestTerminalTabTitleUsesPendingRestartDirectory(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.pendingStartDir = filepath.Join("somewhere", "preserved")
+
+	if got, want := terminalTabTitle(st), "preserved"; got != want {
+		t.Fatalf("terminal tab title=%q want %q", got, want)
 	}
 }
 
@@ -467,5 +521,25 @@ func TestActivateTerminalTabPreservesScrollAnchor(t *testing.T) {
 	}
 	if got, want := ui.terminalTabs.scroll, 3; got != want {
 		t.Fatalf("terminal scroll anchor=%d want preserved %d", got, want)
+	}
+}
+
+func TestTerminalVisualFocusSurvivesTabHandoff(t *testing.T) {
+	first := newTerminalSession(nil)
+	second := newTerminalSession(nil)
+	first.setActive(true)
+	ui := &UI{
+		terminal: first,
+		terminalTabs: terminalTabSet{
+			sessions: []*terminalSession{first, second},
+			active:   0,
+		},
+	}
+
+	if !ui.activateTerminalTab(1) {
+		t.Fatal("activateTerminalTab should switch tabs")
+	}
+	if !ui.terminalVisuallyFocused(layout.Context{}) {
+		t.Fatal("pending terminal focus should keep pane muting stable during tab handoff")
 	}
 }

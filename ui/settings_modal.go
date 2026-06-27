@@ -197,18 +197,23 @@ type settingsModalState struct {
 	viewShellAnim               settingsChoiceAnim
 	viewRemoteSearchCommandEdit widget.Editor
 	paneFontFamily              string
+	tabsFontFamily              string
 	viewFontFamily              string
 	terminalFontFamily          string
 	paneFontSizeSp              float32
+	tabsFontSizeSp              float32
 	viewFontSizeSp              float32
 	terminalFontSizeSp          float32
 	paneFontSizeStepper         settingsNumberStepperState
+	tabsFontSizeStepper         settingsNumberStepperState
 	viewFontSizeStepper         settingsNumberStepperState
 	terminalFontSizeStepper     settingsNumberStepperState
 	paneFontFamilyClicks        []widget.Clickable
+	tabsFontFamilyClicks        []widget.Clickable
 	viewFontFamilyClicks        []widget.Clickable
 	terminalFontFamilyClicks    []widget.Clickable
 	paneFontPickerAnim          settingsChoiceAnim
+	tabsFontPickerAnim          settingsChoiceAnim
 	viewFontPickerAnim          settingsChoiceAnim
 	terminalFontPickerAnim      settingsChoiceAnim
 	generalDimInactiveBool      widget.Bool
@@ -522,12 +527,15 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.viewShellAnim = settingsChoiceAnim{}
 	st.viewRemoteSearchCommandEdit.SetText(fm.NormalizeViewerRemoteSearchCommand(cfg.Viewer.RemoteSearchCommand))
 	st.paneFontFamily = cfg.General.Typeface
+	st.tabsFontFamily = cfg.Tabs.Typeface
 	st.viewFontFamily = cfg.Viewer.Typeface
 	st.terminalFontFamily = cfg.Terminal.Typeface
 	st.paneFontSizeSp = settingsNormalizedFontSize(cfg.General.FontSizeSp, 14)
+	st.tabsFontSizeSp = settingsNormalizedFontSize(cfg.Tabs.FontSizeSp, 10)
 	st.viewFontSizeSp = settingsNormalizedFontSize(cfg.Viewer.FontSizeSp, 13)
 	st.terminalFontSizeSp = settingsNormalizedFontSize(cfg.Terminal.FontSizeSp, 13)
 	st.paneFontPickerAnim = settingsChoiceAnim{}
+	st.tabsFontPickerAnim = settingsChoiceAnim{}
 	st.viewFontPickerAnim = settingsChoiceAnim{}
 	st.terminalFontPickerAnim = settingsChoiceAnim{}
 	st.generalDimInactiveBool.Value = cfg.General.DimInactivePanes
@@ -2799,6 +2807,10 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if paneFontSize < settingsFontSizeMin {
 		return fmt.Errorf("pane font size must be at least 6")
 	}
+	tabsFontSize := st.tabsFontSizeSp
+	if tabsFontSize < settingsFontSizeMin {
+		return fmt.Errorf("tabs font size must be at least 6")
+	}
 	terminalFontSize := st.terminalFontSizeSp
 	if terminalFontSize < settingsFontSizeMin {
 		return fmt.Errorf("terminal font size must be at least 6")
@@ -2809,11 +2821,16 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if !resources.IsBundledFontFamily(st.viewFontFamily) && st.viewFontFamily != ui.fmCfg.Viewer.Typeface {
 		return fmt.Errorf("viewer font family is invalid")
 	}
+	if !resources.IsBundledFontFamily(st.tabsFontFamily) && st.tabsFontFamily != ui.fmCfg.Tabs.Typeface {
+		return fmt.Errorf("tabs font family is invalid")
+	}
 	if !resources.IsBundledMonospaceFontFamily(st.terminalFontFamily) && st.terminalFontFamily != ui.fmCfg.Terminal.Typeface {
 		return fmt.Errorf("terminal font family is invalid")
 	}
 	ui.fmCfg.General.Typeface = st.paneFontFamily
 	ui.fmCfg.General.FontSizeSp = paneFontSize
+	ui.fmCfg.Tabs.Typeface = st.tabsFontFamily
+	ui.fmCfg.Tabs.FontSizeSp = tabsFontSize
 	ui.fmCfg.Viewer.Typeface = st.viewFontFamily
 	ui.fmCfg.Terminal.Typeface = st.terminalFontFamily
 	ui.fmCfg.Terminal.FontSizeSp = terminalFontSize
@@ -3624,6 +3641,7 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	bundledFamilies := resources.BundledFontFamilies()
 	st.ensurePaneFontFamilyClicks(len(bundledFamilies))
+	st.ensureTabsFontFamilyClicks(len(bundledFamilies))
 	st.ensureViewFontFamilyClicks(len(bundledFamilies))
 	st.ensureTerminalFontFamilyClicks(len(bundledFamilies))
 	for i, family := range bundledFamilies {
@@ -3639,6 +3657,12 @@ func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st 
 			st.viewFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
 			st.errText = ""
 		}
+		if st.tabsFontFamilyClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusFontsTabsFont)
+			st.tabsFontPickerAnim.setValue(&st.tabsFontFamily, family.Name, gtx.Now)
+			st.tabsFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
+			st.errText = ""
+		}
 		if st.terminalFontFamilyClicks[i].Clicked(gtx) {
 			st.setKeyboardFocus(settingsKeyboardFocusFontsTerminalFont)
 			st.terminalFontPickerAnim.setValue(&st.terminalFontFamily, family.Name, gtx.Now)
@@ -3652,6 +3676,10 @@ func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st 
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsFontRow(th, gtx, st, "Pane", bundledFamilies, st.paneFontFamilyClicks, st.paneFontFamily, &st.paneFontPickerAnim, st.focus == settingsKeyboardFocusGeneralPaneFont, &st.paneFontSizeStepper, st.paneFontSizeSp, settingsKeyboardFocusGeneralPaneFontSize)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsFontRow(th, gtx, st, "Tabs", bundledFamilies, st.tabsFontFamilyClicks, st.tabsFontFamily, &st.tabsFontPickerAnim, st.focus == settingsKeyboardFocusFontsTabsFont, &st.tabsFontSizeStepper, st.tabsFontSizeSp, settingsKeyboardFocusFontsTabsFontSize)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -3863,6 +3891,7 @@ func (ui *UI) layoutSettingsFontFamilyPicker(th *material.Theme, gtx layout.Cont
 		}
 		specs = append(specs, slidingTabSpec{
 			Label:      settingsFontFamilyLabel(family),
+			Typeface:   font.Typeface(family.Name),
 			Click:      &clicks[i],
 			ActiveFill: activeFill,
 			HoverFill:  hoverFill,
@@ -6778,6 +6807,16 @@ func (st *settingsModalState) ensureViewFontFamilyClicks(n int) {
 	copy(st.viewFontFamilyClicks, old)
 }
 
+func (st *settingsModalState) ensureTabsFontFamilyClicks(n int) {
+	if n <= cap(st.tabsFontFamilyClicks) {
+		st.tabsFontFamilyClicks = st.tabsFontFamilyClicks[:n]
+		return
+	}
+	old := st.tabsFontFamilyClicks
+	st.tabsFontFamilyClicks = make([]widget.Clickable, n)
+	copy(st.tabsFontFamilyClicks, old)
+}
+
 func (st *settingsModalState) ensureTerminalFontFamilyClicks(n int) {
 	if n <= cap(st.terminalFontFamilyClicks) {
 		st.terminalFontFamilyClicks = st.terminalFontFamilyClicks[:n]
@@ -6869,6 +6908,7 @@ func (ui *UI) applyConfigRuntime(now time.Time) {
 	ui.fileKeys = newFileKeyMap(ui.fmCfg)
 	ui.typeface = font.Typeface(ui.fmCfg.General.Typeface)
 	ui.textSize = fontSizeFromConfig(ui.fmCfg)
+	ui.applyTerminalShellRuntime()
 	if ui.tab2State != nil {
 		ui.tab2State.typeface = ui.mainTypeface()
 	}

@@ -185,6 +185,7 @@ type UI struct {
 	sortDirPrunedAt             time.Time
 	terminal                    *terminalSession
 	terminalTabs                terminalTabSet
+	runtimeTerminalShell        string
 	terminalFocusPointerTag     uiEventTag
 	pendingFileOpen             *fileOpenRequest
 	fileCopy                    *fileCopyState
@@ -226,6 +227,7 @@ func NewUI(cfg *fm.Config) *UI {
 		configPath:                 resolveUIConfigPath(),
 		typeface:                   font.Typeface(cfg.General.Typeface),
 		textSize:                   fontSizeFromConfig(cfg),
+		runtimeTerminalShell:       fm.NormalizeViewerShell(cfg.Viewer.Shell),
 		customCommandMenuSelected:  -1,
 		functionBarToolsSelected:   -1,
 		functionBarSliderPrevIndex: -1,

@@ -34,7 +34,7 @@ Each file pane has its own compact tab strip above the current-dir line.
 - `x` closes a tab; the last tab in a pane stays open.
 - `<` and `>` appear when the tab row overflows.
 
-Tab titles use the current directory and trim to fit. Configure `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, `tabs.active_color`, and `tabs.alternating_colors` in `hexone.yaml`.
+Tab titles use the current directory and trim to fit. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, `tabs.active_color`, and `tabs.alternating_colors`.
 
 ## Current Dir Line
 
@@ -86,6 +86,8 @@ When the terminal drawer is open, `Shift+Tab` toggles keyboard focus between the
 The terminal drawer is a real PTY-backed terminal. Its context menu can copy or paste terminal text, select all visible terminal text, send `cd` commands to the terminal for the left or right pane, and set the left or right pane to the terminal's current directory.
 
 The terminal drawer also has tabs. Use `+` for a new terminal tab, `x` to close one, and `<` or `>` when the tab row overflows.
+
+Clear the active terminal tab, including its visible viewport and scrollback, with `Cmd+K` on macOS or `Ctrl+Shift+K` on Windows and Linux. The current prompt and partially typed command remain at the top. Plain `Ctrl+K` is passed through to the shell for line editing.
 
 For local shells, Hexone can usually read the terminal process current directory directly.
 

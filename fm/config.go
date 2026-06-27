@@ -149,14 +149,16 @@ type TerminalConfig struct {
 }
 
 type TabsConfig struct {
-	WidthMode         string `yaml:"width_mode"`
-	MinWidthDp        int    `yaml:"min_width_dp"`
-	FixedWidthDp      int    `yaml:"fixed_width_dp"`
-	MaxWidthDp        int    `yaml:"max_width_dp"`
-	AlternatingColors bool   `yaml:"alternating_colors"`
-	Color             string `yaml:"color,omitempty"`
-	AltColor          string `yaml:"alt_color,omitempty"`
-	ActiveColor       string `yaml:"active_color,omitempty"`
+	WidthMode         string  `yaml:"width_mode"`
+	MinWidthDp        int     `yaml:"min_width_dp"`
+	FixedWidthDp      int     `yaml:"fixed_width_dp"`
+	MaxWidthDp        int     `yaml:"max_width_dp"`
+	Typeface          string  `yaml:"typeface"`
+	FontSizeSp        float32 `yaml:"font_size_sp"`
+	AlternatingColors bool    `yaml:"alternating_colors"`
+	Color             string  `yaml:"color,omitempty"`
+	AltColor          string  `yaml:"alt_color,omitempty"`
+	ActiveColor       string  `yaml:"active_color,omitempty"`
 }
 
 func NormalizeViewerShell(raw string) string {
@@ -582,6 +584,8 @@ func DefaultConfig() *Config {
 			MinWidthDp:   defaultTabMinWidthDp,
 			FixedWidthDp: defaultTabFixedWidthDp,
 			MaxWidthDp:   defaultTabMaxWidthDp,
+			Typeface:     resources.BundledFontFamilyFiraCodeNerdFontMono,
+			FontSizeSp:   10,
 		},
 		General: GeneralConfig{
 			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
@@ -891,6 +895,18 @@ func (c *Config) normalize() {
 	}
 	if c.General.FontSizeSp <= 0 {
 		c.General.FontSizeSp = 14
+	}
+	if c.Tabs.Typeface == "" {
+		c.Tabs.Typeface = c.General.Typeface
+	}
+	if !resources.IsBundledFontFamily(c.Tabs.Typeface) {
+		c.Tabs.Typeface = c.General.Typeface
+	}
+	if c.Tabs.FontSizeSp < 6 {
+		c.Tabs.FontSizeSp = c.General.FontSizeSp * (10.0 / 14.0)
+		if c.Tabs.FontSizeSp < 6 {
+			c.Tabs.FontSizeSp = 10
+		}
 	}
 	if c.Terminal.Typeface == "" {
 		c.Terminal.Typeface = c.General.Typeface

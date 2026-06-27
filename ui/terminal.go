@@ -140,15 +140,16 @@ type terminalSession struct {
 	modeMu     sync.RWMutex
 	modes      terminalModes
 
-	procMu         sync.Mutex
-	writeMu        sync.Mutex
-	pty            terminalProcess
-	running        bool
-	startAttempted bool
-	closing        bool
-	startDir       string
-	rows           int
-	cols           int
+	procMu          sync.Mutex
+	writeMu         sync.Mutex
+	pty             terminalProcess
+	running         bool
+	startAttempted  bool
+	closing         bool
+	startDir        string
+	pendingStartDir string
+	rows            int
+	cols            int
 
 	viewMu              sync.Mutex
 	scrollOffset        int
@@ -762,6 +763,13 @@ func (ui *UI) terminalFocused(gtx layout.Context) bool {
 	return ui != nil && ui.terminal != nil && ui.terminal.active() && gtx.Focused(&ui.terminal.keyTag)
 }
 
+func (ui *UI) terminalVisuallyFocused(gtx layout.Context) bool {
+	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+		return false
+	}
+	return ui.terminal.wantFocus || gtx.Focused(&ui.terminal.keyTag)
+}
+
 func (ui *UI) releaseTerminalKeyboardFocus(gtx layout.Context) bool {
 	if ui == nil || ui.terminal == nil {
 		return false
@@ -952,8 +960,8 @@ func (s *terminalSession) Close() {
 	s.procMu.Unlock()
 
 	if proc != nil {
-		_ = proc.Close()
 		_ = proc.Kill()
+		_ = proc.Close()
 	}
 }
 
@@ -967,6 +975,10 @@ func (s *terminalSession) start(cwd, shell string) {
 		return
 	}
 	s.startAttempted = true
+	if pending := strings.TrimSpace(s.pendingStartDir); pending != "" {
+		cwd = pending
+		s.pendingStartDir = ""
+	}
 	rows, cols := s.rows, s.cols
 	s.procMu.Unlock()
 
@@ -1030,7 +1042,9 @@ func (s *terminalSession) readLoop(proc terminalProcess) {
 		s.running = false
 	}
 	s.procMu.Unlock()
-	_ = proc.Close()
+	if !closing {
+		_ = proc.Close()
+	}
 
 	if !closing {
 		s.setError("terminal exited; close and reopen the drawer to start a new shell")
@@ -1817,6 +1831,57 @@ func (s *terminalSession) clearSelection() bool {
 	return changed
 }
 
+func (s *terminalSession) clearBuffer() bool {
+	if s == nil || s.term == nil {
+		return false
+	}
+	s.parserMu.Lock()
+	cursorRow, cursorCol := s.term.CursorPos()
+	cols := s.term.Cols()
+	currentLine := make([]headlessterm.Cell, 0, cols)
+	if cursorRow >= 0 && cursorRow < s.term.Rows() {
+		for col := 0; col < cols; col++ {
+			if cell := s.term.Cell(cursorRow, col); cell != nil {
+				currentLine = append(currentLine, cell.Copy())
+			} else {
+				currentLine = append(currentLine, headlessterm.NewCell())
+			}
+		}
+	}
+	_, _ = s.term.Write([]byte("\x1b[H\x1b[2J"))
+	s.term.ClearScrollback()
+	s.term.ClearSelection()
+	s.term.ClearPromptMarks()
+	for col, cell := range currentLine {
+		if dst := s.term.Cell(0, col); dst != nil {
+			*dst = cell.Copy()
+			dst.MarkDirty()
+		}
+	}
+	if cursorCol < 0 {
+		cursorCol = 0
+	}
+	if cols > 0 && cursorCol >= cols {
+		cursorCol = cols - 1
+	}
+	_, _ = s.term.Write([]byte("\x1b[1;" + strconvItoa(cursorCol+1) + "H"))
+	s.term.SetWrapped(0, false)
+	s.parserMu.Unlock()
+
+	s.clearSelection()
+	s.viewMu.Lock()
+	s.scrollOffset = 0
+	s.scrollCarry = 0
+	s.lastScrollbackLen = 0
+	s.visualTop = 0
+	s.visualReady = false
+	s.visualAt = time.Time{}
+	s.viewMu.Unlock()
+	s.snapshot()
+	s.invalidateNow()
+	return true
+}
+
 func (s *terminalSession) selectionSnapshot() (start, end terminalPoint, active bool) {
 	if s == nil {
 		return terminalPoint{}, terminalPoint{}, false
@@ -2496,18 +2561,26 @@ func terminalPowerShellCommand(goos string, modern, nonInteractive bool) (string
 	args := []string{"-NoLogo"}
 	if nonInteractive {
 		args = append(args, "-NoProfile", "-NonInteractive", "-Command")
+	} else {
+		args = append(args, "-NoExit", "-Command", terminalPowerShellPromptHook)
 	}
 	return program, args
 }
 
+const terminalPowerShellPromptHook = `$global:__hexoneOriginalPrompt = $function:prompt; function global:prompt { try { $esc = [char]27; $uri = [Uri]::new((Get-Location).ProviderPath).AbsoluteUri; [Console]::Write("$esc]7;$uri$([char]7)") } catch {}; if ($global:__hexoneOriginalPrompt) { & $global:__hexoneOriginalPrompt } else { "PS $PWD> " } }`
+
 func terminalCmdCommand() (string, []string) {
 	if shell := strings.TrimSpace(terminalGetenv("COMSPEC")); shell != "" {
-		return shell, nil
+		return shell, terminalCmdPromptArgs()
 	}
 	if program := terminalFirstLookPath(terminalLookPath, "cmd.exe", "cmd"); program != "" {
-		return program, nil
+		return program, terminalCmdPromptArgs()
 	}
-	return "cmd.exe", nil
+	return "cmd.exe", terminalCmdPromptArgs()
+}
+
+func terminalCmdPromptArgs() []string {
+	return []string{"/K", `prompt $E]7;file://localhost/$P$E\$P$G`}
 }
 
 func terminalShCommand(goos string) (string, []string) {
@@ -2645,6 +2718,129 @@ func (ui *UI) terminalShell() string {
 		return ui.fmCfg.Viewer.Shell
 	}
 	return "auto"
+}
+
+func (ui *UI) applyTerminalShellRuntime() bool {
+	if ui == nil || ui.fmCfg == nil {
+		return false
+	}
+	next := fm.NormalizeViewerShell(ui.fmCfg.Viewer.Shell)
+	if ui.runtimeTerminalShell == "" {
+		ui.runtimeTerminalShell = next
+		return false
+	}
+	if next == ui.runtimeTerminalShell {
+		return false
+	}
+	ui.runtimeTerminalShell = next
+	return ui.restartTerminalSessionsForShellChange()
+}
+
+func (ui *UI) restartTerminalSessionsForShellChange() bool {
+	if ui == nil {
+		return false
+	}
+	sessions := ui.terminalTabs.sessions
+	active := ui.terminalTabs.active
+	if len(sessions) == 0 {
+		if ui.terminal == nil {
+			return false
+		}
+		sessions = []*terminalSession{ui.terminal}
+		active = 0
+	}
+	active = clampTabIndex(active, len(sessions))
+	drawerActive := ui.terminal != nil && ui.terminal.active()
+
+	type replacementState struct {
+		rows       int
+		cols       int
+		dir        string
+		wasRunning bool
+	}
+	states := make([]replacementState, len(sessions))
+	seen := make(map[*terminalSession]struct{}, len(sessions))
+	for i, old := range sessions {
+		state := replacementState{
+			rows: terminalConfiguredRows(ui.fmCfg),
+			cols: terminalDefaultCols,
+		}
+		if old != nil {
+			state.dir = old.restartDirectory()
+			old.procMu.Lock()
+			if old.rows > 0 {
+				state.rows = old.rows
+			}
+			if old.cols > 0 {
+				state.cols = old.cols
+			}
+			state.wasRunning = old.running
+			old.procMu.Unlock()
+		}
+		states[i] = state
+	}
+	for _, old := range sessions {
+		if old == nil {
+			continue
+		}
+		if _, ok := seen[old]; ok {
+			continue
+		}
+		seen[old] = struct{}{}
+		old.Close()
+	}
+
+	replacements := make([]*terminalSession, len(sessions))
+	for i, state := range states {
+		next := newTerminalSession(ui.invalidate, state.rows)
+		next.resize(state.rows, state.cols)
+		next.pendingStartDir = state.dir
+		replacements[i] = next
+	}
+
+	ui.terminalTabs.sessions = replacements
+	ui.terminalTabs.active = active
+	ui.terminalTabs.scroll = clampTabScrollAnchor(ui.terminalTabs.scroll, len(replacements))
+	ui.terminal = replacements[active]
+	ui.terminal.setActive(drawerActive)
+	fallbackDir := ui.terminalStartDir()
+	for i, state := range states {
+		if state.wasRunning {
+			replacements[i].start(fallbackDir, ui.terminalShell())
+		}
+	}
+	if drawerActive {
+		ui.terminal.focusKeyboard()
+	}
+	if ui.invalidate != nil {
+		ui.invalidate()
+	}
+	return true
+}
+
+func (s *terminalSession) restartDirectory() string {
+	if s == nil {
+		return ""
+	}
+	if loc, ok := s.osc7Location(); ok && terminalOSC7HostIsLocal(loc.Host) {
+		if dir := terminalOSC7LocalDir(loc.Dir); terminalDirExists(dir) {
+			return dir
+		}
+	}
+	if dir, ok := s.currentDir(); ok && terminalDirExists(dir) {
+		return dir
+	}
+	return ""
+}
+
+func (s *terminalSession) pendingDirectory() string {
+	if s == nil {
+		return ""
+	}
+	s.procMu.Lock()
+	dir := strings.TrimSpace(s.pendingStartDir)
+	s.procMu.Unlock()
+	return dir
 }
 
 func (ui *UI) terminalStartDir() string {
@@ -2862,7 +3058,11 @@ func (s *terminalSession) activeSSHTarget() (terminalSSHTarget, bool) {
 }
 
 func parseTerminalOSC7Location(raw string) (terminalOSC7Location, bool) {
-	u, err := url.Parse(strings.TrimSpace(raw))
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(strings.ToLower(raw), "file://") {
+		raw = strings.ReplaceAll(raw, `\`, "/")
+	}
+	u, err := url.Parse(raw)
 	if err != nil || u == nil || !strings.EqualFold(u.Scheme, "file") {
 		return terminalOSC7Location{}, false
 	}
@@ -4891,6 +5091,12 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 			if ev.State != key.Press {
 				continue
 			}
+			if terminalClearBufferKey(ev) {
+				if s.clearBuffer() {
+					handled = true
+				}
+				continue
+			}
 			if terminalCopyKey(ev) && s.hasActiveSelection() {
 				if s.copyText(gtx, false) {
 					handled = true
@@ -4915,6 +5121,20 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 			}
 		}
 	}
+}
+
+func terminalClearBufferKey(ev key.Event) bool {
+	return terminalClearBufferKeyForGOOS(ev, runtime.GOOS)
+}
+
+func terminalClearBufferKeyForGOOS(ev key.Event, goos string) bool {
+	if ev.Name != "K" && ev.Name != "k" {
+		return false
+	}
+	if goos == "darwin" {
+		return ev.Modifiers == key.ModCommand
+	}
+	return ev.Modifiers == key.ModCtrl|key.ModShift
 }
 
 func terminalCopyKey(ev key.Event) bool {

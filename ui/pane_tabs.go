@@ -551,9 +551,9 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, item.title)
-					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Typeface = ui.tabStripTypeface()
 					lbl.Font.Weight = font.Medium
-					lbl.TextSize = scaleThemeFontSize(th, 10)
+					lbl.TextSize = ui.tabStripTextSize()
 					lbl.Color = fg
 					lbl.MaxLines = 1
 					lbl.Truncator = ".."
@@ -974,17 +974,19 @@ func tabStripFitWidths(widths, minWidths []int, start, end, budget int) []int {
 
 func (ui *UI) tabStripWidths(th *material.Theme, gtx layout.Context, cfg *fm.Config, items []appTabItem) []int {
 	face := font.Typeface("")
+	size := unit.Sp(10)
 	if ui != nil {
-		face = ui.mainTypeface()
+		face = ui.tabStripTypeface()
+		size = ui.tabStripTextSize()
 	}
-	return tabStripWidthsForTheme(th, gtx, cfg, items, face)
+	return tabStripWidthsForTheme(th, gtx, cfg, items, face, size)
 }
 
 func tabStripWidths(gtx layout.Context, cfg *fm.Config, items []appTabItem) []int {
-	return tabStripWidthsForTheme(nil, gtx, cfg, items, "")
+	return tabStripWidthsForTheme(nil, gtx, cfg, items, "", 10)
 }
 
-func tabStripWidthsForTheme(th *material.Theme, gtx layout.Context, cfg *fm.Config, items []appTabItem, face font.Typeface) []int {
+func tabStripWidthsForTheme(th *material.Theme, gtx layout.Context, cfg *fm.Config, items []appTabItem, face font.Typeface, size unit.Sp) []int {
 	out := make([]int, len(items))
 	minW := gtx.Dp(unit.Dp(72))
 	fixedW := gtx.Dp(unit.Dp(118))
@@ -1016,7 +1018,7 @@ func tabStripWidthsForTheme(th *material.Theme, gtx layout.Context, cfg *fm.Conf
 				closeW = 2
 			}
 			padding := gtx.Dp(unit.Dp(tabStripTitlePadDp + 2 + closeW + 4))
-			w = padding + tabStripTitleTextWidth(th, gtx, face, item.title)
+			w = padding + tabStripTitleTextWidth(th, gtx, face, size, item.title)
 			if w < minW {
 				w = minW
 			}
@@ -1029,7 +1031,7 @@ func tabStripWidthsForTheme(th *material.Theme, gtx layout.Context, cfg *fm.Conf
 	return out
 }
 
-func tabStripTitleTextWidth(th *material.Theme, gtx layout.Context, face font.Typeface, title string) int {
+func tabStripTitleTextWidth(th *material.Theme, gtx layout.Context, face font.Typeface, size unit.Sp, title string) int {
 	if th == nil || th.Shaper == nil {
 		charW := gtx.Dp(unit.Dp(7))
 		return utf8.RuneCountInString(title) * charW
@@ -1039,10 +1041,24 @@ func tabStripTitleTextWidth(th *material.Theme, gtx layout.Context, face font.Ty
 		lbl.Font.Typeface = face
 	}
 	lbl.Font.Weight = font.Medium
-	lbl.TextSize = scaleThemeFontSize(th, 10)
+	lbl.TextSize = size
 	lbl.MaxLines = 1
 	lbl.Truncator = ""
 	return measureLabelUnconstrained(gtx, lbl).Size.X
+}
+
+func (ui *UI) tabStripTypeface() font.Typeface {
+	if ui == nil || ui.fmCfg == nil || ui.fmCfg.Tabs.Typeface == "" {
+		return ui.mainTypeface()
+	}
+	return font.Typeface(ui.fmCfg.Tabs.Typeface)
+}
+
+func (ui *UI) tabStripTextSize() unit.Sp {
+	if ui == nil || ui.fmCfg == nil || ui.fmCfg.Tabs.FontSizeSp < 6 {
+		return 10
+	}
+	return unit.Sp(ui.fmCfg.Tabs.FontSizeSp)
 }
 
 func tabStripMinWidths(gtx layout.Context, cfg *fm.Config, count int) []int {
@@ -1176,13 +1192,61 @@ func terminalTabTitle(st *terminalSession) string {
 	if st == nil {
 		return "terminal"
 	}
+	if loc, ok := st.osc7Location(); ok && strings.TrimSpace(loc.Dir) != "" {
+		if terminalOSC7HostIsLocal(loc.Host) {
+			return terminalDirTitle(terminalOSC7LocalDir(loc.Dir))
+		}
+		base := path.Base(path.Clean(loc.Dir))
+		if base == "." || base == "/" {
+			base = path.Clean(loc.Dir)
+		}
+		if host := strings.TrimSpace(loc.Host); host != "" {
+			return host + ":" + base
+		}
+		return base
+	}
+	if title, ok := st.reportedDirectoryTitle(); ok {
+		return title
+	}
+	if dir := st.pendingDirectory(); dir != "" {
+		return terminalDirTitle(dir)
+	}
 	if dir, ok := st.currentDir(); ok && strings.TrimSpace(dir) != "" {
 		return terminalDirTitle(dir)
 	}
-	if strings.TrimSpace(st.startDir) != "" {
-		return terminalDirTitle(st.startDir)
-	}
 	return "terminal"
+}
+
+func (st *terminalSession) reportedDirectoryTitle() (string, bool) {
+	if st == nil || st.term == nil {
+		return "", false
+	}
+	st.parserMu.Lock()
+	reported := strings.TrimSpace(st.term.Title())
+	st.parserMu.Unlock()
+	if reported == "" {
+		return "", false
+	}
+	candidate := reported
+	if idx := strings.LastIndex(candidate, ": "); idx >= 0 {
+		candidate = strings.TrimSpace(candidate[idx+2:])
+	}
+	if candidate == "~" {
+		return candidate, true
+	}
+	if len(candidate) >= 3 && candidate[1] == ':' && (candidate[2] == '\\' || candidate[2] == '/') {
+		candidate = strings.ReplaceAll(candidate, `\`, "/")
+	} else if !strings.Contains(candidate, "/") && !strings.Contains(candidate, `\`) {
+		return "", false
+	} else {
+		candidate = strings.ReplaceAll(candidate, `\`, "/")
+	}
+	clean := path.Clean(candidate)
+	base := path.Base(clean)
+	if base == "." || base == "/" || base == "" {
+		return clean, true
+	}
+	return base, true
 }
 
 func terminalDirTitle(dir string) string {

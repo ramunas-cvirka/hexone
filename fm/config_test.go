@@ -146,6 +146,8 @@ tabs:
   min_width_dp: 12
   fixed_width_dp: 999
   max_width_dp: 90
+  typeface: Iosevka Nerd Font Mono
+  font_size_sp: 11
   alternating_colors: true
   color: aa3366
   alt_color: nope
@@ -170,6 +172,12 @@ tabs:
 	if got, want := cfg.Tabs.FixedWidthDp, 90; got != want {
 		t.Fatalf("Tabs.FixedWidthDp=%d want %d", got, want)
 	}
+	if got, want := cfg.Tabs.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("Tabs.Typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.Tabs.FontSizeSp, float32(11); got != want {
+		t.Fatalf("Tabs.FontSizeSp=%v want %v", got, want)
+	}
 	if !cfg.Tabs.AlternatingColors {
 		t.Fatal("Tabs.AlternatingColors should preserve true")
 	}
@@ -191,10 +199,35 @@ func TestDefaultConfigSerializesTabs(t *testing.T) {
 		"tabs:",
 		"width_mode: variable",
 		"max_width_dp:",
+		"typeface: FiraCode Nerd Font Mono",
+		"font_size_sp: 10",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("serialized config missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestTabsFontDefaultsToPaneFontForExistingConfigs(t *testing.T) {
+	raw := `
+general:
+  typeface: Iosevka Nerd Font Mono
+  font_size_sp: 16.8
+tabs:
+  width_mode: variable
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.Tabs.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("Tabs.Typeface=%q want inherited %q", got, want)
+	}
+	if got, want := cfg.Tabs.FontSizeSp, float32(12); got != want {
+		t.Fatalf("Tabs.FontSizeSp=%v want inherited scaled size %v", got, want)
 	}
 }
 

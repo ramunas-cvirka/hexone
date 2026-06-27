@@ -4,6 +4,7 @@
 package ui
 
 import (
+	resources "hexone"
 	"hexone/filesys"
 	"image"
 	"image/color"
@@ -165,6 +166,8 @@ func TestSettingsKeyboardFocusOrderIncludesFontControls(t *testing.T) {
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusGeneralPaneFont,
 		settingsKeyboardFocusGeneralPaneFontSize,
+		settingsKeyboardFocusFontsTabsFont,
+		settingsKeyboardFocusFontsTabsFontSize,
 		settingsKeyboardFocusGeneralViewFont,
 		settingsKeyboardFocusGeneralViewFontSize,
 		settingsKeyboardFocusFontsTerminalFont,
@@ -173,6 +176,72 @@ func TestSettingsKeyboardFocusOrderIncludesFontControls(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsModalLoadsTabsFontControls(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Tabs.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.Tabs.FontSizeSp = 12
+	ui := NewUI(cfg)
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	if got, want := st.tabsFontFamily, cfg.Tabs.Typeface; got != want {
+		t.Fatalf("tabs font family=%q want %q", got, want)
+	}
+	if got, want := st.tabsFontSizeSp, cfg.Tabs.FontSizeSp; got != want {
+		t.Fatalf("tabs font size=%v want %v", got, want)
+	}
+}
+
+func TestSettingsModalSavesTabsFontControls(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	st.tabsFontFamily = resources.BundledFontFamilyIosevkaNerdFontMono
+	st.tabsFontSizeSp = 12.5
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+
+	saved := fm.LoadConfig(ui.configPath)
+	if got, want := saved.Tabs.Typeface, st.tabsFontFamily; got != want {
+		t.Fatalf("saved tabs font family=%q want %q", got, want)
+	}
+	if got, want := saved.Tabs.FontSizeSp, st.tabsFontSizeSp; got != want {
+		t.Fatalf("saved tabs font size=%v want %v", got, want)
+	}
+}
+
+func TestSettingsModalShellChangeRecreatesOpenTerminal(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	old := newTerminalSession(nil)
+	old.setActive(true)
+	ui.terminal = old
+	ui.ensureTerminalTabs()
+	ui.openSettingsModal()
+	ui.settingsModal.viewShellEdit.SetText("cmd")
+
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+	if got, want := ui.fmCfg.Viewer.Shell, "cmd"; got != want {
+		t.Fatalf("saved shell=%q want %q", got, want)
+	}
+	if ui.terminal == old || !old.closing {
+		t.Fatal("open terminal was not recreated after changing shells")
+	}
+	if !ui.terminal.active() {
+		t.Fatal("terminal drawer should remain open after changing shells")
 	}
 }
 
