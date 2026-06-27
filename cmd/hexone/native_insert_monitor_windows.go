@@ -32,8 +32,6 @@ var (
 	procGetCurrentProcessID      = kernel32DLL.NewProc("GetCurrentProcessId")
 	nativeInsertInvalidateMu     sync.Mutex
 	nativeInsertInvalidate       func()
-	nativeInsertPressMu          sync.Mutex
-	nativeInsertPresses          int
 	nativeInsertMonitorMu        sync.Mutex
 	nativeInsertMonitorStop      chan struct{}
 	nativeInsertMonitorDone      chan struct{}
@@ -96,10 +94,7 @@ func nativeInsertMonitorLoop(stop <-chan struct{}, done chan<- struct{}) {
 			}
 			insertDown := hwnd != 0 && windowsInsertKeyDown()
 			altDown := hwnd != 0 && windowsAltKeyDown()
-			if insertDown && !insertWasDown {
-				nativeInsertPressMu.Lock()
-				nativeInsertPresses++
-				nativeInsertPressMu.Unlock()
+			if insertDown != insertWasDown {
 				nativeInsertInvalidateMu.Lock()
 				invalidate := nativeInsertInvalidate
 				nativeInsertInvalidateMu.Unlock()
@@ -124,6 +119,14 @@ func nativeInsertMonitorLoop(stop <-chan struct{}, done chan<- struct{}) {
 func windowsInsertKeyDown() bool {
 	state, _, _ := procGetAsyncKeyState.Call(windowsVKInsert)
 	return uint16(state)&0x8000 != 0
+}
+
+func nativeInsertKeyDown() bool {
+	return windowsForegroundWindowForCurrentProcess() != 0 && windowsInsertKeyDown()
+}
+
+func nativeInsertKeyStateAvailable() bool {
+	return true
 }
 
 func windowsAltKeyDown() bool {
@@ -207,12 +210,4 @@ func hexoneWindowsWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 		return ret
 	}
 	return 0
-}
-
-func consumeNativeInsertPresses() int {
-	nativeInsertPressMu.Lock()
-	count := nativeInsertPresses
-	nativeInsertPresses = 0
-	nativeInsertPressMu.Unlock()
-	return count
 }

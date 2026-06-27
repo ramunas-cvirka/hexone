@@ -230,7 +230,11 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 				continue
 			case fileActionMarkSelectNext:
 				if ui.handleFileManagerInsert() {
+					ui.startFileManagerRepeat(ui.activeFilePane, command, gtx.Now)
 					gtx.Execute(op.InvalidateCmd{})
+					gtx.Execute(op.InvalidateCmd{At: ui.rep.next})
+				} else {
+					ui.held[holdKey] = false
 				}
 				continue
 			}
@@ -258,15 +262,7 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 
 			// Start repeat immediately (slow), then accelerate (fast).
 			if fileActionRepeatable(action) {
-				ui.rep.active = true
-				ui.rep.pane = ui.activeFilePane
-				ui.rep.name = command
-				ui.rep.started = gtx.Now
-				ui.rep.slow = repeatSlow
-				ui.rep.fast = repeatFast
-				ui.rep.accelAfter = repeatAccelAfter
-				ui.rep.period = ui.rep.slow
-				ui.rep.next = gtx.Now.Add(repeatStartDelay)
+				ui.startFileManagerRepeat(ui.activeFilePane, command, gtx.Now)
 				gtx.Execute(op.InvalidateCmd{At: ui.rep.next})
 			} else {
 				ui.rep.active = false
@@ -299,11 +295,31 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 		}
 
 		if !gtx.Now.Before(ui.rep.next) {
-			pane.table.HandleKey(ui.rep.name, pane.model.Len())
+			if ui.rep.name == fileActionCommand(fileActionMarkSelectNext) {
+				selected := pane.table.Selected
+				if !pane.markCurrentAndAdvance() || selected >= pane.model.Len()-1 {
+					ui.rep.active = false
+					return
+				}
+			} else {
+				pane.table.HandleKey(ui.rep.name, pane.model.Len())
+			}
 			ui.rep.next = gtx.Now.Add(ui.rep.period)
 		}
 		gtx.Execute(op.InvalidateCmd{At: ui.rep.next})
 	}
+}
+
+func (ui *UI) startFileManagerRepeat(pane int, command string, now time.Time) {
+	ui.rep.active = true
+	ui.rep.pane = pane
+	ui.rep.name = command
+	ui.rep.started = now
+	ui.rep.slow = repeatSlow
+	ui.rep.fast = repeatFast
+	ui.rep.accelAfter = repeatAccelAfter
+	ui.rep.period = ui.rep.slow
+	ui.rep.next = now.Add(repeatStartDelay)
 }
 
 func (ui *UI) handleFilePaneDriveMenuKeys(gtx layout.Context) {
@@ -350,6 +366,31 @@ func (ui *UI) handleFilePaneDriveMenuKeys(gtx layout.Context) {
 
 func (ui *UI) HandlePlatformInsertKey(_ time.Time) bool {
 	return ui.handleFileManagerInsert()
+}
+
+func (ui *UI) HandlePlatformInsertKeyState(now time.Time, down bool) bool {
+	if ui == nil {
+		return false
+	}
+	holdKey := fileActionKey(fileActionMarkSelectNext)
+	command := fileActionCommand(fileActionMarkSelectNext)
+	if !down {
+		ui.held[holdKey] = false
+		if ui.rep.active && ui.rep.name == command {
+			ui.rep.active = false
+		}
+		return false
+	}
+	if ui.held[holdKey] {
+		return false
+	}
+	ui.held[holdKey] = true
+	if !ui.handleFileManagerInsert() {
+		ui.held[holdKey] = false
+		return false
+	}
+	ui.startFileManagerRepeat(ui.activeFilePane, command, now)
+	return true
 }
 
 func (ui *UI) handleFileManagerInsert() bool {

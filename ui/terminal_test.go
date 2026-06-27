@@ -2095,6 +2095,23 @@ func TestWindowsPathToWSLPath(t *testing.T) {
 	}
 }
 
+func TestTerminalChangeDirCommandConvertsWindowsPathOnlyForWSL(t *testing.T) {
+	dir := `C:\Users\ramuc\go\src\hexone\My Assets`
+
+	if got, want := terminalChangeDirCommandForShell(dir, "wsl", "windows"), "cd '/mnt/c/Users/ramuc/go/src/hexone/My Assets'\r"; got != want {
+		t.Fatalf("WSL cd command=%q want %q", got, want)
+	}
+	if got, want := terminalChangeDirCommandForShell(dir, "wsl:Ubuntu-24.04", "windows"), "cd '/mnt/c/Users/ramuc/go/src/hexone/My Assets'\r"; got != want {
+		t.Fatalf("distro WSL cd command=%q want %q", got, want)
+	}
+	if got, want := terminalChangeDirCommandForShell(dir, "powershell", "windows"), `cd "C:\Users\ramuc\go\src\hexone\My Assets"`+"\r"; got != want {
+		t.Fatalf("PowerShell cd command=%q want %q", got, want)
+	}
+	if got, want := terminalChangeDirCommandForShell(dir, "wsl", "linux"), `cd 'C:\Users\ramuc\go\src\hexone\My Assets'`+"\r"; got != want {
+		t.Fatalf("non-Windows cd command=%q want %q", got, want)
+	}
+}
+
 func lookupEnvValue(env []string, key string) string {
 	prefix := key + "="
 	for _, entry := range env {

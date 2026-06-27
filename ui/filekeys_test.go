@@ -41,3 +41,9 @@ func TestFileKeyMapUsesFixedNavigationAndFunctionKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestInsertActionUsesFilePaneRepeat(t *testing.T) {
+	if !fileActionRepeatable(fileActionMarkSelectNext) {
+		t.Fatal("Insert selection action should repeat while held")
+	}
+}

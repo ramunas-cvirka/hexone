@@ -313,6 +313,103 @@ func TestHandlePlatformInsertKeyTogglesCurrentRowOffAndAdvances(t *testing.T) {
 	}
 }
 
+func TestHeldPlatformInsertMarksSuccessiveRows(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: ".",
+		Entries: []filesys.Entry{
+			{Name: "alpha.txt", Path: "alpha.txt"},
+			{Name: "beta.txt", Path: "beta.txt"},
+			{Name: "gamma.txt", Path: "gamma.txt"},
+		},
+	}, "", "", 0)
+
+	start := time.Date(2026, time.March, 13, 12, 0, 0, 0, time.UTC)
+	if !ui.HandlePlatformInsertKeyState(start, true) {
+		t.Fatal("initial Insert down should mark and start repeat")
+	}
+	if !pane.isMarkedRow(0) || pane.table.Selected != 1 || !ui.rep.active {
+		t.Fatalf("initial Insert state: marked0=%v selected=%d repeat=%v", pane.isMarkedRow(0), pane.table.Selected, ui.rep.active)
+	}
+
+	gtx := layout.Context{Ops: new(op.Ops)}
+	for ui.rep.active {
+		gtx.Now = ui.rep.next
+		gtx.Ops.Reset()
+		ui.handleFileManagerKeys(gtx)
+	}
+	for row := 0; row < 3; row++ {
+		if !pane.isMarkedRow(row) {
+			t.Fatalf("row %d should be marked after holding Insert", row)
+		}
+	}
+	if got, want := pane.table.Selected, 2; got != want {
+		t.Fatalf("selected row=%d want final row %d", got, want)
+	}
+
+	ui.HandlePlatformInsertKeyState(gtx.Now, false)
+	if ui.held[fileActionKey(fileActionMarkSelectNext)] || ui.rep.active {
+		t.Fatal("Insert release should clear held and repeat state")
+	}
+}
+
+func TestPlatformInsertReleaseBeforeRepeatKeepsSinglePressBehavior(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: ".",
+		Entries: []filesys.Entry{
+			{Name: "alpha.txt", Path: "alpha.txt"},
+			{Name: "beta.txt", Path: "beta.txt"},
+		},
+	}, "", "", 0)
+
+	start := time.Now()
+	if !ui.HandlePlatformInsertKeyState(start, true) {
+		t.Fatal("Insert down should be handled")
+	}
+	ui.HandlePlatformInsertKeyState(start.Add(repeatStartDelay/2), false)
+	gtx := layout.Context{Ops: new(op.Ops), Now: start.Add(repeatStartDelay)}
+	ui.handleFileManagerKeys(gtx)
+
+	if !pane.isMarkedRow(0) || pane.isMarkedRow(1) {
+		t.Fatal("quick Insert tap should mark only the initial row")
+	}
+	if got, want := pane.table.Selected, 1; got != want {
+		t.Fatalf("selected row=%d want %d", got, want)
+	}
+}
+
+func TestGioInsertPressAndReleaseControlsRepeat(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: ".",
+		Entries: []filesys.Entry{
+			{Name: "alpha.txt", Path: "alpha.txt"},
+			{Name: "beta.txt", Path: "beta.txt"},
+		},
+	}, "", "", 0)
+
+	gtx, router := testKeyContext()
+	gtx.Now = time.Now()
+	router.Event(key.Filter{Name: keyNameInsert})
+	router.Queue(key.Event{Name: keyNameInsert, State: key.Press})
+	ui.handleFileManagerKeys(gtx)
+
+	if !pane.isMarkedRow(0) || pane.table.Selected != 1 || !ui.rep.active {
+		t.Fatal("Gio Insert press should mark, advance, and start repeat")
+	}
+
+	router.Event(key.Filter{Name: keyNameInsert})
+	router.Queue(key.Event{Name: keyNameInsert, State: key.Release})
+	ui.handleFileManagerKeys(gtx)
+	if ui.rep.active || ui.held[fileActionKey(fileActionMarkSelectNext)] {
+		t.Fatal("Gio Insert release should stop repeat")
+	}
+}
+
 func TestHandleFileManagerCtrlASelectAllToggles(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	pane := ui.activePane()

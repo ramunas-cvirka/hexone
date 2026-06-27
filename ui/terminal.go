@@ -2885,7 +2885,7 @@ func (ui *UI) terminalGoToPaneDir(idx int, now time.Time) bool {
 		}
 		return false
 	}
-	ui.terminal.writeString(terminalChangeDirCommand(dir))
+	ui.terminal.writeString(terminalChangeDirCommandForShell(dir, ui.terminalShell(), runtime.GOOS))
 	ui.terminal.focusKeyboard()
 	return true
 }
@@ -2999,7 +2999,14 @@ func (ui *UI) setPaneDirToTerminalRemoteDir(idx int, loc terminalOSC7Location, n
 }
 
 func terminalChangeDirCommand(dir string) string {
-	if runtime.GOOS == "windows" {
+	return terminalChangeDirCommandForShell(dir, "", runtime.GOOS)
+}
+
+func terminalChangeDirCommandForShell(dir, shell, goos string) string {
+	if goos == "windows" && fm.ViewerShellIsWSL(shell) {
+		return "cd " + terminalPosixQuotePath(windowsPathToWSLPath(dir)) + "\r"
+	}
+	if goos == "windows" {
 		return "cd " + terminalWindowsQuotePath(dir) + "\r"
 	}
 	return "cd " + terminalPosixQuotePath(dir) + "\r"
