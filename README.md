@@ -59,6 +59,7 @@ Download a package from the [Releases](../../releases) page for macOS, Linux, or
 | `F4` | Open with system default app |
 | `F5` | Copy |
 | `F6` | Move / Rename |
+| `Ctrl+M` / `Cmd+M` | Multi-rename selected files |
 | `F7` | New folder |
 | `F8` | Delete |
 | `F12` | Toggle terminal drawer |

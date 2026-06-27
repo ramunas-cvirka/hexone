@@ -194,6 +194,7 @@ type UI struct {
 	fileMove                    *fileMoveState
 	fileCreate                  *fileCreateState
 	filePerm                    *filePermState
+	multiRename                 *multiRenameState
 	fileViewer                  *fileViewerState
 	customCommandEditor         *customCommandEditorState
 	helpModal                   *helpModalState
@@ -704,6 +705,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleTerminalClipboardEvents(gtx)
 	ui.handleTerminalOutsidePointerFocus(gtx)
 	ui.handleCustomCommandEditorPreLayoutInput(gtx)
+	ui.handleMultiRenamePreLayoutInput(gtx)
 
 	r := image.Rectangle{Max: gtx.Constraints.Max}
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 32, G: 32, B: 32, A: 255}, clip.Rect(r).Op())
@@ -758,6 +760,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutCustomCommandEditor(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutMultiRename(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutHelpModal(th, gtx)
@@ -963,7 +968,7 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 }
 
 func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
-	if ui != nil && ui.customCommandEditor != nil {
+	if ui != nil && (ui.customCommandEditor != nil || ui.multiRename != nil) {
 		return
 	}
 	if ui != nil {
@@ -994,6 +999,10 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		key.Filter{Name: "s", Required: key.ModCtrl, Optional: anyMods},
 		key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
 		key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
+		key.Filter{Name: "M", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "m", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "M", Required: key.ModShortcut, Optional: anyMods},
+		key.Filter{Name: "m", Required: key.ModShortcut, Optional: anyMods},
 	}
 	filters = append(filters, customCommandShortcutKeyFilters(anyMods)...)
 	for {
@@ -1162,6 +1171,15 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				continue
 			}
 			ui.activateFunctionBarTool("settings", gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
+		case "M", "m":
+			if ke.State != key.Press || (ke.Modifiers != key.ModCtrl && ke.Modifiers != key.ModShortcut) {
+				continue
+			}
+			if ui == nil || ui.Tabs.Value != "tab0" || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() || ui.pathEditActive() || ui.fileViewer != nil {
+				continue
+			}
+			ui.activateFunctionBarTool("multi-rename", gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
 		default:
 			if ui.activateCustomCommandGlobalShortcut(ke, gtx.Now) {

@@ -72,7 +72,8 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F6` moves or renames.
 - `F7` creates a file or folder.
 - `F8` deletes.
-- `F9` opens the Tools menu (`Hex to ASCII`, `Protocol Analyzer`, `Settings`).
+- `F9` opens the Tools menu (`Multi-Rename`, `Hex to ASCII`, `Protocol Analyzer`, `Settings`).
+- `Ctrl+M` / `Cmd+M` opens Multi-Rename for the current file-pane selection. Find/replace, prefix/suffix, case conversion, and a configurable counter all update the filename preview immediately. `Name`, `Extension`, and `Both` choose which part receives the actions. Rename is enabled only when at least one valid filename will change.
 - `F10` exits the app.
 - `F11` hides or shows the function key bar.
 - `F12` opens or closes the terminal drawer.

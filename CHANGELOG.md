@@ -6,6 +6,7 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## Unreleased
 
+- Added a preview-first Multi-Rename tool with find/replace, prefix/suffix, case conversion, extension protection, numbering, collision checks, and local/SFTP support.
 - Added compact tabs for each file pane and the terminal drawer, with overflow controls and configurable colors/widths.
 - Added an in-app help modal on `F1` with bundled help content.
 - Embedded the default bundled fonts so portable builds no longer need the external `assets/` directory.
