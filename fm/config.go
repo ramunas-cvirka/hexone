@@ -39,6 +39,9 @@ const (
 	defaultTerminalHeightRows = 24
 	minTerminalHeightRows     = 4
 	maxTerminalHeightRows     = 80
+	defaultTabMinWidthDp      = 72
+	defaultTabFixedWidthDp    = 118
+	defaultTabMaxWidthDp      = 168
 )
 
 const (
@@ -140,7 +143,22 @@ type SortConfig struct {
 }
 
 type TerminalConfig struct {
-	HeightRows int `yaml:"height_rows"`
+	HeightRows int     `yaml:"height_rows"`
+	Typeface   string  `yaml:"typeface"`
+	FontSizeSp float32 `yaml:"font_size_sp"`
+}
+
+type TabsConfig struct {
+	WidthMode         string  `yaml:"width_mode"`
+	MinWidthDp        int     `yaml:"min_width_dp"`
+	FixedWidthDp      int     `yaml:"fixed_width_dp"`
+	MaxWidthDp        int     `yaml:"max_width_dp"`
+	Typeface          string  `yaml:"typeface"`
+	FontSizeSp        float32 `yaml:"font_size_sp"`
+	AlternatingColors bool    `yaml:"alternating_colors"`
+	Color             string  `yaml:"color,omitempty"`
+	AltColor          string  `yaml:"alt_color,omitempty"`
+	ActiveColor       string  `yaml:"active_color,omitempty"`
 }
 
 func NormalizeViewerShell(raw string) string {
@@ -324,10 +342,53 @@ func NormalizeTerminalHeightRows(rows int) int {
 	return rows
 }
 
+func NormalizeTabWidthMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "fixed", "uniform", "same":
+		return "fixed"
+	default:
+		return "variable"
+	}
+}
+
+func NormalizeTabWidthDp(v, fallback int) int {
+	if v <= 0 {
+		return fallback
+	}
+	if v < 44 {
+		return 44
+	}
+	if v > 320 {
+		return 320
+	}
+	return v
+}
+
 type GeneralConfig struct {
-	Typeface         string  `yaml:"typeface"`
-	FontSizeSp       float32 `yaml:"font_size_sp"`
-	DimInactivePanes bool    `yaml:"dim_inactive_panes"`
+	Typeface              string  `yaml:"typeface"`
+	FontSizeSp            float32 `yaml:"font_size_sp"`
+	DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
+	OpenFavoritesInNewTab bool    `yaml:"open_favorites_in_new_tab"`
+}
+
+func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
+	var raw struct {
+		Typeface              string  `yaml:"typeface"`
+		FontSizeSp            float32 `yaml:"font_size_sp"`
+		DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
+		OpenFavoritesInNewTab *bool   `yaml:"open_favorites_in_new_tab"`
+	}
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	g.Typeface = raw.Typeface
+	g.FontSizeSp = raw.FontSizeSp
+	g.DimInactivePanes = raw.DimInactivePanes
+	g.OpenFavoritesInNewTab = true
+	if raw.OpenFavoritesInNewTab != nil {
+		g.OpenFavoritesInNewTab = *raw.OpenFavoritesInNewTab
+	}
+	return nil
 }
 
 type legacyFontConfig struct {
@@ -427,6 +488,7 @@ type Config struct {
 	Columns           ColumnWidths         `yaml:"columns"`
 	Sort              SortConfig           `yaml:"sort"`
 	Terminal          TerminalConfig       `yaml:"terminal"`
+	Tabs              TabsConfig           `yaml:"tabs"`
 	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
@@ -445,6 +507,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Columns           *ColumnWidths        `yaml:"columns"`
 		Sort              SortConfig           `yaml:"sort"`
 		Terminal          TerminalConfig       `yaml:"terminal"`
+		Tabs              TabsConfig           `yaml:"tabs"`
 		Font              legacyFontConfig     `yaml:"font"`
 		General           GeneralConfig        `yaml:"general"`
 		Colors            ColorsConfig         `yaml:"colors"`
@@ -453,6 +516,9 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Viewer            ViewerConfig         `yaml:"viewer"`
 		SSH               SSHConfig            `yaml:"ssh"`
 	}{
+		General: GeneralConfig{
+			OpenFavoritesInNewTab: true,
+		},
 		Viewer: ViewerConfig{
 			SmoothScrolling: true,
 		},
@@ -477,6 +543,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Columns:           columns,
 		Sort:              raw.Sort,
 		Terminal:          raw.Terminal,
+		Tabs:              raw.Tabs,
 		General:           raw.General,
 		Colors:            raw.Colors,
 		Associations:      raw.Associations,
@@ -509,11 +576,22 @@ func DefaultConfig() *Config {
 		},
 		Terminal: TerminalConfig{
 			HeightRows: defaultTerminalHeightRows,
+			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
+			FontSizeSp: 13,
+		},
+		Tabs: TabsConfig{
+			WidthMode:    "variable",
+			MinWidthDp:   defaultTabMinWidthDp,
+			FixedWidthDp: defaultTabFixedWidthDp,
+			MaxWidthDp:   defaultTabMaxWidthDp,
+			Typeface:     resources.BundledFontFamilyFiraCodeNerdFontMono,
+			FontSizeSp:   10,
 		},
 		General: GeneralConfig{
-			Typeface:         resources.BundledFontFamilyFiraCode,
-			FontSizeSp:       14,
-			DimInactivePanes: true,
+			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
+			FontSizeSp:            14,
+			DimInactivePanes:      true,
+			OpenFavoritesInNewTab: true,
 		},
 		Colors: ColorsConfig{
 			FilePaneBackground:  DefaultFilePaneBackgroundHex,
@@ -535,7 +613,7 @@ func DefaultConfig() *Config {
 		CustomCommands: nil,
 		Viewer: ViewerConfig{
 			FileEncoding:            ViewerFileEncodingAuto,
-			Typeface:                resources.BundledFontFamilyFiraCode,
+			Typeface:                resources.BundledFontFamilyFiraCodeNerdFontMono,
 			Background:              DefaultFilePaneBackgroundHex,
 			Text:                    DefaultFilePaneTextHex,
 			Selection:               DefaultFilePaneSelectionHex,
@@ -795,12 +873,52 @@ func (c *Config) normalize() {
 	c.Sort.DefaultKey = NormalizeSortKey(c.Sort.DefaultKey)
 	c.Sort.PerDir = NormalizeSortPerDir(c.Sort.PerDir, c.Sort)
 	c.Terminal.HeightRows = NormalizeTerminalHeightRows(c.Terminal.HeightRows)
+	c.Tabs.WidthMode = NormalizeTabWidthMode(c.Tabs.WidthMode)
+	c.Tabs.MinWidthDp = NormalizeTabWidthDp(c.Tabs.MinWidthDp, defaultTabMinWidthDp)
+	c.Tabs.FixedWidthDp = NormalizeTabWidthDp(c.Tabs.FixedWidthDp, defaultTabFixedWidthDp)
+	c.Tabs.MaxWidthDp = NormalizeTabWidthDp(c.Tabs.MaxWidthDp, defaultTabMaxWidthDp)
+	if c.Tabs.MaxWidthDp < c.Tabs.MinWidthDp {
+		c.Tabs.MaxWidthDp = c.Tabs.MinWidthDp
+	}
+	if c.Tabs.FixedWidthDp < c.Tabs.MinWidthDp {
+		c.Tabs.FixedWidthDp = c.Tabs.MinWidthDp
+	}
+	if c.Tabs.FixedWidthDp > c.Tabs.MaxWidthDp {
+		c.Tabs.FixedWidthDp = c.Tabs.MaxWidthDp
+	}
+	c.Tabs.Color = NormalizeOptionalHexColor(c.Tabs.Color)
+	c.Tabs.AltColor = NormalizeOptionalHexColor(c.Tabs.AltColor)
+	c.Tabs.ActiveColor = NormalizeOptionalHexColor(c.Tabs.ActiveColor)
 
 	if c.General.Typeface == "" || !resources.IsBundledFontFamily(c.General.Typeface) {
-		c.General.Typeface = resources.BundledFontFamilyFiraCode
+		c.General.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
 	}
 	if c.General.FontSizeSp <= 0 {
 		c.General.FontSizeSp = 14
+	}
+	if c.Tabs.Typeface == "" {
+		c.Tabs.Typeface = c.General.Typeface
+	}
+	if !resources.IsBundledFontFamily(c.Tabs.Typeface) {
+		c.Tabs.Typeface = c.General.Typeface
+	}
+	if c.Tabs.FontSizeSp < 6 {
+		c.Tabs.FontSizeSp = c.General.FontSizeSp * (10.0 / 14.0)
+		if c.Tabs.FontSizeSp < 6 {
+			c.Tabs.FontSizeSp = 10
+		}
+	}
+	if c.Terminal.Typeface == "" {
+		c.Terminal.Typeface = c.General.Typeface
+	}
+	if !resources.IsBundledMonospaceFontFamily(c.Terminal.Typeface) {
+		c.Terminal.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
+	}
+	if c.Terminal.FontSizeSp < 6 {
+		c.Terminal.FontSizeSp = c.General.FontSizeSp * (13.0 / 14.0)
+		if c.Terminal.FontSizeSp < 6 {
+			c.Terminal.FontSizeSp = 13
+		}
 	}
 	if c.Viewer.Typeface == "" {
 		c.Viewer.Typeface = c.General.Typeface

@@ -4,6 +4,7 @@
 package fm
 
 import (
+	resources "hexone"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,6 +109,8 @@ sort:
     /tmp/bad: sideways
 terminal:
   height_rows: 2
+  typeface: Imaginary Sans
+  font_size_sp: 1
 `
 
 	cfg := DefaultConfig()
@@ -119,6 +122,12 @@ terminal:
 	if got, want := cfg.Terminal.HeightRows, 4; got != want {
 		t.Fatalf("Terminal.HeightRows=%d want %d", got, want)
 	}
+	if got, want := cfg.Terminal.Typeface, resources.BundledFontFamilyFiraCodeNerdFontMono; got != want {
+		t.Fatalf("Terminal.Typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.Terminal.FontSizeSp, float32(13); got != want {
+		t.Fatalf("Terminal.FontSizeSp=%v want %v", got, want)
+	}
 	if got, want := cfg.Sort.PerDir[filepath.Clean("/tmp/by-date")], "d-"; got != want {
 		t.Fatalf("sort per dir code=%q want %q", got, want)
 	}
@@ -127,6 +136,98 @@ terminal:
 	}
 	if _, ok := cfg.Sort.PerDir[filepath.Clean("/tmp/bad")]; ok {
 		t.Fatalf("invalid sort override should be omitted: %#v", cfg.Sort.PerDir)
+	}
+}
+
+func TestConfigNormalizesTabs(t *testing.T) {
+	raw := `
+tabs:
+  width_mode: fixed
+  min_width_dp: 12
+  fixed_width_dp: 999
+  max_width_dp: 90
+  typeface: Iosevka Nerd Font Mono
+  font_size_sp: 11
+  alternating_colors: true
+  color: aa3366
+  alt_color: nope
+  active_color: '#112233'
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.Tabs.WidthMode, "fixed"; got != want {
+		t.Fatalf("Tabs.WidthMode=%q want %q", got, want)
+	}
+	if got, want := cfg.Tabs.MinWidthDp, 44; got != want {
+		t.Fatalf("Tabs.MinWidthDp=%d want %d", got, want)
+	}
+	if got, want := cfg.Tabs.MaxWidthDp, 90; got != want {
+		t.Fatalf("Tabs.MaxWidthDp=%d want %d", got, want)
+	}
+	if got, want := cfg.Tabs.FixedWidthDp, 90; got != want {
+		t.Fatalf("Tabs.FixedWidthDp=%d want %d", got, want)
+	}
+	if got, want := cfg.Tabs.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("Tabs.Typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.Tabs.FontSizeSp, float32(11); got != want {
+		t.Fatalf("Tabs.FontSizeSp=%v want %v", got, want)
+	}
+	if !cfg.Tabs.AlternatingColors {
+		t.Fatal("Tabs.AlternatingColors should preserve true")
+	}
+	if got, want := cfg.Tabs.Color, "#AA3366"; got != want {
+		t.Fatalf("Tabs.Color=%q want %q", got, want)
+	}
+	if cfg.Tabs.AltColor != "" {
+		t.Fatalf("Tabs.AltColor=%q want empty invalid color", cfg.Tabs.AltColor)
+	}
+	if got, want := cfg.Tabs.ActiveColor, "#112233"; got != want {
+		t.Fatalf("Tabs.ActiveColor=%q want %q", got, want)
+	}
+}
+
+func TestDefaultConfigSerializesTabs(t *testing.T) {
+	out := string(mustMarshalConfig(t, DefaultConfig()))
+
+	for _, want := range []string{
+		"tabs:",
+		"width_mode: variable",
+		"max_width_dp:",
+		"typeface: FiraCode Nerd Font Mono",
+		"font_size_sp: 10",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("serialized config missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestTabsFontDefaultsToPaneFontForExistingConfigs(t *testing.T) {
+	raw := `
+general:
+  typeface: Iosevka Nerd Font Mono
+  font_size_sp: 16.8
+tabs:
+  width_mode: variable
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.Tabs.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("Tabs.Typeface=%q want inherited %q", got, want)
+	}
+	if got, want := cfg.Tabs.FontSizeSp, float32(12); got != want {
+		t.Fatalf("Tabs.FontSizeSp=%v want inherited scaled size %v", got, want)
 	}
 }
 
@@ -227,7 +328,7 @@ columns:
 func TestLegacyFontBlockMigratesToGeneral(t *testing.T) {
 	raw := `
 font:
-  typeface: Consolas
+  typeface: Hack Nerd Font Mono
   size_sp: 16
 general:
   dim_inactive_panes: true
@@ -242,11 +343,17 @@ viewer:
 	}
 	cfg.normalize()
 
-	if cfg.General.Typeface != "Consolas" {
-		t.Fatalf("General.Typeface=%q, want Consolas", cfg.General.Typeface)
+	if cfg.General.Typeface != resources.BundledFontFamilyHackNerdFontMono {
+		t.Fatalf("General.Typeface=%q, want %s", cfg.General.Typeface, resources.BundledFontFamilyHackNerdFontMono)
 	}
 	if cfg.General.FontSizeSp != 16 {
 		t.Fatalf("General.FontSizeSp=%v, want 16", cfg.General.FontSizeSp)
+	}
+	if cfg.Terminal.Typeface != resources.BundledFontFamilyHackNerdFontMono {
+		t.Fatalf("Terminal.Typeface=%q, want %s", cfg.Terminal.Typeface, resources.BundledFontFamilyHackNerdFontMono)
+	}
+	if got, want := cfg.Terminal.FontSizeSp, cfg.General.FontSizeSp*(13.0/14.0); got != want {
+		t.Fatalf("Terminal.FontSizeSp=%v, want %v", got, want)
 	}
 	if !cfg.General.DimInactivePanes {
 		t.Fatal("General.DimInactivePanes should preserve general block values")
@@ -256,7 +363,7 @@ viewer:
 	if strings.Contains(out, "\nfont:\n") {
 		t.Fatalf("serialized config should not contain legacy font block:\n%s", out)
 	}
-	if !strings.Contains(out, "general:") || !strings.Contains(out, "typeface: Consolas") || !strings.Contains(out, "font_size_sp: 16") {
+	if !strings.Contains(out, "general:") || !strings.Contains(out, "typeface: Hack Nerd Font Mono") || !strings.Contains(out, "font_size_sp: 16") {
 		t.Fatalf("serialized config missing migrated general font settings:\n%s", out)
 	}
 }
@@ -600,6 +707,52 @@ func TestDefaultConfigDimsInactivePanes(t *testing.T) {
 	out := string(mustMarshalConfig(t, cfg))
 	if !strings.Contains(out, "dim_inactive_panes: true") {
 		t.Fatalf("serialized config missing general dim_inactive_panes:\n%s", out)
+	}
+}
+
+func TestDefaultConfigOpensFavoritesInNewTab(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if !cfg.General.OpenFavoritesInNewTab {
+		t.Fatal("general open_favorites_in_new_tab should default to true")
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "open_favorites_in_new_tab: true") {
+		t.Fatalf("serialized config missing general open_favorites_in_new_tab:\n%s", out)
+	}
+}
+
+func TestLoadConfigDefaultsFavoritesNewTabWhenFieldMissing(t *testing.T) {
+	raw := `
+general:
+  dim_inactive_panes: true
+`
+	cfg := DefaultConfig()
+	cfg.General.OpenFavoritesInNewTab = false
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if !cfg.General.OpenFavoritesInNewTab {
+		t.Fatal("general open_favorites_in_new_tab should stay enabled when yaml omits the field")
+	}
+}
+
+func TestLoadConfigAllowsFavoritesNewTabOptOut(t *testing.T) {
+	raw := `
+general:
+  open_favorites_in_new_tab: false
+`
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if cfg.General.OpenFavoritesInNewTab {
+		t.Fatal("general open_favorites_in_new_tab=false should be preserved")
 	}
 }
 

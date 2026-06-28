@@ -1805,6 +1805,9 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 		if !ok {
 			continue
 		}
+		if ui.terminalFocused(gtx) && terminalSurfaceFocusPointerEvent(pe) {
+			ui.releaseTerminalKeyboardFocus(gtx)
+		}
 		if pe.Kind == pointer.Press || pe.Kind == pointer.Drag || pe.Kind == pointer.Move || pe.Kind == pointer.Enter || pe.Kind == pointer.Scroll {
 			v.clearCancelGrace()
 		}

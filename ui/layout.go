@@ -181,8 +181,13 @@ type UI struct {
 	invalidate                  func()
 	fileKeys                    fileKeyMap
 	activeFilePane              int
+	filePaneTabs                []filePaneTabSet
+	tabShortcut                 tabShortcutState
 	sortDirPrunedAt             time.Time
 	terminal                    *terminalSession
+	terminalTabs                terminalTabSet
+	runtimeTerminalShell        string
+	terminalFocusPointerTag     uiEventTag
 	pendingFileOpen             *fileOpenRequest
 	fileCopy                    *fileCopyState
 	archiveExtract              *archiveExtractState
@@ -190,6 +195,7 @@ type UI struct {
 	fileMove                    *fileMoveState
 	fileCreate                  *fileCreateState
 	filePerm                    *filePermState
+	multiRename                 *multiRenameState
 	fileViewer                  *fileViewerState
 	customCommandEditor         *customCommandEditorState
 	helpModal                   *helpModalState
@@ -223,6 +229,7 @@ func NewUI(cfg *fm.Config) *UI {
 		configPath:                 resolveUIConfigPath(),
 		typeface:                   font.Typeface(cfg.General.Typeface),
 		textSize:                   fontSizeFromConfig(cfg),
+		runtimeTerminalShell:       fm.NormalizeViewerShell(cfg.Viewer.Shell),
 		customCommandMenuSelected:  -1,
 		functionBarToolsSelected:   -1,
 		functionBarSliderPrevIndex: -1,
@@ -252,19 +259,11 @@ func NewUI(cfg *fm.Config) *UI {
 		newFilePaneState(cwd, ui.fmCfg),
 	}
 	ui.activeFilePane = 0
+	ui.filePaneTabs = make([]filePaneTabSet, len(ui.filePanes))
 	for i, pane := range ui.filePanes {
-		idx := i
-		pane.table.OnClick = func(row int) {
-			_ = row
-			ui.setActiveFilePane(idx)
-		}
-		pane.table.OnDoubleClick = func(row int) {
-			ui.queueFilePaneSystemOpen(idx, row)
-		}
-		pane.table.OnActivate = func(row int) {
-			ui.queueFilePaneOpen(idx, row)
-		}
-		ui.requestPaneLoadWithSelection(idx, cwd, "", "", 0)
+		ui.installFilePaneHandlers(i, pane)
+		ui.filePaneTabs[i].tabs = []*filePaneState{pane}
+		ui.requestPaneLoadWithSelection(i, cwd, "", "", 0)
 	}
 	return ui
 }
@@ -280,7 +279,7 @@ func (ui *UI) resetKeys() {
 
 func (ui *UI) mainTypeface() font.Typeface {
 	if ui == nil || ui.typeface == "" {
-		return font.Typeface("Fira Code")
+		return font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 	}
 	return ui.typeface
 }
@@ -293,12 +292,10 @@ func (ui *UI) viewerTypeface() font.Typeface {
 }
 
 func (ui *UI) viewerMonospaceTypeface() font.Typeface {
-	switch string(ui.viewerTypeface()) {
-	case resources.BundledFontFamilyFiraCode, resources.BundledFontFamilyConsolas:
+	if resources.IsBundledMonospaceFontFamily(string(ui.viewerTypeface())) {
 		return ui.viewerTypeface()
-	default:
-		return font.Typeface(resources.BundledFontFamilyFiraCode)
 	}
+	return font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 }
 
 func (ui *UI) mainTextSize() unit.Sp {
@@ -707,7 +704,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleEditorContextMenuGlobalPresses(gtx)
 	ui.handleEditorContextMenuClipboardEvents(gtx)
 	ui.handleTerminalClipboardEvents(gtx)
+	ui.handleTerminalOutsidePointerFocus(gtx)
 	ui.handleCustomCommandEditorPreLayoutInput(gtx)
+	ui.handleMultiRenamePreLayoutInput(gtx)
 
 	r := image.Rectangle{Max: gtx.Constraints.Max}
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 32, G: 32, B: 32, A: 255}, clip.Rect(r).Op())
@@ -764,6 +763,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 			return ui.layoutCustomCommandEditor(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutMultiRename(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutHelpModal(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -780,6 +782,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.registerEditorContextMenuGlobalPointer(gtx)
 	ui.registerEditorContextMenuClipboardTarget(gtx)
 	ui.registerTerminalClipboardTarget(gtx)
+	ui.registerTerminalOutsidePointerFocus(gtx)
 	if ui != nil && ui.Tabs.Value == "tab2" && ui.tab2State != nil && ui.tab2State.protoDropOpen {
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		pass := pointer.PassOp{}.Push(gtx.Ops)
@@ -966,10 +969,11 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 }
 
 func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
-	if ui != nil && ui.customCommandEditor != nil {
+	if ui != nil && (ui.customCommandEditor != nil || ui.multiRename != nil) {
 		return
 	}
 	if ui != nil {
+		ui.handleTabShortcuts(gtx)
 		ui.handleTerminalFocusToggleKey(gtx)
 	}
 	if ui != nil && ui.terminalFocused(gtx) {
@@ -997,6 +1001,10 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		key.Filter{Name: "s", Required: key.ModCtrl, Optional: anyMods},
 		key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
 		key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
+		key.Filter{Name: "M", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "m", Required: key.ModCtrl, Optional: anyMods},
+		key.Filter{Name: "M", Required: key.ModShortcut, Optional: anyMods},
+		key.Filter{Name: "m", Required: key.ModShortcut, Optional: anyMods},
 	}
 	filters = append(filters, customCommandShortcutKeyFilters(anyMods)...)
 	for {
@@ -1165,6 +1173,15 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				continue
 			}
 			ui.activateFunctionBarTool("settings", gtx.Now)
+			gtx.Execute(op.InvalidateCmd{})
+		case "M", "m":
+			if ke.State != key.Press || (ke.Modifiers != key.ModCtrl && ke.Modifiers != key.ModShortcut) {
+				continue
+			}
+			if ui == nil || ui.Tabs.Value != "tab0" || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() || ui.pathEditActive() || ui.fileViewer != nil {
+				continue
+			}
+			ui.activateFunctionBarTool("multi-rename", gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
 		default:
 			if ui.activateCustomCommandGlobalShortcut(ke, gtx.Now) {

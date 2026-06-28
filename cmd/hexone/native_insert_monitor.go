@@ -12,11 +12,12 @@ package main
 #import <Carbon/Carbon.h>
 
 static id hexoneNativeInsertMonitor = nil;
+static BOOL hexoneNativeInsertDown = NO;
 
 extern void hexone_onNativeInsertMonitor(void);
 
 static const char *hexoneNativeInsertKind(NSEvent *event) {
-	if (event == nil || [event type] != NSEventTypeKeyDown) {
+	if (event == nil || ([event type] != NSEventTypeKeyDown && [event type] != NSEventTypeKeyUp)) {
 		return NULL;
 	}
 	NSString *chars = [event charactersIgnoringModifiers];
@@ -41,12 +42,14 @@ static void hexoneInstallNativeInsertMonitor(void) {
 		if (hexoneNativeInsertMonitor != nil) {
 			return;
 		}
-		hexoneNativeInsertMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent * _Nullable(NSEvent *event) {
+		hexoneNativeInsertMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskKeyDown | NSEventMaskKeyUp) handler:^NSEvent * _Nullable(NSEvent *event) {
 			const char *kind = hexoneNativeInsertKind(event);
 			if (kind == NULL) {
 				return event;
 			}
-			if (![event isARepeat]) {
+			BOOL down = [event type] == NSEventTypeKeyDown;
+			if (hexoneNativeInsertDown != down) {
+				hexoneNativeInsertDown = down;
 				hexone_onNativeInsertMonitor();
 			}
 			return nil;
@@ -61,7 +64,12 @@ static void hexoneRemoveNativeInsertMonitor(void) {
 		}
 		[NSEvent removeMonitor:hexoneNativeInsertMonitor];
 		hexoneNativeInsertMonitor = nil;
+		hexoneNativeInsertDown = NO;
 	}
+}
+
+static BOOL hexoneNativeInsertKeyDown(void) {
+	return hexoneNativeInsertDown;
 }
 */
 import "C"
@@ -71,8 +79,6 @@ import "sync"
 var (
 	nativeInsertInvalidateMu sync.Mutex
 	nativeInsertInvalidate   func()
-	nativeInsertPressMu      sync.Mutex
-	nativeInsertPresses      int
 )
 
 func setNativeInsertInvalidate(fn func()) {
@@ -104,19 +110,16 @@ func runOnWindowThread(runWindowFunc func(func()), fn func()) {
 	runWindowFunc(fn)
 }
 
-func consumeNativeInsertPresses() int {
-	nativeInsertPressMu.Lock()
-	count := nativeInsertPresses
-	nativeInsertPresses = 0
-	nativeInsertPressMu.Unlock()
-	return count
+func nativeInsertKeyDown() bool {
+	return bool(C.hexoneNativeInsertKeyDown())
+}
+
+func nativeInsertKeyStateAvailable() bool {
+	return true
 }
 
 //export hexone_onNativeInsertMonitor
 func hexone_onNativeInsertMonitor() {
-	nativeInsertPressMu.Lock()
-	nativeInsertPresses++
-	nativeInsertPressMu.Unlock()
 	nativeInsertInvalidateMu.Lock()
 	invalidate := nativeInsertInvalidate
 	nativeInsertInvalidateMu.Unlock()

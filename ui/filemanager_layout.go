@@ -230,7 +230,11 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 				continue
 			case fileActionMarkSelectNext:
 				if ui.handleFileManagerInsert() {
+					ui.startFileManagerRepeat(ui.activeFilePane, command, gtx.Now)
 					gtx.Execute(op.InvalidateCmd{})
+					gtx.Execute(op.InvalidateCmd{At: ui.rep.next})
+				} else {
+					ui.held[holdKey] = false
 				}
 				continue
 			}
@@ -258,15 +262,7 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 
 			// Start repeat immediately (slow), then accelerate (fast).
 			if fileActionRepeatable(action) {
-				ui.rep.active = true
-				ui.rep.pane = ui.activeFilePane
-				ui.rep.name = command
-				ui.rep.started = gtx.Now
-				ui.rep.slow = repeatSlow
-				ui.rep.fast = repeatFast
-				ui.rep.accelAfter = repeatAccelAfter
-				ui.rep.period = ui.rep.slow
-				ui.rep.next = gtx.Now.Add(repeatStartDelay)
+				ui.startFileManagerRepeat(ui.activeFilePane, command, gtx.Now)
 				gtx.Execute(op.InvalidateCmd{At: ui.rep.next})
 			} else {
 				ui.rep.active = false
@@ -299,11 +295,31 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 		}
 
 		if !gtx.Now.Before(ui.rep.next) {
-			pane.table.HandleKey(ui.rep.name, pane.model.Len())
+			if ui.rep.name == fileActionCommand(fileActionMarkSelectNext) {
+				selected := pane.table.Selected
+				if !pane.markCurrentAndAdvance() || selected >= pane.model.Len()-1 {
+					ui.rep.active = false
+					return
+				}
+			} else {
+				pane.table.HandleKey(ui.rep.name, pane.model.Len())
+			}
 			ui.rep.next = gtx.Now.Add(ui.rep.period)
 		}
 		gtx.Execute(op.InvalidateCmd{At: ui.rep.next})
 	}
+}
+
+func (ui *UI) startFileManagerRepeat(pane int, command string, now time.Time) {
+	ui.rep.active = true
+	ui.rep.pane = pane
+	ui.rep.name = command
+	ui.rep.started = now
+	ui.rep.slow = repeatSlow
+	ui.rep.fast = repeatFast
+	ui.rep.accelAfter = repeatAccelAfter
+	ui.rep.period = ui.rep.slow
+	ui.rep.next = now.Add(repeatStartDelay)
 }
 
 func (ui *UI) handleFilePaneDriveMenuKeys(gtx layout.Context) {
@@ -350,6 +366,31 @@ func (ui *UI) handleFilePaneDriveMenuKeys(gtx layout.Context) {
 
 func (ui *UI) HandlePlatformInsertKey(_ time.Time) bool {
 	return ui.handleFileManagerInsert()
+}
+
+func (ui *UI) HandlePlatformInsertKeyState(now time.Time, down bool) bool {
+	if ui == nil {
+		return false
+	}
+	holdKey := fileActionKey(fileActionMarkSelectNext)
+	command := fileActionCommand(fileActionMarkSelectNext)
+	if !down {
+		ui.held[holdKey] = false
+		if ui.rep.active && ui.rep.name == command {
+			ui.rep.active = false
+		}
+		return false
+	}
+	if ui.held[holdKey] {
+		return false
+	}
+	ui.held[holdKey] = true
+	if !ui.handleFileManagerInsert() {
+		ui.held[holdKey] = false
+		return false
+	}
+	ui.startFileManagerRepeat(ui.activeFilePane, command, now)
+	return true
 }
 
 func (ui *UI) handleFileManagerInsert() bool {
@@ -459,6 +500,7 @@ func (ui *UI) handleFileManagerEscape(gtx layout.Context) {
 }
 
 func (ui *UI) layoutFilePanes(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	ui.ensureFilePaneTabs()
 	if len(ui.filePanes) == 0 {
 		lbl := material.Body1(th, "No panes.")
 		lbl.Font.Typeface = ui.mainTypeface()
@@ -537,7 +579,7 @@ func (ui *UI) layoutFilePaneSeams(gtx layout.Context, visible []visiblePane) {
 	height := gtx.Constraints.Max.Y
 	base := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
 	highlight := filePaneActiveBorderColor(palette.PaneBg)
-	terminalFocused := ui.terminalFocused(gtx)
+	terminalFocused := ui.terminalVisuallyFocused(gtx)
 	for i := 0; i < len(visible)-1; i++ {
 		x += widths[i]
 		if x <= 0 || x >= gtx.Constraints.Max.X {
@@ -555,7 +597,7 @@ func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context,
 	if len(visible) == 0 {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
-	if ui.terminalFocused(gtx) {
+	if ui.filePaneVolumeBadgesHidden() {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 	widths := paneColumnWidths(gtx.Constraints.Max.X, len(visible))
@@ -582,8 +624,12 @@ func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context,
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
+func (ui *UI) filePaneVolumeBadgesHidden() bool {
+	return ui != nil && ui.terminal != nil && ui.terminal.active()
+}
+
 func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
-	active := idx == ui.activeFilePane && !ui.terminalFocused(gtx)
+	active := idx == ui.activeFilePane && !ui.terminalVisuallyFocused(gtx)
 	palette := filePanePaletteFromConfig(ui.fmCfg)
 	accent := filePaneActiveBorderColor(palette.PaneBg)
 	shade := filePaneInactiveShadeColor(ui.fmCfg, palette.PaneBg)
@@ -598,6 +644,9 @@ func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pa
 								return layout.Stack{}.Layout(gtx,
 									layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 										return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												return ui.layoutFilePaneTabStrip(th, gtx, idx)
+											}),
 											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 												dims := ui.layoutFilePaneHeader(th, gtx, idx, pane, active)
 												pane.headerHeight = dims.Size.Y
@@ -1282,10 +1331,10 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 		if !ok {
 			continue
 		}
-		if ui.terminalFocused(gtx) {
-			ui.terminal.wantFocus = false
-			gtx.Execute(key.FocusCmd{})
-			gtx.Execute(key.SoftKeyboardCmd{Show: false})
+		terminalFocusedBeforeEvent := ui.terminalFocused(gtx)
+		paneFocusedBeforeEvent := idx == ui.activeFilePane && !terminalFocusedBeforeEvent
+		if terminalFocusedBeforeEvent && terminalSurfaceFocusPointerEvent(pe) {
+			ui.releaseTerminalKeyboardFocus(gtx)
 		}
 		if idx != ui.activeFilePane {
 			ui.setActiveFilePane(idx)
@@ -1340,6 +1389,11 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 					continue
 				}
 				if row == selectedBefore && col == 0 && !pane.hasMarkedRows() {
+					if !paneFocusedBeforeEvent {
+						pane.clearPendingInlineNameEdit()
+						pane.clearTableClickState()
+						continue
+					}
 					if pane.registerTablePrimaryClick(row, col, gtx.Now, filePaneTableDoubleClickWindow) {
 						pane.clearPendingInlineNameEdit()
 						if col == pane.permissionColumnIndex() {

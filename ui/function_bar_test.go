@@ -46,16 +46,19 @@ func TestFunctionBarToolsExposeCompactShortcutHint(t *testing.T) {
 	ui := &UI{}
 
 	items := ui.functionBarToolSpecs()
-	if len(items) != 3 {
-		t.Fatalf("tool count=%d want 3", len(items))
+	if len(items) != 4 {
+		t.Fatalf("tool count=%d want 4", len(items))
 	}
 	if items[0].key == "files" {
 		t.Fatal("redundant file-manager entry should not be present")
 	}
-	if items[2].key != "settings" {
-		t.Fatalf("last tool=%q want settings", items[2].key)
+	if items[0].key != "multi-rename" || items[0].shortcut != "Ctrl+M" {
+		t.Fatalf("first tool=%#v want multi-rename with Ctrl+M", items[0])
 	}
-	if got := items[2].shortcut; got != "Ctrl+S" {
+	if items[3].key != "settings" {
+		t.Fatalf("last tool=%q want settings", items[3].key)
+	}
+	if got := items[3].shortcut; got != "Ctrl+S" {
 		t.Fatalf("settings shortcut=%q want %q", got, "Ctrl+S")
 	}
 }
@@ -232,8 +235,8 @@ func TestFunctionBarToolsOpenSeedsKeyboardSelectionFromActiveTool(t *testing.T) 
 	if !ui.functionBarToolsOpen {
 		t.Fatal("tools popup should be open")
 	}
-	if got := ui.functionBarToolsSelected; got != 1 {
-		t.Fatalf("selected tool=%d want 1 for protocol analyzer", got)
+	if got := ui.functionBarToolsSelected; got != 2 {
+		t.Fatalf("selected tool=%d want 2 for protocol analyzer", got)
 	}
 }
 
@@ -250,8 +253,8 @@ func TestFunctionBarToolKeyboardSelectionWrapsAndActivates(t *testing.T) {
 	if !ui.moveFunctionBarToolSelection(-1) {
 		t.Fatal("up should wrap selection to the last tool")
 	}
-	if got := ui.functionBarToolsSelected; got != 2 {
-		t.Fatalf("selected tool=%d want 2", got)
+	if got := ui.functionBarToolsSelected; got != 3 {
+		t.Fatalf("selected tool=%d want 3", got)
 	}
 	if !ui.activateSelectedFunctionBarTool(now) {
 		t.Fatal("enter should activate the selected tool")
@@ -274,7 +277,7 @@ func TestFunctionBarModifierHintTextShowsFileManagerShortcuts(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ctrl hints for the file manager")
 	}
-	want := "Ctrl+A Select All | Ctrl+E Same Ext | Ctrl+F SSH | Ctrl+S Settings"
+	want := "Ctrl+A Select All | Ctrl+E Same Ext | Ctrl+F SSH | Ctrl+M Multi-Rename | Ctrl+S Settings"
 	if got != want {
 		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
 	}
@@ -370,10 +373,13 @@ func TestFunctionBarHintSlotLabelsUseLeadingFunctionBarSlots(t *testing.T) {
 	if labels[2] != "Ctrl+F SSH" {
 		t.Fatalf("slot 2=%q want %q", labels[2], "Ctrl+F SSH")
 	}
-	if labels[3] != "Ctrl+S Settings" {
-		t.Fatalf("slot 3=%q want %q", labels[3], "Ctrl+S Settings")
+	if labels[3] != "Ctrl+M Multi-Rename" {
+		t.Fatalf("slot 3=%q want %q", labels[3], "Ctrl+M Multi-Rename")
 	}
-	for i := 4; i < len(labels); i++ {
+	if labels[4] != "Ctrl+S Settings" {
+		t.Fatalf("slot 4=%q want %q", labels[4], "Ctrl+S Settings")
+	}
+	for i := 5; i < len(labels); i++ {
 		if labels[i] != "" {
 			t.Fatalf("slot %d=%q want empty", i, labels[i])
 		}

@@ -32,7 +32,7 @@ func TestScaleModalThemeFontSizeTracksPaneFont(t *testing.T) {
 
 func TestSyncThemeRuntimeAppliesPaneFont(t *testing.T) {
 	ui := &UI{
-		typeface: font.Typeface(resources.BundledFontFamilyConsolas),
+		typeface: font.Typeface(resources.BundledFontFamilyJetBrainsMonoNerdFontMono),
 		textSize: unit.Sp(18),
 	}
 	th := material.NewTheme()
@@ -49,7 +49,7 @@ func TestSyncThemeRuntimeAppliesPaneFont(t *testing.T) {
 
 func TestDialogActionSegmentMetricsGrowWithPaneFont(t *testing.T) {
 	ui := &UI{
-		typeface: font.Typeface(resources.BundledFontFamilyFiraCode),
+		typeface: font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono),
 		textSize: unit.Sp(14),
 	}
 	th := material.NewTheme()

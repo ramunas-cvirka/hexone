@@ -9,13 +9,15 @@ in Explorer under file properties, plus the embedded application manifest.
 Most fields live in `cmd/hexone/app_icon_windows.rc`, while the Windows
 manifest template lives in `cmd/hexone/app_windows.manifest`. `make
 windows-resource` renders both files, injects the numeric Windows version from
-the latest `v*` Git tag, and also injects the current copyright year:
+the latest reachable `v*` Git tag, and also injects the current copyright year:
 
 - If `HEAD` is exactly on `v0.1.0`, Explorer gets `0.1.0.0`.
 - If `HEAD` is ahead of `v0.1.0`, Explorer still gets `0.1.0.0`.
 - The 4th component is reserved and currently fixed to `0`.
 
-Regenerate the compiled resource with:
+The normal `make build`, `make build-windows`, packaging, and GoReleaser paths
+regenerate the compiled resource automatically. To regenerate it on its own,
+use:
 
 ```powershell
 make windows-resource

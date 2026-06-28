@@ -20,6 +20,7 @@ import (
 
 type slidingTabSpec struct {
 	Label      string
+	Typeface   font.Typeface
 	Click      *widget.Clickable
 	ActiveFill float32
 	HoverFill  float32
@@ -47,7 +48,7 @@ func (ui *UI) slidingTabWidths(th *material.Theme, gtx layout.Context, textSize 
 	minWidth := gtx.Dp(unit.Dp(30))
 	for i, spec := range specs {
 		lbl := material.Body2(th, spec.Label)
-		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Typeface = ui.slidingTabTypeface(spec)
 		lbl.Font.Weight = font.Medium
 		lbl.TextSize = textSize
 		lbl.MaxLines = 1
@@ -74,6 +75,13 @@ func (ui *UI) slidingTabWidths(th *material.Theme, gtx layout.Context, textSize 
 		}
 	}
 	return widths
+}
+
+func (ui *UI) slidingTabTypeface(spec slidingTabSpec) font.Typeface {
+	if spec.Typeface != "" {
+		return spec.Typeface
+	}
+	return ui.mainTypeface()
 }
 
 func (ui *UI) layoutSlidingTabStrip(th *material.Theme, gtx layout.Context, stripH int, sliderPos float32, textSize unit.Sp, specs []slidingTabSpec) layout.Dimensions {
@@ -163,7 +171,7 @@ func (ui *UI) layoutSlidingTabStrip(th *material.Theme, gtx layout.Context, stri
 										fg = mixNRGBA(fg, color.NRGBA{R: 248, G: 242, B: 228, A: 255}, focusFill*0.24)
 										dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 											lbl := material.Body2(th, spec.Label)
-											lbl.Font.Typeface = ui.mainTypeface()
+											lbl.Font.Typeface = ui.slidingTabTypeface(spec)
 											lbl.Font.Weight = font.Medium
 											lbl.TextSize = textSize
 											lbl.Color = fg

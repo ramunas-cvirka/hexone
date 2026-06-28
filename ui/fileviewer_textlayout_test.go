@@ -13,34 +13,22 @@ import (
 	"hexone/fm"
 )
 
-func TestViewerLineContentRectAddsConsolasOpticalNudge(t *testing.T) {
+func TestViewerLineContentRectSupportsBundledNerdFonts(t *testing.T) {
 	th := material.NewTheme()
 	gtx := testLabelLayoutContext(image.Pt(320, 64))
 
-	firaUI := NewUI(fm.DefaultConfig())
-	firaUI.fmCfg.Viewer.Typeface = resources.BundledFontFamilyFiraCode
-	consolasUI := NewUI(fm.DefaultConfig())
-	consolasUI.fmCfg.Viewer.Typeface = resources.BundledFontFamilyConsolas
+	for _, family := range resources.BundledFontFamilies() {
+		ui := NewUI(fm.DefaultConfig())
+		ui.fmCfg.Viewer.Typeface = family.Name
+		rowH := measureTypefaceLineHeight(ui, th, gtx, ui.viewerTypeface())
+		rect := viewerLineContentRect(ui, th, gtx, ui.viewerTypeface(), ui.viewerTextSize(), rowH, 8, 48)
 
-	rowH := measureTypefaceLineHeight(firaUI, th, gtx, firaUI.viewerTypeface())
-	if other := measureTypefaceLineHeight(consolasUI, th, gtx, consolasUI.viewerTypeface()); other > rowH {
-		rowH = other
-	}
-
-	firaRect := viewerLineContentRect(firaUI, th, gtx, firaUI.viewerTypeface(), firaUI.viewerTextSize(), rowH, 8, 48)
-	consolasRect := viewerLineContentRect(consolasUI, th, gtx, consolasUI.viewerTypeface(), consolasUI.viewerTextSize(), rowH, 8, 48)
-
-	if firaRect.Empty() {
-		t.Fatal("fira rect should not be empty")
-	}
-	if consolasRect.Empty() {
-		t.Fatal("consolas rect should not be empty")
-	}
-	if consolasRect.Min.Y <= firaRect.Min.Y {
-		t.Fatalf("consolas rect top=%d want > fira top=%d", consolasRect.Min.Y, firaRect.Min.Y)
-	}
-	if consolasRect.Max.Y > rowH {
-		t.Fatalf("consolas rect maxY=%d want <= %d", consolasRect.Max.Y, rowH)
+		if rect.Empty() {
+			t.Fatalf("%s rect should not be empty", family.Name)
+		}
+		if rect.Max.Y > rowH {
+			t.Fatalf("%s rect maxY=%d want <= %d", family.Name, rect.Max.Y, rowH)
+		}
 	}
 }
 

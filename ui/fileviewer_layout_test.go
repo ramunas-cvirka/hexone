@@ -184,6 +184,33 @@ func TestFileViewerContentPressKeepsEncodingMenuInsidePopup(t *testing.T) {
 	}
 }
 
+func TestFileViewerContentScrollReleasesTerminalFocus(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.terminal = newTerminalSession(nil)
+	ui.terminal.setActive(true)
+	st := &fileViewerState{mode: "file"}
+	ui.fileViewer = st
+
+	gtx, router := testPointerContext()
+	primePointerScrollFilter(router, &st.contentPointerTag, pointer.ScrollRange{}, pointer.ScrollRange{Min: -100, Max: 100})
+	registerPointerTag(router, gtx.Ops, &st.contentPointerTag)
+	gtx.Execute(key.FocusCmd{Tag: &ui.terminal.keyTag})
+	if !ui.terminalFocused(gtx) {
+		t.Fatal("terminal should start focused")
+	}
+	router.Queue(pointer.Event{
+		Kind:     pointer.Scroll,
+		Scroll:   f32.Pt(0, -1),
+		Position: f32.Pt(100, 100),
+	})
+
+	ui.handleFileViewerPointerEvents(gtx, st, image.Pt(200, 200))
+
+	if ui.terminalFocused(gtx) {
+		t.Fatal("terminal should lose focus after viewer scroll")
+	}
+}
+
 func TestFileViewerTabAnimationFollowsHistoryToggle(t *testing.T) {
 	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
 	st := &fileViewerState{mode: "hex"}
@@ -480,6 +507,20 @@ func registerPointerTag(router *input.Router, ops *op.Ops, tag event.Tag) {
 func primePointerFilter(router *input.Router, tag event.Tag) {
 	for {
 		_, ok := router.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
+		if !ok {
+			return
+		}
+	}
+}
+
+func primePointerScrollFilter(router *input.Router, tag event.Tag, scrollX, scrollY pointer.ScrollRange) {
+	for {
+		_, ok := router.Event(pointer.Filter{
+			Target:  tag,
+			Kinds:   pointer.Scroll,
+			ScrollX: scrollX,
+			ScrollY: scrollY,
+		})
 		if !ok {
 			return
 		}
