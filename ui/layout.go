@@ -182,6 +182,7 @@ type UI struct {
 	fileKeys                    fileKeyMap
 	activeFilePane              int
 	filePaneTabs                []filePaneTabSet
+	tabShortcut                 tabShortcutState
 	sortDirPrunedAt             time.Time
 	terminal                    *terminalSession
 	terminalTabs                terminalTabSet
@@ -972,6 +973,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		return
 	}
 	if ui != nil {
+		ui.handleTabShortcuts(gtx)
 		ui.handleTerminalFocusToggleKey(gtx)
 	}
 	if ui != nil && ui.terminalFocused(gtx) {

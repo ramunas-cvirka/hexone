@@ -183,6 +183,26 @@ func (ui *UI) activateFilePaneTab(paneIdx, tabIdx int) bool {
 	return true
 }
 
+func (ui *UI) stepFilePaneTab(paneIdx, step int) bool {
+	if ui == nil {
+		return false
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return false
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	if len(set.tabs) < 2 {
+		return false
+	}
+	next := wrappedTabIndex(set.active, step, len(set.tabs))
+	if !ui.activateFilePaneTab(paneIdx, next) {
+		return false
+	}
+	set.scroll = tabScrollToActive(set.scroll, set.active)
+	return true
+}
+
 func (ui *UI) addFilePaneTab(paneIdx int) bool {
 	if ui == nil {
 		return false
@@ -330,6 +350,22 @@ func (ui *UI) activateTerminalTab(tabIdx int) bool {
 	if wasActive {
 		ui.terminal.focusKeyboard()
 	}
+	return true
+}
+
+func (ui *UI) stepTerminalTab(step int) bool {
+	if ui == nil {
+		return false
+	}
+	ui.ensureTerminalTabs()
+	if len(ui.terminalTabs.sessions) < 2 {
+		return false
+	}
+	next := wrappedTabIndex(ui.terminalTabs.active, step, len(ui.terminalTabs.sessions))
+	if !ui.activateTerminalTab(next) {
+		return false
+	}
+	ui.terminalTabs.scroll = tabScrollToActive(ui.terminalTabs.scroll, ui.terminalTabs.active)
 	return true
 }
 
@@ -1140,6 +1176,18 @@ func clampTabIndex(idx, n int) int {
 		return n - 1
 	}
 	return idx
+}
+
+func wrappedTabIndex(idx, step, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	idx = clampTabIndex(idx, n)
+	next := (idx + step) % n
+	if next < 0 {
+		next += n
+	}
+	return next
 }
 
 func tabScrollToActive(scroll, active int) int {
