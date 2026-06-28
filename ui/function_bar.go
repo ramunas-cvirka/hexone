@@ -96,7 +96,7 @@ func popupPressed(gtx layout.Context, tag event.Tag) bool {
 }
 
 func (ui *UI) hasBlockingFileDialog() bool {
-	return ui != nil && (ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.customCommandEditor != nil || ui.archiveExtractConflictOpen())
+	return ui != nil && (ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.multiRename != nil || ui.customCommandEditor != nil || ui.archiveExtractConflictOpen())
 }
 
 func (ui *UI) closeFunctionBarToolsMenu() {
@@ -541,6 +541,7 @@ func (ui *UI) functionBarModifierHintSpecs() []functionBarHintSpec {
 			add("A", "Select All")
 			add("E", "Same Ext")
 			add("F", "SSH")
+			add("M", "Multi-Rename")
 			add("S", "Settings")
 		}
 		return hints
@@ -1043,6 +1044,7 @@ func (ui *UI) functionBarToolSpecs() []functionBarToolSpec {
 		active = "protocol"
 	}
 	return []functionBarToolSpec{
+		{key: "multi-rename", label: "Multi-Rename", shortcut: "Ctrl+M"},
 		{key: "hex", label: "Hex to ASCII", active: active == "hex"},
 		{key: "protocol", label: "Protocol Analyzer", active: active == "protocol"},
 		{key: "settings", label: "Settings", shortcut: "Ctrl+S", active: active == "settings"},
@@ -1139,6 +1141,8 @@ func (ui *UI) activateFunctionBarTool(key string, now time.Time) {
 	}
 	ui.closeFunctionBarPopups()
 	switch key {
+	case "multi-rename":
+		ui.startMultiRename(ui.activeFilePane, now)
 	case "files":
 		ui.setActiveTab("tab0", now)
 	case "hex":

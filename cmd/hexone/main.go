@@ -151,8 +151,8 @@ func run(window *app.Window) error {
 			windowTracker.ObserveConfig(typ.Config)
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, typ)
-			for count := consumeNativeInsertPresses(); count > 0; count-- {
-				mainUI.HandlePlatformInsertKey(gtx.Now)
+			if nativeInsertKeyStateAvailable() {
+				mainUI.HandlePlatformInsertKeyState(gtx.Now, nativeInsertKeyDown())
 			}
 			mainUI.SyncPlatformAltHeld(platformAltKeyDown())
 			mainUI.Layout(th, gtx)

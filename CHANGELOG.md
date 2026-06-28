@@ -6,10 +6,6 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## Unreleased
 
-- Added an in-app help modal on `F1` with bundled help content.
-- Embedded the default bundled fonts so portable builds no longer need the external `assets/` directory.
-- Added Windows executable metadata resources with Git tag-derived versioning.
-
 ## v0.1.0 - 2026-03-10
 
 - Initial public release.
@@ -48,6 +44,13 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Replaced the `F2` WIP behavior with custom commands, including a fixed-size command builder with 10 command slots
 
 ## v0.6.0 - 2026-06-15
-
 - New integrated terminal drawer on `F12`, with `Shift+Tab` to jump between the terminal and file panes.
 - Added terminal folder shortcuts for the left and right panes, including supported SSH sessions.
+
+## v0.7.0 - 2026-06-28
+
+- Added tabs to both file panes and the terminal drawer, with overflow controls.
+- Added `Ctrl+N`, `Ctrl+X`, `Ctrl+Tab`, and `Ctrl+Shift+Tab` shortcuts for tab management.
+- Added preview-first Multi-Rename with common transformations, collision checks, and local/SFTP support.
+- Improved terminal selection, clipboard actions, buffer clearing, and pane-directory integration.
+- Embedded FiraCode, Hack, JetBrainsMono, and Iosevka Nerd Font Mono, replacing Fira Code and Consolas.

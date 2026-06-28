@@ -7,8 +7,10 @@ package ui
 
 import (
 	"errors"
+	"hexone/fm"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -50,17 +52,20 @@ func TestWindowsTerminalProcessStartsCmd(t *testing.T) {
 	go func() {
 		waitErr <- proc.Wait()
 	}()
-	if _, err := proc.Write([]byte("echo hexone-conpty\r\nexit\r\n")); err != nil {
-		t.Fatalf("write ConPTY input: %v", err)
-	}
-
 	var out strings.Builder
+	sent := false
 	timer := time.NewTimer(3 * time.Second)
 	defer timer.Stop()
 	for {
 		select {
 		case chunk := <-chunks:
 			out.WriteString(chunk)
+			if !sent && strings.Contains(out.String(), "]7;") {
+				if _, err := proc.Write([]byte("echo hexone-conpty\r\n")); err != nil {
+					t.Fatalf("write ConPTY input: %v", err)
+				}
+				sent = true
+			}
 			if strings.Contains(out.String(), "hexone-conpty") {
 				return
 			}
@@ -85,5 +90,44 @@ func TestWindowsTerminalProcessStartsCmd(t *testing.T) {
 			_ = proc.Kill()
 			t.Fatalf("timed out reading ConPTY output; partial=%q pid=%d", out.String(), proc.PID())
 		}
+	}
+}
+
+func TestWindowsLiveTerminalCanSwitchShellWithoutOverlappingPTYs(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Viewer.Shell = "cmd"
+	ui := NewUI(cfg)
+	firstDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	secondDir := filepath.Dir(firstDir)
+	first := newTerminalSession(nil, 8)
+	first.start(firstDir, "cmd")
+	second := newTerminalSession(nil, 8)
+	second.setActive(true)
+	second.start(secondDir, "cmd")
+	ui.terminalTabs = terminalTabSet{
+		sessions: []*terminalSession{first, second},
+		active:   1,
+	}
+	ui.terminal = second
+
+	cfg.Viewer.Shell = "powershell"
+	if !ui.applyTerminalShellRuntime() {
+		t.Fatal("live shell change should replace the terminal session")
+	}
+	if ui.terminal == second || !first.closing || !second.closing {
+		t.Fatal("old live terminal sessions were not closed")
+	}
+	defer ui.closeAllTerminalTabs()
+	if len(ui.terminalTabs.sessions) != 2 || !ui.terminalTabs.sessions[0].running || !ui.terminalTabs.sessions[1].running {
+		t.Fatal("replacement shells were not prestarted")
+	}
+	if got, want := filepath.Clean(ui.terminalTabs.sessions[0].startDir), filepath.Clean(firstDir); got != want {
+		t.Fatalf("first replacement shell start dir=%q want preserved %q", got, want)
+	}
+	if got, want := filepath.Clean(ui.terminalTabs.sessions[1].startDir), filepath.Clean(secondDir); got != want {
+		t.Fatalf("second replacement shell start dir=%q want preserved %q", got, want)
 	}
 }

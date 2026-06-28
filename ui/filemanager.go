@@ -2005,6 +2005,17 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 		return false
 	}
 
+	if ui.openFavoritesInNewTab() {
+		pane.closeFavoriteMenu()
+		if !ui.addFilePaneTab(idx) {
+			return false
+		}
+		pane = ui.filePanes[idx]
+		if pane == nil {
+			return false
+		}
+	}
+
 	if remoteLoc, ok := parseRemoteFavoriteLocation(target); ok {
 		pane.closeFavoriteMenu()
 		if paneMatchesRemoteFavorite(pane, remoteLoc) {
@@ -2015,6 +2026,16 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 		}
 		if paneMatchesRemoteFavoriteTarget(pane, remoteLoc) {
 			return ui.loadPaneDir(idx, remoteLoc.Dir)
+		}
+		if shared := ui.findReusableRemoteSessionForFavorite(idx, remoteLoc); shared != nil {
+			next := shared.clone()
+			if next != nil {
+				if err := ui.attachPaneSSHSession(idx, next, remoteLoc.Dir, time.Now(), false); err != nil {
+					pane.setNotice("ssh connect failed: "+err.Error(), time.Now())
+					return false
+				}
+				return true
+			}
 		}
 
 		setup, found := findSSHSetupForRemoteFavorite(ui.fmCfg, remoteLoc)
@@ -2042,6 +2063,13 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 	}
 	pane.closeFavoriteMenu()
 	return ui.loadPaneDir(idx, target)
+}
+
+func (ui *UI) openFavoritesInNewTab() bool {
+	if ui == nil || ui.fmCfg == nil {
+		return true
+	}
+	return ui.fmCfg.General.OpenFavoritesInNewTab
 }
 
 func (p *filePaneState) findEntryIndex(name string) int {
@@ -2919,7 +2947,7 @@ func (ui *UI) activateFilePanePathSegment(idx int, pane *filePaneState, target s
 
 func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {
 	anyLoading := false
-	for _, pane := range ui.filePanes {
+	for _, pane := range ui.allFilePaneTabPanes() {
 		if pane == nil || pane.loadResultCh == nil {
 			continue
 		}
@@ -2967,7 +2995,7 @@ func (ui *UI) pumpFilePaneLocalRefresh(gtx layout.Context) {
 		return
 	}
 	nextCheck := time.Time{}
-	for _, pane := range ui.filePanes {
+	for _, pane := range ui.allFilePaneTabPanes() {
 		if pane == nil {
 			continue
 		}

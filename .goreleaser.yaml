@@ -8,6 +8,10 @@ dist: dist/goreleaser
 before:
   hooks:
     - make headers
+    # Refresh the checked-in PE resource so Explorer metadata follows the
+    # release tag instead of whatever version the .syso last contained.
+    - cmd: make windows-resource
+      output: true
 
 builds:
   - id: hexone-linux-amd64

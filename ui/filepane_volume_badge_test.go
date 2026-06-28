@@ -202,6 +202,32 @@ func TestFilePaneVolumeBadgeSourcePaneKeepsMirroringExtractingPane(t *testing.T)
 	}
 }
 
+func TestFilePaneVolumeBadgesStayHiddenAcrossTerminalTabSwitch(t *testing.T) {
+	first := newTerminalSession(nil)
+	second := newTerminalSession(nil)
+	first.setActive(true)
+	ui := &UI{
+		terminal: first,
+		terminalTabs: terminalTabSet{
+			sessions: []*terminalSession{first, second},
+			active:   0,
+		},
+	}
+
+	if !ui.filePaneVolumeBadgesHidden() {
+		t.Fatal("volume badges should be hidden while the terminal drawer is open")
+	}
+	if !ui.activateTerminalTab(1) {
+		t.Fatal("activateTerminalTab should switch terminal tabs")
+	}
+	if !ui.filePaneVolumeBadgesHidden() {
+		t.Fatal("volume badges became visible during terminal tab handoff")
+	}
+	if first.active() || !second.active() {
+		t.Fatal("terminal active state was not transferred to the selected tab")
+	}
+}
+
 func TestLayoutFilePaneStatusBarUsesFullPaneWidth(t *testing.T) {
 	oldLookup := localVolumeUsageFunc
 	defer func() {

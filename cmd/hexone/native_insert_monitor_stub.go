@@ -11,8 +11,12 @@ func installNativeInsertMonitor(func(func())) {}
 
 func removeNativeInsertMonitor(func(func())) {}
 
-func consumeNativeInsertPresses() int {
-	return 0
+func nativeInsertKeyDown() bool {
+	return false
+}
+
+func nativeInsertKeyStateAvailable() bool {
+	return false
 }
 
 func platformAltKeyDown() bool {

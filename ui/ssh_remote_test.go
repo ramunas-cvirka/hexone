@@ -221,6 +221,7 @@ func TestNavigateRemoteFavoriteReusesCurrentPaneSSHSession(t *testing.T) {
 	}
 
 	cfg := fm.DefaultConfig()
+	cfg.General.OpenFavoritesInNewTab = false
 	setup := fm.SSHSetup{Host: "example.test", Port: 2222, User: "ramunas", Password: "secret"}
 	client := new(sftp.Client)
 	pane := newFilePaneState("/", cfg)
@@ -263,5 +264,73 @@ func TestNavigateRemoteFavoriteReusesCurrentPaneSSHSession(t *testing.T) {
 	}
 	if pane.dir != "/var/log" {
 		t.Fatalf("pane dir=%q want /var/log", pane.dir)
+	}
+}
+
+func TestNavigateRemoteFavoriteReusesOtherPaneSSHSessionBeforeSavedSetup(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldOpen := openSSHClientsFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		openSSHClientsFunc = oldOpen
+	})
+
+	openSSHClientsFunc = func(fm.SSHSetup) (sshClientBundle, error) {
+		t.Fatal("favorite should reuse the other pane's live SSH session before dialing")
+		return sshClientBundle{}, nil
+	}
+
+	cfg := fm.DefaultConfig()
+	cfg.General.OpenFavoritesInNewTab = false
+	setup := fm.SSHSetup{Host: "example.test", Port: 2222, User: "ramunas"}
+	client := new(sftp.Client)
+	left := newFilePaneState("/", cfg)
+	left.remote = &paneSSHSession{
+		setup:    setup,
+		identity: sshSetupIdentity(setup),
+		address:  sshSetupAddress(setup),
+		conn: newSharedSSHConn(sshClientBundle{
+			sshClient: new(ssh.Client),
+			sftpBase:  new(ssh.Client),
+			sftp:      client,
+		}),
+	}
+	left.dir = "/home/ramunas"
+	right := newFilePaneState("/tmp", cfg)
+	ui := &UI{
+		fmCfg:          cfg,
+		filePanes:      []*filePaneState{left, right},
+		activeFilePane: 1,
+	}
+
+	readCalls := 0
+	readDirSFTPFunc = func(got *sftp.Client, dir string) (filesys.Listing, error) {
+		readCalls++
+		if got != client {
+			t.Fatalf("unexpected sftp client %p", got)
+		}
+		if dir != "/var/log" {
+			t.Fatalf("readDir dir=%q want /var/log", dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	if !ui.navigatePaneFavorite(1, "ssh://ramunas@EXAMPLE.test:2222/var/log") {
+		t.Fatal("navigatePaneFavorite returned false")
+	}
+	if readCalls != 1 {
+		t.Fatalf("readDir calls=%d want 1", readCalls)
+	}
+	if right.remote == nil || right.remote.sftpClient() != client {
+		t.Fatal("right pane should reuse the left pane's SSH session")
+	}
+	if left.remote == nil || left.remote.sftpClient() != client {
+		t.Fatal("left pane should keep its SSH session")
+	}
+	if right.dir != "/var/log" {
+		t.Fatalf("right pane dir=%q want /var/log", right.dir)
+	}
+	if right.noticeText != "" {
+		t.Fatalf("reused ssh favorite notice=%q want empty", right.noticeText)
 	}
 }

@@ -375,14 +375,44 @@ func (ui *UI) connectPaneSSH(idx int, setup fm.SSHSetup, targetDir string, now t
 		return err
 	}
 	var next *paneSSHSession
+	showConnectedNotice := true
 	if shared := ui.findReusableRemoteSession(idx, setup); shared != nil {
 		next = shared.clone()
+		showConnectedNotice = false
 	}
 	if next == nil {
 		next, err = newPaneSSHSession(setup)
 		if err != nil {
 			return err
 		}
+		showConnectedNotice = true
+	}
+
+	return ui.attachPaneSSHSession(idx, next, targetDir, now, showConnectedNotice)
+}
+
+func (ui *UI) attachPaneSSHSession(idx int, next *paneSSHSession, targetDir string, now time.Time, showConnectedNotice bool) error {
+	if ui == nil {
+		if next != nil {
+			next.close()
+		}
+		return errors.New("ui is nil")
+	}
+	if idx < 0 || idx >= len(ui.filePanes) {
+		if next != nil {
+			next.close()
+		}
+		return errors.New("invalid pane index")
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		if next != nil {
+			next.close()
+		}
+		return errors.New("pane is nil")
+	}
+	if next == nil {
+		return errors.New("ssh session is not connected")
 	}
 
 	prev := pane.remote
@@ -422,7 +452,9 @@ func (ui *UI) connectPaneSSH(idx int, setup fm.SSHSetup, targetDir string, now t
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
-	pane.setNotice("connected: "+next.identity, now)
+	if showConnectedNotice {
+		pane.setNotice("connected: "+next.identity, now)
+	}
 	return nil
 }
 
@@ -435,6 +467,25 @@ func (ui *UI) findReusableRemoteSession(excludeIdx int, setup fm.SSHSetup) *pane
 			continue
 		}
 		if !sameSSHRemoteTarget(pane.remote.setup, setup) {
+			continue
+		}
+		if pane.remote.sftpClient() == nil {
+			continue
+		}
+		return pane.remote
+	}
+	return nil
+}
+
+func (ui *UI) findReusableRemoteSessionForFavorite(excludeIdx int, loc remoteFavoriteLocation) *paneSSHSession {
+	if ui == nil {
+		return nil
+	}
+	for i, pane := range ui.filePanes {
+		if i == excludeIdx || pane == nil || pane.remote == nil {
+			continue
+		}
+		if !paneMatchesRemoteFavoriteTarget(pane, loc) {
 			continue
 		}
 		if pane.remote.sftpClient() == nil {
@@ -458,7 +509,7 @@ func sameSSHRemoteTarget(a, b fm.SSHSetup) bool {
 	if portB <= 0 {
 		portB = 22
 	}
-	return hostA == hostB && userA == userB && portA == portB
+	return strings.EqualFold(hostA, hostB) && userA == userB && portA == portB
 }
 
 func (ui *UI) disconnectPaneSSH(idx int, now time.Time) {

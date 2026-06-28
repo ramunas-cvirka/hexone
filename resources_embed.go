@@ -6,24 +6,34 @@ package resources
 import _ "embed"
 
 const (
-	EmbeddedHelpSource          = "bundled help"
-	EmbeddedLicenseSource       = "bundled LICENSE"
-	EmbeddedNoticeSource        = "bundled NOTICE"
-	EmbeddedRegularFontPath     = "embedded:FiraCode-Regular.ttf"
-	EmbeddedMediumFontPath      = "embedded:FiraCode-Medium.ttf"
-	EmbeddedBoldFontPath        = "embedded:FiraCode-Bold.ttf"
-	EmbeddedConsolasRegularPath = "embedded:consola.ttf"
-	EmbeddedConsolasBoldPath    = "embedded:consolab.ttf"
+	EmbeddedHelpSource    = "bundled help"
+	EmbeddedLicenseSource = "bundled LICENSE"
+	EmbeddedNoticeSource  = "bundled NOTICE"
 
-	BundledFontFamilyFiraCode = "Fira Code"
-	BundledFontFamilyConsolas = "Consolas"
+	EmbeddedFiraCodeNerdFontMonoRegularPath      = "embedded:FiraCodeNerdFontMono-Regular.ttf"
+	EmbeddedFiraCodeNerdFontMonoMediumPath       = "embedded:FiraCodeNerdFontMono-Medium.ttf"
+	EmbeddedFiraCodeNerdFontMonoBoldPath         = "embedded:FiraCodeNerdFontMono-Bold.ttf"
+	EmbeddedHackNerdFontMonoRegularPath          = "embedded:HackNerdFontMono-Regular.ttf"
+	EmbeddedHackNerdFontMonoBoldPath             = "embedded:HackNerdFontMono-Bold.ttf"
+	EmbeddedJetBrainsMonoNerdFontMonoRegularPath = "embedded:JetBrainsMonoNerdFontMono-Regular.ttf"
+	EmbeddedJetBrainsMonoNerdFontMonoMediumPath  = "embedded:JetBrainsMonoNerdFontMono-Medium.ttf"
+	EmbeddedJetBrainsMonoNerdFontMonoBoldPath    = "embedded:JetBrainsMonoNerdFontMono-Bold.ttf"
+	EmbeddedIosevkaNerdFontMonoRegularPath       = "embedded:IosevkaNerdFontMono-Regular.ttf"
+	EmbeddedIosevkaNerdFontMonoBoldPath          = "embedded:IosevkaNerdFontMono-Bold.ttf"
+
+	BundledFontFamilyFiraCodeNerdFontMono      = "FiraCode Nerd Font Mono"
+	BundledFontFamilyHackNerdFontMono          = "Hack Nerd Font Mono"
+	BundledFontFamilyJetBrainsMonoNerdFontMono = "JetBrainsMono Nerd Font Mono"
+	BundledFontFamilyIosevkaNerdFontMono       = "Iosevka Nerd Font Mono"
 )
 
 type BundledFontFamily struct {
 	Name        string
+	Label       string
 	RegularPath string
 	MediumPath  string
 	BoldPath    string
+	Monospace   bool
 }
 
 //go:embed HELP.md
@@ -38,33 +48,68 @@ var embeddedNoticeText string
 //go:embed protocols.yaml
 var embeddedProtocolsYAML []byte
 
-//go:embed assets/FiraCode-Regular.ttf
-var embeddedRegularFont []byte
+//go:embed assets/FiraCodeNerdFontMono-Regular.ttf
+var embeddedFiraCodeNerdFontMonoRegular []byte
 
-//go:embed assets/FiraCode-Medium.ttf
-var embeddedMediumFont []byte
+//go:embed assets/FiraCodeNerdFontMono-Medium.ttf
+var embeddedFiraCodeNerdFontMonoMedium []byte
 
-//go:embed assets/FiraCode-Bold.ttf
-var embeddedBoldFont []byte
+//go:embed assets/FiraCodeNerdFontMono-Bold.ttf
+var embeddedFiraCodeNerdFontMonoBold []byte
 
-//go:embed assets/consola.ttf
-var embeddedConsolasRegular []byte
+//go:embed assets/HackNerdFontMono-Regular.ttf
+var embeddedHackNerdFontMonoRegular []byte
 
-//go:embed assets/consolab.ttf
-var embeddedConsolasBold []byte
+//go:embed assets/HackNerdFontMono-Bold.ttf
+var embeddedHackNerdFontMonoBold []byte
+
+//go:embed assets/JetBrainsMonoNerdFontMono-Regular.ttf
+var embeddedJetBrainsMonoNerdFontMonoRegular []byte
+
+//go:embed assets/JetBrainsMonoNerdFontMono-Medium.ttf
+var embeddedJetBrainsMonoNerdFontMonoMedium []byte
+
+//go:embed assets/JetBrainsMonoNerdFontMono-Bold.ttf
+var embeddedJetBrainsMonoNerdFontMonoBold []byte
+
+//go:embed assets/IosevkaNerdFontMono-Regular.ttf
+var embeddedIosevkaNerdFontMonoRegular []byte
+
+//go:embed assets/IosevkaNerdFontMono-Bold.ttf
+var embeddedIosevkaNerdFontMonoBold []byte
 
 var bundledFontFamilies = []BundledFontFamily{
 	{
-		Name:        BundledFontFamilyFiraCode,
-		RegularPath: EmbeddedRegularFontPath,
-		MediumPath:  EmbeddedMediumFontPath,
-		BoldPath:    EmbeddedBoldFontPath,
+		Name:        BundledFontFamilyFiraCodeNerdFontMono,
+		Label:       "FiraCode",
+		RegularPath: EmbeddedFiraCodeNerdFontMonoRegularPath,
+		MediumPath:  EmbeddedFiraCodeNerdFontMonoMediumPath,
+		BoldPath:    EmbeddedFiraCodeNerdFontMonoBoldPath,
+		Monospace:   true,
 	},
 	{
-		Name:        BundledFontFamilyConsolas,
-		RegularPath: EmbeddedConsolasRegularPath,
-		MediumPath:  EmbeddedConsolasRegularPath,
-		BoldPath:    EmbeddedConsolasBoldPath,
+		Name:        BundledFontFamilyJetBrainsMonoNerdFontMono,
+		Label:       "JetBrains",
+		RegularPath: EmbeddedJetBrainsMonoNerdFontMonoRegularPath,
+		MediumPath:  EmbeddedJetBrainsMonoNerdFontMonoMediumPath,
+		BoldPath:    EmbeddedJetBrainsMonoNerdFontMonoBoldPath,
+		Monospace:   true,
+	},
+	{
+		Name:        BundledFontFamilyHackNerdFontMono,
+		Label:       "Hack",
+		RegularPath: EmbeddedHackNerdFontMonoRegularPath,
+		MediumPath:  EmbeddedHackNerdFontMonoRegularPath,
+		BoldPath:    EmbeddedHackNerdFontMonoBoldPath,
+		Monospace:   true,
+	},
+	{
+		Name:        BundledFontFamilyIosevkaNerdFontMono,
+		Label:       "Iosevka",
+		RegularPath: EmbeddedIosevkaNerdFontMonoRegularPath,
+		MediumPath:  EmbeddedIosevkaNerdFontMonoRegularPath,
+		BoldPath:    EmbeddedIosevkaNerdFontMonoBoldPath,
+		Monospace:   true,
 	},
 }
 
@@ -100,18 +145,33 @@ func IsBundledFontFamily(name string) bool {
 	return ok
 }
 
+func IsBundledMonospaceFontFamily(name string) bool {
+	family, ok := BundledFontFamilyByName(name)
+	return ok && family.Monospace
+}
+
 func BundledFont(path string) ([]byte, bool) {
 	switch path {
-	case EmbeddedRegularFontPath:
-		return append([]byte(nil), embeddedRegularFont...), true
-	case EmbeddedMediumFontPath:
-		return append([]byte(nil), embeddedMediumFont...), true
-	case EmbeddedBoldFontPath:
-		return append([]byte(nil), embeddedBoldFont...), true
-	case EmbeddedConsolasRegularPath:
-		return append([]byte(nil), embeddedConsolasRegular...), true
-	case EmbeddedConsolasBoldPath:
-		return append([]byte(nil), embeddedConsolasBold...), true
+	case EmbeddedFiraCodeNerdFontMonoRegularPath:
+		return append([]byte(nil), embeddedFiraCodeNerdFontMonoRegular...), true
+	case EmbeddedFiraCodeNerdFontMonoMediumPath:
+		return append([]byte(nil), embeddedFiraCodeNerdFontMonoMedium...), true
+	case EmbeddedFiraCodeNerdFontMonoBoldPath:
+		return append([]byte(nil), embeddedFiraCodeNerdFontMonoBold...), true
+	case EmbeddedHackNerdFontMonoRegularPath:
+		return append([]byte(nil), embeddedHackNerdFontMonoRegular...), true
+	case EmbeddedHackNerdFontMonoBoldPath:
+		return append([]byte(nil), embeddedHackNerdFontMonoBold...), true
+	case EmbeddedJetBrainsMonoNerdFontMonoRegularPath:
+		return append([]byte(nil), embeddedJetBrainsMonoNerdFontMonoRegular...), true
+	case EmbeddedJetBrainsMonoNerdFontMonoMediumPath:
+		return append([]byte(nil), embeddedJetBrainsMonoNerdFontMonoMedium...), true
+	case EmbeddedJetBrainsMonoNerdFontMonoBoldPath:
+		return append([]byte(nil), embeddedJetBrainsMonoNerdFontMonoBold...), true
+	case EmbeddedIosevkaNerdFontMonoRegularPath:
+		return append([]byte(nil), embeddedIosevkaNerdFontMonoRegular...), true
+	case EmbeddedIosevkaNerdFontMonoBoldPath:
+		return append([]byte(nil), embeddedIosevkaNerdFontMonoBold...), true
 	default:
 		return nil, false
 	}

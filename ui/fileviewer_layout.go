@@ -303,6 +303,9 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 		if !ok {
 			continue
 		}
+		if ui.terminalFocused(gtx) && terminalSurfaceFocusPointerEvent(pe) {
+			ui.releaseTerminalKeyboardFocus(gtx)
+		}
 		pos := pe.Position.Round()
 		switch pe.Kind {
 		case pointer.Scroll:

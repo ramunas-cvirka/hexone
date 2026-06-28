@@ -276,7 +276,7 @@ func appendUniqueKeyBinding(dst []fileKeyBinding, binding fileKeyBinding) []file
 
 func fileActionRepeatable(action fileAction) bool {
 	switch action {
-	case fileActionMoveUp, fileActionMoveDown, fileActionMoveLeft, fileActionMoveRight, fileActionPageUp, fileActionPageDown:
+	case fileActionMoveUp, fileActionMoveDown, fileActionMoveLeft, fileActionMoveRight, fileActionPageUp, fileActionPageDown, fileActionMarkSelectNext:
 		return true
 	default:
 		return false

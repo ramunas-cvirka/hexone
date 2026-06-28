@@ -5,6 +5,7 @@ package ui
 
 import (
 	"encoding/hex"
+	resources "hexone"
 	"hexone/protocols"
 	uitheme "hexone/ui/theme"
 	"image"
@@ -28,7 +29,7 @@ import (
 
 func newTab2State(typeface font.Typeface) *tab2State {
 	if typeface == "" {
-		typeface = font.Typeface("Fira Code")
+		typeface = font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 	}
 	st := &tab2State{
 		list:            layout.List{Axis: layout.Vertical},

@@ -26,7 +26,7 @@ sort:
     descending: false
     directories_first: true
 general:
-    typeface: Fira Code
+    typeface: FiraCode Nerd Font Mono
     font_size_sp: 15
     dim_inactive_panes: true
 colors:
@@ -58,7 +58,7 @@ associations:
       extensions: mp3, mp4, mp5, mp6
 viewer:
     file_encoding: auto
-    typeface: Fira Code
+    typeface: FiraCode Nerd Font Mono
     background: '#202020'
     text: '#D2D2D2'
     selection: '#3C3C50'

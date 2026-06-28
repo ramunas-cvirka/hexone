@@ -13,7 +13,7 @@ Press `F1` to open or close this help window.
 - In `brief` mode, `Left` and `Right` move across the visible columns.
 - `Enter` opens the selected file or directory.
 - `Esc` closes the current popup, leaves an editor, or returns to the file manager.
-- `Insert` toggles the current row selection and moves to the next row.
+- `Insert` toggles the current row selection and moves to the next row; hold it to select successive rows.
 - `Ctrl+A` or `Cmd+A` toggles `Select All`.
 - `Ctrl+E` or `Cmd+E` toggles selecting rows that match the current item.
 - when a file is selected, `Ctrl+E` matches the same extension, including files with no extension
@@ -25,6 +25,20 @@ Each pane has a mode badge in its header:
 - `brief` `mode:brief` shows a denser multi-column layout
 
 Click the mode badge to switch between `full` and `brief`.
+
+## Pane Tabs
+
+Each file pane has its own independent compact tab strip above the current-dir line. Switching or creating a tab affects only the active pane.
+
+- `+` opens a new tab in the pane's current directory.
+- `x` closes a tab; the last tab in a pane stays open.
+- `<` and `>` appear when the tab row overflows.
+- `Ctrl+N` opens a new tab in the active pane.
+- `Ctrl+X` closes the active tab; the last tab stays open.
+- `Ctrl+Tab` selects the next tab; `Ctrl+Shift+Tab` selects the previous tab.
+- You can also hold `Ctrl+Tab` and press `Left` or `Right` before releasing `Tab` to choose the direction explicitly.
+
+Tab titles use the current directory and trim to fit. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, `tabs.active_color`, and `tabs.alternating_colors`.
 
 ## Current Dir Line
 
@@ -62,7 +76,8 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F6` moves or renames.
 - `F7` creates a file or folder.
 - `F8` deletes.
-- `F9` opens the Tools menu (`Hex to ASCII`, `Protocol Analyzer`, `Settings`).
+- `F9` opens the Tools menu (`Multi-Rename`, `Hex to ASCII`, `Protocol Analyzer`, `Settings`).
+- `Ctrl+M` / `Cmd+M` opens Multi-Rename for the current file-pane selection.
 - `F10` exits the app.
 - `F11` hides or shows the function key bar.
 - `F12` opens or closes the terminal drawer.
@@ -71,9 +86,42 @@ If the function key bar is auto-hidden in the viewer, `F11` can still bring it b
 
 When the terminal drawer is open, `Shift+Tab` toggles keyboard focus between the terminal and the file panes. Plain `Tab` stays available to the terminal for shell completion while the terminal is focused.
 
+## Multi-Rename
+
+Multi-Rename applies a set of filename transformations to the selected items in the active pane. Open it from `F9 -> Multi-Rename` or press `Ctrl+M` / `Cmd+M`.
+
+- The live preview shows every old and proposed filename before anything is changed.
+- Find/replace supports optional case-sensitive matching.
+- Prefix and suffix text can be applied independently.
+- Case conversion can keep, uppercase, or lowercase the selected part.
+- `Name`, `Extension`, and `Both` control which part of each filename is transformed; directory names are handled safely.
+- An optional counter supports start, step, digit width, and placement at the beginning or end.
+- Invalid names and destination collisions are detected before the operation starts. `Rename` is enabled only when at least one valid filename will change.
+- Local and SFTP panes are supported. Files inside an archive cannot be renamed with this tool.
+
 ## Terminal Drawer
 
-The terminal drawer is a real PTY-backed terminal. Its context menu can copy or paste terminal text, select all visible terminal text, send `cd` commands to the terminal for the left or right pane, and set the left or right pane to the terminal's current directory.
+The terminal drawer is a real PTY-backed terminal. Open or close it with `F12`, and use `Shift+Tab` to move keyboard focus between it and the file panes.
+
+The terminal drawer also has tabs. Use `+` for a new terminal tab, `x` to close one, and `<` or `>` when the tab row overflows.
+
+While the terminal has keyboard focus, `Ctrl+N`, `Ctrl+X`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, and the directional tab chord act on terminal tabs instead of file-pane tabs. Terminal tabs and both file-pane tab groups remain independent.
+
+Useful terminal input:
+
+- `Ctrl+V` or `Cmd+V` pastes clipboard text.
+- Middle-click pastes clipboard text during normal shell use. Applications that enable terminal mouse reporting receive the middle click instead.
+- Drag with the primary mouse button to select text; double-click selects a word.
+- `Ctrl+C` or `Cmd+C` copies an active selection. Without a selection, plain `Ctrl+C` remains available to interrupt the running shell command.
+- `Ctrl+A` or `Cmd+A` selects the terminal buffer, including scrollback.
+- `Cmd+K` on macOS or `Ctrl+Shift+K` on Windows and Linux clears the active terminal tab's visible viewport and scrollback. The current prompt and partially typed command remain at the top.
+- Plain `Ctrl+K` is passed through to the shell for line editing.
+
+Right-click opens the terminal context menu. It can:
+
+- copy, paste, or select the full terminal buffer
+- send `cd` commands to move the terminal to the left or right pane's local directory
+- set the left or right pane to the terminal's current directory, including supported SSH sessions that report their location
 
 For local shells, Hexone can usually read the terminal process current directory directly.
 
@@ -231,6 +279,15 @@ Remote panes support `command` mode too, so the same log-following patterns work
 Most everyday customization is available from Settings.
 The full configuration also lives in `hexone.yaml`.
 
+Hexone embeds four Nerd Font Mono families, so portable builds do not need external font files:
+
+- FiraCode Nerd Font Mono
+- Hack Nerd Font Mono
+- JetBrainsMono Nerd Font Mono
+- Iosevka Nerd Font Mono
+
+Use `Settings -> Fonts` to choose the family and size independently for file panes, tabs, the internal viewer, and the terminal.
+
 On Linux, the writable config files live under `~/.config/hexone/`.
 On macOS, they live under `~/Library/Application Support/hexone/`.
 On Windows, they currently live in the current working directory as `hexone.yaml` and related files.
@@ -245,7 +302,7 @@ Useful things to adjust:
 - viewer smooth scrolling
 - file encoding defaults
 - auto-refresh interval for non-streaming command mode
-- viewer font size
+- pane, tab, viewer, and terminal font family and size
 - function bar auto-hide while the viewer is open
 - system associations
 

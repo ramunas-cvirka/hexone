@@ -15,6 +15,9 @@ var (
 	closeIconRef       *widget.Icon
 	refreshIcon        *widget.Icon
 	copyIcon           *widget.Icon
+	chevronLeftIcon    *widget.Icon
+	chevronRightIcon   *widget.Icon
+	addIcon            *widget.Icon
 	arrowUpIcon        *widget.Icon
 	arrowDownIcon      *widget.Icon
 	favoriteIcon       *widget.Icon
@@ -35,6 +38,21 @@ func RefreshIcon() *widget.Icon {
 func CopyIcon() *widget.Icon {
 	initIcons()
 	return copyIcon
+}
+
+func ChevronLeftIcon() *widget.Icon {
+	initIcons()
+	return chevronLeftIcon
+}
+
+func ChevronRightIcon() *widget.Icon {
+	initIcons()
+	return chevronRightIcon
+}
+
+func AddIcon() *widget.Icon {
+	initIcons()
+	return addIcon
 }
 
 func ArrowUpIcon() *widget.Icon {
@@ -65,6 +83,9 @@ func initIcons() {
 		closeIconRef = mustIcon(widget.NewIcon(mdicons.NavigationClose))
 		refreshIcon = mustIcon(widget.NewIcon(mdicons.NavigationRefresh))
 		copyIcon = mustIcon(widget.NewIcon(mdicons.ContentContentCopy))
+		chevronLeftIcon = mustIcon(widget.NewIcon(mdicons.NavigationChevronLeft))
+		chevronRightIcon = mustIcon(widget.NewIcon(mdicons.NavigationChevronRight))
+		addIcon = mustIcon(widget.NewIcon(mdicons.ContentAdd))
 		arrowUpIcon = mustIcon(widget.NewIcon(mdicons.NavigationExpandLess))
 		arrowDownIcon = mustIcon(widget.NewIcon(mdicons.NavigationExpandMore))
 		favoriteIcon = mustIcon(widget.NewIcon(mdicons.ToggleStar))

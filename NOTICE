@@ -39,6 +39,26 @@ This product includes software developed by the following projects:
   Copyright (c) 2021 The go-text authors.
   Licensed under the MIT License.
 
+- Bundled Nerd Font assets from Nerd Fonts (https://www.nerdfonts.com)
+  Patched with Nerd Fonts Patcher.
+  Licensed under the MIT License.
+
+- FiraCode Nerd Font Mono, based on Fira Code (https://github.com/tonsky/FiraCode)
+  Copyright 2014-2021 The Fira Code Project Authors.
+  Licensed under the SIL Open Font License, Version 1.1.
+
+- JetBrainsMono Nerd Font Mono, based on JetBrains Mono (https://github.com/JetBrains/JetBrainsMono)
+  Copyright 2020 The JetBrains Mono Project Authors.
+  Licensed under the SIL Open Font License, Version 1.1.
+
+- Hack Nerd Font Mono, based on Hack (https://github.com/source-foundry/Hack)
+  Copyright 2018 Source Foundry Authors.
+  Licensed under the MIT License.
+
+- Iosevka Nerd Font Mono, based on Iosevka (https://github.com/be5invis/Iosevka)
+  Copyright 2015-2025 Renzhi Li.
+  Licensed under the SIL Open Font License, Version 1.1.
+
 This product is licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at

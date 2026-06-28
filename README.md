@@ -20,6 +20,7 @@ The viewer handles text, syntax-highlighted code, hex dumps, images, PDFs, and b
 
 **Browse**
 - Dual-pane layout — one pane for source, one for destination, or use both independently
+- Per-pane tabs, plus terminal tabs, with compact overflow controls
 - `brief` and `full` listing modes
 - Sort by name, date, extension, or size — flip direction with a single click
 - Favorites for instant access to frequent locations
@@ -58,11 +59,17 @@ Download a package from the [Releases](../../releases) page for macOS, Linux, or
 | `F4` | Open with system default app |
 | `F5` | Copy |
 | `F6` | Move / Rename |
+| `Ctrl+M` / `Cmd+M` | Multi-rename selected files |
 | `F7` | New folder |
 | `F8` | Delete |
 | `F12` | Toggle terminal drawer |
+| `Cmd+K` (macOS), `Ctrl+Shift+K` (Windows/Linux) | Clear active terminal tab |
 | `Tab` | Switch pane |
 | `Shift+Tab` | Toggle terminal/file-pane focus when the terminal drawer is open |
+| `Ctrl+N` | New tab in the focused file pane or terminal |
+| `Ctrl+X` | Close the active tab in the focused file pane or terminal |
+| `Ctrl+Tab` | Next tab in the focused file pane or terminal |
+| `Ctrl+Shift+Tab` | Previous tab in the focused file pane or terminal |
 | `Enter` | Open file or directory |
 | `Ctrl+F` | Find in viewer |
 | `Esc` | Close popup / cancel |
