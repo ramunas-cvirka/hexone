@@ -161,6 +161,11 @@ type TabsConfig struct {
 	ActiveColor       string  `yaml:"active_color,omitempty"`
 }
 
+type InterfaceConfig struct {
+	Typeface   string  `yaml:"typeface"`
+	FontSizeSp float32 `yaml:"font_size_sp"`
+}
+
 func NormalizeViewerShell(raw string) string {
 	shell, ok := NormalizeKnownViewerShell(raw)
 	if !ok {
@@ -489,6 +494,7 @@ type Config struct {
 	Sort              SortConfig           `yaml:"sort"`
 	Terminal          TerminalConfig       `yaml:"terminal"`
 	Tabs              TabsConfig           `yaml:"tabs"`
+	Interface         InterfaceConfig      `yaml:"interface"`
 	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
@@ -508,6 +514,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Sort              SortConfig           `yaml:"sort"`
 		Terminal          TerminalConfig       `yaml:"terminal"`
 		Tabs              TabsConfig           `yaml:"tabs"`
+		Interface         InterfaceConfig      `yaml:"interface"`
 		Font              legacyFontConfig     `yaml:"font"`
 		General           GeneralConfig        `yaml:"general"`
 		Colors            ColorsConfig         `yaml:"colors"`
@@ -544,6 +551,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Sort:              raw.Sort,
 		Terminal:          raw.Terminal,
 		Tabs:              raw.Tabs,
+		Interface:         raw.Interface,
 		General:           raw.General,
 		Colors:            raw.Colors,
 		Associations:      raw.Associations,
@@ -586,6 +594,10 @@ func DefaultConfig() *Config {
 			MaxWidthDp:   defaultTabMaxWidthDp,
 			Typeface:     resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp:   10,
+		},
+		Interface: InterfaceConfig{
+			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
+			FontSizeSp: 14,
 		},
 		General: GeneralConfig{
 			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
@@ -895,6 +907,12 @@ func (c *Config) normalize() {
 	}
 	if c.General.FontSizeSp <= 0 {
 		c.General.FontSizeSp = 14
+	}
+	if c.Interface.Typeface == "" || !resources.IsBundledFontFamily(c.Interface.Typeface) {
+		c.Interface.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
+	}
+	if c.Interface.FontSizeSp < 6 {
+		c.Interface.FontSizeSp = 14
 	}
 	if c.Tabs.Typeface == "" {
 		c.Tabs.Typeface = c.General.Typeface

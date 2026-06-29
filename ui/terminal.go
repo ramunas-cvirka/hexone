@@ -194,6 +194,13 @@ type terminalSession struct {
 	pastePending        bool
 	pastePendingAt      time.Time
 
+	inputMu          sync.Mutex
+	keyRepeatActive  bool
+	keyRepeatKey     key.Name
+	keyRepeatStarted time.Time
+	keyRepeatNext    time.Time
+	keyRepeatPeriod  time.Duration
+
 	invalidateMu sync.RWMutex
 	invalidate   func()
 
@@ -928,6 +935,9 @@ func (s *terminalSession) setActive(active bool) {
 	if s == nil {
 		return
 	}
+	if !active {
+		s.stopKeyRepeat("")
+	}
 	s.procMu.Lock()
 	if active && !s.running {
 		s.startAttempted = false
@@ -952,6 +962,7 @@ func (s *terminalSession) Close() {
 	if s == nil {
 		return
 	}
+	s.stopKeyRepeat("")
 	s.procMu.Lock()
 	s.closing = true
 	proc := s.pty
@@ -1974,6 +1985,21 @@ func (s *terminalSession) pasteText(gtx layout.Context) bool {
 	}
 	s.beginPasteRead(gtx.Now)
 	gtx.Execute(clipboard.ReadCmd{Tag: &s.pasteTag})
+	return true
+}
+
+func (s *terminalSession) pastePrimarySelectionOrClipboard(gtx layout.Context) bool {
+	if s == nil || !s.hasActiveSelection() {
+		return s.pasteText(gtx)
+	}
+	gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
+	data := terminalPasteBytes(s.selectedText(false), s.bracketedPasteMode())
+	if len(data) == 0 {
+		return false
+	}
+	// The terminal selection acts as a primary-selection buffer. Keep it
+	// independent of the system clipboard and visible after it is pasted.
+	s.write(data)
 	return true
 }
 
@@ -3479,7 +3505,10 @@ func terminalConfiguredRows(cfg *fm.Config) int {
 }
 
 func terminalPaneVerticalOverhead(gtx layout.Context) int {
-	return gtx.Dp(unit.Dp(5)) + gtx.Dp(unit.Dp(4))
+	return gtx.Dp(unit.Dp(4)) +
+		gtx.Dp(unit.Dp(tabStripHeightDp)) +
+		gtx.Dp(unit.Dp(3)) +
+		gtx.Dp(unit.Dp(4))
 }
 
 func terminalPaneHeightForRows(gtx layout.Context, cellH, rows int) int {
@@ -3634,10 +3663,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		}
 
 		cols := terminalPaneCols(content.Dx(), cellW)
-		rows := content.Dy() / cellH
-		if rows < 1 {
-			rows = 1
-		}
+		content, rows := terminalGridContentRect(content, cellH)
 		st.resize(rows, cols)
 		st.start(ui.terminalStartDir(), ui.terminalShell())
 		st.layoutScrollbar(gtx, content)
@@ -3686,6 +3712,15 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 
 		return layout.Dimensions{Size: size}
 	})
+}
+
+func terminalGridContentRect(content image.Rectangle, cellH int) (image.Rectangle, int) {
+	if cellH <= 0 || content.Dy() < cellH {
+		return content, 1
+	}
+	rows := content.Dy() / cellH
+	content.Min.Y = content.Max.Y - rows*cellH
+	return content, rows
 }
 
 func (ui *UI) handleTerminalResizeRows(rows int, final bool) {
@@ -4750,7 +4785,7 @@ func (s *terminalSession) handlePointer(gtx layout.Context, content image.Rectan
 			if pe.Buttons.Contain(pointer.ButtonTertiary) {
 				s.closeContextMenu()
 				if viewerPointInRect(pos, content) {
-					_ = s.pasteText(gtx)
+					_ = s.pastePrimarySelectionOrClipboard(gtx)
 				}
 				handled = true
 				continue
@@ -5082,12 +5117,17 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 			key.Filter{Focus: &s.keyTag, Optional: anyMods},
 		)
 		if !ok {
+			if s.pumpKeyRepeat(gtx) {
+				handled = true
+			}
 			return handled
 		}
 		switch ev := ev.(type) {
 		case key.FocusEvent:
 			if ev.Focus {
 				gtx.Execute(key.SoftKeyboardCmd{Show: true})
+			} else {
+				s.stopKeyRepeat("")
 			}
 		case key.EditEvent:
 			if ev.Text != "" {
@@ -5095,9 +5135,32 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 				handled = true
 			}
 		case key.Event:
+			if ev.State == key.Release {
+				if terminalRepeatableKey(ev.Name) {
+					s.stopKeyRepeat(ev.Name)
+				}
+				continue
+			}
 			if ev.State != key.Press {
 				continue
 			}
+			if terminalPlainRepeatableKey(ev) {
+				if s.keyRepeating(ev.Name) {
+					handled = true // Ignore operating-system repeat events.
+					continue
+				}
+				s.stopKeyRepeat("")
+				if data := terminalKeyBytesForMode(ev, s.cursorKeysApplication()); len(data) > 0 {
+					s.write(data)
+					s.startKeyRepeat(ev.Name, gtx.Now)
+					if next, ok := s.keyRepeatDeadline(); ok {
+						gtx.Execute(op.InvalidateCmd{At: next})
+					}
+					handled = true
+				}
+				continue
+			}
+			s.stopKeyRepeat("")
 			if terminalClearBufferKey(ev) {
 				if s.clearBuffer() {
 					handled = true
@@ -5128,6 +5191,92 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 			}
 		}
 	}
+}
+
+func terminalRepeatableKey(name key.Name) bool {
+	return name == key.NameLeftArrow || name == key.NameRightArrow || name == key.NameDeleteBackward
+}
+
+func terminalPlainRepeatableKey(ev key.Event) bool {
+	return ev.Modifiers == 0 && terminalRepeatableKey(ev.Name)
+}
+
+func (s *terminalSession) startKeyRepeat(name key.Name, now time.Time) {
+	if s == nil || !terminalRepeatableKey(name) {
+		return
+	}
+	s.inputMu.Lock()
+	s.keyRepeatActive = true
+	s.keyRepeatKey = name
+	s.keyRepeatStarted = now
+	s.keyRepeatPeriod = repeatSlow
+	s.keyRepeatNext = now.Add(repeatStartDelay)
+	s.inputMu.Unlock()
+}
+
+func (s *terminalSession) stopKeyRepeat(name key.Name) bool {
+	if s == nil {
+		return false
+	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	if !s.keyRepeatActive || (name != "" && s.keyRepeatKey != name) {
+		return false
+	}
+	s.keyRepeatActive = false
+	s.keyRepeatKey = ""
+	s.keyRepeatStarted = time.Time{}
+	s.keyRepeatNext = time.Time{}
+	s.keyRepeatPeriod = 0
+	return true
+}
+
+func (s *terminalSession) keyRepeating(name key.Name) bool {
+	if s == nil {
+		return false
+	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return s.keyRepeatActive && s.keyRepeatKey == name
+}
+
+func (s *terminalSession) keyRepeatDeadline() (time.Time, bool) {
+	if s == nil {
+		return time.Time{}, false
+	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return s.keyRepeatNext, s.keyRepeatActive
+}
+
+func (s *terminalSession) pumpKeyRepeat(gtx layout.Context) bool {
+	if s == nil {
+		return false
+	}
+	s.inputMu.Lock()
+	if !s.keyRepeatActive {
+		s.inputMu.Unlock()
+		return false
+	}
+	if gtx.Now.Sub(s.keyRepeatStarted) >= repeatAccelAfter && s.keyRepeatPeriod != repeatFast {
+		s.keyRepeatPeriod = repeatFast
+		if s.keyRepeatNext.Before(gtx.Now) {
+			s.keyRepeatNext = gtx.Now.Add(s.keyRepeatPeriod)
+		}
+	}
+	due := !gtx.Now.Before(s.keyRepeatNext)
+	name := s.keyRepeatKey
+	if due {
+		s.keyRepeatNext = gtx.Now.Add(s.keyRepeatPeriod)
+	}
+	next := s.keyRepeatNext
+	s.inputMu.Unlock()
+
+	if due {
+		s.write(terminalKeyBytesForMode(key.Event{Name: name, State: key.Press}, s.cursorKeysApplication()))
+	}
+	gtx.Execute(op.InvalidateCmd{At: next})
+	return due
 }
 
 func terminalClearBufferKey(ev key.Event) bool {

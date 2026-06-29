@@ -155,7 +155,7 @@ func (ui *UI) layoutSettingsFilenamePermissionMatchTabs(th *material.Theme, gtx 
 	if stripH < 1 {
 		stripH = 1
 	}
-	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, 10), specs)
+	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, ui.scaleModalFontSize(10), specs)
 }
 
 func settingsFilenamePermissionPickerLabel(open bool) string {
@@ -173,8 +173,8 @@ func (ui *UI) layoutSettingsFilenamePermissionPickerField(th *material.Theme, gt
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(82)), func(gtx layout.Context) layout.Dimensions {
 				ed := material.Editor(th, &st.filenamePermEdit, "0755")
-				ed.Font.Typeface = ui.mainTypeface()
-				ed.TextSize = scaleModalThemeFontSize(th, 10)
+				ed.Font.Typeface = ui.interfaceTypeface()
+				ed.TextSize = ui.scaleModalFontSize(10)
 				ed.Color = txtColor
 				ed.HintColor = hintColor
 				dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-perm", &st.filenamePermEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -186,7 +186,7 @@ func (ui *UI) layoutSettingsFilenamePermissionPickerField(th *material.Theme, gt
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.filenamePermPickerClick, settingsFilenamePermissionPickerLabel(st.filenamePermPickerOpen), st.filenamePermPickerOpen, st.focus == settingsKeyboardFocusFilenamePermPicker)
+			return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.filenamePermPickerClick, settingsFilenamePermissionPickerLabel(st.filenamePermPickerOpen), st.filenamePermPickerOpen, st.focus == settingsKeyboardFocusFilenamePermPicker)
 		}),
 	)
 	if st.filenamePermPickerOpen {
@@ -258,7 +258,7 @@ func (ui *UI) layoutSettingsFilenameSizeMatchTabs(th *material.Theme, gtx layout
 	if stripH < 1 {
 		stripH = 1
 	}
-	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, 10), specs)
+	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, ui.scaleModalFontSize(10), specs)
 }
 
 func (ui *UI) layoutSettingsFilenamePermissionMaskEditor(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
@@ -273,8 +273,8 @@ func (ui *UI) layoutSettingsFilenamePermissionMaskEditor(th *material.Theme, gtx
 	rowLabel := func(title string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, title)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}
@@ -282,8 +282,8 @@ func (ui *UI) layoutSettingsFilenamePermissionMaskEditor(th *material.Theme, gtx
 	colLabel := func(title string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, title)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
 			lbl.Font.Weight = font.Medium
 			lbl.Color = color.NRGBA{R: 196, G: 196, B: 196, A: 255}
 			return layout.Center.Layout(gtx, lbl.Layout)
@@ -292,7 +292,7 @@ func (ui *UI) layoutSettingsFilenamePermissionMaskEditor(th *material.Theme, gtx
 	check := func(idx int) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutThemeCheckbox(th, gtx, &st.filenamePermChecks[idx], "", scaleModalThemeFontSize(th, 9))
+				return ui.layoutThemeCheckbox(th, gtx, &st.filenamePermChecks[idx], "", ui.scaleModalFontSize(9))
 			})
 		}
 	}

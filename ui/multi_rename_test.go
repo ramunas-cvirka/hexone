@@ -216,6 +216,75 @@ func TestMultiRenameCanApplyActionsOnlyToExtension(t *testing.T) {
 	}
 }
 
+func TestMultiRenameEffectiveScopeLocksToNameWhenDirectorySelected(t *testing.T) {
+	st := &multiRenameState{
+		scope: multiRenameScopeBoth,
+		targets: []multiRenameTarget{
+			{oldName: "report.txt", kind: filesys.EntryFile},
+			{oldName: "docs", kind: filesys.EntryDir},
+		},
+	}
+	if !st.hasDirectoryTarget() {
+		t.Fatal("expected hasDirectoryTarget to report the directory")
+	}
+	if got := st.effectiveScope(); got != multiRenameScopeName {
+		t.Fatalf("effectiveScope=%d want %d (Name)", got, multiRenameScopeName)
+	}
+}
+
+func TestMultiRenameEffectiveScopeKeepsSelectionForFilesOnly(t *testing.T) {
+	st := &multiRenameState{
+		scope: multiRenameScopeBoth,
+		targets: []multiRenameTarget{
+			{oldName: "a.txt", kind: filesys.EntryFile},
+			{oldName: "b.txt", kind: filesys.EntryFile},
+		},
+	}
+	if st.hasDirectoryTarget() {
+		t.Fatal("file-only selection must not report a directory")
+	}
+	if got := st.effectiveScope(); got != multiRenameScopeBoth {
+		t.Fatalf("effectiveScope=%d want %d (Both)", got, multiRenameScopeBoth)
+	}
+}
+
+func TestMultiRenameMixedSelectionRenamesOnlyNamePortion(t *testing.T) {
+	st := &multiRenameState{
+		scope: multiRenameScopeBoth,
+		targets: []multiRenameTarget{
+			{oldName: "report.txt", newName: "report.txt", kind: filesys.EntryFile},
+			{oldName: "archive", newName: "archive", kind: filesys.EntryDir},
+		},
+	}
+	st.prefixEdit.SetText("2026-")
+	st.refreshPreview()
+	if st.lastErr != "" {
+		t.Fatalf("unexpected preview error: %s", st.lastErr)
+	}
+	if got, want := st.targets[0].newName, "2026-report.txt"; got != want {
+		t.Fatalf("file newName=%q want %q (extension must be preserved)", got, want)
+	}
+	if got, want := st.targets[1].newName, "2026-archive"; got != want {
+		t.Fatalf("dir newName=%q want %q", got, want)
+	}
+}
+
+func TestMultiRenameArrowKeysCannotChangeScopeWhenDirectorySelected(t *testing.T) {
+	st := &multiRenameState{
+		focus: multiRenameFocusScope,
+		targets: []multiRenameTarget{
+			{oldName: "report.txt", kind: filesys.EntryFile},
+			{oldName: "docs", kind: filesys.EntryDir},
+		},
+	}
+	if st.stepChoice(multiRenameFocusScope, 1, time.Now()) {
+		t.Fatal("scope must not advance while a directory is selected")
+	}
+	if st.scope != multiRenameScopeName {
+		t.Fatalf("scope=%d want %d (Name)", st.scope, multiRenameScopeName)
+	}
+}
+
 func TestMultiRenameBodyStaysCompactAtDialogWidth(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	st := &multiRenameState{

@@ -96,6 +96,32 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	if strings.Contains(out, "key_bindings:") {
 		t.Fatalf("serialized config should not contain legacy key_bindings block:\n%s", out)
 	}
+	if !strings.Contains(out, "interface:\n") || !strings.Contains(out, "font_size_sp: 14") {
+		t.Fatalf("serialized config missing interface font settings:\n%s", out)
+	}
+}
+
+func TestInterfaceFontDefaultsIndependentlyFromPaneFont(t *testing.T) {
+	raw := `
+general:
+  typeface: Iosevka Nerd Font Mono
+  font_size_sp: 22
+`
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.General.FontSizeSp, float32(22); got != want {
+		t.Fatalf("pane font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Interface.FontSizeSp, float32(14); got != want {
+		t.Fatalf("interface font size=%v want independent default %v", got, want)
+	}
+	if got, want := cfg.Interface.Typeface, resources.BundledFontFamilyFiraCodeNerdFontMono; got != want {
+		t.Fatalf("interface typeface=%q want %q", got, want)
+	}
 }
 
 func TestConfigNormalizesTerminalHeightAndSortPerDir(t *testing.T) {

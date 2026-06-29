@@ -840,26 +840,26 @@ func (ui *UI) layoutArchiveExtractConflictDialog(th *material.Theme, gtx layout.
 
 func (ui *UI) layoutArchiveExtractConflictBody(th *material.Theme, gtx layout.Context, st *archiveExtractState, hoverOverwrite, hoverOverwriteAll, hoverAbort, pulseOverwrite, pulseOverwriteAll, pulseAbort float32) layout.Dimensions {
 	title := material.Body1(th, "Extract here")
-	title.Font.Typeface = ui.mainTypeface()
+	title.Font.Typeface = ui.interfaceTypeface()
 	title.Font.Weight = font.Bold
-	title.TextSize = scaleDialogThemeFontSize(th, 12)
+	title.TextSize = ui.scaleDialogFontSize(12)
 	title.Color = txtColor
 
 	subtitle := material.Caption(th, "Destination already exists")
-	subtitle.Font.Typeface = ui.mainTypeface()
-	subtitle.TextSize = scaleDialogThemeFontSize(th, 9)
+	subtitle.Font.Typeface = ui.interfaceTypeface()
+	subtitle.TextSize = ui.scaleDialogFontSize(9)
 	subtitle.Color = hintColor
 
 	pathText := material.Body2(th, st.conflict.displayPath)
-	pathText.Font.Typeface = ui.mainTypeface()
-	pathText.TextSize = scaleDialogThemeFontSize(th, 10)
+	pathText.Font.Typeface = ui.interfaceTypeface()
+	pathText.TextSize = ui.scaleDialogFontSize(10)
 	pathText.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 	pathText.MaxLines = 2
 	pathText.Truncator = "…"
 
 	hint := material.Caption(th, "Enter overwrites this item. Esc aborts.")
-	hint.Font.Typeface = ui.mainTypeface()
-	hint.TextSize = scaleDialogThemeFontSize(th, 9)
+	hint.Font.Typeface = ui.interfaceTypeface()
+	hint.TextSize = ui.scaleDialogFontSize(9)
 	hint.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,

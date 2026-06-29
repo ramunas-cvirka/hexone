@@ -6,6 +6,11 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## Unreleased
 
+- Added an independent interface font for menus, tools, and dialogs, with responsive Favorites and Settings previews at larger font sizes.
+- Improved terminal middle-click paste, bottom-row alignment, and held arrow/Backspace repeat.
+- File panes show a clipped final row only when its centered text/icon content remains intact, then use all available height consistently for scrolling, selection, and paging.
+- Multi-rename locks to the name portion when the selection includes a directory, disabling the "Extension" and "Both" scopes.
+
 ## v0.1.0 - 2026-03-10
 
 - Initial public release.

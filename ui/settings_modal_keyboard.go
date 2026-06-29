@@ -20,6 +20,8 @@ const (
 	settingsKeyboardFocusNav
 	settingsKeyboardFocusGeneralDimInactive
 	settingsKeyboardFocusGeneralFavoritesNewTab
+	settingsKeyboardFocusFontsInterfaceFont
+	settingsKeyboardFocusFontsInterfaceFontSize
 	settingsKeyboardFocusGeneralPaneFont
 	settingsKeyboardFocusGeneralPaneFontSize
 	settingsKeyboardFocusFontsTabsFont
@@ -275,6 +277,10 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		order = append(order, settingsKeyboardFocusGeneralDimInactive)
 		order = append(order, settingsKeyboardFocusGeneralFavoritesNewTab)
 	case "fonts":
+		if len(resources.BundledFontFamilies()) > 0 {
+			order = append(order, settingsKeyboardFocusFontsInterfaceFont)
+		}
+		order = append(order, settingsKeyboardFocusFontsInterfaceFontSize)
 		if len(resources.BundledFontFamilies()) > 0 {
 			order = append(order, settingsKeyboardFocusGeneralPaneFont)
 		}
@@ -1239,6 +1245,28 @@ func (st *settingsModalState) stepPaneFontFamily(step int, families []resources.
 	return true
 }
 
+func (st *settingsModalState) stepInterfaceFontFamily(step int, families []resources.BundledFontFamily, now time.Time) bool {
+	if st == nil || len(families) == 0 {
+		return false
+	}
+	keys := make([]string, len(families))
+	current := st.interfaceFontFamily
+	if current == "" {
+		current = families[0].Name
+	}
+	for i, family := range families {
+		keys[i] = family.Name
+	}
+	next := settingsChoiceStep(current, keys, step)
+	if next == "" || next == current {
+		return false
+	}
+	st.interfaceFontPickerAnim.setValue(&st.interfaceFontFamily, next, now)
+	st.interfaceFontPickerAnim.anim.setPulse(next, now)
+	st.errText = ""
+	return true
+}
+
 func (st *settingsModalState) stepViewFontFamily(step int, families []resources.BundledFontFamily, now time.Time) bool {
 	if st == nil || len(families) == 0 {
 		return false
@@ -1329,6 +1357,11 @@ func (st *settingsModalState) stepFontSize(focus settingsKeyboardFocus, step int
 		return false
 	}
 	switch focus {
+	case settingsKeyboardFocusFontsInterfaceFontSize:
+		next := settingsStepFontSize(st.interfaceFontSizeSp, step)
+		changed := next != st.interfaceFontSizeSp
+		st.interfaceFontSizeSp = next
+		return changed
 	case settingsKeyboardFocusGeneralPaneFontSize:
 		next := settingsStepFontSize(st.paneFontSizeSp, step)
 		changed := next != st.paneFontSizeSp
@@ -1456,6 +1489,8 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 		return false
 	}
 	switch st.focus {
+	case settingsKeyboardFocusFontsInterfaceFont:
+		return st.stepInterfaceFontFamily(step, families, now)
 	case settingsKeyboardFocusGeneralPaneFont:
 		return st.stepPaneFontFamily(step, families, now)
 	case settingsKeyboardFocusFontsTabsFont:

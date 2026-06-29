@@ -95,6 +95,145 @@ func TestTerminalApplicationCursorKeys(t *testing.T) {
 	}
 }
 
+func TestTerminalHeldHorizontalArrowUsesAcceleratedRepeat(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	start := time.Date(2026, time.June, 29, 12, 0, 0, 0, time.UTC)
+	gtx, router := testKeyContext()
+	gtx.Now = start
+	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+	anyMods := ^key.Modifiers(0)
+	router.Event(
+		key.FocusFilter{Target: &st.keyTag},
+		key.Filter{Focus: &st.keyTag, Name: key.NameLeftArrow, Optional: anyMods},
+	)
+	router.Queue(key.Event{Name: key.NameLeftArrow, State: key.Press})
+
+	if !st.handleInput(gtx) {
+		t.Fatal("initial Left press should be handled")
+	}
+	if got, want := proc.String(), "\x1b[D"; got != want {
+		t.Fatalf("initial Left input=%q want %q", got, want)
+	}
+	if !st.keyRepeating(key.NameLeftArrow) {
+		t.Fatal("initial Left press should start terminal repeat")
+	}
+
+	// Ignore the operating system's own repeat presses; Hexone drives a
+	// deterministic accelerated cadence after the initial key-down.
+	router.Queue(key.Event{Name: key.NameLeftArrow, State: key.Press})
+	st.handleInput(gtx)
+	if got, want := proc.String(), "\x1b[D"; got != want {
+		t.Fatalf("OS repeat input=%q want unchanged %q", got, want)
+	}
+
+	gtx.Now = start.Add(repeatStartDelay - time.Millisecond)
+	st.handleInput(gtx)
+	if got, want := proc.String(), "\x1b[D"; got != want {
+		t.Fatalf("input before repeat delay=%q want %q", got, want)
+	}
+
+	gtx.Now = start.Add(repeatStartDelay)
+	st.handleInput(gtx)
+	if got, want := proc.String(), "\x1b[D\x1b[D"; got != want {
+		t.Fatalf("input at repeat delay=%q want %q", got, want)
+	}
+
+	gtx.Now = gtx.Now.Add(repeatFast)
+	st.handleInput(gtx)
+	if got, want := proc.String(), "\x1b[D\x1b[D\x1b[D"; got != want {
+		t.Fatalf("accelerated repeat input=%q want %q", got, want)
+	}
+
+	router.Queue(key.Event{Name: key.NameLeftArrow, State: key.Release})
+	st.handleInput(gtx)
+	if st.keyRepeating(key.NameLeftArrow) {
+		t.Fatal("Left release should stop terminal repeat")
+	}
+	gtx.Now = gtx.Now.Add(repeatFast)
+	st.handleInput(gtx)
+	if got, want := proc.String(), "\x1b[D\x1b[D\x1b[D"; got != want {
+		t.Fatalf("input after release=%q want unchanged %q", got, want)
+	}
+}
+
+func TestTerminalModifiedHorizontalArrowDoesNotStartAcceleratedRepeat(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testKeyContext()
+	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+	router.Event(key.Filter{
+		Focus:    &st.keyTag,
+		Name:     key.NameRightArrow,
+		Optional: ^key.Modifiers(0),
+	})
+	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press, Modifiers: key.ModCtrl})
+	st.handleInput(gtx)
+	if st.keyRepeating(key.NameRightArrow) {
+		t.Fatal("modified Right press should remain under normal terminal handling")
+	}
+}
+
+func TestTerminalHeldBackspaceUsesAcceleratedRepeat(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	start := time.Date(2026, time.June, 29, 12, 0, 0, 0, time.UTC)
+	gtx, router := testKeyContext()
+	gtx.Now = start
+	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+	router.Event(key.Filter{
+		Focus:    &st.keyTag,
+		Name:     key.NameDeleteBackward,
+		Optional: ^key.Modifiers(0),
+	})
+	router.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Press})
+
+	if !st.handleInput(gtx) {
+		t.Fatal("initial Backspace press should be handled")
+	}
+	if got, want := proc.String(), "\x7f"; got != want {
+		t.Fatalf("initial Backspace input=%q want %q", got, want)
+	}
+	if !st.keyRepeating(key.NameDeleteBackward) {
+		t.Fatal("initial Backspace press should start terminal repeat")
+	}
+
+	router.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Press})
+	st.handleInput(gtx)
+	if got, want := proc.String(), "\x7f"; got != want {
+		t.Fatalf("OS Backspace repeat input=%q want unchanged %q", got, want)
+	}
+
+	gtx.Now = start.Add(repeatStartDelay)
+	st.handleInput(gtx)
+	gtx.Now = gtx.Now.Add(repeatFast)
+	st.handleInput(gtx)
+	if got, want := proc.String(), "\x7f\x7f\x7f"; got != want {
+		t.Fatalf("accelerated Backspace input=%q want %q", got, want)
+	}
+
+	router.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Release})
+	st.handleInput(gtx)
+	if st.keyRepeating(key.NameDeleteBackward) {
+		t.Fatal("Backspace release should stop terminal repeat")
+	}
+}
+
 func TestTerminalTracksApplicationCursorMode(t *testing.T) {
 	st := newTerminalSession(nil)
 
@@ -900,6 +1039,49 @@ func TestTerminalMiddleClickPastesClipboardToProcess(t *testing.T) {
 	}
 }
 
+func TestTerminalMiddleClickPrefersSelectionWithoutChangingClipboard(t *testing.T) {
+	oldRead := readTerminalClipboardText
+	readTerminalClipboardText = func() (string, error) {
+		t.Fatal("middle click must not read the clipboard while terminal text is selected")
+		return "clipboard text", nil
+	}
+	defer func() {
+		readTerminalClipboardText = oldRead
+	}()
+
+	st := newTerminalSession(nil)
+	st.writeOutput([]byte("selected text"))
+	st.viewMu.Lock()
+	st.selectionActive = true
+	st.selectionStart = terminalPoint{Row: 0, Col: 0}
+	st.selectionEnd = terminalPoint{Row: 0, Col: 7}
+	st.viewMu.Unlock()
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testPointerContext()
+	registerPointerTag(router, gtx.Ops, &st.pointerTag)
+	primePointerFilter(router, &st.pointerTag)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonTertiary,
+		Position: f32.Pt(40, 40),
+	})
+
+	if !st.handlePointer(gtx, image.Rect(0, 0, 240, 160), 8, 16) {
+		t.Fatal("middle click should be handled")
+	}
+	if got, want := proc.String(), "selected"; got != want {
+		t.Fatalf("middle click pasted bytes=%q want %q", got, want)
+	}
+	if !st.hasActiveSelection() {
+		t.Fatal("middle-click paste should preserve the terminal selection")
+	}
+}
+
 func TestTerminalMiddleClickReportsMouseWhenEnabled(t *testing.T) {
 	oldRead := readTerminalClipboardText
 	readTerminalClipboardText = func() (string, error) {
@@ -1686,7 +1868,7 @@ func TestTerminalPaneHeightPrefersFullscreenRows(t *testing.T) {
 	gtx := testTerminalPaneHeightContext(image.Pt(1200, 800))
 	cellH := 20
 	h := terminalPaneHeight(gtx, cellH)
-	rows := (h - gtx.Dp(unit.Dp(9))) / cellH
+	rows := (h - terminalPaneVerticalOverhead(gtx)) / cellH
 	if rows < terminalPreferredRows {
 		t.Fatalf("terminal rows=%d want at least %d, height=%d", rows, terminalPreferredRows, h)
 	}
@@ -1702,6 +1884,17 @@ func TestTerminalPaneHeightUsesConfiguredRows(t *testing.T) {
 	rows := (h - terminalPaneVerticalOverhead(gtx)) / cellH
 	if got, want := rows, 18; got != want {
 		t.Fatalf("terminal rows=%d want %d, height=%d", got, want, h)
+	}
+}
+
+func TestTerminalGridContentUsesWholeRowsAtBottom(t *testing.T) {
+	content := image.Rect(6, 31, 494, 140)
+	got, rows := terminalGridContentRect(content, 20)
+	if rows != 5 {
+		t.Fatalf("terminal rows=%d want 5", rows)
+	}
+	if got.Min.Y != 40 || got.Max.Y != content.Max.Y || got.Dy() != rows*20 {
+		t.Fatalf("bottom-aligned content=%v want y=40..140", got)
 	}
 }
 

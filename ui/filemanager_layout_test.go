@@ -114,7 +114,7 @@ func TestFavoriteMenuCardWidthStaysFixedWhileRevealExpandsAfterDelay(t *testing.
 	pane.ensureFavoriteRemoveClicks(len(items))
 
 	baseGtx := testFavoriteMenuLayoutContext(image.Pt(520, 240), start)
-	baseWidth := filePaneFavoriteMenuWidth(baseGtx)
+	baseWidth := ui.filePaneFavoriteMenuWidth(baseGtx)
 
 	pane.favoriteHoverKey = item.targetDir
 	pane.favoriteHoverAt = start
@@ -147,6 +147,24 @@ func TestFavoriteMenuCardWidthStaysFixedWhileRevealExpandsAfterDelay(t *testing.
 	}
 	if fullWidth <= trimmedWidth {
 		t.Fatalf("full width=%d want > trimmed width %d", fullWidth, trimmedWidth)
+	}
+}
+
+func TestFavoriteMenuGeometryScalesWithInterfaceFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	gtx := testFavoriteMenuLayoutContext(image.Pt(800, 600), time.Now())
+	baseWidth := ui.filePaneFavoriteMenuWidth(gtx)
+	baseRowHeight := ui.filePaneFavoriteMenuRowHeight(gtx)
+
+	cfg.Interface.FontSizeSp = 20
+	largeWidth := ui.filePaneFavoriteMenuWidth(gtx)
+	largeRowHeight := ui.filePaneFavoriteMenuRowHeight(gtx)
+	if largeWidth <= baseWidth {
+		t.Fatalf("large favorite width=%d want > %d", largeWidth, baseWidth)
+	}
+	if largeRowHeight <= baseRowHeight {
+		t.Fatalf("large favorite row height=%d want > %d", largeRowHeight, baseRowHeight)
 	}
 }
 
@@ -184,7 +202,7 @@ func TestFavoriteRevealHotspotRectUsesLeadingEllipsisArea(t *testing.T) {
 	}
 	items := []fileFavoriteItem{item}
 	gtx := testFavoriteMenuLayoutContext(image.Pt(520, 240), now)
-	size := filePaneFavoriteMenuCardSize(gtx, items)
+	size := ui.filePaneFavoriteMenuCardSize(gtx, items)
 	menuRect := image.Rectangle{Min: image.Pt(260, 40), Max: image.Pt(260+size.X, 40+size.Y)}
 	rect := ui.favoriteMenuRevealHotspotRect(th, gtx, menuRect, items, 0, item)
 	_, _, hiddenPrefixWidth, ellipsisWidth := ui.favoriteMenuLabelMetrics(th, gtx, item)
@@ -201,7 +219,7 @@ func TestFavoriteRevealHotspotRectUsesLeadingEllipsisArea(t *testing.T) {
 	if rect.Dx() < ellipsisWidth {
 		t.Fatalf("hotspot width=%d want at least ellipsis width %d", rect.Dx(), ellipsisWidth)
 	}
-	if rect.Max.X > menuRect.Min.X+gtx.Dp(unit.Dp(7))+filePaneFavoriteMenuTextWidth(gtx, item) {
+	if rect.Max.X > menuRect.Min.X+gtx.Dp(unit.Dp(7))+ui.filePaneFavoriteMenuTextWidth(gtx, item) {
 		t.Fatalf("hotspot rect=%v should stay within text area of menu rect=%v", rect, menuRect)
 	}
 }
@@ -218,7 +236,7 @@ func TestFavoriteRevealHotspotKeyUsesPointerPosition(t *testing.T) {
 	}
 	items := []fileFavoriteItem{item}
 	gtx := testFavoriteMenuLayoutContext(image.Pt(520, 240), now)
-	size := filePaneFavoriteMenuCardSize(gtx, items)
+	size := ui.filePaneFavoriteMenuCardSize(gtx, items)
 	menuRect := image.Rectangle{Min: image.Pt(260, 40), Max: image.Pt(260+size.X, 40+size.Y)}
 	hotspot := ui.favoriteMenuRevealHotspotRect(th, gtx, menuRect, items, 0, item)
 

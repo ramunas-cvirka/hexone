@@ -196,22 +196,27 @@ type settingsModalState struct {
 	viewShellClicks             []widget.Clickable
 	viewShellAnim               settingsChoiceAnim
 	viewRemoteSearchCommandEdit widget.Editor
+	interfaceFontFamily         string
 	paneFontFamily              string
 	tabsFontFamily              string
 	viewFontFamily              string
 	terminalFontFamily          string
+	interfaceFontSizeSp         float32
 	paneFontSizeSp              float32
 	tabsFontSizeSp              float32
 	viewFontSizeSp              float32
 	terminalFontSizeSp          float32
+	interfaceFontSizeStepper    settingsNumberStepperState
 	paneFontSizeStepper         settingsNumberStepperState
 	tabsFontSizeStepper         settingsNumberStepperState
 	viewFontSizeStepper         settingsNumberStepperState
 	terminalFontSizeStepper     settingsNumberStepperState
+	interfaceFontFamilyClicks   []widget.Clickable
 	paneFontFamilyClicks        []widget.Clickable
 	tabsFontFamilyClicks        []widget.Clickable
 	viewFontFamilyClicks        []widget.Clickable
 	terminalFontFamilyClicks    []widget.Clickable
+	interfaceFontPickerAnim     settingsChoiceAnim
 	paneFontPickerAnim          settingsChoiceAnim
 	tabsFontPickerAnim          settingsChoiceAnim
 	viewFontPickerAnim          settingsChoiceAnim
@@ -221,6 +226,7 @@ type settingsModalState struct {
 	viewSmoothScrollingBool     widget.Bool
 	viewHideFunctionBarBool     widget.Bool
 	viewerTabList               widget.List
+	colorsTabList               widget.List
 	viewTargetKeyEdit           widget.Editor
 	viewTargetCommandEdit       widget.Editor
 	viewTargetApplyClick        widget.Clickable
@@ -449,6 +455,7 @@ func (ui *UI) openSettingsModal() {
 		st.viewRemoteSearchCommandEdit.SingleLine = true
 		st.viewRemoteSearchCommandEdit.Submit = false
 		st.viewerTabList.Axis = layout.Vertical
+		st.colorsTabList.Axis = layout.Vertical
 		st.viewTargetKeyEdit.SingleLine = true
 		st.viewTargetKeyEdit.Submit = false
 		st.viewTargetCommandEdit.SingleLine = true
@@ -526,14 +533,17 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.viewShellEdit.SetText(normalizeViewerShellInput(cfg.Viewer.Shell))
 	st.viewShellAnim = settingsChoiceAnim{}
 	st.viewRemoteSearchCommandEdit.SetText(fm.NormalizeViewerRemoteSearchCommand(cfg.Viewer.RemoteSearchCommand))
+	st.interfaceFontFamily = cfg.Interface.Typeface
 	st.paneFontFamily = cfg.General.Typeface
 	st.tabsFontFamily = cfg.Tabs.Typeface
 	st.viewFontFamily = cfg.Viewer.Typeface
 	st.terminalFontFamily = cfg.Terminal.Typeface
+	st.interfaceFontSizeSp = settingsNormalizedFontSize(cfg.Interface.FontSizeSp, 14)
 	st.paneFontSizeSp = settingsNormalizedFontSize(cfg.General.FontSizeSp, 14)
 	st.tabsFontSizeSp = settingsNormalizedFontSize(cfg.Tabs.FontSizeSp, 10)
 	st.viewFontSizeSp = settingsNormalizedFontSize(cfg.Viewer.FontSizeSp, 13)
 	st.terminalFontSizeSp = settingsNormalizedFontSize(cfg.Terminal.FontSizeSp, 13)
+	st.interfaceFontPickerAnim = settingsChoiceAnim{}
 	st.paneFontPickerAnim = settingsChoiceAnim{}
 	st.tabsFontPickerAnim = settingsChoiceAnim{}
 	st.viewFontPickerAnim = settingsChoiceAnim{}
@@ -544,6 +554,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
 	st.viewerTabList.Position.First = 0
 	st.viewerTabList.Position.Offset = 0
+	st.colorsTabList.Position.First = 0
+	st.colorsTabList.Position.Offset = 0
 	st.viewTargetEntries = viewerCommandTargetEntries(cfg.Viewer.CommandByTarget)
 	st.viewTargetSavedEntries = append([]viewerCommandTargetEntry(nil), st.viewTargetEntries...)
 	st.viewTargetPickOpen = false
@@ -2262,8 +2274,8 @@ func (st *settingsModalState) hasFocusedEditor(gtx layout.Context) bool {
 func settingsViewerRowLabel(ui *UI, th *material.Theme, txt string, enabled bool) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
 		lbl := material.Caption(th, txt)
-		lbl.Font.Typeface = ui.mainTypeface()
-		lbl.TextSize = scaleModalThemeFontSize(th, 9)
+		lbl.Font.Typeface = ui.interfaceTypeface()
+		lbl.TextSize = ui.scaleModalFontSize(9)
 		lbl.Color = hintColor
 		if !enabled {
 			lbl.Color = color.NRGBA{R: 102, G: 102, B: 102, A: 255}
@@ -2355,9 +2367,9 @@ func (ui *UI) layoutSettingsViewerBadge(th *material.Theme, gtx layout.Context, 
 	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(8)), fill, border, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, label)
-			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.Font.Typeface = ui.interfaceTypeface()
 			lbl.Font.Weight = font.Medium
-			lbl.TextSize = scaleModalThemeFontSize(th, 8)
+			lbl.TextSize = ui.scaleModalFontSize(8)
 			lbl.Color = fg
 			lbl.MaxLines = 1
 			lbl.Truncator = "..."
@@ -2378,9 +2390,9 @@ func (ui *UI) layoutSettingsViewerCard(th *material.Theme, gtx layout.Context, s
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Body2(th, title)
-							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Typeface = ui.interfaceTypeface()
 							lbl.Font.Weight = font.Medium
-							lbl.TextSize = scaleModalThemeFontSize(th, 10)
+							lbl.TextSize = ui.scaleModalFontSize(10)
 							lbl.Color = txtColor
 							lbl.MaxLines = 1
 							lbl.Truncator = "..."
@@ -2399,9 +2411,9 @@ func (ui *UI) layoutSettingsViewerCard(th *material.Theme, gtx layout.Context, s
 						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Body2(th, title)
-							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Typeface = ui.interfaceTypeface()
 							lbl.Font.Weight = font.Medium
-							lbl.TextSize = scaleModalThemeFontSize(th, 10)
+							lbl.TextSize = ui.scaleModalFontSize(10)
 							lbl.Color = txtColor
 							lbl.MaxLines = 1
 							lbl.Truncator = "..."
@@ -2419,8 +2431,8 @@ func (ui *UI) layoutSettingsViewerCard(th *material.Theme, gtx layout.Context, s
 					layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, note)
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Font.Typeface = ui.interfaceTypeface()
+						lbl.TextSize = ui.scaleModalFontSize(9)
 						lbl.Color = mixNRGBA(hintColor, style.BadgeText, 0.18)
 						lbl.MaxLines = 1
 						lbl.Truncator = "..."
@@ -2815,6 +2827,13 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if terminalFontSize < settingsFontSizeMin {
 		return fmt.Errorf("terminal font size must be at least 6")
 	}
+	interfaceFontSize := st.interfaceFontSizeSp
+	if interfaceFontSize < settingsFontSizeMin {
+		return fmt.Errorf("interface font size must be at least 6")
+	}
+	if !resources.IsBundledFontFamily(st.interfaceFontFamily) && st.interfaceFontFamily != ui.fmCfg.Interface.Typeface {
+		return fmt.Errorf("interface font family is invalid")
+	}
 	if !resources.IsBundledFontFamily(st.paneFontFamily) && st.paneFontFamily != ui.fmCfg.General.Typeface {
 		return fmt.Errorf("pane font family is invalid")
 	}
@@ -2827,6 +2846,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if !resources.IsBundledMonospaceFontFamily(st.terminalFontFamily) && st.terminalFontFamily != ui.fmCfg.Terminal.Typeface {
 		return fmt.Errorf("terminal font family is invalid")
 	}
+	ui.fmCfg.Interface.Typeface = st.interfaceFontFamily
+	ui.fmCfg.Interface.FontSizeSp = interfaceFontSize
 	ui.fmCfg.General.Typeface = st.paneFontFamily
 	ui.fmCfg.General.FontSizeSp = paneFontSize
 	ui.fmCfg.Tabs.Typeface = st.tabsFontFamily
@@ -3271,9 +3292,9 @@ func (ui *UI) layoutSettingsModalHeader(th *material.Theme, gtx layout.Context, 
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body1(th, "Global Settings")
-			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.Font.Typeface = ui.interfaceTypeface()
 			lbl.Font.Weight = font.Bold
-			lbl.TextSize = scaleModalThemeFontSize(th, 12)
+			lbl.TextSize = ui.scaleModalFontSize(12)
 			lbl.Color = txtColor
 			return lbl.Layout(gtx)
 		}),
@@ -3338,9 +3359,9 @@ func (ui *UI) layoutSettingsNavSegment(th *material.Theme, gtx layout.Context, c
 		return fillSettingsNavSegmentBg(gtx, bg, radius, roundTop, roundBottom, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Typeface = ui.interfaceTypeface()
 				lbl.Font.Weight = font.Medium
-				lbl.TextSize = scaleModalThemeFontSize(th, 10)
+				lbl.TextSize = ui.scaleModalFontSize(10)
 				lbl.Color = fg
 				lbl.MaxLines = 1
 				lbl.Alignment = text.Middle
@@ -3406,9 +3427,9 @@ func (ui *UI) layoutSettingsHSegment(th *material.Theme, gtx layout.Context, c *
 			return fillSegmentBg(gtx, bg, radius, roundLeft, roundRight, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(9), Right: unit.Dp(9)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, label)
-					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Typeface = ui.interfaceTypeface()
 					lbl.Font.Weight = font.Medium
-					lbl.TextSize = scaleModalThemeFontSize(th, 10)
+					lbl.TextSize = ui.scaleModalFontSize(10)
 					lbl.Color = fg
 					lbl.MaxLines = 1
 					lbl.Alignment = text.Middle
@@ -3452,9 +3473,9 @@ func (ui *UI) layoutSettingsNavSliderSegment(th *material.Theme, gtx layout.Cont
 			dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, label)
-					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Typeface = ui.interfaceTypeface()
 					lbl.Font.Weight = font.Medium
-					lbl.TextSize = scaleModalThemeFontSize(th, 10)
+					lbl.TextSize = ui.scaleModalFontSize(10)
 					lbl.Color = fg
 					lbl.MaxLines = 1
 					lbl.Alignment = text.Middle
@@ -3610,7 +3631,7 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			before := st.generalDimInactiveBool.Value
-			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalDimInactiveBool, "Gray out inactive pane", scaleModalThemeFontSize(th, 10))
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalDimInactiveBool, "Gray out inactive pane", ui.scaleModalFontSize(10))
 			if st.generalDimInactiveBool.Value != before {
 				st.focus = settingsKeyboardFocusGeneralDimInactive
 			}
@@ -3620,7 +3641,7 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			before := st.generalFavoritesNewTabBool.Value
-			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalFavoritesNewTabBool, "Open favorites in a new tab", scaleModalThemeFontSize(th, 10))
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalFavoritesNewTabBool, "Open favorites in a new tab", ui.scaleModalFontSize(10))
 			if st.generalFavoritesNewTabBool.Value != before {
 				st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
 			}
@@ -3630,8 +3651,8 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th, "Favorites are managed from the '☆' menu. Use the Config tab for full hexone.yaml editing.")
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 11)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(11)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
@@ -3640,11 +3661,18 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 
 func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	bundledFamilies := resources.BundledFontFamilies()
+	st.ensureInterfaceFontFamilyClicks(len(bundledFamilies))
 	st.ensurePaneFontFamilyClicks(len(bundledFamilies))
 	st.ensureTabsFontFamilyClicks(len(bundledFamilies))
 	st.ensureViewFontFamilyClicks(len(bundledFamilies))
 	st.ensureTerminalFontFamilyClicks(len(bundledFamilies))
 	for i, family := range bundledFamilies {
+		if st.interfaceFontFamilyClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusFontsInterfaceFont)
+			st.interfaceFontPickerAnim.setValue(&st.interfaceFontFamily, family.Name, gtx.Now)
+			st.interfaceFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
+			st.errText = ""
+		}
 		if st.paneFontFamilyClicks[i].Clicked(gtx) {
 			st.setKeyboardFocus(settingsKeyboardFocusGeneralPaneFont)
 			st.paneFontPickerAnim.setValue(&st.paneFontFamily, family.Name, gtx.Now)
@@ -3674,6 +3702,10 @@ func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(settingsViewerRowLabel(ui, th, "Fonts", true)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsFontRow(th, gtx, st, "Interface", bundledFamilies, st.interfaceFontFamilyClicks, st.interfaceFontFamily, &st.interfaceFontPickerAnim, st.focus == settingsKeyboardFocusFontsInterfaceFont, &st.interfaceFontSizeStepper, st.interfaceFontSizeSp, settingsKeyboardFocusFontsInterfaceFontSize)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsFontRow(th, gtx, st, "Pane", bundledFamilies, st.paneFontFamilyClicks, st.paneFontFamily, &st.paneFontPickerAnim, st.focus == settingsKeyboardFocusGeneralPaneFont, &st.paneFontSizeStepper, st.paneFontSizeSp, settingsKeyboardFocusGeneralPaneFontSize)
 		}),
@@ -3705,9 +3737,9 @@ func (ui *UI) layoutSettingsFontRow(th *material.Theme, gtx layout.Context, st *
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return fixedWidth(gtx, labelW, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Typeface = ui.interfaceTypeface()
 				lbl.Font.Weight = font.Medium
-				lbl.TextSize = scaleModalThemeFontSize(th, 10)
+				lbl.TextSize = ui.scaleModalFontSize(10)
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				return layoutVCenteredLabel(gtx, lbl)
@@ -3744,7 +3776,7 @@ func (ui *UI) layoutSettingsFontSizeStepper(th *material.Theme, gtx layout.Conte
 		st.errText = ""
 	}
 	focused := st.focus == focus
-	textSize := scaleModalThemeFontSize(th, 10)
+	textSize := ui.scaleModalFontSize(10)
 	height := gtx.Dp(unit.Dp(22))
 	if height < 18 {
 		height = 18
@@ -3799,7 +3831,7 @@ func (ui *UI) layoutSettingsFontSizeValue(th *material.Theme, gtx layout.Context
 		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp-1)), bg, border, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, formatConfigFloat(value))
-				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Typeface = ui.interfaceTypeface()
 				lbl.Font.Weight = font.Medium
 				lbl.TextSize = textSize
 				lbl.Color = fg
@@ -3845,7 +3877,7 @@ func (ui *UI) layoutSettingsFontFamilyPicker(th *material.Theme, gtx layout.Cont
 	if len(families) == 0 {
 		return layout.Dimensions{}
 	}
-	textSize := scaleModalThemeFontSize(th, 10)
+	textSize := ui.scaleModalFontSize(10)
 	keys := make([]string, len(families))
 	hoverKey := ""
 	for i, family := range families {
@@ -3929,7 +3961,7 @@ func (ui *UI) layoutSettingsShellPicker(th *material.Theme, gtx layout.Context, 
 	if len(options) == 0 || len(clicks) < len(options) {
 		return layout.Dimensions{}
 	}
-	textSize := scaleModalThemeFontSize(th, 10)
+	textSize := ui.scaleModalFontSize(10)
 	keys := make([]string, len(options))
 	hoverKey := ""
 	for i, opt := range options {
@@ -4291,8 +4323,8 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 	noticeLabel := func(text string, maxLines int, truncator string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, text)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
 			lbl.Color = color.NRGBA{R: 152, G: 205, B: 152, A: 255}
 			lbl.MaxLines = maxLines
 			lbl.Truncator = truncator
@@ -4311,8 +4343,8 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					ed := material.Editor(th, &st.viewShellEdit, "auto")
-					ed.Font.Typeface = ui.mainTypeface()
-					ed.TextSize = scaleModalThemeFontSize(th, 10)
+					ed.Font.Typeface = ui.interfaceTypeface()
+					ed.TextSize = ui.scaleModalFontSize(10)
 					ed.Color = txtColor
 					ed.HintColor = hintColor
 					dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-shell", &st.viewShellEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -4329,8 +4361,8 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					ed := material.Editor(th, &st.viewRemoteSearchCommandEdit, fm.DefaultViewerRemoteSearchCommand)
-					ed.Font.Typeface = ui.mainTypeface()
-					ed.TextSize = scaleModalThemeFontSize(th, 10)
+					ed.Font.Typeface = ui.interfaceTypeface()
+					ed.TextSize = ui.scaleModalFontSize(10)
 					ed.Color = txtColor
 					ed.HintColor = hintColor
 					dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-remote-search-command", &st.viewRemoteSearchCommandEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -4346,7 +4378,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		},
 		func(gtx layout.Context) layout.Dimensions {
 			before := st.viewSmoothScrollingBool.Value
-			dims := ui.layoutThemeCheckbox(th, gtx, &st.viewSmoothScrollingBool, "Smooth scrolling", scaleModalThemeFontSize(th, 10))
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.viewSmoothScrollingBool, "Smooth scrolling", ui.scaleModalFontSize(10))
 			if st.viewSmoothScrollingBool.Value != before {
 				st.focus = settingsKeyboardFocusViewerSmoothScrolling
 			}
@@ -4355,7 +4387,7 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 		},
 		func(gtx layout.Context) layout.Dimensions {
 			before := st.viewHideFunctionBarBool.Value
-			dims := ui.layoutThemeCheckbox(th, gtx, &st.viewHideFunctionBarBool, "Auto-hide function bar while viewer is open (F11 toggles it)", scaleModalThemeFontSize(th, 10))
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.viewHideFunctionBarBool, "Auto-hide function bar while viewer is open (F11 toggles it)", ui.scaleModalFontSize(10))
 			if st.viewHideFunctionBarBool.Value != before {
 				st.focus = settingsKeyboardFocusViewerHideFunctionBar
 			}
@@ -4371,8 +4403,8 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 								ed := material.Editor(th, &st.viewTargetKeyEdit, "/Users/me/logs/app.log")
-								ed.Font.Typeface = ui.mainTypeface()
-								ed.TextSize = scaleModalThemeFontSize(th, 10)
+								ed.Font.Typeface = ui.interfaceTypeface()
+								ed.TextSize = ui.scaleModalFontSize(10)
 								ed.Color = txtColor
 								ed.HintColor = hintColor
 								dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-target-key", &st.viewTargetKeyEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -4383,11 +4415,11 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 							}),
 							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.viewTargetPickClick, "Browse", st.viewTargetPickOpen, st.focus == settingsKeyboardFocusViewerTargetBrowse)
+								return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.viewTargetPickClick, "Browse", st.viewTargetPickOpen, st.focus == settingsKeyboardFocusViewerTargetBrowse)
 							}),
 							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.viewTargetApplyClick, targetApplyLabel, currentTargetExists, st.focus == settingsKeyboardFocusViewerTargetApply)
+								return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.viewTargetApplyClick, targetApplyLabel, currentTargetExists, st.focus == settingsKeyboardFocusViewerTargetApply)
 							}),
 						)
 					}),
@@ -4406,8 +4438,8 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 								ed := material.Editor(th, &st.viewTargetCommandEdit, "tail -n 200 -f {path}")
-								ed.Font.Typeface = ui.mainTypeface()
-								ed.TextSize = scaleModalThemeFontSize(th, 10)
+								ed.Font.Typeface = ui.interfaceTypeface()
+								ed.TextSize = ui.scaleModalFontSize(10)
 								ed.Color = txtColor
 								ed.HintColor = hintColor
 								dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-target-command", &st.viewTargetCommandEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -4440,8 +4472,8 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 								ed := material.Editor(th, &st.viewRulePatternEdit, `(?i)\.log(?:\.\d+)?$`)
-								ed.Font.Typeface = ui.mainTypeface()
-								ed.TextSize = scaleModalThemeFontSize(th, 10)
+								ed.Font.Typeface = ui.interfaceTypeface()
+								ed.TextSize = ui.scaleModalFontSize(10)
 								ed.Color = txtColor
 								ed.HintColor = hintColor
 								dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-rule-pattern", &st.viewRulePatternEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -4452,11 +4484,11 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 							}),
 							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.viewRulePickClick, "Browse", st.viewRulePickOpen, st.focus == settingsKeyboardFocusViewerRuleBrowse)
+								return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.viewRulePickClick, "Browse", st.viewRulePickOpen, st.focus == settingsKeyboardFocusViewerRuleBrowse)
 							}),
 							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.viewRuleApplyClick, ruleApplyLabel, currentRuleExists, st.focus == settingsKeyboardFocusViewerRuleApply)
+								return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.viewRuleApplyClick, ruleApplyLabel, currentRuleExists, st.focus == settingsKeyboardFocusViewerRuleApply)
 							}),
 						)
 					}),
@@ -4475,8 +4507,8 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 								ed := material.Editor(th, &st.viewRuleCommandEdit, "tail -n 200 -f {path}")
-								ed.Font.Typeface = ui.mainTypeface()
-								ed.TextSize = scaleModalThemeFontSize(th, 10)
+								ed.Font.Typeface = ui.interfaceTypeface()
+								ed.TextSize = ui.scaleModalFontSize(10)
 								ed.Color = txtColor
 								ed.HintColor = hintColor
 								dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-rule-command", &st.viewRuleCommandEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -4507,8 +4539,8 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						ed := material.Editor(th, &st.viewCommandEdit, "cat {path}")
-						ed.Font.Typeface = ui.mainTypeface()
-						ed.TextSize = scaleModalThemeFontSize(th, 10)
+						ed.Font.Typeface = ui.interfaceTypeface()
+						ed.TextSize = ui.scaleModalFontSize(10)
 						ed.Color = txtColor
 						ed.HintColor = hintColor
 						dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-command", &st.viewCommandEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -4560,8 +4592,8 @@ func (ui *UI) layoutSettingsViewerCommandTargetPicker(th *material.Theme, gtx la
 			if len(entries) == 0 {
 				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, "No exact overrides")
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(9)
 					lbl.Color = hintColor
 					return lbl.Layout(gtx)
 				})
@@ -4576,8 +4608,8 @@ func (ui *UI) layoutSettingsViewerCommandTargetPicker(th *material.Theme, gtx la
 					}
 					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, fmt.Sprintf("%d matching overrides", matchCount))
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Font.Typeface = ui.interfaceTypeface()
+						lbl.TextSize = ui.scaleModalFontSize(9)
 						lbl.Color = hintColor
 						lbl.MaxLines = 1
 						lbl.Truncator = "..."
@@ -4637,9 +4669,9 @@ func (ui *UI) layoutSettingsViewerCommandTargetPicker(th *material.Theme, gtx la
 											return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 													lbl := material.Body2(th, headline)
-													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.Font.Typeface = ui.interfaceTypeface()
 													lbl.Font.Weight = font.Medium
-													lbl.TextSize = scaleModalThemeFontSize(th, 10)
+													lbl.TextSize = ui.scaleModalFontSize(10)
 													lbl.Color = txtColor
 													lbl.MaxLines = 1
 													lbl.Truncator = "..."
@@ -4647,8 +4679,8 @@ func (ui *UI) layoutSettingsViewerCommandTargetPicker(th *material.Theme, gtx la
 												}),
 												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 													lbl := material.Caption(th, detail)
-													lbl.Font.Typeface = ui.mainTypeface()
-													lbl.TextSize = scaleModalThemeFontSize(th, 8)
+													lbl.Font.Typeface = ui.interfaceTypeface()
+													lbl.TextSize = ui.scaleModalFontSize(8)
 													lbl.Color = hintColor
 													lbl.MaxLines = 1
 													lbl.Truncator = "..."
@@ -4699,8 +4731,8 @@ func (ui *UI) layoutSettingsViewerCommandRulePicker(th *material.Theme, gtx layo
 			if len(rules) == 0 {
 				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, "No regex rules")
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(9)
 					lbl.Color = hintColor
 					return lbl.Layout(gtx)
 				})
@@ -4715,8 +4747,8 @@ func (ui *UI) layoutSettingsViewerCommandRulePicker(th *material.Theme, gtx layo
 					}
 					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, fmt.Sprintf("%d matching rules", matchCount))
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Font.Typeface = ui.interfaceTypeface()
+						lbl.TextSize = ui.scaleModalFontSize(9)
 						lbl.Color = hintColor
 						lbl.MaxLines = 1
 						lbl.Truncator = "..."
@@ -4766,9 +4798,9 @@ func (ui *UI) layoutSettingsViewerCommandRulePicker(th *material.Theme, gtx layo
 											return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 													lbl := material.Body2(th, rule.Pattern)
-													lbl.Font.Typeface = ui.mainTypeface()
+													lbl.Font.Typeface = ui.interfaceTypeface()
 													lbl.Font.Weight = font.Medium
-													lbl.TextSize = scaleModalThemeFontSize(th, 10)
+													lbl.TextSize = ui.scaleModalFontSize(10)
 													lbl.Color = txtColor
 													lbl.MaxLines = 1
 													lbl.Truncator = "..."
@@ -4776,8 +4808,8 @@ func (ui *UI) layoutSettingsViewerCommandRulePicker(th *material.Theme, gtx layo
 												}),
 												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 													lbl := material.Caption(th, rule.Command)
-													lbl.Font.Typeface = ui.mainTypeface()
-													lbl.TextSize = scaleModalThemeFontSize(th, 8)
+													lbl.Font.Typeface = ui.interfaceTypeface()
+													lbl.TextSize = ui.scaleModalFontSize(8)
 													lbl.Color = hintColor
 													lbl.MaxLines = 1
 													lbl.Truncator = "..."
@@ -4878,7 +4910,7 @@ func (ui *UI) layoutSettingsColorScopeTabs(th *material.Theme, gtx layout.Contex
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, scaleModalThemeFontSize(th, 10), []slidingTabSpec{
+			return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, ui.scaleModalFontSize(10), []slidingTabSpec{
 				{
 					Label:      "Panes",
 					Click:      &st.colorScopePaneClick,
@@ -5165,6 +5197,17 @@ func settingsColorsPreviewHostHeight(gtx layout.Context) int {
 	return height
 }
 
+func (ui *UI) settingsPanePreviewHostHeight(gtx layout.Context) int {
+	rowH := ui.settingsColorPreviewRowHeight(gtx)
+	currentDirH := ui.settingsColorPreviewCurrentDirHeight(gtx)
+	titleH := gtx.Sp(ui.scaleModalFontSize(9))
+	height := gtx.Dp(unit.Dp(16+6+10+6)) + titleH + rowH*6 + currentDirH
+	if minHeight := settingsColorsPreviewHostHeight(gtx); height < minHeight {
+		height = minHeight
+	}
+	return height
+}
+
 func (ui *UI) layoutSettingsViewerPreviewContent(th *material.Theme, gtx layout.Context, st *settingsModalState, theme fileViewerTheme, previewUI *UI) layout.Dimensions {
 	return fixedWidth(gtx, gtx.Constraints.Max.X, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -5298,6 +5341,15 @@ func paintSettingsPreviewRoundedRect(gtx layout.Context, rect image.Rectangle, f
 }
 
 func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	list := settingsScrollableListStyle(th, &st.colorsTabList)
+	return list.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsColorsTabContent(th, gtx, st)
+		})
+	})
+}
+
+func (ui *UI) layoutSettingsColorsTabContent(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	if st.colorScope == "filenames" {
 		return ui.layoutSettingsFilenameColorsTab(th, gtx, st)
 	}
@@ -5455,8 +5507,8 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 				note = "Leave scrollbar fields empty to derive contrast from the active pane palette."
 			}
 			lbl := material.Caption(th, note)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
 			lbl.Color = hintColor
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
@@ -5467,8 +5519,8 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 			}
 			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, previewErr)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, 9)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleModalFontSize(9)
 				lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 				lbl.MaxLines = 1
 				return lbl.Layout(gtx)
@@ -5479,6 +5531,9 @@ func (ui *UI) layoutSettingsColorsTab(th *material.Theme, gtx layout.Context, st
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			hostH := settingsColorsPreviewHostHeight(gtx)
+			if st.colorScope != "viewer" {
+				hostH = ui.settingsPanePreviewHostHeight(gtx)
+			}
 			hostBg := previewPalette.PaneBg
 			if st.colorScope == "viewer" {
 				hostBg = previewTheme.PanelBg
@@ -5507,7 +5562,7 @@ func (ui *UI) layoutSettingsColorCategoryField(th *material.Theme, gtx layout.Co
 	if st == nil {
 		return layout.Dimensions{}
 	}
-	width := settingsColorCategoryWidth(th, gtx, ui.fmCfg, ui.mainTypeface(), options)
+	width := settingsColorCategoryWidth(th, gtx, ui.fmCfg, ui.interfaceTypeface(), options)
 	var btnH int
 	dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -5533,12 +5588,12 @@ func (ui *UI) layoutSettingsColorCategoryField(th *material.Theme, gtx layout.Co
 	return dims
 }
 
-func settingsColorCategoryWidth(th *material.Theme, gtx layout.Context, _ *fm.Config, face font.Typeface, options []settingsColorOption) int {
+func settingsColorCategoryWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface, options []settingsColorOption) int {
 	maxTextW := 0
 	for _, opt := range options {
 		lbl := material.Body2(th, opt.label+"  ▾")
 		lbl.Font.Typeface = face
-		lbl.TextSize = scaleModalThemeFontSize(th, 10)
+		lbl.TextSize = scaleModalConfigFontSize(cfg, 10)
 		lbl.MaxLines = 1
 		w := measureLabelUnconstrained(gtx, lbl).Size.X
 		if w > maxTextW {
@@ -5576,8 +5631,8 @@ func (ui *UI) layoutSettingsColorCategoryButton(th *material.Theme, gtx layout.C
 			return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, bd, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, label)
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 10)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(10)
 					lbl.Color = txtColor
 					lbl.MaxLines = 1
 					return layoutVCenteredLabel(gtx, lbl)
@@ -5631,7 +5686,7 @@ func (ui *UI) layoutSettingsColorCategoryPopup(th *material.Theme, gtx layout.Co
 					return fixedHeight(gtx, ui.fileContextMenuTitleHeight(gtx), func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Caption(th, "Color Target")
-							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Typeface = ui.interfaceTypeface()
 							lbl.Font.Weight = font.Medium
 							lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
 							lbl.Color = scaleColorAlpha(theme.Title, alpha)
@@ -5706,8 +5761,8 @@ func (ui *UI) layoutSettingsColorCategoryOption(th *material.Theme, gtx layout.C
 		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, 10)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleModalFontSize(10)
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				return layoutVCenteredLabel(gtx, lbl)
@@ -5725,14 +5780,14 @@ func (ui *UI) layoutSettingsColorValueField(th *material.Theme, gtx layout.Conte
 	if st == nil {
 		return layout.Dimensions{}
 	}
-	btnW := settingsColorPickerButtonWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
-	edW := settingsColorHexEditorWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
+	btnW := settingsColorPickerButtonWidth(th, gtx, ui.fmCfg, ui.interfaceTypeface())
+	edW := settingsColorHexEditorWidth(th, gtx, ui.fmCfg, ui.interfaceTypeface())
 	editorFocused := gtx.Focused(edit) || st.focus == editorFocusTarget || st.focusPending == editorFocusTarget
 	dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, label)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
 			lbl.Color = hintColor
 			lbl.MaxLines = 1
 			return lbl.Layout(gtx)
@@ -5747,8 +5802,8 @@ func (ui *UI) layoutSettingsColorValueField(th *material.Theme, gtx layout.Conte
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedWidth(gtx, edW, func(gtx layout.Context) layout.Dimensions {
 						ed := material.Editor(th, edit, "#RRGGBB")
-						ed.Font.Typeface = ui.mainTypeface()
-						ed.TextSize = scaleModalThemeFontSize(th, 10)
+						ed.Font.Typeface = ui.interfaceTypeface()
+						ed.TextSize = ui.scaleModalFontSize(10)
 						ed.Color = txtColor
 						ed.HintColor = hintColor
 						dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-color-"+pickerTarget, edit, true, func(gtx layout.Context) layout.Dimensions {
@@ -5771,10 +5826,10 @@ func (ui *UI) layoutSettingsColorValueField(th *material.Theme, gtx layout.Conte
 	return dims
 }
 
-func settingsColorPickerButtonWidth(th *material.Theme, gtx layout.Context, _ *fm.Config, face font.Typeface) int {
+func settingsColorPickerButtonWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface) int {
 	lbl := material.Body2(th, "Pick  ▾")
 	lbl.Font.Typeface = face
-	lbl.TextSize = scaleModalThemeFontSize(th, 10)
+	lbl.TextSize = scaleModalConfigFontSize(cfg, 10)
 	lbl.MaxLines = 1
 	textW := measureLabelUnconstrained(gtx, lbl).Size.X
 	width := gtx.Dp(unit.Dp(6)) + gtx.Dp(unit.Dp(14)) + gtx.Dp(unit.Dp(8)) + textW + gtx.Dp(unit.Dp(6))
@@ -5785,10 +5840,10 @@ func settingsColorPickerButtonWidth(th *material.Theme, gtx layout.Context, _ *f
 	return width
 }
 
-func settingsColorHexEditorWidth(th *material.Theme, gtx layout.Context, _ *fm.Config, face font.Typeface) int {
+func settingsColorHexEditorWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface) int {
 	lbl := material.Body2(th, "#RRGGBB")
 	lbl.Font.Typeface = face
-	lbl.TextSize = scaleModalThemeFontSize(th, 10)
+	lbl.TextSize = scaleModalConfigFontSize(cfg, 10)
 	lbl.MaxLines = 1
 	width := measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(28))
 	minW := gtx.Dp(unit.Dp(104))
@@ -5834,8 +5889,8 @@ func (ui *UI) layoutSettingsColorPickerButton(th *material.Theme, gtx layout.Con
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Body2(th, label)
-							lbl.Font.Typeface = ui.mainTypeface()
-							lbl.TextSize = scaleModalThemeFontSize(th, 10)
+							lbl.Font.Typeface = ui.interfaceTypeface()
+							lbl.TextSize = ui.scaleModalFontSize(10)
 							lbl.Color = txtColor
 							lbl.MaxLines = 1
 							return layoutVCenteredLabel(gtx, lbl)
@@ -5907,8 +5962,8 @@ func (ui *UI) layoutSettingsColorSwatchGroup(th *material.Theme, gtx layout.Cont
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(44)), func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, group.label)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, 8)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleModalFontSize(8)
 				lbl.Color = hintColor
 				lbl.MaxLines = 1
 				return lbl.Layout(gtx)
@@ -6011,8 +6066,8 @@ func (ui *UI) layoutSettingsColorPreview(th *material.Theme, gtx layout.Context,
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, "Pane Preview")
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Font.Typeface = ui.interfaceTypeface()
+						lbl.TextSize = ui.scaleModalFontSize(9)
 						lbl.Color = color.NRGBA{R: 176, G: 190, B: 215, A: 255}
 						return lbl.Layout(gtx)
 					}),
@@ -6089,12 +6144,42 @@ func (ui *UI) layoutSettingsPanePreviewScrollbar(gtx layout.Context, palette fil
 	})
 }
 
-func (ui *UI) layoutSettingsColorPreviewCurrentDir(th *material.Theme, gtx layout.Context, palette filePanePalette) layout.Dimensions {
-	rowH := gtx.Dp(unit.Dp(22))
+func (ui *UI) settingsColorPreviewRowHeight(gtx layout.Context) int {
+	rowH := gtx.Dp(scaleFilePaneDp(ui.fmCfg, 18))
 	if rowH < 1 {
 		rowH = 1
 	}
-	nameSize := scaleConfigFontSize(ui.fmCfg, 13)
+	return rowH
+}
+
+func settingsColorPreviewPathStripHeight(gtx layout.Context) int {
+	stripH := gtx.Dp(unit.Dp(22))
+	if stripH < 1 {
+		stripH = 1
+	}
+	return stripH
+}
+
+func settingsColorPreviewPathContainerHeight(gtx layout.Context) int {
+	height := settingsColorPreviewPathStripHeight(gtx) + gtx.Dp(unit.Dp(1))*2
+	if height < 1 {
+		height = 1
+	}
+	return height
+}
+
+func (ui *UI) settingsColorPreviewCurrentDirHeight(gtx layout.Context) int {
+	rowH := ui.settingsColorPreviewRowHeight(gtx)
+	if pathH := settingsColorPreviewPathContainerHeight(gtx); pathH > rowH {
+		rowH = pathH
+	}
+	return rowH
+}
+
+func (ui *UI) layoutSettingsColorPreviewCurrentDir(th *material.Theme, gtx layout.Context, palette filePanePalette) layout.Dimensions {
+	rowH := ui.settingsColorPreviewCurrentDirHeight(gtx)
+	pathStripH := settingsColorPreviewPathStripHeight(gtx)
+	pathContainerH := settingsColorPreviewPathContainerHeight(gtx)
 	stateW := settingsColorPreviewStateWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
 	stateColor := settingsColorPreviewStateColor(palette.PaneBg)
 	rowBg, rowBorder := filePanePathRowColors(palette)
@@ -6115,26 +6200,25 @@ func (ui *UI) layoutSettingsColorPreviewCurrentDir(th *material.Theme, gtx layou
 					}),
 					layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), rowBg, rowBorder, func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
-									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										gtx.Constraints.Min.X = gtx.Constraints.Max.X
-										return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-											return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-												return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-														lbl := material.Label(th, nameSize, `C:\AsmSource\`)
-														lbl.Font.Typeface = ui.mainTypeface()
-														lbl.Font.Weight = font.Normal
-														lbl.Color = pathColor
-														lbl.MaxLines = 1
-														return layoutVCenteredLabel(gtx, lbl)
-													}),
-													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-														return ui.layoutFilePanePathSegmentLabel(th, gtx, "tests", color.NRGBA{}, pathColor, color.NRGBA{}, font.Medium)
-													}),
-												)
+						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, pathContainerH, func(gtx layout.Context) layout.Dimensions {
+								return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), rowBg, rowBorder, func(gtx layout.Context) layout.Dimensions {
+									return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										return fixedHeight(gtx, pathStripH, func(gtx layout.Context) layout.Dimensions {
+											return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+												gtx.Constraints.Min.X = gtx.Constraints.Max.X
+												return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+													return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+														return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+															layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+																return ui.layoutFilePanePathSegmentLabel(th, gtx, `C:\AsmSource\`, color.NRGBA{}, pathColor, color.NRGBA{}, font.Normal)
+															}),
+															layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+																return ui.layoutFilePanePathSegmentLabel(th, gtx, "tests", color.NRGBA{}, pathColor, color.NRGBA{}, font.Medium)
+															}),
+														)
+													})
+												})
 											})
 										})
 									})
@@ -6149,10 +6233,7 @@ func (ui *UI) layoutSettingsColorPreviewCurrentDir(th *material.Theme, gtx layou
 }
 
 func (ui *UI) layoutSettingsColorPreviewRow(th *material.Theme, gtx layout.Context, bg, fg color.NRGBA, stateLabel, fileName string) layout.Dimensions {
-	rowH := gtx.Dp(scaleFilePaneDp(ui.fmCfg, 18))
-	if rowH < 1 {
-		rowH = 1
-	}
+	rowH := ui.settingsColorPreviewRowHeight(gtx)
 	nameSize := scaleConfigFontSize(ui.fmCfg, 13)
 	stateSize := nameSize
 	stateW := settingsColorPreviewStateWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
@@ -6395,8 +6476,8 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, "Browse copies a known app path into the editor; Add or Update queues it until Save.")
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
 			lbl.Color = hintColor
 			lbl.MaxLines = 1
 			lbl.Truncator = "..."
@@ -6410,8 +6491,8 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedWidth(gtx, gtx.Dp(unit.Dp(108)), func(gtx layout.Context) layout.Dimensions {
 						ed := material.Editor(th, &st.viewAssocExtEdit, "mp3")
-						ed.Font.Typeface = ui.mainTypeface()
-						ed.TextSize = scaleModalThemeFontSize(th, 10)
+						ed.Font.Typeface = ui.interfaceTypeface()
+						ed.TextSize = ui.scaleModalFontSize(10)
 						ed.Color = txtColor
 						ed.HintColor = hintColor
 						dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-assoc-ext", &st.viewAssocExtEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -6423,11 +6504,11 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.viewAssocPickClick, "Browse", st.viewAssocPickOpen, st.focus == settingsKeyboardFocusAssociationsBrowse)
+					return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.viewAssocPickClick, "Browse", st.viewAssocPickOpen, st.focus == settingsKeyboardFocusAssociationsBrowse)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyModeButtonState(th, gtx, ui.mainTypeface(), &st.viewAssocApplyClick, assocApplyLabel, currentAssocExists, st.focus == settingsKeyboardFocusAssociationsApply)
+					return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.viewAssocApplyClick, assocApplyLabel, currentAssocExists, st.focus == settingsKeyboardFocusAssociationsApply)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if statusText == "" {
@@ -6435,8 +6516,8 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 					}
 					return layout.Inset{Left: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, statusText)
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Font.Typeface = ui.interfaceTypeface()
+						lbl.TextSize = ui.scaleModalFontSize(9)
 						lbl.Color = statusColor
 						lbl.MaxLines = 1
 						lbl.Truncator = "..."
@@ -6463,8 +6544,8 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					ed := material.Editor(th, &st.viewAssocAppEdit, `C:\Program Files\App\player.exe`)
-					ed.Font.Typeface = ui.mainTypeface()
-					ed.TextSize = scaleModalThemeFontSize(th, 10)
+					ed.Font.Typeface = ui.interfaceTypeface()
+					ed.TextSize = ui.scaleModalFontSize(10)
 					ed.Color = txtColor
 					ed.HintColor = hintColor
 					dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-view-assoc-app", &st.viewAssocAppEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -6493,8 +6574,8 @@ func (ui *UI) layoutSettingsAssociationsTab(th *material.Theme, gtx layout.Conte
 			}
 			return layout.Inset{Top: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, infoText)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, 9)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleModalFontSize(9)
 				lbl.Color = color.NRGBA{R: 152, G: 205, B: 152, A: 255}
 				lbl.MaxLines = 2
 				lbl.Truncator = "..."
@@ -6519,8 +6600,8 @@ func (ui *UI) layoutSettingsViewerAssocPicker(th *material.Theme, gtx layout.Con
 			if len(programs) == 0 {
 				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, "No apps yet")
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(9)
 					lbl.Color = hintColor
 					return lbl.Layout(gtx)
 				})
@@ -6534,8 +6615,8 @@ func (ui *UI) layoutSettingsViewerAssocPicker(th *material.Theme, gtx layout.Con
 					}
 					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, fmt.Sprintf("%d similar apps, then all apps", matchCount))
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Font.Typeface = ui.interfaceTypeface()
+						lbl.TextSize = ui.scaleModalFontSize(9)
 						lbl.Color = hintColor
 						lbl.MaxLines = 1
 						lbl.Truncator = "..."
@@ -6577,9 +6658,9 @@ func (ui *UI) layoutSettingsViewerAssocPicker(th *material.Theme, gtx layout.Con
 										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 											usedBy := strings.Join(program.Extensions, ", ")
 											lbl := material.Body2(th, filepath.Base(program.AppPath)+" used by "+usedBy)
-											lbl.Font.Typeface = ui.mainTypeface()
+											lbl.Font.Typeface = ui.interfaceTypeface()
 											lbl.Font.Weight = font.Medium
-											lbl.TextSize = scaleModalThemeFontSize(th, 10)
+											lbl.TextSize = ui.scaleModalFontSize(10)
 											lbl.Color = txtColor
 											lbl.MaxLines = 1
 											lbl.Truncator = "..."
@@ -6587,8 +6668,8 @@ func (ui *UI) layoutSettingsViewerAssocPicker(th *material.Theme, gtx layout.Con
 										}),
 										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 											lbl := material.Caption(th, program.AppPath)
-											lbl.Font.Typeface = ui.mainTypeface()
-											lbl.TextSize = scaleModalThemeFontSize(th, 8)
+											lbl.Font.Typeface = ui.interfaceTypeface()
+											lbl.TextSize = ui.scaleModalFontSize(8)
 											lbl.Color = hintColor
 											lbl.MaxLines = 1
 											lbl.Truncator = "..."
@@ -6657,8 +6738,8 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 			}
 			return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, st.errText)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, 9)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleModalFontSize(9)
 				lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
 				lbl.MaxLines = 2
 				lbl.Truncator = "..."
@@ -6679,8 +6760,8 @@ func (ui *UI) layoutSettingsConfigEditor(th *material.Theme, gtx layout.Context,
 		return layout.Stack{Alignment: layout.NE}.Layout(gtx,
 			layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 				ed := material.Editor(th, &st.configEdit, "")
-				ed.Font.Typeface = ui.mainTypeface()
-				ed.TextSize = scaleModalThemeFontSize(th, 10)
+				ed.Font.Typeface = ui.interfaceTypeface()
+				ed.TextSize = ui.scaleModalFontSize(10)
 				ed.Color = txtColor
 				ed.HintColor = hintColor
 				editorFocused := gtx.Focused(&st.configEdit) || st.focus == settingsKeyboardFocusConfigEditor || st.focusPending == settingsKeyboardFocusConfigEditor
@@ -6726,8 +6807,8 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, "Edit hexone.yaml directly")
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
@@ -6736,8 +6817,8 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, "Located at:")
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(9)
 					lbl.Color = hintColor
 					return lbl.Layout(gtx)
 				}),
@@ -6751,8 +6832,8 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 						func(gtx layout.Context) layout.Dimensions {
 							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								lbl := material.Body2(th, cfgPath)
-								lbl.Font.Typeface = ui.mainTypeface()
-								lbl.TextSize = scaleModalThemeFontSize(th, 8)
+								lbl.Font.Typeface = ui.interfaceTypeface()
+								lbl.TextSize = ui.scaleModalFontSize(8)
 								lbl.Color = color.NRGBA{R: 194, G: 212, B: 255, A: 255}
 								lbl.SelectionColor = color.NRGBA{R: 80, G: 120, B: 220, A: 88}
 								lbl.State = &st.configPathSelect
@@ -6795,6 +6876,16 @@ func (st *settingsModalState) ensurePaneFontFamilyClicks(n int) {
 	old := st.paneFontFamilyClicks
 	st.paneFontFamilyClicks = make([]widget.Clickable, n)
 	copy(st.paneFontFamilyClicks, old)
+}
+
+func (st *settingsModalState) ensureInterfaceFontFamilyClicks(n int) {
+	if n <= cap(st.interfaceFontFamilyClicks) {
+		st.interfaceFontFamilyClicks = st.interfaceFontFamilyClicks[:n]
+		return
+	}
+	old := st.interfaceFontFamilyClicks
+	st.interfaceFontFamilyClicks = make([]widget.Clickable, n)
+	copy(st.interfaceFontFamilyClicks, old)
 }
 
 func (st *settingsModalState) ensureViewFontFamilyClicks(n int) {
@@ -6910,7 +7001,7 @@ func (ui *UI) applyConfigRuntime(now time.Time) {
 	ui.textSize = fontSizeFromConfig(ui.fmCfg)
 	ui.applyTerminalShellRuntime()
 	if ui.tab2State != nil {
-		ui.tab2State.typeface = ui.mainTypeface()
+		ui.tab2State.typeface = ui.interfaceTypeface()
 	}
 	ui.reloadFilePanesForConfig(now)
 	ui.refreshFileViewerNow(now)

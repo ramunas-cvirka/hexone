@@ -32,7 +32,7 @@ const (
 	filePaneFavoriteRevealDelay        = 350 * time.Millisecond
 	filePaneFavoriteRevealFadeDur      = 220 * time.Millisecond
 	filePaneFavoriteRevealHotspotPadDp = 8
-	filePaneFavoriteMenuWidthDp        = 148
+	filePaneFavoriteMenuWidthDp        = 163
 	filePaneCornerDp                   = 8
 	filePaneControlCornerDp            = 6
 	filePaneOverlayCornerDp            = 6
@@ -3054,15 +3054,15 @@ func (ui *UI) favoriteMenuRevealHotspotRect(th *material.Theme, gtx layout.Conte
 		return image.Rectangle{}
 	}
 	hotspotWidth := ellipsisWidth + gtx.Dp(unit.Dp(filePaneFavoriteRevealHotspotPadDp))
-	maxWidth := filePaneFavoriteMenuTextWidth(gtx, item)
+	maxWidth := ui.filePaneFavoriteMenuTextWidth(gtx, item)
 	if hotspotWidth > maxWidth {
 		hotspotWidth = maxWidth
 	}
 	if hotspotWidth < ellipsisWidth {
 		hotspotWidth = ellipsisWidth
 	}
-	rowTop := menuRect.Min.Y + filePaneFavoriteMenuItemOffsetY(gtx, items, index)
-	rowH := filePaneFavoriteMenuRowHeight(gtx)
+	rowTop := menuRect.Min.Y + ui.filePaneFavoriteMenuItemOffsetY(gtx, items, index)
+	rowH := ui.filePaneFavoriteMenuRowHeight(gtx)
 	left := menuRect.Min.X + gtx.Dp(unit.Dp(7))
 	return image.Rect(left, rowTop, left+hotspotWidth, rowTop+rowH)
 }
@@ -3096,8 +3096,8 @@ func (ui *UI) favoriteMenuRevealRect(th *material.Theme, gtx layout.Context, pan
 	if revealWidth <= menuRect.Dx() {
 		return image.Rectangle{}
 	}
-	rowTop := menuRect.Min.Y + filePaneFavoriteMenuItemOffsetY(gtx, items, revealIndex)
-	rowH := filePaneFavoriteMenuRowHeight(gtx)
+	rowTop := menuRect.Min.Y + ui.filePaneFavoriteMenuItemOffsetY(gtx, items, revealIndex)
+	rowH := ui.filePaneFavoriteMenuRowHeight(gtx)
 	return image.Rect(menuRect.Max.X-revealWidth, rowTop, menuRect.Max.X, rowTop+rowH)
 }
 
@@ -3174,8 +3174,8 @@ func filePaneFavoriteLabelRevealed(pane *filePaneState, now time.Time, item file
 	return filePaneFavoriteRevealAlpha(pane, now, item) > 0
 }
 
-func filePaneFavoriteMenuWidth(gtx layout.Context) int {
-	width := gtx.Dp(unit.Dp(filePaneFavoriteMenuWidthDp))
+func (ui *UI) filePaneFavoriteMenuWidth(gtx layout.Context) int {
+	width := gtx.Dp(ui.scaleInterfaceDp(unit.Dp(filePaneFavoriteMenuWidthDp)))
 	if width > gtx.Constraints.Max.X {
 		width = gtx.Constraints.Max.X
 	}
@@ -3191,51 +3191,51 @@ func filePaneFavoriteRectContains(rect image.Rectangle, pos image.Point) bool {
 		pos.Y >= rect.Min.Y && pos.Y < rect.Max.Y
 }
 
-func filePaneFavoriteMenuTitleHeight(gtx layout.Context) int {
-	titleH := gtx.Dp(unit.Dp(17))
+func (ui *UI) filePaneFavoriteMenuTitleHeight(gtx layout.Context) int {
+	titleH := gtx.Sp(ui.scaleInterfaceFontSize(9)) + gtx.Dp(ui.scaleInterfaceDp(6))
 	if titleH < 1 {
 		titleH = 1
 	}
 	return titleH
 }
 
-func filePaneFavoriteMenuRowHeight(gtx layout.Context) int {
-	rowH := gtx.Dp(unit.Dp(18))
+func (ui *UI) filePaneFavoriteMenuRowHeight(gtx layout.Context) int {
+	rowH := gtx.Sp(ui.functionBarTextSize()) + gtx.Dp(ui.scaleInterfaceDp(7))
 	if rowH < 1 {
 		rowH = 1
 	}
 	return rowH
 }
 
-func filePaneFavoriteMenuSeparatorHeight(gtx layout.Context) int {
-	sepH := gtx.Dp(unit.Dp(5))
+func (ui *UI) filePaneFavoriteMenuSeparatorHeight(gtx layout.Context) int {
+	sepH := gtx.Dp(ui.scaleInterfaceDp(5))
 	if sepH < 3 {
 		sepH = 3
 	}
 	return sepH
 }
 
-func filePaneFavoriteMenuCardSize(gtx layout.Context, items []fileFavoriteItem) image.Point {
-	height := filePaneFavoriteMenuTitleHeight(gtx)
+func (ui *UI) filePaneFavoriteMenuCardSize(gtx layout.Context, items []fileFavoriteItem) image.Point {
+	height := ui.filePaneFavoriteMenuTitleHeight(gtx)
 	for i, item := range items {
 		if item.addCurrent && i > 0 {
-			height += filePaneFavoriteMenuSeparatorHeight(gtx)
+			height += ui.filePaneFavoriteMenuSeparatorHeight(gtx)
 		}
-		height += filePaneFavoriteMenuRowHeight(gtx)
+		height += ui.filePaneFavoriteMenuRowHeight(gtx)
 	}
-	return image.Pt(filePaneFavoriteMenuWidth(gtx), height)
+	return image.Pt(ui.filePaneFavoriteMenuWidth(gtx), height)
 }
 
-func filePaneFavoriteRemoveButtonWidth(gtx layout.Context) int {
-	size := gtx.Dp(unit.Dp(9))
+func (ui *UI) filePaneFavoriteRemoveButtonWidth(gtx layout.Context) int {
+	size := gtx.Dp(ui.scaleInterfaceDp(10))
 	if size < 1 {
 		size = 1
 	}
-	return size + gtx.Dp(unit.Dp(4))
+	return size + gtx.Dp(ui.scaleInterfaceDp(6))
 }
 
 func (ui *UI) filePaneFavoriteMenuBaseRect(gtx layout.Context, pane *filePaneState, items []fileFavoriteItem, slideY int) image.Rectangle {
-	size := filePaneFavoriteMenuCardSize(gtx, items)
+	size := ui.filePaneFavoriteMenuCardSize(gtx, items)
 	anchor := image.Point{
 		X: gtx.Constraints.Max.X - size.X,
 		Y: pane.headerHeight + gtx.Dp(unit.Dp(4)) + slideY,
@@ -3244,10 +3244,10 @@ func (ui *UI) filePaneFavoriteMenuBaseRect(gtx layout.Context, pane *filePaneSta
 	return image.Rectangle{Min: anchor, Max: anchor.Add(size)}
 }
 
-func filePaneFavoriteMenuTextWidth(gtx layout.Context, item fileFavoriteItem) int {
-	width := filePaneFavoriteMenuWidth(gtx) - gtx.Dp(unit.Dp(7)) - gtx.Dp(unit.Dp(6))
+func (ui *UI) filePaneFavoriteMenuTextWidth(gtx layout.Context, item fileFavoriteItem) int {
+	width := ui.filePaneFavoriteMenuWidth(gtx) - gtx.Dp(unit.Dp(7)) - gtx.Dp(unit.Dp(6))
 	if item.removable && !item.disabled {
-		width -= gtx.Dp(unit.Dp(2)) + filePaneFavoriteRemoveButtonWidth(gtx)
+		width -= gtx.Dp(unit.Dp(2)) + ui.filePaneFavoriteRemoveButtonWidth(gtx)
 	}
 	if width < 0 {
 		width = 0
@@ -3257,7 +3257,7 @@ func filePaneFavoriteMenuTextWidth(gtx layout.Context, item fileFavoriteItem) in
 
 func (ui *UI) favoriteMenuLabelMetrics(th *material.Theme, gtx layout.Context, item fileFavoriteItem) (fullWidth, trimmedWidth, hiddenPrefixWidth, ellipsisWidth int) {
 	lbl := material.Body2(th, item.label)
-	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.Font.Typeface = ui.interfaceTypeface()
 	lbl.TextSize = ui.functionBarTextSize()
 	if item.active || item.addCurrent {
 		lbl.Font.Weight = font.Medium
@@ -3265,7 +3265,7 @@ func (ui *UI) favoriteMenuLabelMetrics(th *material.Theme, gtx layout.Context, i
 	lbl.MaxLines = 1
 	fullWidth = measureLabelUnconstrained(gtx, lbl).Size.X
 
-	textWidth := filePaneFavoriteMenuTextWidth(gtx, item)
+	textWidth := ui.filePaneFavoriteMenuTextWidth(gtx, item)
 	if textWidth <= 0 {
 		return fullWidth, fullWidth, 0, 0
 	}
@@ -3300,19 +3300,19 @@ func (ui *UI) favoriteMenuLabelMetrics(th *material.Theme, gtx layout.Context, i
 	return fullWidth, trimmedWidth, hiddenPrefixWidth, ellipsisWidth
 }
 
-func filePaneFavoriteMenuItemOffsetY(gtx layout.Context, items []fileFavoriteItem, target int) int {
-	y := filePaneFavoriteMenuTitleHeight(gtx)
+func (ui *UI) filePaneFavoriteMenuItemOffsetY(gtx layout.Context, items []fileFavoriteItem, target int) int {
+	y := ui.filePaneFavoriteMenuTitleHeight(gtx)
 	for i, item := range items {
 		if i >= target {
 			break
 		}
 		if item.addCurrent && i > 0 {
-			y += filePaneFavoriteMenuSeparatorHeight(gtx)
+			y += ui.filePaneFavoriteMenuSeparatorHeight(gtx)
 		}
-		y += filePaneFavoriteMenuRowHeight(gtx)
+		y += ui.filePaneFavoriteMenuRowHeight(gtx)
 	}
 	if target >= 0 && target < len(items) && items[target].addCurrent && target > 0 {
-		y += filePaneFavoriteMenuSeparatorHeight(gtx)
+		y += ui.filePaneFavoriteMenuSeparatorHeight(gtx)
 	}
 	return y
 }
@@ -3354,7 +3354,7 @@ func filePaneFavoriteMenuItemStyle(theme filePanePopupTheme, item fileFavoriteIt
 
 func (ui *UI) favoriteMenuRevealWidth(th *material.Theme, gtx layout.Context, item fileFavoriteItem) int {
 	_, _, hiddenPrefixWidth, ellipsisWidth := ui.favoriteMenuLabelMetrics(th, gtx, item)
-	width := filePaneFavoriteMenuWidth(gtx)
+	width := ui.filePaneFavoriteMenuWidth(gtx)
 	if extraWidth := hiddenPrefixWidth - ellipsisWidth; extraWidth > 0 {
 		width += extraWidth
 	}
@@ -3368,7 +3368,7 @@ func (ui *UI) layoutFilePaneFavoriteMenuItemContent(th *material.Theme, gtx layo
 	label := item.label
 	renderLabel := func(gtx layout.Context) layout.Dimensions {
 		lbl := material.Body2(th, label)
-		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Typeface = ui.interfaceTypeface()
 		lbl.TextSize = ui.functionBarTextSize()
 		lbl.Font.Weight = weight
 		lbl.Color = fg
@@ -3400,9 +3400,9 @@ func (ui *UI) layoutFilePaneFavoriteMenuItemContent(th *material.Theme, gtx layo
 			children = append(children, layout.Rigid(layout.Spacer{Width: unit.Dp(2)}.Layout))
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if interactive && removeClick != nil {
-					return layoutFilePaneFavoriteRemoveButton(th, gtx, theme, removeClick, alpha)
+					return ui.layoutFilePaneFavoriteRemoveButton(th, gtx, theme, removeClick, alpha)
 				}
-				return layoutFilePaneFavoriteRemoveButtonVisual(gtx, theme, alpha, false)
+				return ui.layoutFilePaneFavoriteRemoveButtonVisual(gtx, theme, alpha, false)
 			}))
 		}
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
@@ -3457,7 +3457,7 @@ func (ui *UI) layoutFilePaneFavoriteMenuCard(th *material.Theme, gtx layout.Cont
 	if pane == nil {
 		return layout.Dimensions{}
 	}
-	width := filePaneFavoriteMenuWidth(gtx)
+	width := ui.filePaneFavoriteMenuWidth(gtx)
 	theme := ui.filePanePopupTheme()
 	hoverID := filePaneFavoriteMenuHoveredID(pane, items)
 	if hoverID != pane.favoriteMenuHoverID {
@@ -3476,12 +3476,12 @@ func (ui *UI) layoutFilePaneFavoriteMenuCard(th *material.Theme, gtx layout.Cont
 				func(gtx layout.Context) layout.Dimensions {
 					children := make([]layout.FlexChild, 0, len(items)+3)
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						titleH := filePaneFavoriteMenuTitleHeight(gtx)
+						titleH := ui.filePaneFavoriteMenuTitleHeight(gtx)
 						return fixedHeight(gtx, titleH, func(gtx layout.Context) layout.Dimensions {
 							return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								lbl := material.Caption(th, "Favorites")
-								lbl.Font.Typeface = ui.mainTypeface()
-								lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
+								lbl.Font.Typeface = ui.interfaceTypeface()
+								lbl.TextSize = ui.scaleInterfaceFontSize(9)
 								lbl.Color = scaleColorAlpha(theme.Title, alpha)
 								lbl.MaxLines = 1
 								lbl.Font.Weight = font.Medium
@@ -3495,7 +3495,7 @@ func (ui *UI) layoutFilePaneFavoriteMenuCard(th *material.Theme, gtx layout.Cont
 						item := item
 						if item.addCurrent && i > 0 {
 							children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								sepH := filePaneFavoriteMenuSeparatorHeight(gtx)
+								sepH := ui.filePaneFavoriteMenuSeparatorHeight(gtx)
 								return fixedHeight(gtx, sepH, func(gtx layout.Context) layout.Dimensions {
 									return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 										h := gtx.Dp(unit.Dp(1))
@@ -3526,7 +3526,7 @@ func (ui *UI) layoutFilePaneFavoriteMenuCard(th *material.Theme, gtx layout.Cont
 }
 
 func (ui *UI) layoutFilePaneFavoriteMenuItem(th *material.Theme, gtx layout.Context, theme filePanePopupTheme, click *widget.Clickable, removeClick *widget.Clickable, item fileFavoriteItem, hoverFill, alpha, _ float32) layout.Dimensions {
-	rowH := filePaneFavoriteMenuRowHeight(gtx)
+	rowH := ui.filePaneFavoriteMenuRowHeight(gtx)
 	bg, fg, weight, _ := filePaneFavoriteMenuItemStyle(theme, item, hoverFill, alpha)
 	return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
 		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
@@ -3581,38 +3581,32 @@ func trimLeftLabelToFit(gtx layout.Context, lbl material.LabelStyle, text string
 	return best
 }
 
-func layoutFilePaneFavoriteRemoveButtonVisual(gtx layout.Context, theme filePanePopupTheme, alpha float32, hovered bool) layout.Dimensions {
-	bg := scaleColorAlpha(theme.ButtonBg, alpha)
-	border := scaleColorAlpha(theme.ButtonBorder, alpha)
-	iconBase := bestContrastColor(theme.ButtonBg, theme.Text, theme.HoverText, theme.ActiveText)
-	iconColor := scaleColorAlpha(mixNRGBA(iconBase, theme.ButtonBg, 0.18), alpha)
+func (ui *UI) layoutFilePaneFavoriteRemoveButtonVisual(gtx layout.Context, theme filePanePopupTheme, alpha float32, hovered bool) layout.Dimensions {
+	bg := color.NRGBA{}
+	iconColor := scaleColorAlpha(bestContrastColor(theme.Bg, theme.Text, theme.HoverText, theme.ActiveText), alpha*0.72)
 	if hovered {
-		bg = scaleColorAlpha(mixNRGBA(theme.ButtonBg, theme.HoverBg, 0.7), alpha)
-		border = scaleColorAlpha(mixNRGBA(theme.ButtonBorder, theme.HoverText, 0.3), alpha)
-		iconColor = scaleColorAlpha(theme.HoverText, alpha)
+		bg = scaleColorAlpha(color.NRGBA{R: 112, G: 40, B: 52, A: 238}, alpha)
+		iconColor = scaleColorAlpha(color.NRGBA{R: 255, G: 150, B: 164, A: 255}, alpha)
 	}
-	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(3)), bg, border, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Left: unit.Dp(2), Right: unit.Dp(2), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			size := gtx.Dp(unit.Dp(9))
+	buttonW := ui.filePaneFavoriteRemoveButtonWidth(gtx)
+	return fixedWidth(gtx, buttonW, func(gtx layout.Context) layout.Dimensions {
+		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+			size := gtx.Dp(ui.scaleInterfaceDp(10))
 			if size < 1 {
 				size = 1
 			}
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				if ic := uitheme.CloseIcon(); ic != nil {
-					iconGtx := gtx
-					iconGtx.Constraints = layout.Exact(image.Pt(size, size))
-					ic.Layout(iconGtx, iconColor)
-				}
+				drawTabCloseIcon(gtx, size, iconColor)
 				return layout.Dimensions{Size: image.Pt(size, size)}
 			})
 		})
 	})
 }
 
-func layoutFilePaneFavoriteRemoveButton(_ *material.Theme, gtx layout.Context, theme filePanePopupTheme, c *widget.Clickable, alpha float32) layout.Dimensions {
+func (ui *UI) layoutFilePaneFavoriteRemoveButton(_ *material.Theme, gtx layout.Context, theme filePanePopupTheme, c *widget.Clickable, alpha float32) layout.Dimensions {
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
-		return layoutFilePaneFavoriteRemoveButtonVisual(gtx, theme, alpha, c.Hovered())
+		return ui.layoutFilePaneFavoriteRemoveButtonVisual(gtx, theme, alpha, c.Hovered())
 	})
 }
 

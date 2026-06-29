@@ -11,20 +11,20 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 	resources "hexone"
+	"hexone/fm"
 )
 
-func TestScaleModalThemeFontSizeTracksPaneFont(t *testing.T) {
-	th := material.NewTheme()
-	th.TextSize = unit.Sp(14)
-
-	base := scaleModalThemeFontSize(th, 10)
-	want := unit.Sp(float32(scaleThemeFontSize(th, 10)) * modalFontScale)
+func TestScaleModalFontSizeTracksInterfaceFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	base := ui.scaleModalFontSize(10)
+	want := unit.Sp(float32(scaleInterfaceConfigFontSize(cfg, 10)) * modalFontScale)
 	if base != want {
 		t.Fatalf("base modal size = %v, want %v", base, want)
 	}
 
-	th.TextSize = unit.Sp(20)
-	larger := scaleModalThemeFontSize(th, 10)
+	cfg.Interface.FontSizeSp = 20
+	larger := ui.scaleModalFontSize(10)
 	if larger <= base {
 		t.Fatalf("larger modal size = %v, want > %v", larger, base)
 	}
@@ -47,11 +47,9 @@ func TestSyncThemeRuntimeAppliesPaneFont(t *testing.T) {
 	}
 }
 
-func TestDialogActionSegmentMetricsGrowWithPaneFont(t *testing.T) {
-	ui := &UI{
-		typeface: font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono),
-		textSize: unit.Sp(14),
-	}
+func TestDialogActionSegmentMetricsUseInterfaceFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
 	th := material.NewTheme()
 	gtx := testLabelLayoutContext(image.Pt(320, 80))
 
@@ -60,6 +58,12 @@ func TestDialogActionSegmentMetricsGrowWithPaneFont(t *testing.T) {
 
 	ui.textSize = unit.Sp(20)
 	ui.syncThemeRuntime(th)
+	paneLargeW, paneLargeH := ui.dialogActionSegmentMetricsPx(th, gtx, "Deleting...")
+	if paneLargeW != baseW || paneLargeH != baseH {
+		t.Fatalf("pane font changed dialog metrics from %dx%d to %dx%d", baseW, baseH, paneLargeW, paneLargeH)
+	}
+
+	cfg.Interface.FontSizeSp = 20
 	largeW, largeH := ui.dialogActionSegmentMetricsPx(th, gtx, "Deleting...")
 
 	if largeW <= baseW {

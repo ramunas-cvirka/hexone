@@ -6,7 +6,6 @@ package ui
 import (
 	"fmt"
 	"hexone/fm"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"strconv"
@@ -14,6 +13,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -1064,14 +1064,14 @@ func (ui *UI) layoutSSHModalHeader(th *material.Theme, gtx layout.Context, st *s
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body1(th, "SSH Sessions")
-			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.Font.Typeface = ui.interfaceTypeface()
 			lbl.Font.Weight = font.Bold
-			lbl.TextSize = scaleModalThemeFontSize(th, 12)
+			lbl.TextSize = ui.scaleModalFontSize(12)
 			lbl.Color = txtColor
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+			return ui.layoutSSHCloseButton(gtx, &st.closeClick, false)
 		}),
 	)
 }
@@ -1104,8 +1104,8 @@ func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *ss
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 								lbl := material.Caption(th, "Saved setups")
-								lbl.Font.Typeface = ui.mainTypeface()
-								lbl.TextSize = scaleModalThemeFontSize(th, 9)
+								lbl.Font.Typeface = ui.interfaceTypeface()
+								lbl.TextSize = ui.scaleModalFontSize(9)
 								lbl.Color = hintColor
 								return lbl.Layout(gtx)
 							}),
@@ -1118,8 +1118,8 @@ func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *ss
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						if len(st.setups) == 0 {
 							lbl := material.Body2(th, "No setups yet. Press + to add one.")
-							lbl.Font.Typeface = ui.mainTypeface()
-							lbl.TextSize = scaleModalThemeFontSize(th, 10)
+							lbl.Font.Typeface = ui.interfaceTypeface()
+							lbl.TextSize = ui.scaleModalFontSize(10)
 							lbl.Color = hintColor
 							lbl.MaxLines = 3
 							return lbl.Layout(gtx)
@@ -1160,9 +1160,9 @@ func (ui *UI) layoutSSHAddButton(th *material.Theme, gtx layout.Context, c *widg
 			func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body1(th, "+")
-					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Typeface = ui.interfaceTypeface()
 					lbl.Font.Weight = font.Bold
-					lbl.TextSize = scaleModalThemeFontSize(th, 12)
+					lbl.TextSize = ui.scaleModalFontSize(12)
 					lbl.Color = fg
 					return lbl.Layout(gtx)
 				})
@@ -1177,49 +1177,91 @@ func (ui *UI) layoutSSHSetupRow(th *material.Theme, gtx layout.Context, st *sshM
 	visibleFocus := st.visibleFocus()
 
 	active := index == st.selected
-	bg := color.NRGBA{R: 24, G: 24, B: 24, A: 240}
-	bd := color.NRGBA{R: 255, G: 255, B: 255, A: 14}
+	bg := color.NRGBA{}
 	if active {
 		bg = color.NRGBA{R: 40, G: 40, B: 40, A: 255}
-		bd = color.NRGBA{R: 255, G: 255, B: 255, A: 42}
 	} else if st.setupClicks[index].Hovered() {
 		bg = color.NRGBA{R: 32, G: 32, B: 32, A: 255}
 	}
 	if active && visibleFocus == sshModalFocusSetupsList {
 		bg = mixNRGBA(bg, color.NRGBA{R: 42, G: 54, B: 80, A: 255}, 0.35)
-		bd = mixNRGBA(bd, color.NRGBA{R: 150, G: 180, B: 255, A: 255}, 0.72)
-		bd.A = 168
 	}
 
-	return layout.Inset{Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return fillRoundedBox(
-			gtx,
-			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-			bg,
-			bd,
-			func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return st.setupClicks[index].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body2(th, label)
-								lbl.Font.Typeface = ui.mainTypeface()
-								lbl.TextSize = scaleModalThemeFontSize(th, 10)
-								lbl.Font.Weight = font.Medium
-								lbl.Color = txtColor
-								lbl.MaxLines = 1
-								lbl.Truncator = "..."
-								return lbl.Layout(gtx)
-							})
-						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyIconModeButtonState(gtx, &st.setupRemoveClicks[index], uitheme.CloseIcon(), false, active && visibleFocus == sshModalFocusRemove)
-						}),
-					)
+	return fixedHeight(gtx, ui.sshSetupRowHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(6), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+						return st.setupClicks[index].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							pointer.CursorPointer.Add(gtx.Ops)
+							gtx.Constraints.Min.X = gtx.Constraints.Max.X
+							lbl := material.Body2(th, label)
+							lbl.Font.Typeface = ui.interfaceTypeface()
+							lbl.TextSize = ui.scaleModalFontSize(10)
+							lbl.Font.Weight = font.Medium
+							lbl.Color = txtColor
+							lbl.MaxLines = 1
+							lbl.Truncator = "..."
+							return layoutVCenteredLabel(gtx, lbl)
+						})
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(2)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutSSHCloseButton(gtx, &st.setupRemoveClicks[index], active && visibleFocus == sshModalFocusRemove)
+					}),
+				)
+			})
+		})
+	})
+}
+
+func (ui *UI) sshSetupRowHeight(gtx layout.Context) int {
+	rowH := gtx.Sp(ui.scaleModalFontSize(10)) + gtx.Dp(ui.scaleInterfaceDp(7))
+	if rowH < 1 {
+		rowH = 1
+	}
+	return rowH
+}
+
+func (ui *UI) layoutSSHCloseButton(gtx layout.Context, c *widget.Clickable, focused bool) layout.Dimensions {
+	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return ui.layoutSSHCloseButtonVisual(gtx, c.Hovered(), c.Pressed(), focused)
+	})
+}
+
+func (ui *UI) layoutSSHCloseButtonVisual(gtx layout.Context, hovered, pressed, focused bool) layout.Dimensions {
+	icon := gtx.Dp(ui.scaleInterfaceDp(10))
+	if icon < 1 {
+		icon = 1
+	}
+	buttonW := icon + gtx.Dp(ui.scaleInterfaceDp(6))
+	buttonH := icon + gtx.Dp(ui.scaleInterfaceDp(6))
+
+	bg := color.NRGBA{}
+	iconColor := scaleColorAlpha(txtColor, 0.72)
+	if focused {
+		bg = color.NRGBA{R: 28, G: 36, B: 54, A: 210}
+		iconColor = color.NRGBA{R: 244, G: 248, B: 255, A: 238}
+	}
+	if hovered || pressed {
+		bg = color.NRGBA{R: 112, G: 40, B: 52, A: 238}
+		iconColor = color.NRGBA{R: 255, G: 150, B: 164, A: 255}
+	}
+	if pressed {
+		bg = color.NRGBA{R: 136, G: 44, B: 60, A: 255}
+		iconColor = color.NRGBA{R: 255, G: 190, B: 198, A: 255}
+	}
+
+	return fixedWidth(gtx, buttonW, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, buttonH, func(gtx layout.Context) layout.Dimensions {
+			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					drawTabCloseIcon(gtx, icon, iconColor)
+					return layout.Dimensions{Size: image.Pt(icon, icon)}
 				})
-			},
-		)
+			})
+		})
 	})
 }
 
@@ -1237,16 +1279,16 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, "Setup details")
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleModalThemeFontSize(th, 9)
+						lbl.Font.Typeface = ui.interfaceTypeface()
+						lbl.TextSize = ui.scaleModalFontSize(9)
 						lbl.Color = hintColor
 						return lbl.Layout(gtx)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Body2(th, identityLabel)
-						lbl.Font.Typeface = ui.mainTypeface()
+						lbl.Font.Typeface = ui.interfaceTypeface()
 						lbl.Font.Weight = font.Medium
-						lbl.TextSize = scaleModalThemeFontSize(th, 10)
+						lbl.TextSize = ui.scaleModalFontSize(10)
 						lbl.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 						lbl.MaxLines = 1
 						lbl.Truncator = "..."
@@ -1298,14 +1340,14 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 
 func (ui *UI) layoutSSHField(th *material.Theme, gtx layout.Context, label string, edState *widget.Editor, hint string, enabled, focused bool) layout.Dimensions {
 	rowLabel := material.Caption(th, label)
-	rowLabel.Font.Typeface = ui.mainTypeface()
-	rowLabel.TextSize = scaleModalThemeFontSize(th, 9)
+	rowLabel.Font.Typeface = ui.interfaceTypeface()
+	rowLabel.TextSize = ui.scaleModalFontSize(9)
 	rowLabel.Color = hintColor
 
 	edState.ReadOnly = !enabled
 	ed := material.Editor(th, edState, hint)
-	ed.Font.Typeface = ui.mainTypeface()
-	ed.TextSize = scaleModalThemeFontSize(th, 10)
+	ed.Font.Typeface = ui.interfaceTypeface()
+	ed.TextSize = ui.scaleModalFontSize(10)
 	ed.Color = txtColor
 	ed.HintColor = hintColor
 	if !enabled {
@@ -1356,8 +1398,8 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 				return layout.Dimensions{}
 			}
 			lbl := material.Caption(th, st.errText)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleModalThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
 			lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
 			lbl.MaxLines = 2
 			lbl.Truncator = "..."
