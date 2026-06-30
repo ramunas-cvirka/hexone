@@ -152,6 +152,7 @@ func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
 		settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
 		settingsKeyboardFocusGeneralCompletionSound,
+		settingsKeyboardFocusGeneralTerminalAcceleratedKeys,
 		settingsKeyboardFocusFooter,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -294,6 +295,31 @@ func TestSettingsModalSavesTabsFontControls(t *testing.T) {
 	}
 	if got, want := saved.Tabs.FontSizeSp, st.tabsFontSizeSp; got != want {
 		t.Fatalf("saved tabs font size=%v want %v", got, want)
+	}
+}
+
+func TestSettingsModalLoadsAndSavesTerminalAcceleratedKeys(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.AcceleratedKeys = false
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	if st.terminalAcceleratedKeysBool.Value {
+		t.Fatal("terminal accelerated keys checkbox should load false")
+	}
+
+	st.terminalAcceleratedKeysBool.Value = true
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+	saved := fm.LoadConfig(ui.configPath)
+	if !saved.Terminal.AcceleratedKeys {
+		t.Fatal("saved terminal accelerated keys should be true")
 	}
 }
 
@@ -484,6 +510,39 @@ func TestSettingsModalKeyboardSpaceTogglesFavoritesNewTab(t *testing.T) {
 
 	if st.generalFavoritesNewTabBool.Value {
 		t.Fatal("Space should toggle the focused favorites new-tab checkbox")
+	}
+}
+
+func TestSettingsModalKeyboardSpaceTogglesTerminalAcceleratedKeys(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "general"
+	st.focus = settingsKeyboardFocusGeneralTerminalAcceleratedKeys
+	st.keyFocus.wantFocus = true
+	st.terminalAcceleratedKeysBool.Value = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameSpace, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if st.terminalAcceleratedKeysBool.Value {
+		t.Fatal("Space should toggle the focused terminal accelerated-keys checkbox")
 	}
 }
 

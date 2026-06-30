@@ -184,53 +184,110 @@ func TestTerminalModifiedHorizontalArrowDoesNotStartAcceleratedRepeat(t *testing
 	}
 }
 
-func TestTerminalHeldBackspaceUsesAcceleratedRepeat(t *testing.T) {
-	st := newTerminalSession(nil)
-	proc := &terminalWriteProcess{}
-	st.procMu.Lock()
-	st.pty = proc
-	st.running = true
-	st.procMu.Unlock()
-
-	start := time.Date(2026, time.June, 29, 12, 0, 0, 0, time.UTC)
-	gtx, router := testKeyContext()
-	gtx.Now = start
-	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
-	router.Event(key.Filter{
-		Focus:    &st.keyTag,
-		Name:     key.NameDeleteBackward,
-		Optional: ^key.Modifiers(0),
-	})
-	router.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Press})
-
-	if !st.handleInput(gtx) {
-		t.Fatal("initial Backspace press should be handled")
+func TestTerminalDisabledAcceleratedKeysUsesNormalInput(t *testing.T) {
+	cases := []struct {
+		name key.Name
+		want string
+	}{
+		{name: key.NameRightArrow, want: "\x1b[C"},
+		{name: key.NameDeleteForward, want: "\x1b[3~"},
 	}
-	if got, want := proc.String(), "\x7f"; got != want {
-		t.Fatalf("initial Backspace input=%q want %q", got, want)
-	}
-	if !st.keyRepeating(key.NameDeleteBackward) {
-		t.Fatal("initial Backspace press should start terminal repeat")
-	}
+	for _, tc := range cases {
+		t.Run(string(tc.name), func(t *testing.T) {
+			st := newTerminalSession(nil)
+			proc := &terminalWriteProcess{}
+			st.procMu.Lock()
+			st.pty = proc
+			st.running = true
+			st.procMu.Unlock()
 
-	router.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Press})
-	st.handleInput(gtx)
-	if got, want := proc.String(), "\x7f"; got != want {
-		t.Fatalf("OS Backspace repeat input=%q want unchanged %q", got, want)
-	}
+			gtx, router := testKeyContext()
+			gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+			anyMods := ^key.Modifiers(0)
+			router.Event(
+				key.FocusFilter{Target: &st.keyTag},
+				key.Filter{Focus: &st.keyTag, Name: tc.name, Optional: anyMods},
+			)
+			router.Queue(key.Event{Name: tc.name, State: key.Press})
 
-	gtx.Now = start.Add(repeatStartDelay)
-	st.handleInput(gtx)
-	gtx.Now = gtx.Now.Add(repeatFast)
-	st.handleInput(gtx)
-	if got, want := proc.String(), "\x7f\x7f\x7f"; got != want {
-		t.Fatalf("accelerated Backspace input=%q want %q", got, want)
-	}
+			if !st.handleInputWithAcceleratedKeys(gtx, false) {
+				t.Fatal("plain press should be handled")
+			}
+			if got := proc.String(); got != tc.want {
+				t.Fatalf("plain input=%q want %q", got, tc.want)
+			}
+			if st.keyRepeating(tc.name) {
+				t.Fatal("disabled accelerated keys should not start terminal repeat")
+			}
 
-	router.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Release})
-	st.handleInput(gtx)
-	if st.keyRepeating(key.NameDeleteBackward) {
-		t.Fatal("Backspace release should stop terminal repeat")
+			router.Queue(key.Event{Name: tc.name, State: key.Press})
+			st.handleInputWithAcceleratedKeys(gtx, false)
+			if got, want := proc.String(), tc.want+tc.want; got != want {
+				t.Fatalf("OS repeat input=%q want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestTerminalHeldDeletionKeysUseAcceleratedRepeat(t *testing.T) {
+	cases := []struct {
+		label string
+		name  key.Name
+		want  string
+	}{
+		{label: "Backspace", name: key.NameDeleteBackward, want: "\x7f"},
+		{label: "Delete", name: key.NameDeleteForward, want: "\x1b[3~"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			st := newTerminalSession(nil)
+			proc := &terminalWriteProcess{}
+			st.procMu.Lock()
+			st.pty = proc
+			st.running = true
+			st.procMu.Unlock()
+
+			start := time.Date(2026, time.June, 29, 12, 0, 0, 0, time.UTC)
+			gtx, router := testKeyContext()
+			gtx.Now = start
+			gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+			router.Event(key.Filter{
+				Focus:    &st.keyTag,
+				Name:     tc.name,
+				Optional: ^key.Modifiers(0),
+			})
+			router.Queue(key.Event{Name: tc.name, State: key.Press})
+
+			if !st.handleInput(gtx) {
+				t.Fatal("initial press should be handled")
+			}
+			if got := proc.String(); got != tc.want {
+				t.Fatalf("initial input=%q want %q", got, tc.want)
+			}
+			if !st.keyRepeating(tc.name) {
+				t.Fatal("initial press should start terminal repeat")
+			}
+
+			router.Queue(key.Event{Name: tc.name, State: key.Press})
+			st.handleInput(gtx)
+			if got := proc.String(); got != tc.want {
+				t.Fatalf("OS repeat input=%q want unchanged %q", got, tc.want)
+			}
+
+			gtx.Now = start.Add(repeatStartDelay)
+			st.handleInput(gtx)
+			gtx.Now = gtx.Now.Add(repeatFast)
+			st.handleInput(gtx)
+			if got, want := proc.String(), tc.want+tc.want+tc.want; got != want {
+				t.Fatalf("accelerated input=%q want %q", got, want)
+			}
+
+			router.Queue(key.Event{Name: tc.name, State: key.Release})
+			st.handleInput(gtx)
+			if st.keyRepeating(tc.name) {
+				t.Fatal("release should stop terminal repeat")
+			}
+		})
 	}
 }
 
@@ -1637,6 +1694,60 @@ func TestTerminalVisualScrollAnimatesShortSteps(t *testing.T) {
 	}
 }
 
+func TestTerminalPointFromPositionOutsideGridUsesLogicalViewStart(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.parserMu.Lock()
+	st.term.Resize(3, 12)
+	if _, err := st.term.Write([]byte("line0\r\nline1\r\nline2\r\nline3\r\nline4\r\nline5")); err != nil {
+		st.parserMu.Unlock()
+		t.Fatalf("Write lines: %v", err)
+	}
+	st.parserMu.Unlock()
+	st.snapshot()
+
+	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
+	if st.prepareVisualScroll(now, true) {
+		t.Fatal("initial visual sync should not animate")
+	}
+	st.State.Mu.RLock()
+	initialViewStart := st.State.ViewStart
+	st.State.Mu.RUnlock()
+	if initialViewStart <= 0 {
+		t.Fatalf("initial ViewStart=%d want scrollback-backed view", initialViewStart)
+	}
+	if !st.scrollByLines(1) {
+		t.Fatal("scrollByLines should move into scrollback history")
+	}
+
+	st.State.Mu.RLock()
+	viewStart := st.State.ViewStart
+	rows := st.State.Rows
+	st.State.Mu.RUnlock()
+	st.viewMu.Lock()
+	visualTop := st.visualTop
+	st.viewMu.Unlock()
+	if int(visualTop) == viewStart {
+		t.Fatalf("test setup expected lagging visual top, got visual=%v viewStart=%d", visualTop, viewStart)
+	}
+
+	content := image.Rect(0, 0, 96, 48)
+	top, ok := st.terminalPointFromPosition(image.Pt(40, -8), content, 8, 16)
+	if !ok {
+		t.Fatal("terminalPointFromPosition above grid = not ok")
+	}
+	if top.Row != viewStart {
+		t.Fatalf("above-grid row=%d want logical ViewStart %d", top.Row, viewStart)
+	}
+
+	bottom, ok := st.terminalPointFromPosition(image.Pt(40, content.Max.Y+8), content, 8, 16)
+	if !ok {
+		t.Fatal("terminalPointFromPosition below grid = not ok")
+	}
+	if want := viewStart + rows - 1; bottom.Row != want {
+		t.Fatalf("below-grid row=%d want logical bottom row %d", bottom.Row, want)
+	}
+}
+
 func TestTerminalChangeDirCommandQuotesPath(t *testing.T) {
 	got := terminalPosixQuotePath("/tmp/it's here")
 	if got != "'/tmp/it'\\''s here'" {
@@ -1928,10 +2039,14 @@ func TestTerminalResizeDragSnapsByRows(t *testing.T) {
 func TestTerminalSelectionAutoScrollParamsUseDistanceTiers(t *testing.T) {
 	content := image.Rect(0, 0, 120, 120)
 
-	nearDir, nearStep := terminalSelectionAutoScrollParams(image.Pt(40, 105), content)
-	farDir, farStep := terminalSelectionAutoScrollParams(image.Pt(40, 170), content)
+	insideDir, insideStep := terminalSelectionAutoScrollParams(image.Pt(40, 16), content)
+	nearDir, nearStep := terminalSelectionAutoScrollParams(image.Pt(40, 125), content)
+	farDir, farStep := terminalSelectionAutoScrollParams(image.Pt(40, 190), content)
 	topDir, topStep := terminalSelectionAutoScrollParams(image.Pt(40, -70), content)
 
+	if insideDir != 0 || insideStep != 0 {
+		t.Fatalf("inside-grid autoscroll=%d/%d want 0/0", insideDir, insideStep)
+	}
 	if nearDir != -1 || farDir != -1 {
 		t.Fatalf("bottom autoscroll dirs near=%d far=%d want both -1", nearDir, farDir)
 	}
@@ -1940,6 +2055,19 @@ func TestTerminalSelectionAutoScrollParamsUseDistanceTiers(t *testing.T) {
 	}
 	if topDir != 1 || topStep != farStep {
 		t.Fatalf("top autoscroll dir/step=%d/%d want 1/%d", topDir, topStep, farStep)
+	}
+}
+
+func TestTerminalSelectionAutoScrollStepAcceleratesWithHoldTime(t *testing.T) {
+	base := terminalSelectionAutoScrollStep(1)
+	if got := terminalSelectionAutoScrollStepForElapsed(base, 0); got != base {
+		t.Fatalf("initial accelerated step=%d want base %d", got, base)
+	}
+	if got := terminalSelectionAutoScrollStepForElapsed(base, terminalSelectAutoScrollAccel1); got <= base {
+		t.Fatalf("first acceleration step=%d want greater than base %d", got, base)
+	}
+	if got := terminalSelectionAutoScrollStepForElapsed(base, terminalSelectAutoScrollAccel2); got <= terminalSelectionAutoScrollStepForElapsed(base, terminalSelectAutoScrollAccel1) {
+		t.Fatalf("second acceleration step=%d should exceed first acceleration", got)
 	}
 }
 
@@ -1952,8 +2080,9 @@ func TestTerminalSelectionAutoScrollDoesNotDelayDueTickOnMove(t *testing.T) {
 	st.viewMu.Lock()
 	st.selectionSelecting = true
 	st.autoScrollDir = -1
-	st.autoScrollStep = 4
+	st.autoScrollStep = 1
 	st.autoScrollAt = now
+	st.autoScrollStartedAt = now
 	st.updateSelectionAutoScrollLocked(image.Pt(40, 130), content, later)
 	got := st.autoScrollAt
 	st.viewMu.Unlock()
@@ -1972,14 +2101,15 @@ func TestTerminalSelectionAutoScrollSpeedChangeIsImmediate(t *testing.T) {
 	st.viewMu.Lock()
 	st.selectionSelecting = true
 	st.autoScrollDir = -1
-	st.autoScrollStep = 2
+	st.autoScrollStep = 1
 	st.autoScrollAt = now
-	st.updateSelectionAutoScrollLocked(image.Pt(40, 170), content, later)
+	st.autoScrollStartedAt = now
+	st.updateSelectionAutoScrollLocked(image.Pt(40, 190), content, later)
 	gotDir, gotStep, gotAt := st.autoScrollDir, st.autoScrollStep, st.autoScrollAt
 	st.viewMu.Unlock()
 
-	if gotDir != -1 || gotStep != 7 {
-		t.Fatalf("terminal autoscroll dir/step=%d/%d want -1/7", gotDir, gotStep)
+	if gotDir != -1 || gotStep != 6 {
+		t.Fatalf("terminal autoscroll dir/step=%d/%d want -1/6", gotDir, gotStep)
 	}
 	if !gotAt.Equal(later) {
 		t.Fatalf("terminal autoScrollAt after speed change=%v want %v", gotAt, later)
@@ -1994,14 +2124,15 @@ func TestTerminalSelectionAutoScrollStopsOnReentry(t *testing.T) {
 	st.viewMu.Lock()
 	st.selectionSelecting = true
 	st.autoScrollDir = -1
-	st.autoScrollStep = 7
+	st.autoScrollStep = 6
 	st.autoScrollAt = now
+	st.autoScrollStartedAt = now
 	st.updateSelectionAutoScrollLocked(image.Pt(40, 60), content, now.Add(terminalSelectAutoScrollTick))
-	gotDir, gotStep, gotAt := st.autoScrollDir, st.autoScrollStep, st.autoScrollAt
+	gotDir, gotStep, gotAt, gotStartedAt := st.autoScrollDir, st.autoScrollStep, st.autoScrollAt, st.autoScrollStartedAt
 	st.viewMu.Unlock()
 
-	if gotDir != 0 || gotStep != 0 || !gotAt.IsZero() {
-		t.Fatalf("terminal autoscroll should stop on reentry, got dir=%d step=%d at=%v", gotDir, gotStep, gotAt)
+	if gotDir != 0 || gotStep != 0 || !gotAt.IsZero() || !gotStartedAt.IsZero() {
+		t.Fatalf("terminal autoscroll should stop on reentry, got dir=%d step=%d at=%v started=%v", gotDir, gotStep, gotAt, gotStartedAt)
 	}
 }
 
@@ -2041,6 +2172,48 @@ func TestTerminalResizeHandleGeometryUsesLaidOutPaneHeight(t *testing.T) {
 	}
 	if wantRows := terminalRowsForPaneHeight(rootGtx, cellH, paneH); gotRows != wantRows {
 		t.Fatalf("resize handle rows=%d want %d", gotRows, wantRows)
+	}
+}
+
+func TestTerminalMaximizedPaneUsesAvailableHeight(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.Maximized = true
+	cfg.Terminal.HeightRows = 6
+	ui := NewUI(cfg)
+	ui.terminal = newTerminalSession(nil, cfg.Terminal.HeightRows)
+	ui.terminal.setActive(true)
+	ui.terminal.startAttempted = true
+
+	gtx := testTerminalPaneHeightContext(image.Pt(1200, 640))
+	dims := ui.layoutTerminalPane(material.NewTheme(), gtx)
+	if got, want := dims.Size.Y, 640; got != want {
+		t.Fatalf("maximized terminal height=%d want %d", got, want)
+	}
+	height, _, ok := ui.terminal.paneMetrics()
+	if !ok {
+		t.Fatal("terminal pane metrics missing")
+	}
+	if height != 640 {
+		t.Fatalf("terminal pane metric height=%d want 640", height)
+	}
+	if got, want := ui.fmCfg.Terminal.HeightRows, 6; got != want {
+		t.Fatalf("maximized layout should preserve saved partial rows=%d want %d", got, want)
+	}
+}
+
+func TestTerminalResizeHandleHiddenWhenMaximized(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.Maximized = true
+	st := newTerminalSession(nil)
+	st.setActive(true)
+	ui := &UI{
+		fmCfg:    cfg,
+		terminal: st,
+	}
+
+	rect, _, _, ok := ui.terminalResizeHandleGeometry(material.NewTheme(), testTerminalPaneHeightContext(image.Pt(1200, 800)))
+	if ok || !rect.Empty() {
+		t.Fatalf("maximized terminal resize handle=%v ok=%v want hidden", rect, ok)
 	}
 }
 

@@ -498,6 +498,69 @@ func TestTerminalPaneTabStripAddButtonHandlesPointerClick(t *testing.T) {
 	}
 }
 
+func TestTerminalPaneTabStripMaximizeButtonTogglesConfig(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.HeightRows = 7
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	if err := fm.SaveConfig(path, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	ui := NewUI(cfg)
+	ui.configPath = path
+	ui.terminal = newTerminalSession(nil)
+	ui.terminal.setActive(true)
+	ui.terminal.startAttempted = true
+	ui.ensureTerminalTabs()
+
+	th := material.NewTheme()
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(320, 160),
+		},
+	}
+	frame := func() {
+		gtx.Ops.Reset()
+		ui.layoutTerminalPane(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame()
+	x := gtx.Constraints.Max.X - 6 - tabStripControlWidth(gtx)/2
+	y := 4 + tabStripHeightDp/2
+	pos := f32.Pt(float32(x), float32(y))
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Source:   pointer.Mouse,
+		Buttons:  pointer.ButtonPrimary,
+		Position: pos,
+	})
+	frame()
+	router.Queue(pointer.Event{
+		Kind:     pointer.Release,
+		Source:   pointer.Mouse,
+		Position: pos,
+	})
+	frame()
+
+	if !ui.fmCfg.Terminal.Maximized {
+		t.Fatal("terminal maximize button should set maximized config")
+	}
+	if got, want := ui.fmCfg.Terminal.HeightRows, 7; got != want {
+		t.Fatalf("terminal maximize should preserve saved row count=%d want %d", got, want)
+	}
+	saved := fm.LoadConfig(path)
+	if !saved.Terminal.Maximized {
+		t.Fatal("terminal maximized state should be persisted")
+	}
+	if got, want := saved.Terminal.HeightRows, 7; got != want {
+		t.Fatalf("saved terminal rows=%d want %d", got, want)
+	}
+}
+
 func TestActivateTerminalTabPreservesScrollAnchor(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	sessions := []*terminalSession{

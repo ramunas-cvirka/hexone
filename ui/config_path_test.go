@@ -201,3 +201,32 @@ func TestTerminalHeightRuntimeSavePreservesUnrelatedState(t *testing.T) {
 		t.Fatalf("terminal height rows=%d want %d", got, want)
 	}
 }
+
+func TestTerminalLayoutRuntimeSavePreservesRowsAndMaximized(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	original.Terminal.HeightRows = 18
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = path
+	ui.fmCfg.Terminal.HeightRows = 31
+	ui.fmCfg.Terminal.Maximized = true
+	if err := ui.saveFMConfigWithOptions("terminal-layout", false); err != nil {
+		t.Fatalf("saveFMConfigWithOptions(terminal-layout): %v", err)
+	}
+
+	saved := fm.LoadConfig(path)
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+	if got, want := saved.Terminal.HeightRows, 31; got != want {
+		t.Fatalf("terminal height rows=%d want %d", got, want)
+	}
+	if !saved.Terminal.Maximized {
+		t.Fatal("terminal maximized state should be saved")
+	}
+}

@@ -154,12 +154,19 @@ func (ui *UI) functionBarAutoHiddenForViewer() bool {
 		ui.fmCfg.Viewer.HideFunctionBarWhenOpen
 }
 
+func (ui *UI) functionBarAutoHiddenForTerminal() bool {
+	return ui != nil && ui.terminalMaximized()
+}
+
 func (ui *UI) functionBarVisible() bool {
 	if ui == nil {
 		return false
 	}
 	if ui.functionBarAutoHiddenForViewer() {
 		return ui.functionBarViewerShown
+	}
+	if ui.functionBarAutoHiddenForTerminal() {
+		return ui.functionBarTerminalShown
 	}
 	return !ui.functionBarHidden
 }
@@ -170,6 +177,8 @@ func (ui *UI) toggleFunctionBarVisibility(now time.Time) bool {
 	}
 	if ui.functionBarAutoHiddenForViewer() {
 		ui.functionBarViewerShown = !ui.functionBarViewerShown
+	} else if ui.functionBarAutoHiddenForTerminal() {
+		ui.functionBarTerminalShown = !ui.functionBarTerminalShown
 	} else {
 		ui.functionBarHidden = !ui.functionBarHidden
 	}

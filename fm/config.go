@@ -147,9 +147,11 @@ type SortConfig struct {
 }
 
 type TerminalConfig struct {
-	HeightRows int     `yaml:"height_rows"`
-	Typeface   string  `yaml:"typeface"`
-	FontSizeSp float32 `yaml:"font_size_sp"`
+	HeightRows      int     `yaml:"height_rows"`
+	Typeface        string  `yaml:"typeface"`
+	FontSizeSp      float32 `yaml:"font_size_sp"`
+	AcceleratedKeys bool    `yaml:"accelerated_keys"`
+	Maximized       bool    `yaml:"maximized"`
 }
 
 type TabsConfig struct {
@@ -543,6 +545,9 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Viewer            ViewerConfig         `yaml:"viewer"`
 		SSH               SSHConfig            `yaml:"ssh"`
 	}{
+		Terminal: TerminalConfig{
+			AcceleratedKeys: true,
+		},
 		General: GeneralConfig{
 			OpenFavoritesInNewTab: true,
 			CompletionSound:       CompletionSoundBackground,
@@ -604,9 +609,10 @@ func DefaultConfig() *Config {
 			DirectoriesFirst: true,
 		},
 		Terminal: TerminalConfig{
-			HeightRows: defaultTerminalHeightRows,
-			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
-			FontSizeSp: 13,
+			HeightRows:      defaultTerminalHeightRows,
+			Typeface:        resources.BundledFontFamilyFiraCodeNerdFontMono,
+			FontSizeSp:      13,
+			AcceleratedKeys: true,
 		},
 		Tabs: TabsConfig{
 			WidthMode:    "variable",

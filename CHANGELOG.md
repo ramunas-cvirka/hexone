@@ -6,11 +6,6 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## Unreleased
 
-- Added an independent interface font for menus, tools, and dialogs, with responsive Favorites and Settings previews at larger font sizes.
-- Improved terminal middle-click paste, bottom-row alignment, and held arrow/Backspace repeat.
-- File panes show a clipped final row only when its centered text/icon content remains intact, then use all available height consistently for scrolling, selection, and paging.
-- Multi-rename locks to the name portion when the selection includes a directory, disabling the "Extension" and "Both" scopes.
-
 ## v0.1.0 - 2026-03-10
 
 - Initial public release.
@@ -59,3 +54,14 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Added preview-first Multi-Rename with common transformations, collision checks, and local/SFTP support.
 - Improved terminal selection, clipboard actions, buffer clearing, and pane-directory integration.
 - Embedded FiraCode, Hack, JetBrainsMono, and Iosevka Nerd Font Mono, replacing Fira Code and Consolas.
+
+## v0.8.0 - 2026-06-30
+
+- Added optional completion sounds for long copy and archive extraction operations.
+- Added a maximized Terminal mode with saved restore state.
+- Added an Interface font setting for modals, menus, and tools.
+- Improved font scaling support across interface surfaces.
+- Improved Favorites and SSH setup layouts with a flatter look.
+- Improved terminal key repeat, drag selection, and smooth scrolling behavior.
+- Terminal now uses all available bottom space.
+- Fixed SSH favorites opened in new tabs using the previous local pane path.

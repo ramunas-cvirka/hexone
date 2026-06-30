@@ -21,6 +21,7 @@ const (
 	settingsKeyboardFocusGeneralDimInactive
 	settingsKeyboardFocusGeneralFavoritesNewTab
 	settingsKeyboardFocusGeneralCompletionSound
+	settingsKeyboardFocusGeneralTerminalAcceleratedKeys
 	settingsKeyboardFocusFontsInterfaceFont
 	settingsKeyboardFocusFontsInterfaceFontSize
 	settingsKeyboardFocusGeneralPaneFont
@@ -150,6 +151,7 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 	switch target {
 	case settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
+		settingsKeyboardFocusGeneralTerminalAcceleratedKeys,
 		settingsKeyboardFocusViewerShell,
 		settingsKeyboardFocusViewerRemoteSearch,
 		settingsKeyboardFocusViewerSmoothScrolling,
@@ -196,6 +198,8 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 		st.focus = settingsKeyboardFocusGeneralDimInactive
 	case gtx.Focused(&st.generalFavoritesNewTabBool):
 		st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
+	case gtx.Focused(&st.terminalAcceleratedKeysBool):
+		st.focus = settingsKeyboardFocusGeneralTerminalAcceleratedKeys
 	case gtx.Focused(&st.viewShellEdit):
 		st.focus = settingsKeyboardFocusViewerShell
 	case gtx.Focused(&st.viewRemoteSearchCommandEdit):
@@ -278,6 +282,7 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		order = append(order, settingsKeyboardFocusGeneralDimInactive)
 		order = append(order, settingsKeyboardFocusGeneralFavoritesNewTab)
 		order = append(order, settingsKeyboardFocusGeneralCompletionSound)
+		order = append(order, settingsKeyboardFocusGeneralTerminalAcceleratedKeys)
 	case "fonts":
 		if len(resources.BundledFontFamilies()) > 0 {
 			order = append(order, settingsKeyboardFocusFontsInterfaceFont)
@@ -485,6 +490,9 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 		return true
 	case settingsKeyboardFocusViewerHideFunctionBar:
 		st.viewHideFunctionBarBool.Value = !st.viewHideFunctionBarBool.Value
+		return true
+	case settingsKeyboardFocusGeneralTerminalAcceleratedKeys:
+		st.terminalAcceleratedKeysBool.Value = !st.terminalAcceleratedKeysBool.Value
 		return true
 	default:
 		return false

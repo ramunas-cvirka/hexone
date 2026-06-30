@@ -223,6 +223,44 @@ func TestViewerFunctionBarAutoHideCanBeTemporarilyShown(t *testing.T) {
 	}
 }
 
+func TestTerminalMaximizedFunctionBarAutoHideCanBeTemporarilyShown(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 10, 5, 0, 0, time.UTC)
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.Maximized = true
+	st := newTerminalSession(nil)
+	st.setActive(true)
+	ui := &UI{
+		fmCfg:             cfg,
+		terminal:          st,
+		functionBarHidden: true,
+	}
+
+	if ui.functionBarVisible() {
+		t.Fatal("maximized terminal should hide function bar by default")
+	}
+	if ui.functionBarTerminalShown {
+		t.Fatal("terminal override should start disabled")
+	}
+
+	if !ui.toggleFunctionBarVisibility(now) {
+		t.Fatal("toggleFunctionBarVisibility should succeed")
+	}
+	if !ui.functionBarVisible() {
+		t.Fatal("F11 should temporarily show the function bar over maximized terminal")
+	}
+	if !ui.functionBarTerminalShown {
+		t.Fatal("terminal override should be enabled after showing the bar")
+	}
+	if !ui.functionBarHidden {
+		t.Fatal("global manual hidden state should be preserved while terminal override is active")
+	}
+
+	cfg.Terminal.Maximized = false
+	if ui.functionBarVisible() {
+		t.Fatal("manual hidden state should resume after terminal leaves maximized mode")
+	}
+}
+
 func TestFunctionBarToolsOpenSeedsKeyboardSelectionFromActiveTool(t *testing.T) {
 	now := time.Date(2026, time.March, 11, 10, 0, 0, 0, time.UTC)
 	ui := &UI{

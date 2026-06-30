@@ -54,6 +54,7 @@ type terminalTabSet struct {
 	prevClick   widget.Clickable
 	nextClick   widget.Clickable
 	addClick    widget.Clickable
+	maxClick    widget.Clickable
 }
 
 type appTabItem struct {
@@ -457,18 +458,37 @@ func (ui *UI) layoutTerminalTabStrip(th *material.Theme, gtx layout.Context) lay
 			active: i == ui.terminalTabs.active,
 		})
 	}
-	actions, dims := ui.layoutAppTabStrip(th, gtx, items, &ui.terminalTabs.scroll, &ui.terminalTabs.tabClicks, &ui.terminalTabs.closeClicks, &ui.terminalTabs.prevClick, &ui.terminalTabs.nextClick, &ui.terminalTabs.addClick)
-	if actions.selectIdx >= 0 {
-		ui.activateTerminalTab(actions.selectIdx)
-		gtx.Execute(opInvalidate())
+	for ui.terminalTabs.maxClick.Clicked(gtx) {
+		if ui.toggleTerminalMaximized() {
+			gtx.Execute(opInvalidate())
+		}
 	}
-	if actions.closeIdx >= 0 && ui.closeTerminalTab(actions.closeIdx) {
-		gtx.Execute(opInvalidate())
+	icon := uitheme.FullscreenIcon()
+	if ui.terminalMaximized() {
+		icon = uitheme.FullscreenExitIcon()
 	}
-	if actions.add && ui.addTerminalTab() {
-		gtx.Execute(opInvalidate())
-	}
-	return dims
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			actions, dims := ui.layoutAppTabStrip(th, gtx, items, &ui.terminalTabs.scroll, &ui.terminalTabs.tabClicks, &ui.terminalTabs.closeClicks, &ui.terminalTabs.prevClick, &ui.terminalTabs.nextClick, &ui.terminalTabs.addClick)
+			if actions.selectIdx >= 0 {
+				ui.activateTerminalTab(actions.selectIdx)
+				gtx.Execute(opInvalidate())
+			}
+			if actions.closeIdx >= 0 && ui.closeTerminalTab(actions.closeIdx) {
+				gtx.Execute(opInvalidate())
+			}
+			if actions.add && ui.addTerminalTab() {
+				gtx.Execute(opInvalidate())
+			}
+			return dims
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutTabStripSeparator(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutTabStripButton(th, gtx, &ui.terminalTabs.maxClick, icon, true)
+		}),
+	)
 }
 
 func (ui *UI) layoutAppTabStrip(

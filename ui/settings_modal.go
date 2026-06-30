@@ -221,6 +221,7 @@ type settingsModalState struct {
 	tabsFontPickerAnim           settingsChoiceAnim
 	viewFontPickerAnim           settingsChoiceAnim
 	terminalFontPickerAnim       settingsChoiceAnim
+	terminalAcceleratedKeysBool  widget.Bool
 	generalDimInactiveBool       widget.Bool
 	generalFavoritesNewTabBool   widget.Bool
 	generalCompletionSound       string
@@ -546,6 +547,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.tabsFontSizeSp = settingsNormalizedFontSize(cfg.Tabs.FontSizeSp, 10)
 	st.viewFontSizeSp = settingsNormalizedFontSize(cfg.Viewer.FontSizeSp, 13)
 	st.terminalFontSizeSp = settingsNormalizedFontSize(cfg.Terminal.FontSizeSp, 13)
+	st.terminalAcceleratedKeysBool.Value = cfg.Terminal.AcceleratedKeys
 	st.interfaceFontPickerAnim = settingsChoiceAnim{}
 	st.paneFontPickerAnim = settingsChoiceAnim{}
 	st.tabsFontPickerAnim = settingsChoiceAnim{}
@@ -2860,6 +2862,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.Typeface = st.viewFontFamily
 	ui.fmCfg.Terminal.Typeface = st.terminalFontFamily
 	ui.fmCfg.Terminal.FontSizeSp = terminalFontSize
+	ui.fmCfg.Terminal.AcceleratedKeys = st.terminalAcceleratedKeysBool.Value
 	ui.fmCfg.Viewer.Command = cmd
 	ui.fmCfg.Viewer.Shell = shell
 	ui.fmCfg.Viewer.RemoteSearchCommand = fm.NormalizeViewerRemoteSearchCommand(st.viewRemoteSearchCommandEdit.Text())
@@ -3655,26 +3658,96 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			before := st.generalFavoritesNewTabBool.Value
-			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalFavoritesNewTabBool, "Open favorites in a new tab", ui.scaleModalFontSize(10))
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalFavoritesNewTabBool, "Open ☆ favorites in a new tab", ui.scaleModalFontSize(10))
 			if st.generalFavoritesNewTabBool.Value != before {
 				st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
 			}
 			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralFavoritesNewTab, &st.generalFavoritesNewTabBool)
 			return dims
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsCompletionSoundRow(th, gtx, st)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body2(th, "Favorites are managed from the '☆' menu. Use the Config tab for full hexone.yaml editing.")
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleModalFontSize(11)
-			lbl.Color = hintColor
-			return lbl.Layout(gtx)
+			before := st.terminalAcceleratedKeysBool.Value
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.terminalAcceleratedKeysBool, "Terminal: accelerate Left, Right, Backspace, and Del", ui.scaleModalFontSize(10))
+			if st.terminalAcceleratedKeysBool.Value != before {
+				st.focus = settingsKeyboardFocusGeneralTerminalAcceleratedKeys
+			}
+			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralTerminalAcceleratedKeys, &st.terminalAcceleratedKeysBool)
+			return dims
 		}),
 	)
+}
+
+func (ui *UI) layoutSettingsHelpIcon(th *material.Theme, gtx layout.Context, click *widget.Clickable, helpText string) layout.Dimensions {
+	if click == nil || strings.TrimSpace(helpText) == "" {
+		return layout.Dimensions{}
+	}
+	size := gtx.Dp(unit.Dp(16))
+	if size < 12 {
+		size = 12
+	}
+	hovered := click.Hovered()
+	dims := click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if gtx.Enabled() {
+			pointer.CursorPointer.Add(gtx.Ops)
+		}
+		rect := image.Rect(0, 0, size, size)
+		bg := color.NRGBA{R: 34, G: 36, B: 40, A: 228}
+		border := color.NRGBA{R: 255, G: 255, B: 255, A: 50}
+		fg := hintColor
+		if hovered {
+			bg = color.NRGBA{R: 50, G: 54, B: 60, A: 246}
+			border = color.NRGBA{R: 214, G: 198, B: 166, A: 138}
+			fg = color.NRGBA{R: 230, G: 224, B: 208, A: 255}
+		}
+		rr := clip.UniformRRect(rect, size/2)
+		paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
+		paint.FillShape(gtx.Ops, border, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1}.Op())
+
+		lbl := material.Caption(th, "?")
+		lbl.Font.Typeface = ui.interfaceTypeface()
+		lbl.Font.Weight = font.Bold
+		lbl.TextSize = ui.scaleModalFontSize(9)
+		lbl.Color = fg
+		labelGtx := gtx
+		labelGtx.Constraints = layout.Exact(rect.Size())
+		return layout.Center.Layout(labelGtx, lbl.Layout)
+	})
+	if hovered {
+		gtx.Execute(op.InvalidateCmd{})
+		m := op.Record(gtx.Ops)
+		tipGtx := gtx
+		tipGtx.Constraints = layout.Constraints{
+			Max: image.Pt(gtx.Dp(unit.Dp(260)), gtx.Dp(unit.Dp(120))),
+		}
+		ui.layoutSettingsHelpTooltip(th, tipGtx, helpText)
+		call := m.Stop()
+		offset := image.Pt(dims.Size.X+gtx.Dp(unit.Dp(6)), -gtx.Dp(unit.Dp(4)))
+		stack := op.Offset(offset).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		stack.Pop()
+	}
+	return dims
+}
+
+func (ui *UI) layoutSettingsHelpTooltip(th *material.Theme, gtx layout.Context, text string) layout.Dimensions {
+	bg := color.NRGBA{R: 24, G: 26, B: 30, A: 252}
+	border := color.NRGBA{R: 255, G: 255, B: 255, A: 38}
+	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(6)), bg, border, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, text)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
+			lbl.Color = color.NRGBA{R: 214, G: 218, B: 224, A: 255}
+			lbl.MaxLines = 3
+			lbl.Truncator = "..."
+			return lbl.Layout(gtx)
+		})
+	})
 }
 
 func settingsCompletionSoundOptions() []terminalShellOption {
@@ -3686,22 +3759,12 @@ func settingsCompletionSoundOptions() []terminalShellOption {
 }
 
 func (ui *UI) layoutSettingsCompletionSoundRow(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
-	labelW := gtx.Dp(unit.Dp(104))
-	if labelW < 80 {
-		labelW = 80
-	}
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, labelW, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, "Completion sound")
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleModalFontSize(10)
-				lbl.Color = hintColor
-				return lbl.Layout(gtx)
-			})
+			return settingsViewerRowLabel(ui, th, "Completion sound", true)(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsShellPicker(
 				th,
 				gtx,

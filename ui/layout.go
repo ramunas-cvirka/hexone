@@ -146,6 +146,7 @@ type UI struct {
 	functionBarClicks           [10]widget.Clickable
 	functionBarHidden           bool
 	functionBarViewerShown      bool
+	functionBarTerminalShown    bool
 	customCommandMenuOpen       bool
 	customCommandMenuButtonRect image.Rectangle
 	customCommandMenuRect       image.Rectangle
@@ -770,6 +771,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 					return ui.layoutFunctionBar(th, gtx)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					if ui.terminalMaximized() {
+						return ui.layoutTerminalPane(th, gtx)
+					}
 					switch ui.Tabs.Value {
 					case "tab0":
 						ui.wantFocusTable = true
@@ -788,7 +792,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 					}
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+					if ui == nil || ui.terminal == nil || !ui.terminal.active() || ui.terminalMaximized() {
 						return layout.Dimensions{}
 					}
 					return ui.layoutTerminalPane(th, gtx)
@@ -798,6 +802,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 			return dims
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			if ui != nil && ui.terminalMaximized() {
+				return layout.Dimensions{Size: gtx.Constraints.Max}
+			}
 			return ui.layoutTerminalResizeHandle(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -1024,6 +1031,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		ui.handleTerminalFocusToggleKey(gtx)
 	}
 	if ui != nil && ui.terminalFocused(gtx) {
+		ui.handleTerminalFunctionBarToggleKey(gtx)
 		ui.handleTerminalToggleKey(gtx)
 		ui.handleGlobalSettingsShortcut(gtx)
 		return
