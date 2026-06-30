@@ -146,6 +146,7 @@ type UI struct {
 	functionBarClicks           [10]widget.Clickable
 	functionBarHidden           bool
 	functionBarViewerShown      bool
+	functionBarTerminalShown    bool
 	customCommandMenuOpen       bool
 	customCommandMenuButtonRect image.Rectangle
 	customCommandMenuRect       image.Rectangle
@@ -179,6 +180,7 @@ type UI struct {
 	typeface                    font.Typeface
 	textSize                    unit.Sp
 	invalidate                  func()
+	windowFocused               bool
 	fileKeys                    fileKeyMap
 	activeFilePane              int
 	filePaneTabs                []filePaneTabSet
@@ -234,6 +236,7 @@ func NewUI(cfg *fm.Config) *UI {
 		functionBarToolsSelected:   -1,
 		functionBarSliderPrevIndex: -1,
 		functionBarSliderIndex:     -1,
+		windowFocused:              true,
 	}
 	ui.Tabs.Value = "tab0"
 
@@ -282,6 +285,44 @@ func (ui *UI) mainTypeface() font.Typeface {
 		return font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 	}
 	return ui.typeface
+}
+
+func (ui *UI) interfaceTypeface() font.Typeface {
+	if ui == nil || ui.fmCfg == nil || ui.fmCfg.Interface.Typeface == "" {
+		return font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
+	}
+	return font.Typeface(ui.fmCfg.Interface.Typeface)
+}
+
+func (ui *UI) interfaceBaseTextSize() unit.Sp {
+	if ui == nil || ui.fmCfg == nil {
+		return defaultUIFontSp
+	}
+	return normalizeUIFontSize(unit.Sp(ui.fmCfg.Interface.FontSizeSp))
+}
+
+func (ui *UI) scaleInterfaceFontSize(size unit.Sp) unit.Sp {
+	return scaleFontSize(ui.interfaceBaseTextSize(), size)
+}
+
+func (ui *UI) scaleModalFontSize(size unit.Sp) unit.Sp {
+	out := unit.Sp(float32(ui.scaleInterfaceFontSize(size)) * modalFontScale)
+	if out < 1 {
+		return 1
+	}
+	return out
+}
+
+func (ui *UI) scaleDialogFontSize(size unit.Sp) unit.Sp {
+	return ui.scaleInterfaceFontSize(size)
+}
+
+func (ui *UI) scaleInterfaceDp(size unit.Dp) unit.Dp {
+	scale := float32(ui.interfaceBaseTextSize()) / float32(defaultUIFontSp)
+	if scale <= 0 {
+		scale = 1
+	}
+	return unit.Dp(float32(size) * scale)
 }
 
 func (ui *UI) viewerTypeface() font.Typeface {
@@ -340,20 +381,27 @@ func scaleThemeFontSize(th *material.Theme, size unit.Sp) unit.Sp {
 	return scaleFontSize(themeFontSize(th), size)
 }
 
-func scaleModalThemeFontSize(th *material.Theme, size unit.Sp) unit.Sp {
-	out := unit.Sp(float32(scaleThemeFontSize(th, size)) * modalFontScale)
+func scaleConfigFontSize(cfg *fm.Config, size unit.Sp) unit.Sp {
+	return scaleFontSize(fontSizeFromConfig(cfg), size)
+}
+
+func interfaceFontSizeFromConfig(cfg *fm.Config) unit.Sp {
+	if cfg == nil {
+		return defaultUIFontSp
+	}
+	return normalizeUIFontSize(unit.Sp(cfg.Interface.FontSizeSp))
+}
+
+func scaleInterfaceConfigFontSize(cfg *fm.Config, size unit.Sp) unit.Sp {
+	return scaleFontSize(interfaceFontSizeFromConfig(cfg), size)
+}
+
+func scaleModalConfigFontSize(cfg *fm.Config, size unit.Sp) unit.Sp {
+	out := unit.Sp(float32(scaleInterfaceConfigFontSize(cfg, size)) * modalFontScale)
 	if out < 1 {
 		return 1
 	}
 	return out
-}
-
-func scaleDialogThemeFontSize(th *material.Theme, size unit.Sp) unit.Sp {
-	return scaleThemeFontSize(th, size)
-}
-
-func scaleConfigFontSize(cfg *fm.Config, size unit.Sp) unit.Sp {
-	return scaleFontSize(fontSizeFromConfig(cfg), size)
 }
 
 func clamp01(v float32) float32 {
@@ -723,6 +771,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 					return ui.layoutFunctionBar(th, gtx)
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					if ui.terminalMaximized() {
+						return ui.layoutTerminalPane(th, gtx)
+					}
 					switch ui.Tabs.Value {
 					case "tab0":
 						ui.wantFocusTable = true
@@ -741,7 +792,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 					}
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+					if ui == nil || ui.terminal == nil || !ui.terminal.active() || ui.terminalMaximized() {
 						return layout.Dimensions{}
 					}
 					return ui.layoutTerminalPane(th, gtx)
@@ -751,6 +802,9 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 			return dims
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			if ui != nil && ui.terminalMaximized() {
+				return layout.Dimensions{Size: gtx.Constraints.Max}
+			}
 			return ui.layoutTerminalResizeHandle(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -977,6 +1031,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		ui.handleTerminalFocusToggleKey(gtx)
 	}
 	if ui != nil && ui.terminalFocused(gtx) {
+		ui.handleTerminalFunctionBarToggleKey(gtx)
 		ui.handleTerminalToggleKey(gtx)
 		ui.handleGlobalSettingsShortcut(gtx)
 		return

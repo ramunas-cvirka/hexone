@@ -141,9 +141,10 @@ type Table struct {
 	ScrollbarThumbHover color.NRGBA
 	ScrollbarThumbDrag  color.NRGBA
 
-	viewRows         int
-	briefRowsPerCol  int
-	briefVisibleCols int
+	viewRows          int
+	partialRowVisible bool
+	briefRowsPerCol   int
+	briefVisibleCols  int
 
 	rowClicks []widget.Clickable
 
@@ -313,10 +314,95 @@ func (t *Table) pageStep() int {
 		}
 		return rowsPerCol * cols
 	}
+	if visible := t.fullModeVisibleRows(); visible > 0 {
+		return visible
+	}
 	if t.List.Position.Count > 0 {
 		return t.List.Position.Count
 	}
 	return 10
+}
+
+func (t *Table) fullModeVisibleRows() int {
+	if t == nil {
+		return 0
+	}
+	visible := t.viewRows
+	if t.partialRowVisible {
+		visible++
+	}
+	if visible < 1 {
+		visible = 1
+	}
+	return visible
+}
+
+func intersectingRows(height, rowHeight int) int {
+	if height <= 0 || rowHeight <= 0 {
+		return 1
+	}
+	rows := height / rowHeight
+	if height%rowHeight != 0 {
+		rows++
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
+func partialRowViewportHeight(height, rowHeight, minimumPartial int) int {
+	if height <= 0 || rowHeight <= 0 {
+		return height
+	}
+	completeHeight := height / rowHeight * rowHeight
+	remainder := height - completeHeight
+	if completeHeight == 0 || remainder == 0 {
+		return height
+	}
+	if minimumPartial < 1 {
+		minimumPartial = 1
+	}
+	if minimumPartial > rowHeight {
+		minimumPartial = rowHeight
+	}
+	if remainder < minimumPartial {
+		return completeHeight
+	}
+	return height
+}
+
+func (t *Table) minimumPartialRowHeight(gtx layout.Context, rowHeight int, m Model) int {
+	if rowHeight <= 0 {
+		return 1
+	}
+	pad := gtx.Dp(t.RowPadY)
+	cellHeight := rowHeight - 2*pad
+	if cellHeight < 1 {
+		cellHeight = 1
+	}
+	// Add a small line-metric allowance to the configured text size, then
+	// find the bottom edge of that content when vertically centered.
+	textHeight := gtx.Sp(t.TextSize) + 2
+	if textHeight > cellHeight {
+		textHeight = cellHeight
+	}
+	minimum := pad + (cellHeight-textHeight)/2 + textHeight
+	if _, hasIcons := m.(LeadingIconModel); hasIcons {
+		// Parent/link glyphs are the tallest leading icons and leave roughly
+		// two pixels below them in a normal row.
+		iconBottom := rowHeight - 2
+		if iconBottom > minimum {
+			minimum = iconBottom
+		}
+	}
+	if minimum < 1 {
+		minimum = 1
+	}
+	if minimum > rowHeight {
+		minimum = rowHeight
+	}
+	return minimum
 }
 
 func (t *Table) columnStep() int {
@@ -960,7 +1046,11 @@ func (t *Table) HitRow(pos image.Point, n int) int {
 	}
 
 	if t.Mode != ModeBrief {
-		row := t.List.Position.First + pos.Y/t.rowHeightPx
+		contentY := pos.Y + t.List.Position.Offset
+		if contentY < 0 {
+			return -1
+		}
+		row := t.List.Position.First + contentY/t.rowHeightPx
 		if row < 0 || row >= n {
 			return -1
 		}
@@ -1065,21 +1155,23 @@ func (t *Table) RowRect(row, n int) (image.Rectangle, bool) {
 		}
 		y := t.hitOffset.Y + rowInCol*t.rowHeightPx
 		rect := image.Rect(x, y, x+w, y+t.rowHeightPx)
-		if !rect.Overlaps(image.Rect(t.hitOffset.X, t.hitOffset.Y, t.hitOffset.X+t.hitSize.X, t.hitOffset.Y+t.hitSize.Y)) {
+		viewport := image.Rect(t.hitOffset.X, t.hitOffset.Y, t.hitOffset.X+t.hitSize.X, t.hitOffset.Y+t.hitSize.Y)
+		if !rect.Overlaps(viewport) {
 			return image.Rectangle{}, false
 		}
-		return rect, true
+		return rect.Intersect(viewport), true
 	default:
 		visibleRow := row - t.List.Position.First
 		if visibleRow < 0 {
 			return image.Rectangle{}, false
 		}
-		y := t.hitOffset.Y + visibleRow*t.rowHeightPx
+		y := t.hitOffset.Y + visibleRow*t.rowHeightPx - t.List.Position.Offset
 		rect := image.Rect(t.hitOffset.X, y, t.hitOffset.X+t.hitSize.X, y+t.rowHeightPx)
-		if rect.Min.Y < t.hitOffset.Y || rect.Max.Y > t.hitOffset.Y+t.hitSize.Y {
+		viewport := image.Rect(t.hitOffset.X, t.hitOffset.Y, t.hitOffset.X+t.hitSize.X, t.hitOffset.Y+t.hitSize.Y)
+		if !rect.Overlaps(viewport) {
 			return image.Rectangle{}, false
 		}
-		return rect, true
+		return rect.Intersect(viewport), true
 	}
 }
 
@@ -1266,7 +1358,7 @@ func (t *Table) scrollbarMetrics(n int) (items, visible, maxFirst int) {
 		visible = t.briefVisibleCols
 	} else {
 		items = n
-		visible = t.viewRows
+		visible = t.fullModeVisibleRows()
 	}
 	if visible < 1 {
 		visible = 1
@@ -1459,6 +1551,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 	t.hitSize = image.Point{}
 	t.fullModeWidths = nil
 	t.rowHeightPx = 0
+	t.partialRowVisible = false
 	t.briefColPx = 0
 	t.briefGapPx = 0
 	t.briefLastColExtraPx = 0
@@ -1496,16 +1589,15 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 		if innerH < 1 {
 			innerH = 1
 		}
+		minimumPartialH := t.minimumPartialRowHeight(gtx, rowHpx, m)
 
 		if t.Mode == ModeBrief {
 			briefViewportW := innerW
 			contentH := innerH
 			scrollbarH := t.scrollbarThicknessPx(gtx, innerH)
 
-			t.viewRows = contentH / rowHpx
-			if t.viewRows < 1 {
-				t.viewRows = 1
-			}
+			listH := partialRowViewportHeight(contentH, rowHpx, minimumPartialH)
+			t.viewRows = intersectingRows(listH, rowHpx)
 			t.briefRowsPerCol = t.viewRows
 			t.briefVisibleCols = 1
 			t.computeBriefLayout(gtx, n, briefViewportW)
@@ -1516,15 +1608,13 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 				if contentH < 1 {
 					contentH = 1
 				}
-				t.viewRows = contentH / rowHpx
-				if t.viewRows < 1 {
-					t.viewRows = 1
-				}
+				listH = partialRowViewportHeight(contentH, rowHpx, minimumPartialH)
+				t.viewRows = intersectingRows(listH, rowHpx)
 				t.briefRowsPerCol = t.viewRows
 				t.computeBriefLayout(gtx, n, briefViewportW)
 				itemCount = t.listItemCount(n)
 			}
-			t.hitSize = image.Pt(briefViewportW, contentH)
+			t.hitSize = image.Pt(briefViewportW, listH)
 			t.clampListPos(itemCount)
 
 			// If selection changed by click in previous frame, ensure visible now (after Count exists).
@@ -1540,19 +1630,22 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 			listGtx := gtx
 			listGtx.Constraints.Min.X = briefViewportW
 			listGtx.Constraints.Max.X = briefViewportW
-			listGtx.Constraints.Min.Y = contentH
-			listGtx.Constraints.Max.Y = contentH
+			listGtx.Constraints.Min.Y = listH
+			listGtx.Constraints.Max.Y = listH
 			_ = t.layoutBrief(th, listGtx, m, n, rowHpx, itemCount)
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}
 
 		contentW := innerW
 		scrollbarW := t.scrollbarThicknessPx(gtx, innerW)
-		t.viewRows = innerH / rowHpx
+		listH := partialRowViewportHeight(innerH, rowHpx, minimumPartialH)
+		completeRows := listH / rowHpx
+		t.viewRows = completeRows
 		if t.viewRows < 1 {
 			t.viewRows = 1
 		}
-		needScrollbar := n > t.viewRows && scrollbarW > 0 && contentW > scrollbarW
+		t.partialRowVisible = completeRows > 0 && listH%rowHpx != 0
+		needScrollbar := int64(n)*int64(rowHpx) > int64(listH) && scrollbarW > 0 && contentW > scrollbarW
 		if needScrollbar {
 			contentW = innerW - scrollbarW
 			if contentW < 1 {
@@ -1571,36 +1664,20 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 			t.ensureVisible(n)
 		}
 
-		listH := t.viewRows * rowHpx
-		if listH > innerH {
-			listH = innerH
-		}
-		if listH < 1 {
-			listH = innerH
-		}
+		// Avoid drawing an accidental-looking sliver. Once at least half a row
+		// fits, use all remaining height rather than artificially clipping it.
 		t.hitSize = image.Pt(contentW, listH)
-		spareH := innerH - listH
 		if needScrollbar {
 			track := image.Rect(t.hitOffset.X+contentW, t.hitOffset.Y, t.hitOffset.X+contentW+scrollbarW, t.hitOffset.Y+innerH)
 			t.setScrollbarGeometry(gtx, layout.Vertical, track, n)
 		}
 
-		_ = layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				listGtx := gtx
-				listGtx.Constraints.Min.X = contentW
-				listGtx.Constraints.Max.X = contentW
-				listGtx.Constraints.Min.Y = listH
-				listGtx.Constraints.Max.Y = listH
-				return t.layoutFull(th, listGtx, m, n, rowHpx)
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if spareH <= 0 {
-					return layout.Dimensions{}
-				}
-				return layout.Dimensions{Size: image.Pt(contentW, spareH)}
-			}),
-		)
+		listGtx := gtx
+		listGtx.Constraints.Min.X = contentW
+		listGtx.Constraints.Max.X = contentW
+		listGtx.Constraints.Min.Y = listH
+		listGtx.Constraints.Max.Y = listH
+		_ = t.layoutFull(th, listGtx, m, n, rowHpx)
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	})
 	if !t.scrollbarVisible && !t.scrollbarDragging {

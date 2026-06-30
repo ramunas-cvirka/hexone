@@ -50,6 +50,10 @@ const (
 	ViewerFileEncodingUTF16LE = "utf-16le"
 	ViewerFileEncodingUTF16BE = "utf-16be"
 	ViewerFileEncodingCP437   = "cp437"
+
+	CompletionSoundNever      = "never"
+	CompletionSoundAlways     = "always"
+	CompletionSoundBackground = "background"
 )
 
 type NameCompact struct {
@@ -143,9 +147,11 @@ type SortConfig struct {
 }
 
 type TerminalConfig struct {
-	HeightRows int     `yaml:"height_rows"`
-	Typeface   string  `yaml:"typeface"`
-	FontSizeSp float32 `yaml:"font_size_sp"`
+	HeightRows      int     `yaml:"height_rows"`
+	Typeface        string  `yaml:"typeface"`
+	FontSizeSp      float32 `yaml:"font_size_sp"`
+	AcceleratedKeys bool    `yaml:"accelerated_keys"`
+	Maximized       bool    `yaml:"maximized"`
 }
 
 type TabsConfig struct {
@@ -159,6 +165,11 @@ type TabsConfig struct {
 	Color             string  `yaml:"color,omitempty"`
 	AltColor          string  `yaml:"alt_color,omitempty"`
 	ActiveColor       string  `yaml:"active_color,omitempty"`
+}
+
+type InterfaceConfig struct {
+	Typeface   string  `yaml:"typeface"`
+	FontSizeSp float32 `yaml:"font_size_sp"`
 }
 
 func NormalizeViewerShell(raw string) string {
@@ -369,6 +380,7 @@ type GeneralConfig struct {
 	FontSizeSp            float32 `yaml:"font_size_sp"`
 	DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 	OpenFavoritesInNewTab bool    `yaml:"open_favorites_in_new_tab"`
+	CompletionSound       string  `yaml:"completion_sound"`
 }
 
 func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
@@ -377,6 +389,7 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 		FontSizeSp            float32 `yaml:"font_size_sp"`
 		DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 		OpenFavoritesInNewTab *bool   `yaml:"open_favorites_in_new_tab"`
+		CompletionSound       string  `yaml:"completion_sound"`
 	}
 	if err := node.Decode(&raw); err != nil {
 		return err
@@ -388,7 +401,21 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	if raw.OpenFavoritesInNewTab != nil {
 		g.OpenFavoritesInNewTab = *raw.OpenFavoritesInNewTab
 	}
+	g.CompletionSound = NormalizeCompletionSound(raw.CompletionSound)
 	return nil
+}
+
+func NormalizeCompletionSound(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case CompletionSoundNever, "none", "off", "disabled", "false":
+		return CompletionSoundNever
+	case CompletionSoundAlways, "on", "enabled", "true":
+		return CompletionSoundAlways
+	case "", CompletionSoundBackground, "background_only", "background-only", "background only", "unfocused", "not_focused", "not-focused", "app_not_focused", "app-not-focused":
+		return CompletionSoundBackground
+	default:
+		return CompletionSoundBackground
+	}
 }
 
 type legacyFontConfig struct {
@@ -489,6 +516,7 @@ type Config struct {
 	Sort              SortConfig           `yaml:"sort"`
 	Terminal          TerminalConfig       `yaml:"terminal"`
 	Tabs              TabsConfig           `yaml:"tabs"`
+	Interface         InterfaceConfig      `yaml:"interface"`
 	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
@@ -508,6 +536,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Sort              SortConfig           `yaml:"sort"`
 		Terminal          TerminalConfig       `yaml:"terminal"`
 		Tabs              TabsConfig           `yaml:"tabs"`
+		Interface         InterfaceConfig      `yaml:"interface"`
 		Font              legacyFontConfig     `yaml:"font"`
 		General           GeneralConfig        `yaml:"general"`
 		Colors            ColorsConfig         `yaml:"colors"`
@@ -516,8 +545,12 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Viewer            ViewerConfig         `yaml:"viewer"`
 		SSH               SSHConfig            `yaml:"ssh"`
 	}{
+		Terminal: TerminalConfig{
+			AcceleratedKeys: true,
+		},
 		General: GeneralConfig{
 			OpenFavoritesInNewTab: true,
+			CompletionSound:       CompletionSoundBackground,
 		},
 		Viewer: ViewerConfig{
 			SmoothScrolling: true,
@@ -544,6 +577,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Sort:              raw.Sort,
 		Terminal:          raw.Terminal,
 		Tabs:              raw.Tabs,
+		Interface:         raw.Interface,
 		General:           raw.General,
 		Colors:            raw.Colors,
 		Associations:      raw.Associations,
@@ -575,9 +609,10 @@ func DefaultConfig() *Config {
 			DirectoriesFirst: true,
 		},
 		Terminal: TerminalConfig{
-			HeightRows: defaultTerminalHeightRows,
-			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
-			FontSizeSp: 13,
+			HeightRows:      defaultTerminalHeightRows,
+			Typeface:        resources.BundledFontFamilyFiraCodeNerdFontMono,
+			FontSizeSp:      13,
+			AcceleratedKeys: true,
 		},
 		Tabs: TabsConfig{
 			WidthMode:    "variable",
@@ -587,11 +622,16 @@ func DefaultConfig() *Config {
 			Typeface:     resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp:   10,
 		},
+		Interface: InterfaceConfig{
+			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
+			FontSizeSp: 14,
+		},
 		General: GeneralConfig{
 			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp:            14,
 			DimInactivePanes:      true,
 			OpenFavoritesInNewTab: true,
+			CompletionSound:       CompletionSoundBackground,
 		},
 		Colors: ColorsConfig{
 			FilePaneBackground:  DefaultFilePaneBackgroundHex,
@@ -895,6 +935,13 @@ func (c *Config) normalize() {
 	}
 	if c.General.FontSizeSp <= 0 {
 		c.General.FontSizeSp = 14
+	}
+	c.General.CompletionSound = NormalizeCompletionSound(c.General.CompletionSound)
+	if c.Interface.Typeface == "" || !resources.IsBundledFontFamily(c.Interface.Typeface) {
+		c.Interface.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
+	}
+	if c.Interface.FontSizeSp < 6 {
+		c.Interface.FontSizeSp = 14
 	}
 	if c.Tabs.Typeface == "" {
 		c.Tabs.Typeface = c.General.Typeface

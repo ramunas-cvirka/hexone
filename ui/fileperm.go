@@ -389,16 +389,16 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 		}
 	}
 	targetLabel := material.Body2(th, target)
-	targetLabel.Font.Typeface = ui.mainTypeface()
-	targetLabel.TextSize = scaleDialogThemeFontSize(th, 10)
+	targetLabel.Font.Typeface = ui.interfaceTypeface()
+	targetLabel.TextSize = ui.scaleDialogFontSize(10)
 	targetLabel.Font.Weight = font.Medium
 	targetLabel.Color = txtColor
 	targetLabel.MaxLines = 1
 	targetLabel.Truncator = "…"
 
 	pathLabel := material.Caption(th, st.targetPath)
-	pathLabel.Font.Typeface = ui.mainTypeface()
-	pathLabel.TextSize = scaleDialogThemeFontSize(th, 9)
+	pathLabel.Font.Typeface = ui.interfaceTypeface()
+	pathLabel.TextSize = ui.scaleDialogFontSize(9)
 	pathLabel.Color = hintColor
 	pathLabel.MaxLines = 1
 	pathLabel.Truncator = "…"
@@ -408,9 +408,9 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					title := material.Body1(th, "Permissions")
-					title.Font.Typeface = ui.mainTypeface()
+					title.Font.Typeface = ui.interfaceTypeface()
 					title.Font.Weight = font.Bold
-					title.TextSize = scaleDialogThemeFontSize(th, 12)
+					title.TextSize = ui.scaleDialogFontSize(12)
 					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
@@ -437,8 +437,8 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 				return layout.Dimensions{}
 			}
 			lbl := material.Caption(th, st.lastErr)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(9)
 			lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
@@ -448,8 +448,8 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 				return layout.Dimensions{}
 			}
 			lbl := material.Caption(th, "Applying permissions...")
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
@@ -484,8 +484,8 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 	rowLabel := func(title string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, title)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(10)
 			lbl.Color = color.NRGBA{R: 178, G: 178, B: 178, A: 255}
 			return lbl.Layout(gtx)
 		}
@@ -493,17 +493,19 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 	check := func(idx int) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutThemeCheckbox(th, gtx, &st.checks[idx], "", scaleDialogThemeFontSize(th, 10))
+				return ui.layoutThemeCheckbox(th, gtx, &st.checks[idx], "", ui.scaleDialogFontSize(10))
 			})
 		}
 	}
 	colLabel := func(title string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, title)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(10)
 			lbl.Font.Weight = font.Medium
 			lbl.Color = color.NRGBA{R: 196, G: 196, B: 196, A: 255}
+			lbl.MaxLines = 1
+			lbl.Truncator = "…"
 			return layout.Center.Layout(gtx, lbl.Layout)
 		}
 	}
@@ -525,7 +527,7 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 				layout.Rigid(colSpacer),
 				layout.Rigid(cell(colWidthDp, colLabel("Write"))),
 				layout.Rigid(colSpacer),
-				layout.Rigid(cell(colWidthDp, colLabel("Execute"))),
+				layout.Rigid(cell(colWidthDp, colLabel("Exec"))),
 			)
 		}),
 		layout.Rigid(layout.Spacer{Height: headerGapDp}.Layout),
@@ -569,23 +571,23 @@ func (ui *UI) layoutPermMatrix(th *material.Theme, gtx layout.Context, st *fileP
 
 func (ui *UI) layoutPermDigitsEditor(th *material.Theme, gtx layout.Context, st *filePermState) layout.Dimensions {
 	sym := material.Caption(th, formatPermSymbolicGrouped(st.permMode))
-	sym.Font.Typeface = ui.mainTypeface()
-	sym.TextSize = scaleDialogThemeFontSize(th, 9)
+	sym.Font.Typeface = ui.interfaceTypeface()
+	sym.TextSize = ui.scaleDialogFontSize(9)
 	sym.Color = color.NRGBA{R: 186, G: 202, B: 216, A: 255}
 
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, "Octal")
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(9)
 			lbl.Color = color.NRGBA{R: 178, G: 178, B: 178, A: 255}
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(54)), lbl.Layout)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			ed := material.Editor(th, &st.permEdit, "0755")
-			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleDialogThemeFontSize(th, 10)
+			ed.Font.Typeface = ui.interfaceTypeface()
+			ed.TextSize = ui.scaleDialogFontSize(10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(84)), func(gtx layout.Context) layout.Dimensions {

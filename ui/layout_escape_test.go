@@ -127,6 +127,36 @@ func TestShiftTabTogglesTerminalFocusWhenDrawerOpen(t *testing.T) {
 	}
 }
 
+func TestF11ShowsFunctionBarWhenMaximizedTerminalFocused(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.Maximized = true
+	ui := NewUI(cfg)
+	ui.Tabs.Value = "tab0"
+	ui.terminal = newTerminalSession(nil)
+	ui.terminal.setActive(true)
+
+	gtx, router := testKeyContext()
+	gtx.Execute(key.FocusCmd{Tag: &ui.terminal.keyTag})
+	if !ui.terminalFocused(gtx) {
+		t.Fatal("terminal should start focused")
+	}
+	if ui.functionBarVisible() {
+		t.Fatal("maximized terminal should initially auto-hide the function bar")
+	}
+
+	anyMods := ^key.Modifiers(0)
+	router.Event(key.Filter{Name: key.NameF11, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF11, State: key.Press})
+
+	ui.handleGlobalFunctionKeys(gtx)
+	if !ui.functionBarVisible() {
+		t.Fatal("F11 should show the function bar while maximized terminal is focused")
+	}
+	if !ui.functionBarTerminalShown {
+		t.Fatal("F11 should set the terminal function-bar override")
+	}
+}
+
 func TestPlainTabRemainsAvailableWhenTerminalFocused(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	ui.Tabs.Value = "tab0"

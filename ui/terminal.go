@@ -63,6 +63,8 @@ const (
 	terminalSelectAutoScrollTick   = 50 * time.Millisecond
 	terminalSelectAutoScrollNearPx = 20
 	terminalSelectAutoScrollMidPx  = 64
+	terminalSelectAutoScrollAccel1 = 650 * time.Millisecond
+	terminalSelectAutoScrollAccel2 = 1400 * time.Millisecond
 	terminalDoubleClickDur         = 420 * time.Millisecond
 	terminalDoubleClickDist        = 6
 )
@@ -184,6 +186,7 @@ type terminalSession struct {
 	autoScrollDir       int
 	autoScrollStep      int
 	autoScrollAt        time.Time
+	autoScrollStartedAt time.Time
 	menuOpen            bool
 	menuPos             image.Point
 	menuRect            image.Rectangle
@@ -193,6 +196,13 @@ type terminalSession struct {
 	menuHoverAnim       segmentedAnimState
 	pastePending        bool
 	pastePendingAt      time.Time
+
+	inputMu          sync.Mutex
+	keyRepeatActive  bool
+	keyRepeatKey     key.Name
+	keyRepeatStarted time.Time
+	keyRepeatNext    time.Time
+	keyRepeatPeriod  time.Duration
 
 	invalidateMu sync.RWMutex
 	invalidate   func()
@@ -707,6 +717,35 @@ func (ui *UI) toggleTerminal() bool {
 	return true
 }
 
+func (ui *UI) terminalMaximized() bool {
+	return ui != nil &&
+		ui.fmCfg != nil &&
+		ui.fmCfg.Terminal.Maximized &&
+		ui.terminal != nil &&
+		ui.terminal.active()
+}
+
+func (ui *UI) toggleTerminalMaximized() bool {
+	st := ui.ensureTerminalSession()
+	if st == nil || ui.fmCfg == nil {
+		return false
+	}
+	next := !ui.fmCfg.Terminal.Maximized
+	ui.fmCfg.Terminal.Maximized = next
+	ui.functionBarTerminalShown = false
+	st.setActive(true)
+	st.focusKeyboard()
+	ui.closeFunctionBarPopups()
+	ui.resetKeys()
+	if err := ui.saveFMConfigWithOptions("terminal-layout", false); err != nil {
+		st.setError("save terminal layout failed: " + err.Error())
+	}
+	if ui.invalidate != nil {
+		ui.invalidate()
+	}
+	return true
+}
+
 func (ui *UI) handleTerminalFocusToggleKey(gtx layout.Context) bool {
 	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
 		return false
@@ -894,6 +933,27 @@ func (ui *UI) handleTerminalToggleKey(gtx layout.Context) bool {
 	return handled
 }
 
+func (ui *UI) handleTerminalFunctionBarToggleKey(gtx layout.Context) bool {
+	if ui == nil || !ui.terminalMaximized() {
+		return false
+	}
+	handled := false
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameF11})
+		if !ok {
+			return handled
+		}
+		ke, ok := ev.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		handled = true
+		if ke.Modifiers == 0 && ui.toggleFunctionBarVisibility(gtx.Now) {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+}
+
 func (s *terminalSession) setInvalidate(fn func()) {
 	if s == nil {
 		return
@@ -928,6 +988,9 @@ func (s *terminalSession) setActive(active bool) {
 	if s == nil {
 		return
 	}
+	if !active {
+		s.stopKeyRepeat("")
+	}
 	s.procMu.Lock()
 	if active && !s.running {
 		s.startAttempted = false
@@ -952,6 +1015,7 @@ func (s *terminalSession) Close() {
 	if s == nil {
 		return
 	}
+	s.stopKeyRepeat("")
 	s.procMu.Lock()
 	s.closing = true
 	proc := s.pty
@@ -1461,21 +1525,29 @@ func (s *terminalSession) terminalPointFromPosition(pos image.Point, content ima
 	s.State.Mu.RLock()
 	rows := s.State.Rows
 	cols := s.State.Cols
+	viewStart := s.State.ViewStart
 	s.State.Mu.RUnlock()
 	if rows <= 0 || cols <= 0 {
 		return terminalPoint{}, false
 	}
-	displayTop, displayY, displayCount := s.displayRows(cellH)
 	col := (pos.X - content.Min.X) / cellW
-	row := (pos.Y - content.Min.Y - displayY) / cellH
 	if col < 0 {
 		col = 0
 	}
-	if row < 0 {
-		row = 0
-	}
 	if col >= cols {
 		col = cols - 1
+	}
+	if pos.Y < content.Min.Y {
+		return terminalPoint{Row: viewStart, Col: col}, true
+	}
+	if pos.Y >= content.Max.Y {
+		return terminalPoint{Row: viewStart + rows - 1, Col: col}, true
+	}
+
+	displayTop, displayY, displayCount := s.displayRows(cellH)
+	row := (pos.Y - content.Min.Y - displayY) / cellH
+	if row < 0 {
+		row = 0
 	}
 	if displayCount <= 0 {
 		displayCount = rows
@@ -1502,6 +1574,7 @@ func (s *terminalSession) beginSelection(pos image.Point, content image.Rectangl
 	s.autoScrollDir = 0
 	s.autoScrollStep = 0
 	s.autoScrollAt = time.Time{}
+	s.autoScrollStartedAt = time.Time{}
 	s.viewMu.Unlock()
 	return true
 }
@@ -1594,6 +1667,7 @@ func (s *terminalSession) selectWordAtPoint(pt terminalPoint) bool {
 	s.autoScrollDir = 0
 	s.autoScrollStep = 0
 	s.autoScrollAt = time.Time{}
+	s.autoScrollStartedAt = time.Time{}
 	s.viewMu.Unlock()
 	return true
 }
@@ -1659,7 +1733,11 @@ func (s *terminalSession) updateSelectionAutoScrollLocked(pos image.Point, conte
 	s.autoScrollStep = step
 	if dir == 0 || step <= 0 {
 		s.autoScrollAt = time.Time{}
+		s.autoScrollStartedAt = time.Time{}
 		return prevDir != 0 || prevStep != 0 || !prevAt.IsZero()
+	}
+	if prevDir != dir || s.autoScrollStartedAt.IsZero() {
+		s.autoScrollStartedAt = now
 	}
 	if prevDir != dir || prevStep != step {
 		s.autoScrollAt = now
@@ -1676,48 +1754,44 @@ func terminalSelectionAutoScrollParams(pos image.Point, content image.Rectangle)
 	if content.Dx() <= 0 || content.Dy() <= 0 {
 		return 0, 0
 	}
-	margin := terminalSelectionAutoScrollMargin(content.Dy())
-	if margin <= 0 {
-		return 0, 0
-	}
-	topEdge := content.Min.Y + margin
-	bottomEdge := content.Max.Y - margin
 	dist := 0
 	switch {
-	case pos.Y < topEdge:
+	case pos.Y < content.Min.Y:
 		dir = 1
-		dist = topEdge - pos.Y
-	case pos.Y >= bottomEdge:
+		dist = content.Min.Y - pos.Y
+	case pos.Y >= content.Max.Y:
 		dir = -1
-		dist = pos.Y - bottomEdge + 1
+		dist = pos.Y - content.Max.Y + 1
 	default:
 		return 0, 0
 	}
 	return dir, terminalSelectionAutoScrollStep(dist)
 }
 
-func terminalSelectionAutoScrollMargin(height int) int {
-	margin := height / 6
-	if margin < 18 {
-		margin = 18
-	}
-	if margin > 48 {
-		margin = 48
-	}
-	if height > 0 && margin*2 >= height {
-		margin = height / 2
-	}
-	return margin
-}
-
 func terminalSelectionAutoScrollStep(dist int) int {
 	if dist > terminalSelectAutoScrollMidPx {
-		return 7
+		return 6
 	}
 	if dist > terminalSelectAutoScrollNearPx {
-		return 4
+		return 3
 	}
-	return 2
+	return 1
+}
+
+func terminalSelectionAutoScrollStepForElapsed(base int, elapsed time.Duration) int {
+	if base <= 0 {
+		return 0
+	}
+	step := base
+	if elapsed >= terminalSelectAutoScrollAccel2 {
+		step += 3
+	} else if elapsed >= terminalSelectAutoScrollAccel1 {
+		step++
+	}
+	if step > 9 {
+		return 9
+	}
+	return step
 }
 
 func (s *terminalSession) endSelection(id pointer.ID) bool {
@@ -1739,6 +1813,7 @@ func (s *terminalSession) endSelection(id pointer.ID) bool {
 	s.autoScrollDir = 0
 	s.autoScrollStep = 0
 	s.autoScrollAt = time.Time{}
+	s.autoScrollStartedAt = time.Time{}
 	return changed
 }
 
@@ -1764,7 +1839,7 @@ func (s *terminalSession) runSelectionAutoScroll(now time.Time, content image.Re
 		return false
 	}
 	dir := s.autoScrollDir
-	step := s.autoScrollStep
+	step := terminalSelectionAutoScrollStepForElapsed(s.autoScrollStep, now.Sub(s.autoScrollStartedAt))
 	lastPos := s.selectionLastPos
 	s.autoScrollAt = now.Add(terminalSelectAutoScrollTick)
 	s.viewMu.Unlock()
@@ -1774,6 +1849,7 @@ func (s *terminalSession) runSelectionAutoScroll(now time.Time, content image.Re
 		s.autoScrollDir = 0
 		s.autoScrollStep = 0
 		s.autoScrollAt = time.Time{}
+		s.autoScrollStartedAt = time.Time{}
 		s.viewMu.Unlock()
 		return false
 	}
@@ -1810,6 +1886,7 @@ func (s *terminalSession) selectAll() bool {
 	s.autoScrollDir = 0
 	s.autoScrollStep = 0
 	s.autoScrollAt = time.Time{}
+	s.autoScrollStartedAt = time.Time{}
 	changed := !prevActive || prevStart != s.selectionStart || prevEnd != s.selectionEnd
 	s.viewMu.Unlock()
 	return changed
@@ -1827,6 +1904,7 @@ func (s *terminalSession) clearSelection() bool {
 	s.autoScrollDir = 0
 	s.autoScrollStep = 0
 	s.autoScrollAt = time.Time{}
+	s.autoScrollStartedAt = time.Time{}
 	s.viewMu.Unlock()
 	return changed
 }
@@ -1974,6 +2052,21 @@ func (s *terminalSession) pasteText(gtx layout.Context) bool {
 	}
 	s.beginPasteRead(gtx.Now)
 	gtx.Execute(clipboard.ReadCmd{Tag: &s.pasteTag})
+	return true
+}
+
+func (s *terminalSession) pastePrimarySelectionOrClipboard(gtx layout.Context) bool {
+	if s == nil || !s.hasActiveSelection() {
+		return s.pasteText(gtx)
+	}
+	gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
+	data := terminalPasteBytes(s.selectedText(false), s.bracketedPasteMode())
+	if len(data) == 0 {
+		return false
+	}
+	// The terminal selection acts as a primary-selection buffer. Keep it
+	// independent of the system clipboard and visible after it is pasted.
+	s.write(data)
 	return true
 }
 
@@ -3478,8 +3571,15 @@ func terminalConfiguredRows(cfg *fm.Config) int {
 	return fm.NormalizeTerminalHeightRows(cfg.Terminal.HeightRows)
 }
 
+func (ui *UI) terminalAcceleratedKeysEnabled() bool {
+	return ui == nil || ui.fmCfg == nil || ui.fmCfg.Terminal.AcceleratedKeys
+}
+
 func terminalPaneVerticalOverhead(gtx layout.Context) int {
-	return gtx.Dp(unit.Dp(5)) + gtx.Dp(unit.Dp(4))
+	return gtx.Dp(unit.Dp(4)) +
+		gtx.Dp(unit.Dp(tabStripHeightDp)) +
+		gtx.Dp(unit.Dp(3)) +
+		gtx.Dp(unit.Dp(4))
 }
 
 func terminalPaneHeightForRows(gtx layout.Context, cellH, rows int) int {
@@ -3596,6 +3696,9 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		cellH = 16
 	}
 	h := terminalPaneHeight(gtx, cellH, terminalConfiguredRows(ui.fmCfg))
+	if ui.terminalMaximized() {
+		h = gtx.Constraints.Max.Y
+	}
 	if h <= 0 {
 		st.setPaneMetrics(0, cellH)
 		return layout.Dimensions{}
@@ -3634,10 +3737,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		}
 
 		cols := terminalPaneCols(content.Dx(), cellW)
-		rows := content.Dy() / cellH
-		if rows < 1 {
-			rows = 1
-		}
+		content, rows := terminalGridContentRect(content, cellH)
 		st.resize(rows, cols)
 		st.start(ui.terminalStartDir(), ui.terminalShell())
 		st.layoutScrollbar(gtx, content)
@@ -3645,7 +3745,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		if st.handlePointer(gtx, content, cellW, cellH) {
 			gtx.Execute(op.InvalidateCmd{})
 		}
-		if st.handleInput(gtx) {
+		if st.handleInputWithAcceleratedKeys(gtx, ui.terminalAcceleratedKeysEnabled()) {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 		if st.runSelectionAutoScroll(gtx.Now, content, cellW, cellH) {
@@ -3688,6 +3788,15 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 	})
 }
 
+func terminalGridContentRect(content image.Rectangle, cellH int) (image.Rectangle, int) {
+	if cellH <= 0 || content.Dy() < cellH {
+		return content, 1
+	}
+	rows := content.Dy() / cellH
+	content.Min.Y = content.Max.Y - rows*cellH
+	return content, rows
+}
+
 func (ui *UI) handleTerminalResizeRows(rows int, final bool) {
 	if ui == nil {
 		return
@@ -3705,7 +3814,7 @@ func (ui *UI) handleTerminalResizeRows(rows int, final bool) {
 }
 
 func (ui *UI) layoutTerminalResizeHandle(th *material.Theme, gtx layout.Context) layout.Dimensions {
-	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+	if ui == nil || ui.terminal == nil || !ui.terminal.active() || ui.terminalMaximized() {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 	st := ui.terminal
@@ -3733,7 +3842,7 @@ func (ui *UI) layoutTerminalResizeHandle(th *material.Theme, gtx layout.Context)
 }
 
 func (ui *UI) terminalResizeHandleGeometry(th *material.Theme, gtx layout.Context) (image.Rectangle, int, int, bool) {
-	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
+	if ui == nil || ui.terminal == nil || !ui.terminal.active() || ui.terminalMaximized() {
 		return image.Rectangle{}, 0, 0, false
 	}
 	st := ui.terminal
@@ -4750,7 +4859,7 @@ func (s *terminalSession) handlePointer(gtx layout.Context, content image.Rectan
 			if pe.Buttons.Contain(pointer.ButtonTertiary) {
 				s.closeContextMenu()
 				if viewerPointInRect(pos, content) {
-					_ = s.pasteText(gtx)
+					_ = s.pastePrimarySelectionOrClipboard(gtx)
 				}
 				handled = true
 				continue
@@ -5048,8 +5157,15 @@ func (s *terminalSession) contextMenuConsumesPointer(pos image.Point) bool {
 }
 
 func (s *terminalSession) handleInput(gtx layout.Context) bool {
+	return s.handleInputWithAcceleratedKeys(gtx, true)
+}
+
+func (s *terminalSession) handleInputWithAcceleratedKeys(gtx layout.Context, acceleratedKeys bool) bool {
 	anyMods := ^key.Modifiers(0)
 	handled := false
+	if !acceleratedKeys {
+		s.stopKeyRepeat("")
+	}
 	for {
 		ev, ok := gtx.Event(
 			key.FocusFilter{Target: &s.keyTag},
@@ -5082,12 +5198,17 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 			key.Filter{Focus: &s.keyTag, Optional: anyMods},
 		)
 		if !ok {
+			if acceleratedKeys && s.pumpKeyRepeat(gtx) {
+				handled = true
+			}
 			return handled
 		}
 		switch ev := ev.(type) {
 		case key.FocusEvent:
 			if ev.Focus {
 				gtx.Execute(key.SoftKeyboardCmd{Show: true})
+			} else {
+				s.stopKeyRepeat("")
 			}
 		case key.EditEvent:
 			if ev.Text != "" {
@@ -5095,9 +5216,32 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 				handled = true
 			}
 		case key.Event:
+			if ev.State == key.Release {
+				if terminalRepeatableKey(ev.Name) {
+					s.stopKeyRepeat(ev.Name)
+				}
+				continue
+			}
 			if ev.State != key.Press {
 				continue
 			}
+			if acceleratedKeys && terminalPlainRepeatableKey(ev) {
+				if s.keyRepeating(ev.Name) {
+					handled = true // Ignore operating-system repeat events.
+					continue
+				}
+				s.stopKeyRepeat("")
+				if data := terminalKeyBytesForMode(ev, s.cursorKeysApplication()); len(data) > 0 {
+					s.write(data)
+					s.startKeyRepeat(ev.Name, gtx.Now)
+					if next, ok := s.keyRepeatDeadline(); ok {
+						gtx.Execute(op.InvalidateCmd{At: next})
+					}
+					handled = true
+				}
+				continue
+			}
+			s.stopKeyRepeat("")
 			if terminalClearBufferKey(ev) {
 				if s.clearBuffer() {
 					handled = true
@@ -5128,6 +5272,95 @@ func (s *terminalSession) handleInput(gtx layout.Context) bool {
 			}
 		}
 	}
+}
+
+func terminalRepeatableKey(name key.Name) bool {
+	return name == key.NameLeftArrow ||
+		name == key.NameRightArrow ||
+		name == key.NameDeleteBackward ||
+		name == key.NameDeleteForward
+}
+
+func terminalPlainRepeatableKey(ev key.Event) bool {
+	return ev.Modifiers == 0 && terminalRepeatableKey(ev.Name)
+}
+
+func (s *terminalSession) startKeyRepeat(name key.Name, now time.Time) {
+	if s == nil || !terminalRepeatableKey(name) {
+		return
+	}
+	s.inputMu.Lock()
+	s.keyRepeatActive = true
+	s.keyRepeatKey = name
+	s.keyRepeatStarted = now
+	s.keyRepeatPeriod = repeatSlow
+	s.keyRepeatNext = now.Add(repeatStartDelay)
+	s.inputMu.Unlock()
+}
+
+func (s *terminalSession) stopKeyRepeat(name key.Name) bool {
+	if s == nil {
+		return false
+	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	if !s.keyRepeatActive || (name != "" && s.keyRepeatKey != name) {
+		return false
+	}
+	s.keyRepeatActive = false
+	s.keyRepeatKey = ""
+	s.keyRepeatStarted = time.Time{}
+	s.keyRepeatNext = time.Time{}
+	s.keyRepeatPeriod = 0
+	return true
+}
+
+func (s *terminalSession) keyRepeating(name key.Name) bool {
+	if s == nil {
+		return false
+	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return s.keyRepeatActive && s.keyRepeatKey == name
+}
+
+func (s *terminalSession) keyRepeatDeadline() (time.Time, bool) {
+	if s == nil {
+		return time.Time{}, false
+	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return s.keyRepeatNext, s.keyRepeatActive
+}
+
+func (s *terminalSession) pumpKeyRepeat(gtx layout.Context) bool {
+	if s == nil {
+		return false
+	}
+	s.inputMu.Lock()
+	if !s.keyRepeatActive {
+		s.inputMu.Unlock()
+		return false
+	}
+	if gtx.Now.Sub(s.keyRepeatStarted) >= repeatAccelAfter && s.keyRepeatPeriod != repeatFast {
+		s.keyRepeatPeriod = repeatFast
+		if s.keyRepeatNext.Before(gtx.Now) {
+			s.keyRepeatNext = gtx.Now.Add(s.keyRepeatPeriod)
+		}
+	}
+	due := !gtx.Now.Before(s.keyRepeatNext)
+	name := s.keyRepeatKey
+	if due {
+		s.keyRepeatNext = gtx.Now.Add(s.keyRepeatPeriod)
+	}
+	next := s.keyRepeatNext
+	s.inputMu.Unlock()
+
+	if due {
+		s.write(terminalKeyBytesForMode(key.Event{Name: name, State: key.Press}, s.cursorKeysApplication()))
+	}
+	gtx.Execute(op.InvalidateCmd{At: next})
+	return due
 }
 
 func terminalClearBufferKey(ev key.Event) bool {
@@ -5299,6 +5532,12 @@ func (ui *UI) drawTerminalGrid(th *material.Theme, gtx layout.Context, st *termi
 	if st == nil || cellW <= 0 || cellH <= 0 {
 		return
 	}
+	if gtx.Constraints.Max.X <= 0 || gtx.Constraints.Max.Y <= 0 {
+		return
+	}
+	gridClip := clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops)
+	defer gridClip.Pop()
+
 	st.State.Mu.RLock()
 	cursorX := st.State.Cursor.X
 	cursorY := st.State.Cursor.Y

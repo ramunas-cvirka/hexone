@@ -157,6 +157,111 @@ func TestFullModeScrollbarReservesColumnWidth(t *testing.T) {
 	}
 }
 
+func TestFullModeHidesPartialRowBelowMinimum(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
+	tbl.RowHeight = unit.Dp(20)
+	tbl.ScrollbarWidth = unit.Dp(10)
+	// The table's 2px outer inset leaves a 101px viewport: five complete
+	// rows and one pixel of the sixth row.
+	gtx := testTableLayoutContext(image.Pt(120, 105))
+
+	tbl.Layout(th, gtx, tableTestModel{rows: 20})
+
+	if got, want := tbl.hitSize.Y, 100; got != want {
+		t.Fatalf("hit height=%d want complete-row height %d", got, want)
+	}
+	if got, want := tbl.viewRows, 5; got != want {
+		t.Fatalf("complete visible rows=%d want %d", got, want)
+	}
+	if got, want := tbl.pageStep(), 5; got != want {
+		t.Fatalf("page step=%d want intersecting-row count %d", got, want)
+	}
+	if got, want := tbl.List.Position.Count, 5; got != want {
+		t.Fatalf("fully visible list count=%d want %d", got, want)
+	}
+	if got := tbl.HitRow(image.Pt(4, 102), 20); got != -1 {
+		t.Fatalf("sub-threshold remainder hit row %d want none", got)
+	}
+
+	if _, visible, maxFirst := tbl.scrollbarMetrics(20); visible != 5 || maxFirst != 15 {
+		t.Fatalf("scrollbar visible/maxFirst=%d/%d want 5/15", visible, maxFirst)
+	}
+
+	// A row below the minimum preview threshold is not visible, so selecting
+	// it should scroll normally.
+	tbl.Selected = 5
+	tbl.pendingEnsure = true
+	tbl.Layout(th, gtx, tableTestModel{rows: 20})
+	if got, want := tbl.List.Position.First, 1; got != want {
+		t.Fatalf("first row after ensuring partial selection=%d want %d", got, want)
+	}
+	if rect, ok := tbl.RowRect(5, 20); !ok || rect.Dy() != 20 {
+		t.Fatalf("ensured row rect=%v ok=%v want full row", rect, ok)
+	}
+}
+
+func TestPartialRowViewportHeightRequiresContentThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		height int
+		want   int
+	}{
+		{height: 100, want: 100},
+		{height: 101, want: 100},
+		{height: 109, want: 100},
+		{height: 110, want: 100},
+		{height: 117, want: 100},
+		{height: 118, want: 118},
+		{height: 119, want: 119},
+		{height: 120, want: 120},
+	} {
+		if got := partialRowViewportHeight(tc.height, 20, 18); got != tc.want {
+			t.Fatalf("partialRowViewportHeight(%d, 20, 18)=%d want %d", tc.height, got, tc.want)
+		}
+	}
+}
+
+func TestFilePaneStylePartialRowRequiresIntactContent(t *testing.T) {
+	tbl := New([]Column{{Width: unit.Dp(80), Flex: true}})
+	tbl.RowHeight = unit.Dp(18)
+	tbl.RowPadY = 0
+	tbl.TextSize = unit.Sp(13)
+	gtx := testTableLayoutContext(image.Pt(120, 100))
+	model := tableIconTestModel{tableTestModel{rows: 10}}
+
+	minimum := tbl.minimumPartialRowHeight(gtx, 18, model)
+	if got, want := minimum, 16; got != want {
+		t.Fatalf("file-pane partial-row minimum=%d want %d", got, want)
+	}
+	if got, want := partialRowViewportHeight(33, 18, minimum), 18; got != want {
+		t.Fatalf("15px fragment viewport=%d want hidden at %d", got, want)
+	}
+	if got, want := partialRowViewportHeight(34, 18, minimum), 34; got != want {
+		t.Fatalf("16px fragment viewport=%d want full available %d", got, want)
+	}
+}
+
+func TestFullModeUsesAllRemainderAbovePartialMinimum(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
+	tbl.RowHeight = unit.Dp(20)
+	// The 119px inner viewport exposes 19px of the sixth row. Because that is
+	// above the minimum threshold, all 19 available pixels should be used.
+	gtx := testTableLayoutContext(image.Pt(120, 123))
+
+	tbl.Layout(th, gtx, tableTestModel{rows: 20})
+
+	if got, want := tbl.hitSize.Y, 119; got != want {
+		t.Fatalf("partial-row hit height=%d want %d", got, want)
+	}
+	if rect, ok := tbl.RowRect(5, 20); !ok || rect.Dy() != 19 {
+		t.Fatalf("partial row rect=%v ok=%v want 19px", rect, ok)
+	}
+	if got, want := tbl.HitRow(image.Pt(4, 120), 20), 5; got != want {
+		t.Fatalf("available partial-row space hit=%d want row %d", got, want)
+	}
+}
+
 func TestBriefModeScrollbarReservesBottomSpaceAndRecomputesRows(t *testing.T) {
 	th := material.NewTheme()
 	tbl := New([]Column{{Width: unit.Dp(60), MinWidth: unit.Dp(20), Flex: true}})
@@ -175,7 +280,7 @@ func TestBriefModeScrollbarReservesBottomSpaceAndRecomputesRows(t *testing.T) {
 	if tbl.scrollbarAxis != layout.Horizontal {
 		t.Fatalf("scrollbar axis=%v want horizontal", tbl.scrollbarAxis)
 	}
-	if got, want := tbl.briefRowsPerCol, 2; got != want {
+	if got, want := tbl.briefRowsPerCol, 3; got != want {
 		t.Fatalf("rows per brief column=%d want recomputed value %d", got, want)
 	}
 	if got, want := tbl.hitSize.Y, 86; got != want {
@@ -183,6 +288,33 @@ func TestBriefModeScrollbarReservesBottomSpaceAndRecomputesRows(t *testing.T) {
 	}
 	if tbl.HitRow(image.Pt(4, 89), 30) != -1 {
 		t.Fatal("bottom scrollbar gutter should not hit a file row")
+	}
+}
+
+func TestBriefModeUsesRemainderAbovePartialMinimum(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(20)
+	tbl.BriefColumnWidth = unit.Dp(200)
+	tbl.BriefGap = unit.Dp(0)
+	// The 119px inner height fits five complete rows plus 19px, enough to
+	// preserve the row's centered content.
+	gtx := testTableLayoutContext(image.Pt(120, 123))
+
+	tbl.Layout(th, gtx, tableTestModel{rows: 6})
+
+	if got, want := tbl.briefRowsPerCol, 6; got != want {
+		t.Fatalf("brief rows per column=%d want intersecting-row count %d", got, want)
+	}
+	if tbl.scrollbarVisible {
+		t.Fatal("six intersecting rows should fit in one brief column without a scrollbar")
+	}
+	if got, want := tbl.HitRow(image.Pt(4, 120), 6), 5; got != want {
+		t.Fatalf("partially visible brief row hit=%d want row %d", got, want)
+	}
+	if rect, ok := tbl.RowRect(5, 6); !ok || rect.Dy() != 19 {
+		t.Fatalf("partial brief row rect=%v ok=%v want 19px", rect, ok)
 	}
 }
 
@@ -205,6 +337,14 @@ func TestScrollbarDragUpdatesListPositionImmediately(t *testing.T) {
 
 type tableTestModel struct {
 	rows int
+}
+
+type tableIconTestModel struct {
+	tableTestModel
+}
+
+func (tableIconTestModel) LeadingIcon(row, col int) (LeadingIcon, bool) {
+	return LeadingIcon{Kind: IconFolder}, row >= 0 && col == 0
 }
 
 func (m tableTestModel) Len() int {

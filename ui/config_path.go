@@ -151,6 +151,9 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 		rebased.Viewer.FileEncoding = next.Viewer.FileEncoding
 	case "terminal-height":
 		rebased.Terminal.HeightRows = next.Terminal.HeightRows
+	case "terminal-layout":
+		rebased.Terminal.HeightRows = next.Terminal.HeightRows
+		rebased.Terminal.Maximized = next.Terminal.Maximized
 	case "sort-dir":
 		rebased.Sort.PerDir = cloneStringMap(next.Sort.PerDir)
 	case "viewer-command":

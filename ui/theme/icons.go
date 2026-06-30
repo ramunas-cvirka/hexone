@@ -20,6 +20,8 @@ var (
 	addIcon            *widget.Icon
 	arrowUpIcon        *widget.Icon
 	arrowDownIcon      *widget.Icon
+	fullscreenIcon     *widget.Icon
+	fullscreenExitIcon *widget.Icon
 	favoriteIcon       *widget.Icon
 	favoriteBorderIcon *widget.Icon
 	disconnectIcon     *widget.Icon
@@ -65,6 +67,16 @@ func ArrowDownIcon() *widget.Icon {
 	return arrowDownIcon
 }
 
+func FullscreenIcon() *widget.Icon {
+	initIcons()
+	return fullscreenIcon
+}
+
+func FullscreenExitIcon() *widget.Icon {
+	initIcons()
+	return fullscreenExitIcon
+}
+
 func FavoriteIcon(active bool) *widget.Icon {
 	initIcons()
 	if active {
@@ -88,6 +100,8 @@ func initIcons() {
 		addIcon = mustIcon(widget.NewIcon(mdicons.ContentAdd))
 		arrowUpIcon = mustIcon(widget.NewIcon(mdicons.NavigationExpandLess))
 		arrowDownIcon = mustIcon(widget.NewIcon(mdicons.NavigationExpandMore))
+		fullscreenIcon = mustIcon(widget.NewIcon(mdicons.NavigationFullscreen))
+		fullscreenExitIcon = mustIcon(widget.NewIcon(mdicons.NavigationFullscreenExit))
 		favoriteIcon = mustIcon(widget.NewIcon(mdicons.ToggleStar))
 		favoriteBorderIcon = mustIcon(widget.NewIcon(mdicons.ToggleStarBorder))
 		disconnectIcon = mustIcon(widget.NewIcon(mdicons.ActionPowerSettingsNew))

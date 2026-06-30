@@ -26,6 +26,7 @@ type slidingTabSpec struct {
 	HoverFill  float32
 	PulseFill  float32
 	FocusFill  float32
+	Disabled   bool
 }
 
 func float32Abs(v float32) float32 {
@@ -169,6 +170,10 @@ func (ui *UI) layoutSlidingTabStrip(th *material.Theme, gtx layout.Context, stri
 										bg = mixNRGBA(bg, color.NRGBA{R: 212, G: 196, B: 164, A: 28}, focusFill*0.34)
 										fg := slidingStripTextColor(labelActive, hoverFill, pulseFill)
 										fg = mixNRGBA(fg, color.NRGBA{R: 248, G: 242, B: 228, A: 255}, focusFill*0.24)
+										if spec.Disabled {
+											bg = color.NRGBA{}
+											fg = mixNRGBA(fg, color.NRGBA{R: 24, G: 24, B: 24, A: 255}, 0.55)
+										}
 										dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 											lbl := material.Body2(th, spec.Label)
 											lbl.Font.Typeface = ui.slidingTabTypeface(spec)
@@ -179,7 +184,9 @@ func (ui *UI) layoutSlidingTabStrip(th *material.Theme, gtx layout.Context, stri
 											lbl.Alignment = text.Middle
 											dims := layoutVCenteredLabel(gtx, lbl)
 											defer clip.Rect(image.Rectangle{Max: image.Pt(segW, stripH)}).Push(gtx.Ops).Pop()
-											pointer.CursorPointer.Add(gtx.Ops)
+											if !spec.Disabled {
+												pointer.CursorPointer.Add(gtx.Ops)
+											}
 											return dims
 										})
 										if focusFill > 0 && dims.Size.X > 0 && dims.Size.Y > 0 {

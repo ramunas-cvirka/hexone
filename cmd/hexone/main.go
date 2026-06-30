@@ -149,6 +149,7 @@ func run(window *app.Window) error {
 			}
 		case app.ConfigEvent:
 			windowTracker.ObserveConfig(typ.Config)
+			mainUI.SetWindowFocused(typ.Config.Focused)
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, typ)
 			if nativeInsertKeyStateAvailable() {

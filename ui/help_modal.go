@@ -637,23 +637,23 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body1(th, st.doc.Title)
-					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Typeface = ui.interfaceTypeface()
 					lbl.Font.Weight = font.Bold
-					lbl.TextSize = scaleModalThemeFontSize(th, 12)
+					lbl.TextSize = ui.scaleModalFontSize(12)
 					lbl.Color = theme.popup.Text
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, buildinfo.HelpVersionText())
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(9)
 					lbl.Color = theme.popup.Muted
 					return lbl.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Caption(th, "Up/Down switches topics. F1 or Esc closes help.")
-					lbl.Font.Typeface = ui.mainTypeface()
-					lbl.TextSize = scaleModalThemeFontSize(th, 9)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(9)
 					lbl.Color = theme.popup.Muted
 					return lbl.Layout(gtx)
 				}),
@@ -799,7 +799,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			th,
 			gtx,
 			block.Text,
-			scaleModalThemeFontSize(th, 11),
+			ui.scaleModalFontSize(11),
 			theme.headingText,
 			font.Bold,
 		)
@@ -812,8 +812,8 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 					return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							bullet := material.Body2(th, "•")
-							bullet.Font.Typeface = ui.mainTypeface()
-							bullet.TextSize = scaleModalThemeFontSize(th, 10)
+							bullet.Font.Typeface = ui.interfaceTypeface()
+							bullet.TextSize = ui.scaleModalFontSize(10)
 							bullet.Color = theme.bulletText
 							return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, bullet.Layout)
 						}),
@@ -822,7 +822,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 								th,
 								gtx,
 								item,
-								scaleModalThemeFontSize(th, 10),
+								ui.scaleModalFontSize(10),
 								theme.popup.Text,
 								font.Normal,
 							)
@@ -836,8 +836,8 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), theme.codeBg, theme.codeBorder, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(7), Bottom: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, block.Text)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleModalThemeFontSize(th, 9)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleModalFontSize(9)
 				lbl.Color = theme.codeText
 				lbl.SelectionColor = theme.codeSelection
 				lbl.State = st.codeSelectable(sectionIndex, blockIndex)
@@ -849,7 +849,7 @@ func (ui *UI) layoutHelpBlock(th *material.Theme, gtx layout.Context, st *helpMo
 			th,
 			gtx,
 			block.Text,
-			scaleModalThemeFontSize(th, 10),
+			ui.scaleModalFontSize(10),
 			theme.popup.Text,
 			font.Normal,
 		)
@@ -938,7 +938,7 @@ func (ui *UI) layoutHelpInlineText(th *material.Theme, gtx layout.Context, text 
 						return ui.layoutHelpInlineCodeChip(th, gtx, tok.Text, size)
 					}
 					lbl := material.Body2(th, tok.Text)
-					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Typeface = ui.interfaceTypeface()
 					lbl.Font.Weight = weight
 					lbl.TextSize = size
 					lbl.Color = fg
@@ -961,7 +961,7 @@ func (ui *UI) measureHelpInlineToken(gtx layout.Context, th *material.Theme, tok
 		}).Size
 	}
 	lbl := material.Body2(th, tok.Text)
-	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.Font.Typeface = ui.interfaceTypeface()
 	lbl.Font.Weight = weight
 	lbl.TextSize = size
 	return measureLabelUnconstrained(gtx, lbl).Size
@@ -1001,7 +1001,7 @@ func (ui *UI) layoutHelpInlineCodeChip(th *material.Theme, gtx layout.Context, t
 		}
 	} else {
 		lbl := material.Body2(th, text)
-		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Typeface = ui.interfaceTypeface()
 		lbl.Font.Weight = font.Bold
 		lbl.TextSize = size
 		contentH = measureLabelUnconstrained(gtx, lbl).Size.Y
@@ -1042,7 +1042,7 @@ func (ui *UI) layoutHelpInlineCodeChip(th *material.Theme, gtx layout.Context, t
 						})
 					}
 					lbl := material.Body2(th, text)
-					lbl.Font.Typeface = ui.mainTypeface()
+					lbl.Font.Typeface = ui.interfaceTypeface()
 					lbl.Font.Weight = font.Bold
 					lbl.TextSize = size
 					lbl.Color = theme.chipText

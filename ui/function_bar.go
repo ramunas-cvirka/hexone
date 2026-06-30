@@ -6,6 +6,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"runtime"
 	"strings"
 	"time"
 
@@ -153,12 +154,19 @@ func (ui *UI) functionBarAutoHiddenForViewer() bool {
 		ui.fmCfg.Viewer.HideFunctionBarWhenOpen
 }
 
+func (ui *UI) functionBarAutoHiddenForTerminal() bool {
+	return ui != nil && ui.terminalMaximized()
+}
+
 func (ui *UI) functionBarVisible() bool {
 	if ui == nil {
 		return false
 	}
 	if ui.functionBarAutoHiddenForViewer() {
 		return ui.functionBarViewerShown
+	}
+	if ui.functionBarAutoHiddenForTerminal() {
+		return ui.functionBarTerminalShown
 	}
 	return !ui.functionBarHidden
 }
@@ -169,6 +177,8 @@ func (ui *UI) toggleFunctionBarVisibility(now time.Time) bool {
 	}
 	if ui.functionBarAutoHiddenForViewer() {
 		ui.functionBarViewerShown = !ui.functionBarViewerShown
+	} else if ui.functionBarAutoHiddenForTerminal() {
+		ui.functionBarTerminalShown = !ui.functionBarTerminalShown
 	} else {
 		ui.functionBarHidden = !ui.functionBarHidden
 	}
@@ -366,7 +376,7 @@ func (ui *UI) functionBarTextSize() unit.Sp {
 	if ui == nil {
 		return 11
 	}
-	return scaleConfigFontSize(ui.fmCfg, 11)
+	return ui.scaleInterfaceFontSize(11)
 }
 
 func (ui *UI) functionBarButtonText(spec functionBarButtonSpec) string {
@@ -485,6 +495,10 @@ func (ui *UI) functionBarShortcutLabel(keys string) string {
 }
 
 func (ui *UI) functionBarModifierHintSpecs() []functionBarHintSpec {
+	return ui.functionBarModifierHintSpecsForContext(false, runtime.GOOS)
+}
+
+func (ui *UI) functionBarModifierHintSpecsForContext(terminalFocused bool, goos string) []functionBarHintSpec {
 	mod := ui.functionBarHeldHintModifier()
 	if ui == nil || mod == 0 || ui.customCommandMenuOpen || ui.functionBarToolsOpen {
 		return nil
@@ -504,6 +518,23 @@ func (ui *UI) functionBarModifierHintSpecs() []functionBarHintSpec {
 			shortcut: shortcut,
 			label:    label,
 		})
+	}
+
+	if terminalFocused {
+		if mod != key.ModCtrl && mod != key.ModCommand {
+			return nil
+		}
+		add("A", "Select All")
+		switch {
+		case goos == "darwin" && mod == key.ModCommand:
+			add("K", "Clear")
+		case goos != "darwin" && mod == key.ModCtrl:
+			add("Shift+K", "Clear")
+		}
+		add("N", "New Tab")
+		add("X", "Close Tab")
+		add("S", "Settings")
+		return hints
 	}
 
 	if mod == key.ModAlt {
@@ -540,6 +571,8 @@ func (ui *UI) functionBarModifierHintSpecs() []functionBarHintSpec {
 		if !ui.pathEditActive() {
 			add("A", "Select All")
 			add("E", "Same Ext")
+			add("N", "New Tab")
+			add("X", "Close Tab")
 			add("F", "SSH")
 			add("M", "Multi-Rename")
 			add("S", "Settings")
@@ -554,7 +587,11 @@ func (ui *UI) functionBarModifierHintSpecs() []functionBarHintSpec {
 }
 
 func (ui *UI) functionBarModifierHintText() (string, bool) {
-	hints := ui.functionBarModifierHintSpecs()
+	return ui.functionBarModifierHintTextForContext(false, runtime.GOOS)
+}
+
+func (ui *UI) functionBarModifierHintTextForContext(terminalFocused bool, goos string) (string, bool) {
+	hints := ui.functionBarModifierHintSpecsForContext(terminalFocused, goos)
 	if len(hints) == 0 {
 		return "", false
 	}
@@ -584,11 +621,14 @@ func (ui *UI) functionBarHintLabel(hint functionBarHintSpec) string {
 }
 
 func (ui *UI) functionBarHintSlotLabels(slotCount int) []string {
+	return ui.functionBarHintSlotLabelsForSpecs(ui.functionBarModifierHintSpecs(), slotCount)
+}
+
+func (ui *UI) functionBarHintSlotLabelsForSpecs(hints []functionBarHintSpec, slotCount int) []string {
 	if slotCount < 0 {
 		slotCount = 0
 	}
 	labels := make([]string, slotCount)
-	hints := ui.functionBarModifierHintSpecs()
 	if len(hints) > slotCount {
 		hints = hints[:slotCount]
 	}
@@ -618,7 +658,7 @@ func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context,
 		}
 		specs := ui.functionBarButtonSpecs()
 		widths := ui.functionBarWidths(th, gtx, specs)
-		slotLabels := ui.functionBarHintSlotLabels(len(widths))
+		slotLabels := ui.functionBarHintSlotLabelsForSpecs(hints, len(widths))
 		return fixedWidth(gtx, outerW, func(gtx layout.Context) layout.Dimensions {
 			return fillRoundedBox(
 				gtx,
@@ -636,7 +676,7 @@ func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context,
 										return fixedWidth(gtx, widths[i], func(gtx layout.Context) layout.Dimensions {
 											return fillBgExact(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
 												lbl := material.Body2(th, slotLabels[i])
-												lbl.Font.Typeface = ui.mainTypeface()
+												lbl.Font.Typeface = ui.interfaceTypeface()
 												lbl.Font.Weight = font.Medium
 												lbl.TextSize = ui.functionBarTextSize()
 												lbl.Color = color.NRGBA{R: 228, G: 232, B: 240, A: 255}
@@ -673,7 +713,7 @@ func (ui *UI) functionBarWidths(th *material.Theme, gtx layout.Context, specs []
 	padding := gtx.Dp(unit.Dp(16))
 	for i, spec := range specs {
 		lbl := material.Body2(th, ui.functionBarButtonText(spec))
-		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Typeface = ui.interfaceTypeface()
 		lbl.Font.Weight = font.Medium
 		lbl.TextSize = ui.functionBarTextSize()
 		lbl.MaxLines = 1
@@ -828,7 +868,7 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 	if ui == nil {
 		return layout.Dimensions{}
 	}
-	if hints := ui.functionBarModifierHintSpecs(); len(hints) > 0 {
+	if hints := ui.functionBarModifierHintSpecsForContext(ui.terminalFocused(gtx), runtime.GOOS); len(hints) > 0 {
 		return ui.layoutFunctionBarHintStrip(th, gtx, hints)
 	}
 
@@ -973,7 +1013,7 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 
 											dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 												lbl := material.Body2(th, ui.functionBarButtonText(spec))
-												lbl.Font.Typeface = ui.mainTypeface()
+												lbl.Font.Typeface = ui.interfaceTypeface()
 												lbl.Font.Weight = font.Medium
 												lbl.TextSize = ui.functionBarTextSize()
 												lbl.Color = fg
@@ -1007,7 +1047,7 @@ func (ui *UI) applyFunctionBarCursor(gtx layout.Context) {
 	if ui == nil || !ui.functionBarVisible() {
 		return
 	}
-	if hints := ui.functionBarModifierHintSpecs(); len(hints) > 0 {
+	if hints := ui.functionBarModifierHintSpecsForContext(ui.terminalFocused(gtx), runtime.GOOS); len(hints) > 0 {
 		return
 	}
 	for i := range ui.functionBarClicks {
@@ -1200,14 +1240,14 @@ func (ui *UI) functionBarToolCardWidth(th *material.Theme, gtx layout.Context, i
 	maxTextW := 0
 	for _, item := range items {
 		lbl := material.Body2(th, item.label)
-		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Typeface = ui.interfaceTypeface()
 		lbl.Font.Weight = font.Medium
 		lbl.TextSize = ui.functionBarTextSize()
 		lbl.MaxLines = 1
 		w := measureLabelUnconstrained(gtx, lbl).Size.X
 		if item.shortcut != "" {
 			shortcut := material.Caption(th, item.shortcut)
-			shortcut.Font.Typeface = ui.mainTypeface()
+			shortcut.Font.Typeface = ui.interfaceTypeface()
 			shortcut.Font.Weight = font.Medium
 			shortcut.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
 			shortcut.MaxLines = 1
@@ -1303,7 +1343,7 @@ func (ui *UI) layoutFunctionBarToolOption(th *material.Theme, gtx layout.Context
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Body2(th, item.label)
-							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Typeface = ui.interfaceTypeface()
 							lbl.TextSize = ui.functionBarTextSize()
 							lbl.Font.Weight = weight
 							lbl.Color = fg
@@ -1317,7 +1357,7 @@ func (ui *UI) layoutFunctionBarToolOption(th *material.Theme, gtx layout.Context
 							}
 							return layout.Inset{Left: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								lbl := material.Caption(th, item.shortcut)
-								lbl.Font.Typeface = ui.mainTypeface()
+								lbl.Font.Typeface = ui.interfaceTypeface()
 								lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
 								lbl.Font.Weight = font.Medium
 								lbl.Color = detailColor
@@ -1384,7 +1424,7 @@ func (ui *UI) layoutFunctionBarToolsCard(th *material.Theme, gtx layout.Context,
 					return fixedHeight(gtx, ui.fileContextMenuTitleHeight(gtx), func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Caption(th, "Tools")
-							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Typeface = ui.interfaceTypeface()
 							lbl.Font.Weight = font.Medium
 							lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
 							lbl.Color = scaleColorAlpha(theme.Title, alpha)
