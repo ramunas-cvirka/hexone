@@ -597,7 +597,7 @@ func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context,
 	if len(visible) == 0 {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
-	if ui.filePaneVolumeBadgesHidden() {
+	if ui.filePaneVolumeBadgesHidden(gtx) {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 	widths := paneColumnWidths(gtx.Constraints.Max.X, len(visible))
@@ -624,8 +624,8 @@ func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context,
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
-func (ui *UI) filePaneVolumeBadgesHidden() bool {
-	return ui != nil && ui.terminal != nil && ui.terminal.active()
+func (ui *UI) filePaneVolumeBadgesHidden(gtx layout.Context) bool {
+	return ui.terminalVisuallyFocused(gtx)
 }
 
 func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {

@@ -50,6 +50,10 @@ const (
 	ViewerFileEncodingUTF16LE = "utf-16le"
 	ViewerFileEncodingUTF16BE = "utf-16be"
 	ViewerFileEncodingCP437   = "cp437"
+
+	CompletionSoundNever      = "never"
+	CompletionSoundAlways     = "always"
+	CompletionSoundBackground = "background"
 )
 
 type NameCompact struct {
@@ -374,6 +378,7 @@ type GeneralConfig struct {
 	FontSizeSp            float32 `yaml:"font_size_sp"`
 	DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 	OpenFavoritesInNewTab bool    `yaml:"open_favorites_in_new_tab"`
+	CompletionSound       string  `yaml:"completion_sound"`
 }
 
 func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
@@ -382,6 +387,7 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 		FontSizeSp            float32 `yaml:"font_size_sp"`
 		DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 		OpenFavoritesInNewTab *bool   `yaml:"open_favorites_in_new_tab"`
+		CompletionSound       string  `yaml:"completion_sound"`
 	}
 	if err := node.Decode(&raw); err != nil {
 		return err
@@ -393,7 +399,21 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	if raw.OpenFavoritesInNewTab != nil {
 		g.OpenFavoritesInNewTab = *raw.OpenFavoritesInNewTab
 	}
+	g.CompletionSound = NormalizeCompletionSound(raw.CompletionSound)
 	return nil
+}
+
+func NormalizeCompletionSound(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case CompletionSoundNever, "none", "off", "disabled", "false":
+		return CompletionSoundNever
+	case CompletionSoundAlways, "on", "enabled", "true":
+		return CompletionSoundAlways
+	case "", CompletionSoundBackground, "background_only", "background-only", "background only", "unfocused", "not_focused", "not-focused", "app_not_focused", "app-not-focused":
+		return CompletionSoundBackground
+	default:
+		return CompletionSoundBackground
+	}
 }
 
 type legacyFontConfig struct {
@@ -525,6 +545,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	}{
 		General: GeneralConfig{
 			OpenFavoritesInNewTab: true,
+			CompletionSound:       CompletionSoundBackground,
 		},
 		Viewer: ViewerConfig{
 			SmoothScrolling: true,
@@ -604,6 +625,7 @@ func DefaultConfig() *Config {
 			FontSizeSp:            14,
 			DimInactivePanes:      true,
 			OpenFavoritesInNewTab: true,
+			CompletionSound:       CompletionSoundBackground,
 		},
 		Colors: ColorsConfig{
 			FilePaneBackground:  DefaultFilePaneBackgroundHex,
@@ -908,6 +930,7 @@ func (c *Config) normalize() {
 	if c.General.FontSizeSp <= 0 {
 		c.General.FontSizeSp = 14
 	}
+	c.General.CompletionSound = NormalizeCompletionSound(c.General.CompletionSound)
 	if c.Interface.Typeface == "" || !resources.IsBundledFontFamily(c.Interface.Typeface) {
 		c.Interface.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
 	}

@@ -550,6 +550,7 @@ func scaleFilePanePx(cfg *fm.Config, v int) int {
 }
 
 func (p *filePaneState) load(dir string) error {
+	p.cancelPendingLoad()
 	var (
 		listing filesys.Listing
 		err     error
@@ -565,6 +566,17 @@ func (p *filePaneState) load(dir string) error {
 
 	p.applyListing(listing, "", "", 0)
 	return nil
+}
+
+func (p *filePaneState) cancelPendingLoad() {
+	if p == nil {
+		return
+	}
+	p.loadSeq++
+	p.loading = false
+	p.loadQuiet = false
+	p.loadingDir = ""
+	p.loadingStartedAt = time.Time{}
 }
 
 func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int) {

@@ -20,6 +20,7 @@ const (
 	settingsKeyboardFocusNav
 	settingsKeyboardFocusGeneralDimInactive
 	settingsKeyboardFocusGeneralFavoritesNewTab
+	settingsKeyboardFocusGeneralCompletionSound
 	settingsKeyboardFocusFontsInterfaceFont
 	settingsKeyboardFocusFontsInterfaceFontSize
 	settingsKeyboardFocusGeneralPaneFont
@@ -276,6 +277,7 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 	case "general":
 		order = append(order, settingsKeyboardFocusGeneralDimInactive)
 		order = append(order, settingsKeyboardFocusGeneralFavoritesNewTab)
+		order = append(order, settingsKeyboardFocusGeneralCompletionSound)
 	case "fonts":
 		if len(resources.BundledFontFamilies()) > 0 {
 			order = append(order, settingsKeyboardFocusFontsInterfaceFont)
@@ -1333,6 +1335,26 @@ func (st *settingsModalState) stepTerminalFontFamily(step int, families []resour
 	return true
 }
 
+func (st *settingsModalState) stepCompletionSound(step int, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	options := settingsCompletionSoundOptions()
+	keys := make([]string, len(options))
+	current := fm.NormalizeCompletionSound(st.generalCompletionSound)
+	for i, opt := range options {
+		keys[i] = opt.Key
+	}
+	next := settingsChoiceStep(current, keys, step)
+	if next == "" || next == current {
+		return false
+	}
+	st.generalCompletionSoundAnim.setValue(&st.generalCompletionSound, next, now)
+	st.generalCompletionSoundAnim.anim.setPulse(next, now)
+	st.errText = ""
+	return true
+}
+
 func settingsNormalizedFontSize(value, fallback float32) float32 {
 	if !(value >= settingsFontSizeMin) {
 		if fallback >= settingsFontSizeMin {
@@ -1509,6 +1531,8 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 		return st.stepFilenamePermMatch(step, now)
 	case settingsKeyboardFocusFilenameSizeMatch:
 		return st.stepFilenameSizeMatch(step, now)
+	case settingsKeyboardFocusGeneralCompletionSound:
+		return st.stepCompletionSound(step, now)
 	case settingsKeyboardFocusFooter:
 		return st.stepFooterAction(step)
 	default:

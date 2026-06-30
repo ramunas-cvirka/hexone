@@ -749,6 +749,40 @@ func TestDefaultConfigOpensFavoritesInNewTab(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigCompletionSoundBackground(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.General.CompletionSound != CompletionSoundBackground {
+		t.Fatalf("general completion_sound=%q want %q", cfg.General.CompletionSound, CompletionSoundBackground)
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "completion_sound: background") {
+		t.Fatalf("serialized config missing general completion_sound:\n%s", out)
+	}
+}
+
+func TestNormalizeCompletionSound(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{raw: "", want: CompletionSoundBackground},
+		{raw: "never", want: CompletionSoundNever},
+		{raw: "off", want: CompletionSoundNever},
+		{raw: "always", want: CompletionSoundAlways},
+		{raw: "on", want: CompletionSoundAlways},
+		{raw: "background only", want: CompletionSoundBackground},
+		{raw: "app_not_focused", want: CompletionSoundBackground},
+		{raw: "surprise", want: CompletionSoundBackground},
+	}
+	for _, tt := range tests {
+		if got := NormalizeCompletionSound(tt.raw); got != tt.want {
+			t.Fatalf("NormalizeCompletionSound(%q)=%q want %q", tt.raw, got, tt.want)
+		}
+	}
+}
+
 func TestLoadConfigDefaultsFavoritesNewTabWhenFieldMissing(t *testing.T) {
 	raw := `
 general:

@@ -641,6 +641,9 @@ func (ui *UI) finishArchiveExtract(now time.Time, err error) {
 		return
 	}
 	ui.archiveExtract = nil
+	if err == nil {
+		ui.maybePlayBackgroundOperationSound(st.startedAt, now)
+	}
 
 	pane := (*filePaneState)(nil)
 	if st.pane >= 0 && st.pane < len(ui.filePanes) {

@@ -179,6 +179,7 @@ type UI struct {
 	typeface                    font.Typeface
 	textSize                    unit.Sp
 	invalidate                  func()
+	windowFocused               bool
 	fileKeys                    fileKeyMap
 	activeFilePane              int
 	filePaneTabs                []filePaneTabSet
@@ -234,6 +235,7 @@ func NewUI(cfg *fm.Config) *UI {
 		functionBarToolsSelected:   -1,
 		functionBarSliderPrevIndex: -1,
 		functionBarSliderIndex:     -1,
+		windowFocused:              true,
 	}
 	ui.Tabs.Value = "tab0"
 

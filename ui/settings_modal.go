@@ -62,209 +62,212 @@ type settingsModalState struct {
 	navPulseKey      string
 	navPulseAt       time.Time
 
-	colorScopePaneClick         widget.Clickable
-	colorScopeViewerClick       widget.Clickable
-	colorScopeFilenameClick     widget.Clickable
-	colorScope                  string
-	colorScopeAnim              settingsChoiceAnim
-	colorCategoryClick          widget.Clickable
-	colorBgPickerClick          widget.Clickable
-	colorTextPickerClick        widget.Clickable
-	colorValueEdit              widget.Editor
-	colorTextValueEdit          widget.Editor
-	colorCategoryOpen           bool
-	colorCategoryOpenedAt       time.Time
-	colorCategoryHoverID        string
-	colorCategoryHoverAnim      segmentedAnimState
-	colorPickerOpen             bool
-	colorPickerTarget           string
-	popupGlobalPointerTag       uiEventTag
-	colorCategoryPopupTag       uiEventTag
-	colorPickerPopupTag         uiEventTag
-	filenameIconPickerPopupTag  uiEventTag
-	filenamePermPickerPopupTag  uiEventTag
-	viewTargetPickerPopupTag    uiEventTag
-	viewAssocPickerPopupTag     uiEventTag
-	viewRulePickerPopupTag      uiEventTag
-	colorCategory               string
-	colorOptionClicks           []widget.Clickable
-	colorSwatchClicks           []widget.Clickable
-	colorPaneBackground         string
-	colorPaneText               string
-	colorHover                  string
-	colorHoverText              string
-	colorPopupHover             string
-	colorPopupHoverText         string
-	colorSelection              string
-	colorSelectionText          string
-	colorSelectedFiles          string
-	colorSelectedFilesText      string
-	colorFocusedSelected        string
-	colorFocusedSelectedText    string
-	colorCurrentDir             string
-	colorCurrentDirText         string
-	colorScrollbarThumb         string
-	colorScrollbarTrack         string
-	colorViewerBackground       string
-	colorViewerText             string
-	colorViewerSelection        string
-	filenameDefaultText         string
-	filenameDefaultTextEdit     widget.Editor
-	filenameDefaultIcon         string
-	filenameDefaultIconClick    widget.Clickable
-	filenameDefaultTextPicker   widget.Clickable
-	filenameIconPickerOpen      bool
-	filenameIconPickerTarget    string
-	filenameIconSwatchClicks    []widget.Clickable
-	filenameRuleMode            string
-	filenameRuleModeAnim        settingsChoiceAnim
-	filenameRuleModeAgeClick    widget.Clickable
-	filenameRuleModePermClick   widget.Clickable
-	filenameRuleModeExtClick    widget.Clickable
-	filenameRuleModeSizeClick   widget.Clickable
-	filenameAgeOffsetEdit       widget.Editor
-	filenameAgeUnit             string
-	filenameAgeUnitAnim         settingsChoiceAnim
-	filenameAgeUnitClicks       [4]widget.Clickable
-	filenameAgeTextEdit         widget.Editor
-	filenameAgeIcon             string
-	filenameAgeIconClick        widget.Clickable
-	filenameAgeTextPicker       widget.Clickable
-	filenameAgeApplyClick       widget.Clickable
-	filenameAgeRemoveClick      widget.Clickable
-	filenameAgeList             widget.List
-	filenameAgeEntries          []fm.FilenameAgeRule
-	filenameAgeSavedEntries     []fm.FilenameAgeRule
-	filenameAgeLookup           string
-	filenameAgeRowClicks        map[string]*widget.Clickable
-	filenameAgeRowRemove        map[string]*widget.Clickable
-	filenameAgeInfoText         string
-	filenamePermEdit            widget.Editor
-	filenamePermMatch           string
-	filenamePermMatchAnim       settingsChoiceAnim
-	filenamePermMatchClicks     [4]widget.Clickable
-	filenamePermChecks          [9]widget.Bool
-	filenamePermPickerOpen      bool
-	filenamePermPickerClick     widget.Clickable
-	filenamePermTextEdit        widget.Editor
-	filenamePermIcon            string
-	filenamePermIconClick       widget.Clickable
-	filenamePermTextPicker      widget.Clickable
-	filenamePermApplyClick      widget.Clickable
-	filenamePermRemoveClick     widget.Clickable
-	filenamePermList            widget.List
-	filenamePermEntries         []fm.FilenamePermissionRule
-	filenamePermSavedEntries    []fm.FilenamePermissionRule
-	filenamePermLookup          string
-	filenamePermRowClicks       map[string]*widget.Clickable
-	filenamePermRowRemove       map[string]*widget.Clickable
-	filenamePermInfoText        string
-	filenameExtEdit             widget.Editor
-	filenameExtTextEdit         widget.Editor
-	filenameExtIcon             string
-	filenameExtIconClick        widget.Clickable
-	filenameExtTextPicker       widget.Clickable
-	filenameExtApplyClick       widget.Clickable
-	filenameExtRemoveClick      widget.Clickable
-	filenameExtList             widget.List
-	filenameExtEntries          []fm.FilenameExtensionRule
-	filenameExtSavedEntries     []fm.FilenameExtensionRule
-	filenameExtLookup           string
-	filenameExtRowClicks        map[string]*widget.Clickable
-	filenameExtRowRemove        map[string]*widget.Clickable
-	filenameExtInfoText         string
-	filenameSizeEdit            widget.Editor
-	filenameSizeMatch           string
-	filenameSizeMatchAnim       settingsChoiceAnim
-	filenameSizeMatchClicks     [2]widget.Clickable
-	filenameSizeTextEdit        widget.Editor
-	filenameSizeIcon            string
-	filenameSizeIconClick       widget.Clickable
-	filenameSizeTextPicker      widget.Clickable
-	filenameSizeApplyClick      widget.Clickable
-	filenameSizeRemoveClick     widget.Clickable
-	filenameSizeList            widget.List
-	filenameSizeEntries         []fm.FilenameSizeRule
-	filenameSizeSavedEntries    []fm.FilenameSizeRule
-	filenameSizeLookup          string
-	filenameSizeRowClicks       map[string]*widget.Clickable
-	filenameSizeRowRemove       map[string]*widget.Clickable
-	filenameSizeInfoText        string
-	viewCommandEdit             widget.Editor
-	viewShellEdit               widget.Editor
-	viewShellOptions            []terminalShellOption
-	viewShellClicks             []widget.Clickable
-	viewShellAnim               settingsChoiceAnim
-	viewRemoteSearchCommandEdit widget.Editor
-	interfaceFontFamily         string
-	paneFontFamily              string
-	tabsFontFamily              string
-	viewFontFamily              string
-	terminalFontFamily          string
-	interfaceFontSizeSp         float32
-	paneFontSizeSp              float32
-	tabsFontSizeSp              float32
-	viewFontSizeSp              float32
-	terminalFontSizeSp          float32
-	interfaceFontSizeStepper    settingsNumberStepperState
-	paneFontSizeStepper         settingsNumberStepperState
-	tabsFontSizeStepper         settingsNumberStepperState
-	viewFontSizeStepper         settingsNumberStepperState
-	terminalFontSizeStepper     settingsNumberStepperState
-	interfaceFontFamilyClicks   []widget.Clickable
-	paneFontFamilyClicks        []widget.Clickable
-	tabsFontFamilyClicks        []widget.Clickable
-	viewFontFamilyClicks        []widget.Clickable
-	terminalFontFamilyClicks    []widget.Clickable
-	interfaceFontPickerAnim     settingsChoiceAnim
-	paneFontPickerAnim          settingsChoiceAnim
-	tabsFontPickerAnim          settingsChoiceAnim
-	viewFontPickerAnim          settingsChoiceAnim
-	terminalFontPickerAnim      settingsChoiceAnim
-	generalDimInactiveBool      widget.Bool
-	generalFavoritesNewTabBool  widget.Bool
-	viewSmoothScrollingBool     widget.Bool
-	viewHideFunctionBarBool     widget.Bool
-	viewerTabList               widget.List
-	colorsTabList               widget.List
-	viewTargetKeyEdit           widget.Editor
-	viewTargetCommandEdit       widget.Editor
-	viewTargetApplyClick        widget.Clickable
-	viewTargetPickClick         widget.Clickable
-	viewTargetRemoveClick       widget.Clickable
-	viewTargetPickOpen          bool
-	viewTargetPickList          widget.List
-	viewTargetPickRemember      int
-	viewTargetRowClicks         map[string]*widget.Clickable
-	viewTargetRowRemoveClicks   map[string]*widget.Clickable
-	viewTargetEntries           []viewerCommandTargetEntry
-	viewTargetSavedEntries      []viewerCommandTargetEntry
-	viewTargetLookupKey         string
-	viewRulePatternEdit         widget.Editor
-	viewRuleCommandEdit         widget.Editor
-	viewRuleApplyClick          widget.Clickable
-	viewRulePickClick           widget.Clickable
-	viewRuleRemoveClick         widget.Clickable
-	viewRulePickOpen            bool
-	viewRulePickList            widget.List
-	viewRulePickRemember        int
-	viewRuleRowClicks           map[string]*widget.Clickable
-	viewRuleRowRemoveClicks     map[string]*widget.Clickable
-	viewRuleEntries             []fm.ViewerCommandRule
-	viewRuleSavedEntries        []fm.ViewerCommandRule
-	viewRuleLookupPattern       string
-	viewAssocExtEdit            widget.Editor
-	viewAssocAppEdit            widget.Editor
-	viewAssocApplyClick         widget.Clickable
-	viewAssocPickClick          widget.Clickable
-	viewAssocRemoveClick        widget.Clickable
-	viewAssocPickOpen           bool
-	viewAssocPickList           layout.List
-	viewAssocPickRemember       int
-	viewAssocRowClicks          map[string]*widget.Clickable
-	viewAssocEntries            []fm.ViewerAssociation
-	viewAssocSavedEntries       []fm.ViewerAssociation
-	viewAssocLookupExt          string
+	colorScopePaneClick          widget.Clickable
+	colorScopeViewerClick        widget.Clickable
+	colorScopeFilenameClick      widget.Clickable
+	colorScope                   string
+	colorScopeAnim               settingsChoiceAnim
+	colorCategoryClick           widget.Clickable
+	colorBgPickerClick           widget.Clickable
+	colorTextPickerClick         widget.Clickable
+	colorValueEdit               widget.Editor
+	colorTextValueEdit           widget.Editor
+	colorCategoryOpen            bool
+	colorCategoryOpenedAt        time.Time
+	colorCategoryHoverID         string
+	colorCategoryHoverAnim       segmentedAnimState
+	colorPickerOpen              bool
+	colorPickerTarget            string
+	popupGlobalPointerTag        uiEventTag
+	colorCategoryPopupTag        uiEventTag
+	colorPickerPopupTag          uiEventTag
+	filenameIconPickerPopupTag   uiEventTag
+	filenamePermPickerPopupTag   uiEventTag
+	viewTargetPickerPopupTag     uiEventTag
+	viewAssocPickerPopupTag      uiEventTag
+	viewRulePickerPopupTag       uiEventTag
+	colorCategory                string
+	colorOptionClicks            []widget.Clickable
+	colorSwatchClicks            []widget.Clickable
+	colorPaneBackground          string
+	colorPaneText                string
+	colorHover                   string
+	colorHoverText               string
+	colorPopupHover              string
+	colorPopupHoverText          string
+	colorSelection               string
+	colorSelectionText           string
+	colorSelectedFiles           string
+	colorSelectedFilesText       string
+	colorFocusedSelected         string
+	colorFocusedSelectedText     string
+	colorCurrentDir              string
+	colorCurrentDirText          string
+	colorScrollbarThumb          string
+	colorScrollbarTrack          string
+	colorViewerBackground        string
+	colorViewerText              string
+	colorViewerSelection         string
+	filenameDefaultText          string
+	filenameDefaultTextEdit      widget.Editor
+	filenameDefaultIcon          string
+	filenameDefaultIconClick     widget.Clickable
+	filenameDefaultTextPicker    widget.Clickable
+	filenameIconPickerOpen       bool
+	filenameIconPickerTarget     string
+	filenameIconSwatchClicks     []widget.Clickable
+	filenameRuleMode             string
+	filenameRuleModeAnim         settingsChoiceAnim
+	filenameRuleModeAgeClick     widget.Clickable
+	filenameRuleModePermClick    widget.Clickable
+	filenameRuleModeExtClick     widget.Clickable
+	filenameRuleModeSizeClick    widget.Clickable
+	filenameAgeOffsetEdit        widget.Editor
+	filenameAgeUnit              string
+	filenameAgeUnitAnim          settingsChoiceAnim
+	filenameAgeUnitClicks        [4]widget.Clickable
+	filenameAgeTextEdit          widget.Editor
+	filenameAgeIcon              string
+	filenameAgeIconClick         widget.Clickable
+	filenameAgeTextPicker        widget.Clickable
+	filenameAgeApplyClick        widget.Clickable
+	filenameAgeRemoveClick       widget.Clickable
+	filenameAgeList              widget.List
+	filenameAgeEntries           []fm.FilenameAgeRule
+	filenameAgeSavedEntries      []fm.FilenameAgeRule
+	filenameAgeLookup            string
+	filenameAgeRowClicks         map[string]*widget.Clickable
+	filenameAgeRowRemove         map[string]*widget.Clickable
+	filenameAgeInfoText          string
+	filenamePermEdit             widget.Editor
+	filenamePermMatch            string
+	filenamePermMatchAnim        settingsChoiceAnim
+	filenamePermMatchClicks      [4]widget.Clickable
+	filenamePermChecks           [9]widget.Bool
+	filenamePermPickerOpen       bool
+	filenamePermPickerClick      widget.Clickable
+	filenamePermTextEdit         widget.Editor
+	filenamePermIcon             string
+	filenamePermIconClick        widget.Clickable
+	filenamePermTextPicker       widget.Clickable
+	filenamePermApplyClick       widget.Clickable
+	filenamePermRemoveClick      widget.Clickable
+	filenamePermList             widget.List
+	filenamePermEntries          []fm.FilenamePermissionRule
+	filenamePermSavedEntries     []fm.FilenamePermissionRule
+	filenamePermLookup           string
+	filenamePermRowClicks        map[string]*widget.Clickable
+	filenamePermRowRemove        map[string]*widget.Clickable
+	filenamePermInfoText         string
+	filenameExtEdit              widget.Editor
+	filenameExtTextEdit          widget.Editor
+	filenameExtIcon              string
+	filenameExtIconClick         widget.Clickable
+	filenameExtTextPicker        widget.Clickable
+	filenameExtApplyClick        widget.Clickable
+	filenameExtRemoveClick       widget.Clickable
+	filenameExtList              widget.List
+	filenameExtEntries           []fm.FilenameExtensionRule
+	filenameExtSavedEntries      []fm.FilenameExtensionRule
+	filenameExtLookup            string
+	filenameExtRowClicks         map[string]*widget.Clickable
+	filenameExtRowRemove         map[string]*widget.Clickable
+	filenameExtInfoText          string
+	filenameSizeEdit             widget.Editor
+	filenameSizeMatch            string
+	filenameSizeMatchAnim        settingsChoiceAnim
+	filenameSizeMatchClicks      [2]widget.Clickable
+	filenameSizeTextEdit         widget.Editor
+	filenameSizeIcon             string
+	filenameSizeIconClick        widget.Clickable
+	filenameSizeTextPicker       widget.Clickable
+	filenameSizeApplyClick       widget.Clickable
+	filenameSizeRemoveClick      widget.Clickable
+	filenameSizeList             widget.List
+	filenameSizeEntries          []fm.FilenameSizeRule
+	filenameSizeSavedEntries     []fm.FilenameSizeRule
+	filenameSizeLookup           string
+	filenameSizeRowClicks        map[string]*widget.Clickable
+	filenameSizeRowRemove        map[string]*widget.Clickable
+	filenameSizeInfoText         string
+	viewCommandEdit              widget.Editor
+	viewShellEdit                widget.Editor
+	viewShellOptions             []terminalShellOption
+	viewShellClicks              []widget.Clickable
+	viewShellAnim                settingsChoiceAnim
+	viewRemoteSearchCommandEdit  widget.Editor
+	interfaceFontFamily          string
+	paneFontFamily               string
+	tabsFontFamily               string
+	viewFontFamily               string
+	terminalFontFamily           string
+	interfaceFontSizeSp          float32
+	paneFontSizeSp               float32
+	tabsFontSizeSp               float32
+	viewFontSizeSp               float32
+	terminalFontSizeSp           float32
+	interfaceFontSizeStepper     settingsNumberStepperState
+	paneFontSizeStepper          settingsNumberStepperState
+	tabsFontSizeStepper          settingsNumberStepperState
+	viewFontSizeStepper          settingsNumberStepperState
+	terminalFontSizeStepper      settingsNumberStepperState
+	interfaceFontFamilyClicks    []widget.Clickable
+	paneFontFamilyClicks         []widget.Clickable
+	tabsFontFamilyClicks         []widget.Clickable
+	viewFontFamilyClicks         []widget.Clickable
+	terminalFontFamilyClicks     []widget.Clickable
+	interfaceFontPickerAnim      settingsChoiceAnim
+	paneFontPickerAnim           settingsChoiceAnim
+	tabsFontPickerAnim           settingsChoiceAnim
+	viewFontPickerAnim           settingsChoiceAnim
+	terminalFontPickerAnim       settingsChoiceAnim
+	generalDimInactiveBool       widget.Bool
+	generalFavoritesNewTabBool   widget.Bool
+	generalCompletionSound       string
+	generalCompletionSoundAnim   settingsChoiceAnim
+	generalCompletionSoundClicks [3]widget.Clickable
+	viewSmoothScrollingBool      widget.Bool
+	viewHideFunctionBarBool      widget.Bool
+	viewerTabList                widget.List
+	colorsTabList                widget.List
+	viewTargetKeyEdit            widget.Editor
+	viewTargetCommandEdit        widget.Editor
+	viewTargetApplyClick         widget.Clickable
+	viewTargetPickClick          widget.Clickable
+	viewTargetRemoveClick        widget.Clickable
+	viewTargetPickOpen           bool
+	viewTargetPickList           widget.List
+	viewTargetPickRemember       int
+	viewTargetRowClicks          map[string]*widget.Clickable
+	viewTargetRowRemoveClicks    map[string]*widget.Clickable
+	viewTargetEntries            []viewerCommandTargetEntry
+	viewTargetSavedEntries       []viewerCommandTargetEntry
+	viewTargetLookupKey          string
+	viewRulePatternEdit          widget.Editor
+	viewRuleCommandEdit          widget.Editor
+	viewRuleApplyClick           widget.Clickable
+	viewRulePickClick            widget.Clickable
+	viewRuleRemoveClick          widget.Clickable
+	viewRulePickOpen             bool
+	viewRulePickList             widget.List
+	viewRulePickRemember         int
+	viewRuleRowClicks            map[string]*widget.Clickable
+	viewRuleRowRemoveClicks      map[string]*widget.Clickable
+	viewRuleEntries              []fm.ViewerCommandRule
+	viewRuleSavedEntries         []fm.ViewerCommandRule
+	viewRuleLookupPattern        string
+	viewAssocExtEdit             widget.Editor
+	viewAssocAppEdit             widget.Editor
+	viewAssocApplyClick          widget.Clickable
+	viewAssocPickClick           widget.Clickable
+	viewAssocRemoveClick         widget.Clickable
+	viewAssocPickOpen            bool
+	viewAssocPickList            layout.List
+	viewAssocPickRemember        int
+	viewAssocRowClicks           map[string]*widget.Clickable
+	viewAssocEntries             []fm.ViewerAssociation
+	viewAssocSavedEntries        []fm.ViewerAssociation
+	viewAssocLookupExt           string
 
 	footerFocus     settingsFooterAction
 	footerHoverKey  string
@@ -550,6 +553,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.terminalFontPickerAnim = settingsChoiceAnim{}
 	st.generalDimInactiveBool.Value = cfg.General.DimInactivePanes
 	st.generalFavoritesNewTabBool.Value = cfg.General.OpenFavoritesInNewTab
+	st.generalCompletionSound = fm.NormalizeCompletionSound(cfg.General.CompletionSound)
+	st.generalCompletionSoundAnim = settingsChoiceAnim{}
 	st.viewSmoothScrollingBool.Value = cfg.Viewer.SmoothScrolling
 	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
 	st.viewerTabList.Position.First = 0
@@ -2864,6 +2869,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.FontSizeSp = viewerFontSize
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
 	ui.fmCfg.General.OpenFavoritesInNewTab = st.generalFavoritesNewTabBool.Value
+	ui.fmCfg.General.CompletionSound = fm.NormalizeCompletionSound(st.generalCompletionSound)
 	ui.fmCfg.Viewer.SmoothScrolling = st.viewSmoothScrollingBool.Value
 	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value
 	ui.fmCfg.Viewer.CommandByTarget = viewerCommandTargetMap(st.viewTargetEntries)
@@ -3625,6 +3631,14 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 	rowLabel := func(txt string) layout.Widget {
 		return settingsViewerRowLabel(ui, th, txt, true)
 	}
+	for i, opt := range settingsCompletionSoundOptions() {
+		if st.generalCompletionSoundClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusGeneralCompletionSound)
+			st.generalCompletionSoundAnim.setValue(&st.generalCompletionSound, opt.Key, gtx.Now)
+			st.generalCompletionSoundAnim.anim.setPulse(opt.Key, gtx.Now)
+			st.errText = ""
+		}
+	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(rowLabel("Workspace")),
@@ -3648,13 +3662,55 @@ func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, s
 			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralFavoritesNewTab, &st.generalFavoritesNewTabBool)
 			return dims
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsCompletionSoundRow(th, gtx, st)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th, "Favorites are managed from the '☆' menu. Use the Config tab for full hexone.yaml editing.")
 			lbl.Font.Typeface = ui.interfaceTypeface()
 			lbl.TextSize = ui.scaleModalFontSize(11)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
+		}),
+	)
+}
+
+func settingsCompletionSoundOptions() []terminalShellOption {
+	return []terminalShellOption{
+		{Key: fm.CompletionSoundNever, Label: "Never"},
+		{Key: fm.CompletionSoundAlways, Label: "Always"},
+		{Key: fm.CompletionSoundBackground, Label: "Background only"},
+	}
+}
+
+func (ui *UI) layoutSettingsCompletionSoundRow(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	labelW := gtx.Dp(unit.Dp(104))
+	if labelW < 80 {
+		labelW = 80
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, labelW, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, "Completion sound")
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleModalFontSize(10)
+				lbl.Color = hintColor
+				return lbl.Layout(gtx)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsShellPicker(
+				th,
+				gtx,
+				settingsCompletionSoundOptions(),
+				st.generalCompletionSoundClicks[:],
+				fm.NormalizeCompletionSound(st.generalCompletionSound),
+				&st.generalCompletionSoundAnim,
+				st.focus == settingsKeyboardFocusGeneralCompletionSound,
+			)
 		}),
 	)
 }

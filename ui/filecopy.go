@@ -896,6 +896,7 @@ func (ui *UI) finishFileCopy(now time.Time) {
 	if noticePaneIdx < 0 {
 		noticePaneIdx = srcPaneIdx
 	}
+	ui.maybePlayBackgroundOperationSound(st.startedAt, now)
 	ui.fileCopy = nil // close dialog first
 	ui.clearFileCopyHotkeyHold()
 
