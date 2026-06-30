@@ -20,6 +20,10 @@ const (
 	settingsKeyboardFocusNav
 	settingsKeyboardFocusGeneralDimInactive
 	settingsKeyboardFocusGeneralFavoritesNewTab
+	settingsKeyboardFocusGeneralCompletionSound
+	settingsKeyboardFocusGeneralTerminalAcceleratedKeys
+	settingsKeyboardFocusFontsInterfaceFont
+	settingsKeyboardFocusFontsInterfaceFontSize
 	settingsKeyboardFocusGeneralPaneFont
 	settingsKeyboardFocusGeneralPaneFontSize
 	settingsKeyboardFocusFontsTabsFont
@@ -147,6 +151,7 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 	switch target {
 	case settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
+		settingsKeyboardFocusGeneralTerminalAcceleratedKeys,
 		settingsKeyboardFocusViewerShell,
 		settingsKeyboardFocusViewerRemoteSearch,
 		settingsKeyboardFocusViewerSmoothScrolling,
@@ -193,6 +198,8 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 		st.focus = settingsKeyboardFocusGeneralDimInactive
 	case gtx.Focused(&st.generalFavoritesNewTabBool):
 		st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
+	case gtx.Focused(&st.terminalAcceleratedKeysBool):
+		st.focus = settingsKeyboardFocusGeneralTerminalAcceleratedKeys
 	case gtx.Focused(&st.viewShellEdit):
 		st.focus = settingsKeyboardFocusViewerShell
 	case gtx.Focused(&st.viewRemoteSearchCommandEdit):
@@ -274,7 +281,13 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 	case "general":
 		order = append(order, settingsKeyboardFocusGeneralDimInactive)
 		order = append(order, settingsKeyboardFocusGeneralFavoritesNewTab)
+		order = append(order, settingsKeyboardFocusGeneralCompletionSound)
+		order = append(order, settingsKeyboardFocusGeneralTerminalAcceleratedKeys)
 	case "fonts":
+		if len(resources.BundledFontFamilies()) > 0 {
+			order = append(order, settingsKeyboardFocusFontsInterfaceFont)
+		}
+		order = append(order, settingsKeyboardFocusFontsInterfaceFontSize)
 		if len(resources.BundledFontFamilies()) > 0 {
 			order = append(order, settingsKeyboardFocusGeneralPaneFont)
 		}
@@ -477,6 +490,9 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 		return true
 	case settingsKeyboardFocusViewerHideFunctionBar:
 		st.viewHideFunctionBarBool.Value = !st.viewHideFunctionBarBool.Value
+		return true
+	case settingsKeyboardFocusGeneralTerminalAcceleratedKeys:
+		st.terminalAcceleratedKeysBool.Value = !st.terminalAcceleratedKeysBool.Value
 		return true
 	default:
 		return false
@@ -1239,6 +1255,28 @@ func (st *settingsModalState) stepPaneFontFamily(step int, families []resources.
 	return true
 }
 
+func (st *settingsModalState) stepInterfaceFontFamily(step int, families []resources.BundledFontFamily, now time.Time) bool {
+	if st == nil || len(families) == 0 {
+		return false
+	}
+	keys := make([]string, len(families))
+	current := st.interfaceFontFamily
+	if current == "" {
+		current = families[0].Name
+	}
+	for i, family := range families {
+		keys[i] = family.Name
+	}
+	next := settingsChoiceStep(current, keys, step)
+	if next == "" || next == current {
+		return false
+	}
+	st.interfaceFontPickerAnim.setValue(&st.interfaceFontFamily, next, now)
+	st.interfaceFontPickerAnim.anim.setPulse(next, now)
+	st.errText = ""
+	return true
+}
+
 func (st *settingsModalState) stepViewFontFamily(step int, families []resources.BundledFontFamily, now time.Time) bool {
 	if st == nil || len(families) == 0 {
 		return false
@@ -1305,6 +1343,26 @@ func (st *settingsModalState) stepTerminalFontFamily(step int, families []resour
 	return true
 }
 
+func (st *settingsModalState) stepCompletionSound(step int, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	options := settingsCompletionSoundOptions()
+	keys := make([]string, len(options))
+	current := fm.NormalizeCompletionSound(st.generalCompletionSound)
+	for i, opt := range options {
+		keys[i] = opt.Key
+	}
+	next := settingsChoiceStep(current, keys, step)
+	if next == "" || next == current {
+		return false
+	}
+	st.generalCompletionSoundAnim.setValue(&st.generalCompletionSound, next, now)
+	st.generalCompletionSoundAnim.anim.setPulse(next, now)
+	st.errText = ""
+	return true
+}
+
 func settingsNormalizedFontSize(value, fallback float32) float32 {
 	if !(value >= settingsFontSizeMin) {
 		if fallback >= settingsFontSizeMin {
@@ -1329,6 +1387,11 @@ func (st *settingsModalState) stepFontSize(focus settingsKeyboardFocus, step int
 		return false
 	}
 	switch focus {
+	case settingsKeyboardFocusFontsInterfaceFontSize:
+		next := settingsStepFontSize(st.interfaceFontSizeSp, step)
+		changed := next != st.interfaceFontSizeSp
+		st.interfaceFontSizeSp = next
+		return changed
 	case settingsKeyboardFocusGeneralPaneFontSize:
 		next := settingsStepFontSize(st.paneFontSizeSp, step)
 		changed := next != st.paneFontSizeSp
@@ -1456,6 +1519,8 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 		return false
 	}
 	switch st.focus {
+	case settingsKeyboardFocusFontsInterfaceFont:
+		return st.stepInterfaceFontFamily(step, families, now)
 	case settingsKeyboardFocusGeneralPaneFont:
 		return st.stepPaneFontFamily(step, families, now)
 	case settingsKeyboardFocusFontsTabsFont:
@@ -1474,6 +1539,8 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 		return st.stepFilenamePermMatch(step, now)
 	case settingsKeyboardFocusFilenameSizeMatch:
 		return st.stepFilenameSizeMatch(step, now)
+	case settingsKeyboardFocusGeneralCompletionSound:
+		return st.stepCompletionSound(step, now)
 	case settingsKeyboardFocusFooter:
 		return st.stepFooterAction(step)
 	default:

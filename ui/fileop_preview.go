@@ -50,8 +50,8 @@ func (ui *UI) layoutFileOpPreviewList(th *material.Theme, gtx layout.Context, li
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, line)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(9)
 			lbl.Color = color.NRGBA{R: 172, G: 172, B: 172, A: 255}
 			lbl.MaxLines = 1
 			lbl.Truncator = "..."

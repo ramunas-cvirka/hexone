@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -32,15 +33,23 @@ const (
 	filePaneVolumeBadgeRemoteTimeout   = 4 * time.Second
 )
 
+const (
+	filePaneVolumeBadgePaddingX   unit.Dp = 8
+	filePaneVolumeBadgePaddingY   unit.Dp = 4
+	filePaneVolumeBadgeWidthSlack unit.Dp = 4
+)
+
 type filePaneVolumeBadgeState struct {
-	lookupPath    string
-	label         string
-	checkedAt     time.Time
-	nextRefreshAt time.Time
-	measuredLabel string
-	measuredWidth int
-	measuredPxDp  float32
-	measuredPxSp  float32
+	lookupPath       string
+	label            string
+	checkedAt        time.Time
+	nextRefreshAt    time.Time
+	measuredLabel    string
+	measuredWidth    int
+	measuredPxDp     float32
+	measuredPxSp     float32
+	measuredTypeface font.Typeface
+	measuredTextSize unit.Sp
 }
 
 var localVolumeUsageFunc = platform.LocalVolumeUsage
@@ -352,12 +361,14 @@ func (ui *UI) layoutFilePaneVolumeBadge(th *material.Theme, gtx layout.Context, 
 	badgeGtx.Constraints.Min = image.Point{}
 	dims := fixedWidth(badgeGtx, width, func(gtx layout.Context) layout.Dimensions {
 		return layoutFilePaneAttachedBadge(gtx, bg, border, attachedLeft, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleThemeFontSize(th, 11)
+			return layout.Inset{
+				Left:   filePaneVolumeBadgePaddingX,
+				Right:  filePaneVolumeBadgePaddingX,
+				Top:    filePaneVolumeBadgePaddingY,
+				Bottom: filePaneVolumeBadgePaddingY,
+			}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := ui.filePaneVolumeBadgeTextStyle(th, label)
 				lbl.Color = textColor
-				lbl.MaxLines = 1
 				lbl.Truncator = "…"
 				return lbl.Layout(gtx)
 			})
@@ -450,24 +461,42 @@ func (ui *UI) filePaneVolumeBadgeWidth(th *material.Theme, gtx layout.Context, p
 	}
 
 	state := &pane.volumeBadge
-	if state.measuredLabel != label || state.measuredWidth <= 0 || state.measuredPxDp != gtx.Metric.PxPerDp || state.measuredPxSp != gtx.Metric.PxPerSp {
+	typeface := ui.mainTypeface()
+	textSize := filePaneVolumeBadgeTextSize(th)
+	if state.measuredLabel != label ||
+		state.measuredWidth <= 0 ||
+		state.measuredPxDp != gtx.Metric.PxPerDp ||
+		state.measuredPxSp != gtx.Metric.PxPerSp ||
+		state.measuredTypeface != typeface ||
+		state.measuredTextSize != textSize {
 		state.measuredLabel = label
 		state.measuredWidth = ui.measureFilePaneVolumeBadgeWidth(th, gtx, label)
 		state.measuredPxDp = gtx.Metric.PxPerDp
 		state.measuredPxSp = gtx.Metric.PxPerSp
+		state.measuredTypeface = typeface
+		state.measuredTextSize = textSize
 	}
 	return state.measuredWidth
 }
 
-func (ui *UI) measureFilePaneVolumeBadgeWidth(th *material.Theme, gtx layout.Context, label string) int {
+func filePaneVolumeBadgeTextSize(th *material.Theme) unit.Sp {
+	return scaleThemeFontSize(th, 11)
+}
+
+func (ui *UI) filePaneVolumeBadgeTextStyle(th *material.Theme, label string) material.LabelStyle {
 	lbl := material.Body2(th, label)
 	lbl.Font.Typeface = ui.mainTypeface()
-	lbl.TextSize = scaleThemeFontSize(th, 11)
+	lbl.TextSize = filePaneVolumeBadgeTextSize(th)
 	lbl.MaxLines = 1
+	return lbl
+}
+
+func (ui *UI) measureFilePaneVolumeBadgeWidth(th *material.Theme, gtx layout.Context, label string) int {
+	lbl := ui.filePaneVolumeBadgeTextStyle(th, label)
 	lbl.Truncator = ""
 
 	width := measureLabelUnconstrained(gtx, lbl).Size.X
-	width += gtx.Dp(unit.Dp(16))
+	width += gtx.Dp(filePaneVolumeBadgePaddingX + filePaneVolumeBadgePaddingX + filePaneVolumeBadgeWidthSlack)
 	minWidth := gtx.Dp(unit.Dp(84))
 	if width < minWidth {
 		width = minWidth

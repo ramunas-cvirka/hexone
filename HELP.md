@@ -110,8 +110,9 @@ While the terminal has keyboard focus, `Ctrl+N`, `Ctrl+X`, `Ctrl+Tab`, `Ctrl+Shi
 Useful terminal input:
 
 - `Ctrl+V` or `Cmd+V` pastes clipboard text.
-- Middle-click pastes clipboard text during normal shell use. Applications that enable terminal mouse reporting receive the middle click instead.
+- Middle-click pastes the active terminal selection, or clipboard text when there is no selection. The selection does not replace the clipboard. Applications that enable terminal mouse reporting receive the middle click instead.
 - Drag with the primary mouse button to select text; double-click selects a word.
+- Holding `Left`, `Right`, or `Backspace` accelerates cursor movement or deletion.
 - `Ctrl+C` or `Cmd+C` copies an active selection. Without a selection, plain `Ctrl+C` remains available to interrupt the running shell command.
 - `Ctrl+A` or `Cmd+A` selects the terminal buffer, including scrollback.
 - `Cmd+K` on macOS or `Ctrl+Shift+K` on Windows and Linux clears the active terminal tab's visible viewport and scrollback. The current prompt and partially typed command remain at the top.
@@ -286,7 +287,7 @@ Hexone embeds four Nerd Font Mono families, so portable builds do not need exter
 - JetBrainsMono Nerd Font Mono
 - Iosevka Nerd Font Mono
 
-Use `Settings -> Fonts` to choose the family and size independently for file panes, tabs, the internal viewer, and the terminal.
+Use `Settings -> Fonts` to choose the family and size independently for interface controls, file panes, tabs, the internal viewer, and the terminal. The interface font covers menus, tools, and dialogs, so pane text can be enlarged without distorting them.
 
 On Linux, the writable config files live under `~/.config/hexone/`.
 On macOS, they live under `~/Library/Application Support/hexone/`.

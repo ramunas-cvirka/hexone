@@ -54,3 +54,14 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Added preview-first Multi-Rename with common transformations, collision checks, and local/SFTP support.
 - Improved terminal selection, clipboard actions, buffer clearing, and pane-directory integration.
 - Embedded FiraCode, Hack, JetBrainsMono, and Iosevka Nerd Font Mono, replacing Fira Code and Consolas.
+
+## v0.8.0 - 2026-06-30
+
+- Added optional completion sounds for long copy and archive extraction operations.
+- Added a maximized Terminal mode with saved restore state.
+- Added an Interface font setting for modals, menus, and tools.
+- Improved font scaling support across interface surfaces.
+- Improved Favorites and SSH setup layouts with a flatter look.
+- Improved terminal key repeat, drag selection, and smooth scrolling behavior.
+- Terminal now uses all available bottom space.
+- Fixed SSH favorites opened in new tabs using the previous local pane path.

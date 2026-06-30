@@ -151,6 +151,8 @@ func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
+		settingsKeyboardFocusGeneralCompletionSound,
+		settingsKeyboardFocusGeneralTerminalAcceleratedKeys,
 		settingsKeyboardFocusFooter,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -164,6 +166,8 @@ func TestSettingsKeyboardFocusOrderIncludesFontControls(t *testing.T) {
 	got := st.focusOrder()
 	want := []settingsKeyboardFocus{
 		settingsKeyboardFocusNav,
+		settingsKeyboardFocusFontsInterfaceFont,
+		settingsKeyboardFocusFontsInterfaceFontSize,
 		settingsKeyboardFocusGeneralPaneFont,
 		settingsKeyboardFocusGeneralPaneFontSize,
 		settingsKeyboardFocusFontsTabsFont,
@@ -198,6 +202,80 @@ func TestSettingsModalLoadsTabsFontControls(t *testing.T) {
 	}
 }
 
+func TestSettingsModalLoadsAndSavesInterfaceFontControls(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Interface.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.Interface.FontSizeSp = 15
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if got, want := st.interfaceFontFamily, cfg.Interface.Typeface; got != want {
+		t.Fatalf("interface font family=%q want %q", got, want)
+	}
+	if got, want := st.interfaceFontSizeSp, cfg.Interface.FontSizeSp; got != want {
+		t.Fatalf("interface font size=%v want %v", got, want)
+	}
+
+	st.interfaceFontFamily = resources.BundledFontFamilyHackNerdFontMono
+	st.interfaceFontSizeSp = 16
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+	saved := fm.LoadConfig(ui.configPath)
+	if got, want := saved.Interface.Typeface, st.interfaceFontFamily; got != want {
+		t.Fatalf("saved interface font family=%q want %q", got, want)
+	}
+	if got, want := saved.Interface.FontSizeSp, st.interfaceFontSizeSp; got != want {
+		t.Fatalf("saved interface font size=%v want %v", got, want)
+	}
+}
+
+func TestSettingsPanePreviewHeightTracksPaneFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	gtx := testLabelLayoutContext(image.Pt(640, 480))
+	base := ui.settingsPanePreviewHostHeight(gtx)
+
+	cfg.General.FontSizeSp = 22
+	large := ui.settingsPanePreviewHostHeight(gtx)
+	if large <= base {
+		t.Fatalf("large pane preview height=%d want > %d", large, base)
+	}
+}
+
+func TestSettingsColorPreviewPathHeightMatchesPanePathBar(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.FontSizeSp = 22
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	ui.syncThemeRuntime(th)
+
+	pane := newFilePaneState(".", cfg)
+	pane.applyListing(testPathListing("/opt/gpstrack/log"), "", "", 0)
+	pathGtx := testPathLayoutContext()
+	pathDims := ui.layoutFilePanePathArea(th, pathGtx, 0, pane, true)
+
+	previewPathH := settingsColorPreviewPathContainerHeight(pathGtx)
+	if previewPathH != pathDims.Size.Y {
+		t.Fatalf("preview path height=%d want real path bar height %d", previewPathH, pathDims.Size.Y)
+	}
+
+	previewGtx := testLabelLayoutContext(image.Pt(640, 480))
+	if got, oldScaled := ui.settingsColorPreviewCurrentDirHeight(previewGtx), previewGtx.Dp(scaleFilePaneDp(cfg, 22)); got >= oldScaled {
+		t.Fatalf("current-dir preview row height=%d should stay below old scaled path height %d", got, oldScaled)
+	}
+}
+
+func TestSettingsColorsTabScrollsVertically(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	if got := ui.settingsModal.colorsTabList.Axis; got != layout.Vertical {
+		t.Fatalf("colors tab list axis=%v want vertical", got)
+	}
+}
+
 func TestSettingsModalSavesTabsFontControls(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	ui := NewUI(cfg)
@@ -217,6 +295,31 @@ func TestSettingsModalSavesTabsFontControls(t *testing.T) {
 	}
 	if got, want := saved.Tabs.FontSizeSp, st.tabsFontSizeSp; got != want {
 		t.Fatalf("saved tabs font size=%v want %v", got, want)
+	}
+}
+
+func TestSettingsModalLoadsAndSavesTerminalAcceleratedKeys(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.AcceleratedKeys = false
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	if st.terminalAcceleratedKeysBool.Value {
+		t.Fatal("terminal accelerated keys checkbox should load false")
+	}
+
+	st.terminalAcceleratedKeysBool.Value = true
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+	saved := fm.LoadConfig(ui.configPath)
+	if !saved.Terminal.AcceleratedKeys {
+		t.Fatal("saved terminal accelerated keys should be true")
 	}
 }
 
@@ -410,6 +513,39 @@ func TestSettingsModalKeyboardSpaceTogglesFavoritesNewTab(t *testing.T) {
 	}
 }
 
+func TestSettingsModalKeyboardSpaceTogglesTerminalAcceleratedKeys(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "general"
+	st.focus = settingsKeyboardFocusGeneralTerminalAcceleratedKeys
+	st.keyFocus.wantFocus = true
+	st.terminalAcceleratedKeysBool.Value = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameSpace, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if st.terminalAcceleratedKeysBool.Value {
+		t.Fatal("Space should toggle the focused terminal accelerated-keys checkbox")
+	}
+}
+
 func TestSettingsModalKeyboardSpaceTogglesViewerSmoothScrolling(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	ui.openSettingsModal()
@@ -485,8 +621,8 @@ func TestSettingsModalKeyboardTabIncludesFontSizeStepper(t *testing.T) {
 		frame(now.Add(time.Duration(i+1) * time.Millisecond))
 	}
 
-	if st.focus != settingsKeyboardFocusGeneralPaneFontSize {
-		t.Fatalf("focus after tabbing = %v, want pane font size stepper", st.focus)
+	if st.focus != settingsKeyboardFocusFontsInterfaceFontSize {
+		t.Fatalf("focus after tabbing = %v, want interface font size stepper", st.focus)
 	}
 	if st.focusPending != settingsKeyboardFocusNone {
 		t.Fatalf("focusPending = %v, want none for keyboard-owned stepper focus", st.focusPending)

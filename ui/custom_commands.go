@@ -434,7 +434,7 @@ func (ui *UI) layoutCustomCommandMenuCard(th *material.Theme, gtx layout.Context
 					return fixedHeight(gtx, ui.fileContextMenuTitleHeight(gtx), func(gtx layout.Context) layout.Dimensions {
 						return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(4), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Caption(th, "F2")
-							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Typeface = ui.interfaceTypeface()
 							lbl.Font.Weight = font.Medium
 							lbl.TextSize = scaleConfigFontSize(ui.fmCfg, 9)
 							lbl.Color = scaleColorAlpha(theme.Title, alpha)
@@ -1223,9 +1223,9 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					title := material.Body1(th, "Custom Command")
-					title.Font.Typeface = ui.mainTypeface()
+					title.Font.Typeface = ui.interfaceTypeface()
 					title.Font.Weight = font.Bold
-					title.TextSize = scaleDialogThemeFontSize(th, 12)
+					title.TextSize = ui.scaleDialogFontSize(12)
 					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
@@ -1262,8 +1262,8 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Min.Y)}
 				}
 				lbl := material.Caption(th, st.lastErr)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleDialogFontSize(9)
 				lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 				lbl.MaxLines = 1
 				return lbl.Layout(gtx)
@@ -1371,8 +1371,8 @@ func (ui *UI) layoutCustomCommandEditorFields(th *material.Theme, gtx layout.Con
 	rowLabel := func(label string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, label)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(9)
 			lbl.Color = hintColor
 			lbl.MaxLines = 1
 			return lbl.Layout(gtx)
@@ -1383,7 +1383,7 @@ func (ui *UI) layoutCustomCommandEditorFields(th *material.Theme, gtx layout.Con
 			st.applyPendingEditorFocus(gtx, target, ed)
 			materialEd := material.Editor(th, ed, hint)
 			materialEd.Font.Typeface = ui.viewerTypeface()
-			materialEd.TextSize = scaleDialogThemeFontSize(th, 10)
+			materialEd.TextSize = ui.scaleDialogFontSize(10)
 			materialEd.Color = txtColor
 			materialEd.HintColor = hintColor
 			host := func(gtx layout.Context) layout.Dimensions {
@@ -1404,8 +1404,8 @@ func (ui *UI) layoutCustomCommandEditorFields(th *material.Theme, gtx layout.Con
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			text := fmt.Sprintf("%d / %s", st.selected+1, customCommandMenuShortcut(st.selected))
 			lbl := material.Body2(th, text)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(10)
 			lbl.Color = txtColor
 			lbl.MaxLines = 1
 			return lbl.Layout(gtx)

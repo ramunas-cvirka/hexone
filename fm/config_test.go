@@ -96,6 +96,81 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	if strings.Contains(out, "key_bindings:") {
 		t.Fatalf("serialized config should not contain legacy key_bindings block:\n%s", out)
 	}
+	if !strings.Contains(out, "interface:\n") || !strings.Contains(out, "font_size_sp: 14") {
+		t.Fatalf("serialized config missing interface font settings:\n%s", out)
+	}
+}
+
+func TestInterfaceFontDefaultsIndependentlyFromPaneFont(t *testing.T) {
+	raw := `
+general:
+  typeface: Iosevka Nerd Font Mono
+  font_size_sp: 22
+`
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.General.FontSizeSp, float32(22); got != want {
+		t.Fatalf("pane font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Interface.FontSizeSp, float32(14); got != want {
+		t.Fatalf("interface font size=%v want independent default %v", got, want)
+	}
+	if got, want := cfg.Interface.Typeface, resources.BundledFontFamilyFiraCodeNerdFontMono; got != want {
+		t.Fatalf("interface typeface=%q want %q", got, want)
+	}
+}
+
+func TestTerminalAcceleratedKeysDefaultsOnAndCanBeDisabled(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.Terminal.AcceleratedKeys {
+		t.Fatal("default terminal accelerated keys should be enabled")
+	}
+	if cfg.Terminal.Maximized {
+		t.Fatal("default terminal should not be maximized")
+	}
+
+	raw := `
+general:
+  font_size_sp: 16
+`
+	cfg = DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config without terminal settings: %v", err)
+	}
+	cfg.normalize()
+	if !cfg.Terminal.AcceleratedKeys {
+		t.Fatal("decoded config should keep terminal accelerated keys enabled when omitted")
+	}
+
+	raw = `
+terminal:
+  accelerated_keys: false
+`
+	cfg = DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+	if cfg.Terminal.AcceleratedKeys {
+		t.Fatal("terminal accelerated keys should preserve explicit false")
+	}
+
+	raw = `
+terminal:
+  maximized: true
+`
+	cfg = DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal maximized terminal config: %v", err)
+	}
+	cfg.normalize()
+	if !cfg.Terminal.Maximized {
+		t.Fatal("terminal maximized state should preserve explicit true")
+	}
 }
 
 func TestConfigNormalizesTerminalHeightAndSortPerDir(t *testing.T) {
@@ -720,6 +795,40 @@ func TestDefaultConfigOpensFavoritesInNewTab(t *testing.T) {
 	out := string(mustMarshalConfig(t, cfg))
 	if !strings.Contains(out, "open_favorites_in_new_tab: true") {
 		t.Fatalf("serialized config missing general open_favorites_in_new_tab:\n%s", out)
+	}
+}
+
+func TestDefaultConfigCompletionSoundBackground(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg.General.CompletionSound != CompletionSoundBackground {
+		t.Fatalf("general completion_sound=%q want %q", cfg.General.CompletionSound, CompletionSoundBackground)
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "completion_sound: background") {
+		t.Fatalf("serialized config missing general completion_sound:\n%s", out)
+	}
+}
+
+func TestNormalizeCompletionSound(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{raw: "", want: CompletionSoundBackground},
+		{raw: "never", want: CompletionSoundNever},
+		{raw: "off", want: CompletionSoundNever},
+		{raw: "always", want: CompletionSoundAlways},
+		{raw: "on", want: CompletionSoundAlways},
+		{raw: "background only", want: CompletionSoundBackground},
+		{raw: "app_not_focused", want: CompletionSoundBackground},
+		{raw: "surprise", want: CompletionSoundBackground},
+	}
+	for _, tt := range tests {
+		if got := NormalizeCompletionSound(tt.raw); got != tt.want {
+			t.Fatalf("NormalizeCompletionSound(%q)=%q want %q", tt.raw, got, tt.want)
+		}
 	}
 }
 

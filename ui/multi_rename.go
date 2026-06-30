@@ -365,6 +365,31 @@ func (ui *UI) closeMultiRename() {
 	ui.closeEditorContextMenu()
 }
 
+func (st *multiRenameState) hasDirectoryTarget() bool {
+	if st == nil {
+		return false
+	}
+	for _, target := range st.targets {
+		if target.kind == filesys.EntryDir {
+			return true
+		}
+	}
+	return false
+}
+
+// effectiveScope is the scope actually applied. Directories have no extension,
+// so any directory in the selection (including mixed file+dir selections) locks
+// the operation to the name portion only.
+func (st *multiRenameState) effectiveScope() multiRenameScope {
+	if st == nil {
+		return multiRenameScopeName
+	}
+	if st.hasDirectoryTarget() {
+		return multiRenameScopeName
+	}
+	return st.scope
+}
+
 func splitMultiRenameName(name string, kind filesys.EntryKind) (string, string) {
 	if kind == filesys.EntryDir {
 		return name, ""
@@ -481,9 +506,10 @@ func (st *multiRenameState) refreshPreview() {
 	if st == nil {
 		return
 	}
+	scope := st.effectiveScope()
 	signature := fmt.Sprintf("%q\x00%q\x00%q\x00%q\x00%q\x00%q\x00%q\x00%t\x00%d\x00%t\x00%t\x00%d",
 		st.searchEdit.Text(), st.replaceEdit.Text(), st.prefixEdit.Text(), st.suffixEdit.Text(), st.startEdit.Text(), st.stepEdit.Text(), st.digitsEdit.Text(),
-		st.caseSensitive.Value, st.scope, st.sequence.Value, st.sequenceAtEnd, st.caseMode)
+		st.caseSensitive.Value, scope, st.sequence.Value, st.sequenceAtEnd, st.caseMode)
 	if signature != st.lastInput {
 		st.operationErr = ""
 		st.lastInput = signature
@@ -516,7 +542,7 @@ func (st *multiRenameState) refreshPreview() {
 		st.targets[i].newName = multiRenameApply(
 			st.targets[i].oldName, st.targets[i].kind,
 			st.searchEdit.Text(), st.replaceEdit.Text(), st.prefixEdit.Text(), st.suffixEdit.Text(),
-			st.caseSensitive.Value, st.scope, st.sequence.Value, st.sequenceAtEnd, start+i*step, digits, st.caseMode,
+			st.caseSensitive.Value, scope, st.sequence.Value, st.sequenceAtEnd, start+i*step, digits, st.caseMode,
 		)
 		if st.lastErr == "" {
 			if err := multiRenameValidName(st.targets[i].newName, st.endpoint.isRemote()); err != nil {
@@ -731,6 +757,9 @@ func (st *multiRenameState) stepChoice(focus multiRenameFocus, step int, now tim
 	}
 	switch focus {
 	case multiRenameFocusScope:
+		if st.hasDirectoryTarget() {
+			return false
+		}
 		current := int(st.scope)
 		next := dialogWrappedIndex(current, len(st.scopeClicks), step)
 		if next == current {
@@ -911,8 +940,14 @@ func (ui *UI) layoutMultiRename(th *material.Theme, gtx layout.Context) layout.D
 			st.refreshPreview()
 		}
 	}
+	scopeLocked := st.hasDirectoryTarget()
 	for i := range st.scopeClicks {
 		for st.scopeClicks[i].Clicked(gtx) {
+			// Directories have no extension, so the "Extension" and "Both"
+			// tabs are disabled; ignore stray clicks on them.
+			if scopeLocked && multiRenameScope(i) != multiRenameScopeName {
+				continue
+			}
 			st.setFocus(gtx, multiRenameFocusScope)
 			st.scope = multiRenameScope(i)
 			st.scopeTabsAnim.setPulse(fmt.Sprintf("scope:%d", i), gtx.Now)
@@ -1009,9 +1044,9 @@ func (ui *UI) layoutMultiRenameBody(th *material.Theme, gtx layout.Context, st *
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					title := material.Body1(th, fmt.Sprintf("Multi-Rename  ·  %d selected", len(st.targets)))
-					title.Font.Typeface = ui.mainTypeface()
+					title.Font.Typeface = ui.interfaceTypeface()
 					title.Font.Weight = font.Bold
-					title.TextSize = scaleDialogThemeFontSize(th, 12)
+					title.TextSize = ui.scaleDialogFontSize(12)
 					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
@@ -1053,8 +1088,8 @@ func (ui *UI) layoutMultiRenameBody(th *material.Theme, gtx layout.Context, st *
 				text, col = st.lastErr, color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			}
 			lbl := material.Caption(th, text)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(9)
 			lbl.Color = col
 			lbl.MaxLines = 1
 			lbl.Truncator = "…"
@@ -1108,31 +1143,34 @@ func (ui *UI) layoutMultiRenameCaseControl(th *material.Theme, gtx layout.Contex
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutThemeCheckbox(th, gtx, &st.caseSensitive, "Find is case sensitive", scaleDialogThemeFontSize(th, 8))
+			return ui.layoutThemeCheckbox(th, gtx, &st.caseSensitive, "Find is case sensitive", ui.scaleDialogFontSize(8))
 		}),
 	)
 }
 
 func (ui *UI) layoutMultiRenameScopeControl(th *material.Theme, gtx layout.Context, st *multiRenameState) layout.Dimensions {
-	active := int(st.scope)
+	locked := st.hasDirectoryTarget()
+	active := int(st.effectiveScope())
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(ui.multiRenameGroupLabel(th, "Apply actions to")),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutMultiRenameTabs(th, gtx, []string{"Name", "Extension", "Both"}, st.scopeClicks[:], active, &st.scopeTabsAnim, "scope", st.focus == multiRenameFocusScope)
+			return ui.layoutMultiRenameTabs(th, gtx, []string{"Name", "Extension", "Both"}, st.scopeClicks[:], active, &st.scopeTabsAnim, "scope", st.focus == multiRenameFocusScope, false, locked, locked)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			text := "Extension stays unchanged"
-			switch st.scope {
-			case multiRenameScopeExtension:
+			switch {
+			case locked:
+				text = "Folder selected · only the name is renamed"
+			case st.scope == multiRenameScopeExtension:
 				text = "Name stays unchanged"
-			case multiRenameScopeBoth:
+			case st.scope == multiRenameScopeBoth:
 				text = "Complete filename is edited"
 			}
 			lbl := material.Caption(th, text)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 8)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(8)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
@@ -1142,24 +1180,27 @@ func (ui *UI) layoutMultiRenameScopeControl(th *material.Theme, gtx layout.Conte
 func (ui *UI) multiRenameGroupLabel(th *material.Theme, text string) layout.Widget {
 	return func(gtx layout.Context) layout.Dimensions {
 		lbl := material.Caption(th, text)
-		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Typeface = ui.interfaceTypeface()
 		lbl.Font.Weight = font.Medium
-		lbl.TextSize = scaleDialogThemeFontSize(th, 8)
+		lbl.TextSize = ui.scaleDialogFontSize(8)
 		lbl.Color = hintColor
 		return lbl.Layout(gtx)
 	}
 }
 
-func (ui *UI) layoutMultiRenameTabs(th *material.Theme, gtx layout.Context, labels []string, clicks []widget.Clickable, active int, anim *segmentedAnimState, keyPrefix string, focused bool) layout.Dimensions {
+func (ui *UI) layoutMultiRenameTabs(th *material.Theme, gtx layout.Context, labels []string, clicks []widget.Clickable, active int, anim *segmentedAnimState, keyPrefix string, focused bool, disabled ...bool) layout.Dimensions {
 	if len(labels) == 0 || len(clicks) < len(labels) {
 		return layout.Dimensions{}
 	}
 	if active < 0 || active >= len(labels) {
 		active = 0
 	}
+	tabDisabled := func(i int) bool {
+		return i < len(disabled) && disabled[i]
+	}
 	hoverKey := ""
 	for i := range labels {
-		if clicks[i].Hovered() {
+		if !tabDisabled(i) && clicks[i].Hovered() {
 			hoverKey = fmt.Sprintf("%s:%d", keyPrefix, i)
 			break
 		}
@@ -1174,6 +1215,9 @@ func (ui *UI) layoutMultiRenameTabs(th *material.Theme, gtx layout.Context, labe
 		if hoverAnim || pulseAnim {
 			animating = true
 		}
+		if tabDisabled(i) {
+			hover, pulse = 0, 0
+		}
 		fill := float32(0)
 		if i == active {
 			fill = 1
@@ -1182,12 +1226,12 @@ func (ui *UI) layoutMultiRenameTabs(th *material.Theme, gtx layout.Context, labe
 		if focused && i == active {
 			focusFill = 1
 		}
-		specs = append(specs, slidingTabSpec{Label: label, Click: &clicks[i], ActiveFill: fill, HoverFill: hover, PulseFill: pulse, FocusFill: focusFill})
+		specs = append(specs, slidingTabSpec{Label: label, Click: &clicks[i], ActiveFill: fill, HoverFill: hover, PulseFill: pulse, FocusFill: focusFill, Disabled: tabDisabled(i)})
 	}
 	if animating {
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	return ui.layoutSlidingTabStrip(th, gtx, gtx.Dp(unit.Dp(22)), float32(active), scaleDialogThemeFontSize(th, 9), specs)
+	return ui.layoutSlidingTabStrip(th, gtx, gtx.Dp(unit.Dp(22)), float32(active), ui.scaleDialogFontSize(9), specs)
 }
 
 func (ui *UI) layoutMultiRenameCounterControl(th *material.Theme, gtx layout.Context, st *multiRenameState) layout.Dimensions {
@@ -1202,7 +1246,7 @@ func (ui *UI) layoutMultiRenameCounterControl(th *material.Theme, gtx layout.Con
 					layout.Rigid(ui.multiRenameGroupLabel(th, "Dynamic element")),
 					layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutThemeCheckbox(th, gtx, &st.sequence, "Add counter", scaleDialogThemeFontSize(th, 9))
+						return ui.layoutThemeCheckbox(th, gtx, &st.sequence, "Add counter", ui.scaleDialogFontSize(9))
 					}),
 				)
 			})
@@ -1245,9 +1289,9 @@ func (ui *UI) layoutMultiRenamePreview(th *material.Theme, gtx layout.Context, s
 	header := func(text string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, text)
-			lbl.Font.Typeface = ui.mainTypeface()
+			lbl.Font.Typeface = ui.interfaceTypeface()
 			lbl.Font.Weight = font.Bold
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+			lbl.TextSize = ui.scaleDialogFontSize(9)
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}
@@ -1272,8 +1316,8 @@ func (ui *UI) layoutMultiRenamePreview(th *material.Theme, gtx layout.Context, s
 							cell := func(text string, changedCell bool) layout.Widget {
 								return func(gtx layout.Context) layout.Dimensions {
 									lbl := material.Body2(th, text)
-									lbl.Font.Typeface = ui.mainTypeface()
-									lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+									lbl.Font.Typeface = ui.interfaceTypeface()
+									lbl.TextSize = ui.scaleDialogFontSize(9)
 									lbl.Color = color.NRGBA{R: 185, G: 185, B: 185, A: 255}
 									if changedCell {
 										lbl.Color = color.NRGBA{R: 225, G: 225, B: 225, A: 255}
@@ -1286,8 +1330,8 @@ func (ui *UI) layoutMultiRenamePreview(th *material.Theme, gtx layout.Context, s
 							return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 								return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, layout.Flexed(1, cell(target.oldName, false)), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									arrow := material.Caption(th, "→")
-									arrow.Font.Typeface = ui.mainTypeface()
-									arrow.TextSize = scaleDialogThemeFontSize(th, 9)
+									arrow.Font.Typeface = ui.interfaceTypeface()
+									arrow.TextSize = ui.scaleDialogFontSize(9)
 									arrow.Color = hintColor
 									return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5)}.Layout(gtx, arrow.Layout)
 								}), layout.Flexed(1, cell(target.newName, changed)))

@@ -223,6 +223,44 @@ func TestViewerFunctionBarAutoHideCanBeTemporarilyShown(t *testing.T) {
 	}
 }
 
+func TestTerminalMaximizedFunctionBarAutoHideCanBeTemporarilyShown(t *testing.T) {
+	now := time.Date(2026, time.March, 8, 10, 5, 0, 0, time.UTC)
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.Maximized = true
+	st := newTerminalSession(nil)
+	st.setActive(true)
+	ui := &UI{
+		fmCfg:             cfg,
+		terminal:          st,
+		functionBarHidden: true,
+	}
+
+	if ui.functionBarVisible() {
+		t.Fatal("maximized terminal should hide function bar by default")
+	}
+	if ui.functionBarTerminalShown {
+		t.Fatal("terminal override should start disabled")
+	}
+
+	if !ui.toggleFunctionBarVisibility(now) {
+		t.Fatal("toggleFunctionBarVisibility should succeed")
+	}
+	if !ui.functionBarVisible() {
+		t.Fatal("F11 should temporarily show the function bar over maximized terminal")
+	}
+	if !ui.functionBarTerminalShown {
+		t.Fatal("terminal override should be enabled after showing the bar")
+	}
+	if !ui.functionBarHidden {
+		t.Fatal("global manual hidden state should be preserved while terminal override is active")
+	}
+
+	cfg.Terminal.Maximized = false
+	if ui.functionBarVisible() {
+		t.Fatal("manual hidden state should resume after terminal leaves maximized mode")
+	}
+}
+
 func TestFunctionBarToolsOpenSeedsKeyboardSelectionFromActiveTool(t *testing.T) {
 	now := time.Date(2026, time.March, 11, 10, 0, 0, 0, time.UTC)
 	ui := &UI{
@@ -277,9 +315,57 @@ func TestFunctionBarModifierHintTextShowsFileManagerShortcuts(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ctrl hints for the file manager")
 	}
-	want := "Ctrl+A Select All | Ctrl+E Same Ext | Ctrl+F SSH | Ctrl+M Multi-Rename | Ctrl+S Settings"
+	want := "Ctrl+A Select All | Ctrl+E Same Ext | Ctrl+N New Tab | Ctrl+X Close Tab | Ctrl+F SSH | Ctrl+M Multi-Rename | Ctrl+S Settings"
 	if got != want {
 		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
+	}
+}
+
+func TestFunctionBarModifierHintTextShowsFocusedTerminalShortcuts(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModCtrl,
+	}
+
+	got, ok := ui.functionBarModifierHintTextForContext(true, "linux")
+	if !ok {
+		t.Fatal("expected ctrl hints for the focused terminal")
+	}
+	want := "Ctrl+A Select All | Ctrl+Shift+K Clear | Ctrl+N New Tab | Ctrl+X Close Tab | Ctrl+S Settings"
+	if got != want {
+		t.Fatalf("functionBarModifierHintTextForContext()=%q want %q", got, want)
+	}
+}
+
+func TestFunctionBarModifierHintTextUsesMacTerminalClearShortcut(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModCommand,
+	}
+
+	got, ok := ui.functionBarModifierHintTextForContext(true, "darwin")
+	if !ok {
+		t.Fatal("expected command hints for the focused terminal")
+	}
+	want := "Cmd+A Select All | Cmd+K Clear | Cmd+N New Tab | Cmd+X Close Tab | Cmd+S Settings"
+	if got != want {
+		t.Fatalf("functionBarModifierHintTextForContext()=%q want %q", got, want)
+	}
+}
+
+func TestFunctionBarModifierHintTextDoesNotAdvertiseMacClearForCtrl(t *testing.T) {
+	ui := &UI{
+		Tabs:                widget.Enum{Value: "tab0"},
+		functionBarHeldMods: key.ModCtrl,
+	}
+
+	got, ok := ui.functionBarModifierHintTextForContext(true, "darwin")
+	if !ok {
+		t.Fatal("expected ctrl hints for the focused terminal")
+	}
+	want := "Ctrl+A Select All | Ctrl+N New Tab | Ctrl+X Close Tab | Ctrl+S Settings"
+	if got != want {
+		t.Fatalf("functionBarModifierHintTextForContext()=%q want %q", got, want)
 	}
 }
 
@@ -370,16 +456,22 @@ func TestFunctionBarHintSlotLabelsUseLeadingFunctionBarSlots(t *testing.T) {
 	if labels[1] != "Ctrl+E Same Ext" {
 		t.Fatalf("slot 1=%q want %q", labels[1], "Ctrl+E Same Ext")
 	}
-	if labels[2] != "Ctrl+F SSH" {
-		t.Fatalf("slot 2=%q want %q", labels[2], "Ctrl+F SSH")
+	if labels[2] != "Ctrl+N New Tab" {
+		t.Fatalf("slot 2=%q want %q", labels[2], "Ctrl+N New Tab")
 	}
-	if labels[3] != "Ctrl+M Multi-Rename" {
-		t.Fatalf("slot 3=%q want %q", labels[3], "Ctrl+M Multi-Rename")
+	if labels[3] != "Ctrl+X Close Tab" {
+		t.Fatalf("slot 3=%q want %q", labels[3], "Ctrl+X Close Tab")
 	}
-	if labels[4] != "Ctrl+S Settings" {
-		t.Fatalf("slot 4=%q want %q", labels[4], "Ctrl+S Settings")
+	if labels[4] != "Ctrl+F SSH" {
+		t.Fatalf("slot 4=%q want %q", labels[4], "Ctrl+F SSH")
 	}
-	for i := 5; i < len(labels); i++ {
+	if labels[5] != "Ctrl+M Multi-Rename" {
+		t.Fatalf("slot 5=%q want %q", labels[5], "Ctrl+M Multi-Rename")
+	}
+	if labels[6] != "Ctrl+S Settings" {
+		t.Fatalf("slot 6=%q want %q", labels[6], "Ctrl+S Settings")
+	}
+	for i := 7; i < len(labels); i++ {
 		if labels[i] != "" {
 			t.Fatalf("slot %d=%q want empty", i, labels[i])
 		}

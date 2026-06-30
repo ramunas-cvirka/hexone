@@ -12,6 +12,7 @@ import (
 	"hexone/filesys"
 	"hexone/ui/platform"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -153,6 +154,41 @@ func TestFilePaneVolumeBadgeOffsetPinsToBottomInnerCorner(t *testing.T) {
 	}
 }
 
+func TestFilePaneVolumeBadgeWidthCacheTracksTextStyle(t *testing.T) {
+	ui := &UI{}
+	pane := newFilePaneState(t.TempDir(), nil)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(640, 80)),
+	}
+	label := "999.99 GB free / 9999.99 GB"
+
+	small := material.NewTheme()
+	small.TextSize = 12
+	large := material.NewTheme()
+	large.TextSize = 24
+
+	smallWidth := ui.filePaneVolumeBadgeWidth(small, gtx, pane, label)
+	if got, want := pane.volumeBadge.measuredTextSize, filePaneVolumeBadgeTextSize(small); got != want {
+		t.Fatalf("small measuredTextSize = %v, want %v", got, want)
+	}
+
+	largeWidth := ui.filePaneVolumeBadgeWidth(large, gtx, pane, label)
+	if largeWidth <= smallWidth {
+		t.Fatalf("large font cached width = %d, want greater than small width %d", largeWidth, smallWidth)
+	}
+	if got, want := pane.volumeBadge.measuredTextSize, filePaneVolumeBadgeTextSize(large); got != want {
+		t.Fatalf("large measuredTextSize = %v, want %v", got, want)
+	}
+
+	ui.typeface = font.Typeface("serif")
+	_ = ui.filePaneVolumeBadgeWidth(large, gtx, pane, label)
+	if got, want := pane.volumeBadge.measuredTypeface, ui.mainTypeface(); got != want {
+		t.Fatalf("measuredTypeface = %q, want %q", got, want)
+	}
+}
+
 func TestFilePaneVolumeBadgeSourcePaneUsesActivePane(t *testing.T) {
 	ui := NewUI(nil)
 	left := newFilePaneState(t.TempDir(), nil)
@@ -202,10 +238,21 @@ func TestFilePaneVolumeBadgeSourcePaneKeepsMirroringExtractingPane(t *testing.T)
 	}
 }
 
+func TestFilePaneVolumeBadgesVisibleWhenTerminalOpenButPaneFocused(t *testing.T) {
+	terminal := newTerminalSession(nil)
+	terminal.setActive(true)
+	ui := &UI{terminal: terminal}
+
+	if ui.filePaneVolumeBadgesHidden(layout.Context{}) {
+		t.Fatal("volume badges should stay visible when the terminal drawer is open but not focused")
+	}
+}
+
 func TestFilePaneVolumeBadgesStayHiddenAcrossTerminalTabSwitch(t *testing.T) {
 	first := newTerminalSession(nil)
 	second := newTerminalSession(nil)
 	first.setActive(true)
+	first.focusKeyboard()
 	ui := &UI{
 		terminal: first,
 		terminalTabs: terminalTabSet{
@@ -214,13 +261,13 @@ func TestFilePaneVolumeBadgesStayHiddenAcrossTerminalTabSwitch(t *testing.T) {
 		},
 	}
 
-	if !ui.filePaneVolumeBadgesHidden() {
-		t.Fatal("volume badges should be hidden while the terminal drawer is open")
+	if !ui.filePaneVolumeBadgesHidden(layout.Context{}) {
+		t.Fatal("volume badges should be hidden while the terminal is focused")
 	}
 	if !ui.activateTerminalTab(1) {
 		t.Fatal("activateTerminalTab should switch terminal tabs")
 	}
-	if !ui.filePaneVolumeBadgesHidden() {
+	if !ui.filePaneVolumeBadgesHidden(layout.Context{}) {
 		t.Fatal("volume badges became visible during terminal tab handoff")
 	}
 	if first.active() || !second.active() {

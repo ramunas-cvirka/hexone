@@ -334,3 +334,79 @@ func TestNavigateRemoteFavoriteReusesOtherPaneSSHSessionBeforeSavedSetup(t *test
 		t.Fatalf("reused ssh favorite notice=%q want empty", right.noticeText)
 	}
 }
+
+func TestNavigateRemoteFavoriteNewTabIgnoresInheritedLocalLoad(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldOpen := openSSHClientsFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		openSSHClientsFunc = oldOpen
+	})
+
+	setup := fm.SSHSetup{Host: "example.test", Port: 22, User: "root", Password: "secret"}
+	cfg := fm.DefaultConfig()
+	cfg.General.OpenFavoritesInNewTab = true
+	cfg.SSH.Setups = []fm.SSHSetup{setup}
+
+	client := new(sftp.Client)
+	openSSHClientsFunc = func(got fm.SSHSetup) (sshClientBundle, error) {
+		if got.Host != setup.Host || got.Port != setup.Port || got.User != setup.User {
+			t.Fatalf("unexpected ssh setup: %+v", got)
+		}
+		return sshClientBundle{
+			sshClient: new(ssh.Client),
+			sftpBase:  new(ssh.Client),
+			sftp:      client,
+		}, nil
+	}
+
+	readDirSFTPFunc = func(got *sftp.Client, dir string) (filesys.Listing, error) {
+		if got != client {
+			t.Fatalf("unexpected sftp client %p", got)
+		}
+		if dir != "/root/gpstrack" {
+			t.Fatalf("readDir dir=%q want /root/gpstrack", dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	localDir := t.TempDir()
+	base := newFilePaneState(localDir, cfg)
+	base.dir = localDir
+	ui := &UI{
+		fmCfg:          cfg,
+		filePanes:      []*filePaneState{base},
+		activeFilePane: 0,
+	}
+
+	if !ui.navigatePaneFavorite(0, "ssh://root@example.test/root/gpstrack") {
+		t.Fatal("navigatePaneFavorite returned false")
+	}
+	pane := ui.filePanes[0]
+	if pane == nil || pane == base {
+		t.Fatal("favorite should open in a new file pane tab")
+	}
+	if pane.remote == nil || pane.remote.sftpClient() != client {
+		t.Fatal("new tab should be connected to the SSH favorite")
+	}
+	if pane.dir != "/root/gpstrack" {
+		t.Fatalf("pane dir=%q want /root/gpstrack", pane.dir)
+	}
+	if pane.loadSeq < 2 {
+		t.Fatalf("pane loadSeq=%d want remote load to invalidate inherited local load", pane.loadSeq)
+	}
+
+	staleSeq := pane.loadSeq - 1
+	sendFilePaneLoadResult(pane.loadResultCh, filePaneLoadResult{
+		seq:     staleSeq,
+		listing: filesys.Listing{Dir: localDir},
+	})
+	ui.pumpFilePaneLoads(testPathLayoutContext())
+
+	if pane.remote == nil || pane.remote.sftpClient() != client {
+		t.Fatal("stale local load should not disconnect the SSH pane")
+	}
+	if pane.dir != "/root/gpstrack" {
+		t.Fatalf("pane dir after stale local load=%q want /root/gpstrack", pane.dir)
+	}
+}

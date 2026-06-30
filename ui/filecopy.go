@@ -896,6 +896,7 @@ func (ui *UI) finishFileCopy(now time.Time) {
 	if noticePaneIdx < 0 {
 		noticePaneIdx = srcPaneIdx
 	}
+	ui.maybePlayBackgroundOperationSound(st.startedAt, now)
 	ui.fileCopy = nil // close dialog first
 	ui.clearFileCopyHotkeyHold()
 
@@ -1192,20 +1193,20 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 	}
 
 	srcHdr := material.Caption(th, "Source")
-	srcHdr.Font.Typeface = ui.mainTypeface()
-	srcHdr.TextSize = scaleDialogThemeFontSize(th, 9)
+	srcHdr.Font.Typeface = ui.interfaceTypeface()
+	srcHdr.TextSize = ui.scaleDialogFontSize(9)
 	srcHdr.Color = hintColor
 
 	srcText := material.Body2(th, st.srcPath)
-	srcText.Font.Typeface = ui.mainTypeface()
-	srcText.TextSize = scaleDialogThemeFontSize(th, 10)
+	srcText.Font.Typeface = ui.interfaceTypeface()
+	srcText.TextSize = ui.scaleDialogFontSize(10)
 	srcText.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 	srcText.MaxLines = 1
 	srcText.Truncator = "…"
 
 	dstHdr := material.Caption(th, "Destination")
-	dstHdr.Font.Typeface = ui.mainTypeface()
-	dstHdr.TextSize = scaleDialogThemeFontSize(th, 9)
+	dstHdr.Font.Typeface = ui.interfaceTypeface()
+	dstHdr.TextSize = ui.scaleDialogFontSize(9)
 	dstHdr.Color = hintColor
 
 	progress := st.progress
@@ -1222,9 +1223,9 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					title := material.Body1(th, st.title())
-					title.Font.Typeface = ui.mainTypeface()
+					title.Font.Typeface = ui.interfaceTypeface()
 					title.Font.Weight = font.Bold
-					title.TextSize = scaleDialogThemeFontSize(th, 12)
+					title.TextSize = ui.scaleDialogFontSize(12)
 					title.Color = txtColor
 					return title.Layout(gtx)
 				}),
@@ -1268,8 +1269,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.running {
 				lbl := material.Body2(th, st.dstPath)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleDialogFontSize(10)
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Truncator = "…"
@@ -1285,8 +1286,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			}
 			if st.dstLocked {
 				lbl := material.Body2(th, st.dstPath)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleDialogFontSize(10)
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Truncator = "…"
@@ -1301,8 +1302,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 				)
 			}
 			ed := material.Editor(th, &st.dstEdit, "")
-			ed.Font.Typeface = ui.mainTypeface()
-			ed.TextSize = scaleDialogThemeFontSize(th, 10)
+			ed.Font.Typeface = ui.interfaceTypeface()
+			ed.TextSize = ui.scaleDialogFontSize(10)
 			ed.Color = txtColor
 			ed.HintColor = hintColor
 			return ui.layoutEditorWithContextMenu(th, gtx, "filecopy-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
@@ -1322,8 +1323,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			}
 			return layout.Inset{Top: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, overwriteLabel)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleDialogFontSize(9)
 				lbl.Color = color.NRGBA{R: 196, G: 196, B: 196, A: 255}
 				lbl.MaxLines = 2
 				return lbl.Layout(gtx)
@@ -1338,8 +1339,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 				return ui.layoutFileCopyProgress(th, gtx, progressFrac, status, current)
 			}
 			lbl := material.Body2(th, st.lastErr)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(10)
 			lbl.Color = color.NRGBA{R: 220, G: 140, B: 140, A: 255}
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
@@ -1374,8 +1375,8 @@ func (ui *UI) layoutFileCopyProgress(th *material.Theme, gtx layout.Context, fra
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, status)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(9)
 			lbl.Color = hintColor
 			lbl.MaxLines = 1
 			lbl.Truncator = "…"
@@ -1386,8 +1387,8 @@ func (ui *UI) layoutFileCopyProgress(th *material.Theme, gtx layout.Context, fra
 				return layout.Dimensions{}
 			}
 			lbl := material.Caption(th, current)
-			lbl.Font.Typeface = ui.mainTypeface()
-			lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleDialogFontSize(9)
 			lbl.Color = color.NRGBA{R: 168, G: 168, B: 168, A: 255}
 			lbl.MaxLines = 1
 			lbl.Truncator = "…"
@@ -1444,8 +1445,8 @@ func (ui *UI) layoutFileOverwriteDiffInfo(th *material.Theme, gtx layout.Context
 				children = append(children,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, title)
-						lbl.Font.Typeface = ui.mainTypeface()
-						lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+						lbl.Font.Typeface = ui.interfaceTypeface()
+						lbl.TextSize = ui.scaleDialogFontSize(9)
 						lbl.Color = style.Title
 						return lbl.Layout(gtx)
 					}),
@@ -1469,8 +1470,8 @@ func (ui *UI) fileOverwriteDiffColumns(th *material.Theme, gtx layout.Context, r
 			return 0
 		}
 		lbl := material.Caption(th, part.Text)
-		lbl.Font.Typeface = ui.mainTypeface()
-		lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+		lbl.Font.Typeface = ui.interfaceTypeface()
+		lbl.TextSize = ui.scaleDialogFontSize(9)
 		lbl.MaxLines = 1
 		width := measureLabelUnconstrained(gtx, lbl).Size.X
 		return width + gtx.Dp(unit.Dp(6))
@@ -1495,8 +1496,8 @@ func (ui *UI) layoutFileOverwriteDiffRow(th *material.Theme, gtx layout.Context,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(24)), func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, row.Prefix)
-				lbl.Font.Typeface = ui.mainTypeface()
-				lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleDialogFontSize(9)
 				lbl.Color = style.Muted
 				lbl.MaxLines = 1
 				return lbl.Layout(gtx)
@@ -1533,8 +1534,8 @@ func (ui *UI) layoutFileOverwriteDiffPart(th *material.Theme, gtx layout.Context
 	}
 	label := func(gtx layout.Context, col color.NRGBA) layout.Dimensions {
 		lbl := material.Caption(th, part.Text)
-		lbl.Font.Typeface = ui.mainTypeface()
-		lbl.TextSize = scaleDialogThemeFontSize(th, 9)
+		lbl.Font.Typeface = ui.interfaceTypeface()
+		lbl.TextSize = ui.scaleDialogFontSize(9)
 		lbl.Color = col
 		lbl.MaxLines = 1
 		return lbl.Layout(gtx)
@@ -1686,9 +1687,9 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 					return layout.Inset{Left: unit.Dp(9), Right: unit.Dp(9), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							lbl := material.Body2(th, label)
-							lbl.Font.Typeface = ui.mainTypeface()
+							lbl.Font.Typeface = ui.interfaceTypeface()
 							lbl.Font.Weight = font.Medium
-							lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+							lbl.TextSize = ui.scaleDialogFontSize(10)
 							lbl.Color = fg
 							lbl.MaxLines = 1
 							return lbl.Layout(gtx)
@@ -1742,9 +1743,9 @@ func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, 
 
 func (ui *UI) dialogActionSegmentMetricsPx(th *material.Theme, gtx layout.Context, label string) (width, height int) {
 	lbl := material.Body2(th, strings.TrimSpace(label))
-	lbl.Font.Typeface = ui.mainTypeface()
+	lbl.Font.Typeface = ui.interfaceTypeface()
 	lbl.Font.Weight = font.Medium
-	lbl.TextSize = scaleDialogThemeFontSize(th, 10)
+	lbl.TextSize = ui.scaleDialogFontSize(10)
 	lbl.MaxLines = 1
 	dims := measureLabelUnconstrained(gtx, lbl)
 
