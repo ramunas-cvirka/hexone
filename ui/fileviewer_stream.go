@@ -107,25 +107,22 @@ type streamSelectionState struct {
 }
 
 const (
-	streamAutoScrollTick      = 50 * time.Millisecond
-	streamAutoScrollStopIn    = 180 * time.Millisecond
-	streamCancelGrace         = 320 * time.Millisecond
-	streamAutoScrollNearPx    = 20
-	streamAutoScrollMidPx     = 64
-	streamDoubleClickDur      = 420 * time.Millisecond
-	streamDoubleClickDist     = 6
-	streamTooltipGapDp        = 6
-	streamTooltipInsetXDp     = 6
-	streamTooltipInsetYDp     = 3
-	streamTooltipMinWidthDp   = 72
-	streamTooltipMinHeightDp  = 18
-	streamSmoothTick          = 16 * time.Millisecond
-	streamSmoothTau           = 28 * time.Millisecond
-	streamSmoothAutoTau       = 12 * time.Millisecond
-	streamSmoothSnapEpsilon   = 0.02
-	streamSmoothJumpLines     = 6
-	streamSmoothAutoJumpLines = 24
-	streamSmoothAutoMaxLag    = 1.25
+	streamAutoScrollTick     = 50 * time.Millisecond
+	streamAutoScrollStopIn   = 180 * time.Millisecond
+	streamCancelGrace        = 320 * time.Millisecond
+	streamAutoScrollNearPx   = 20
+	streamAutoScrollMidPx    = 64
+	streamDoubleClickDur     = 420 * time.Millisecond
+	streamDoubleClickDist    = 6
+	streamTooltipGapDp       = 6
+	streamTooltipInsetXDp    = 6
+	streamTooltipInsetYDp    = 3
+	streamTooltipMinWidthDp  = 72
+	streamTooltipMinHeightDp = 18
+	streamSmoothTick         = 16 * time.Millisecond
+	streamSmoothTau          = 28 * time.Millisecond
+	streamSmoothSnapEpsilon  = 0.02
+	streamSmoothJumpLines    = 6
 )
 
 func (v *streamOutputView) SetContent(raw string) {
@@ -208,33 +205,8 @@ func (v *streamOutputView) smoothJumpThreshold() float32 {
 	return limit
 }
 
-func (v *streamOutputView) autoScrollSmoothActive() bool {
+func (v *streamOutputView) selectionAutoScrollActive() bool {
 	return v.autoScrollActive && v.selectingText
-}
-
-func (v *streamOutputView) smoothJumpLimit() float32 {
-	if v.autoScrollSmoothActive() {
-		return streamSmoothAutoJumpLines
-	}
-	return v.smoothJumpThreshold()
-}
-
-func (v *streamOutputView) smoothTau() time.Duration {
-	if v.autoScrollSmoothActive() {
-		return streamSmoothAutoTau
-	}
-	return streamSmoothTau
-}
-
-func (v *streamOutputView) clampAutoScrollVisualLag(target float32) {
-	if !v.autoScrollSmoothActive() {
-		return
-	}
-	if delta := target - v.visualTop; delta > streamSmoothAutoMaxLag {
-		v.visualTop = target - streamSmoothAutoMaxLag
-	} else if delta < -streamSmoothAutoMaxLag {
-		v.visualTop = target + streamSmoothAutoMaxLag
-	}
 }
 
 func (v *streamOutputView) updateDisplayState() {
@@ -323,14 +295,13 @@ func (v *streamOutputView) prepareVisualScroll(now time.Time, smooth bool) bool 
 		v.updateDisplayState()
 		return false
 	}
-	autoScrollSmooth := v.autoScrollSmoothActive()
-	if !smooth || v.dragging || v.hDragging || (v.selectingText && !autoScrollSmooth) || v.cancelPending {
+	if !smooth || v.dragging || v.hDragging || v.selectingText || v.cancelPending {
 		v.visualTop = target
 		v.visualAt = now
 		v.updateDisplayState()
 		return false
 	}
-	if float32Abs(target-v.visualTop) > v.smoothJumpLimit() {
+	if float32Abs(target-v.visualTop) > v.smoothJumpThreshold() {
 		v.visualTop = target
 		v.visualAt = now
 		v.updateDisplayState()
@@ -354,10 +325,9 @@ func (v *streamOutputView) prepareVisualScroll(now time.Time, smooth bool) bool 
 		dt = streamSmoothTick
 	}
 	if dt > 0 {
-		blend := float32(1 - math.Exp(-float64(dt)/float64(v.smoothTau())))
+		blend := float32(1 - math.Exp(-float64(dt)/float64(streamSmoothTau)))
 		v.visualTop += (target - v.visualTop) * clamp01(blend)
 	}
-	v.clampAutoScrollVisualLag(target)
 	v.visualAt = now
 	if float32Abs(target-v.visualTop) < streamSmoothSnapEpsilon {
 		v.visualTop = target
@@ -1748,7 +1718,7 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 		st.markUserBrowsing(gtx.Now)
 	}
 	animating := v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg))
-	if v.autoScrollSmoothActive() && v.selActive {
+	if v.selectionAutoScrollActive() && v.selActive {
 		beforeStart, beforeLen := v.selStart, v.selLen
 		v.updateSelection(v.textOffsetFromPoint(v.selectPos))
 		if v.selStart != beforeStart || v.selLen != beforeLen {

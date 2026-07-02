@@ -3246,6 +3246,9 @@ func (ui *UI) filePaneFavoriteMenuBaseRect(gtx layout.Context, pane *filePaneSta
 
 func (ui *UI) filePaneFavoriteMenuTextWidth(gtx layout.Context, item fileFavoriteItem) int {
 	width := ui.filePaneFavoriteMenuWidth(gtx) - gtx.Dp(unit.Dp(7)) - gtx.Dp(unit.Dp(6))
+	if item.remoteKey != "" {
+		width -= gtx.Dp(unit.Dp(remoteIndicatorWidthDp))
+	}
 	if item.removable && !item.disabled {
 		width -= gtx.Dp(unit.Dp(2)) + ui.filePaneFavoriteRemoveButtonWidth(gtx)
 	}
@@ -3366,7 +3369,7 @@ func (ui *UI) favoriteMenuRevealWidth(th *material.Theme, gtx layout.Context, it
 
 func (ui *UI) layoutFilePaneFavoriteMenuItemContent(th *material.Theme, gtx layout.Context, theme filePanePopupTheme, click *widget.Clickable, removeClick *widget.Clickable, item fileFavoriteItem, fg color.NRGBA, weight font.Weight, alpha float32, fullLabel, interactive bool) layout.Dimensions {
 	label := item.label
-	renderLabel := func(gtx layout.Context) layout.Dimensions {
+	renderText := func(gtx layout.Context) layout.Dimensions {
 		lbl := material.Body2(th, label)
 		lbl.Font.Typeface = ui.interfaceTypeface()
 		lbl.TextSize = ui.functionBarTextSize()
@@ -3379,6 +3382,17 @@ func (ui *UI) layoutFilePaneFavoriteMenuItemContent(th *material.Theme, gtx layo
 			lbl.Text = trimLeftLabelToFit(gtx, lbl, label)
 		}
 		return layoutVCenteredLabel(gtx, lbl)
+	}
+	renderLabel := func(gtx layout.Context) layout.Dimensions {
+		if item.remoteKey == "" {
+			return renderText(gtx)
+		}
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutRemoteIndicatorOn(gtx, item.remoteKey, alpha, theme.Bg)
+			}),
+			layout.Flexed(1, renderText),
+		)
 	}
 
 	return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(6), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {

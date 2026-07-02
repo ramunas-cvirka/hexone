@@ -4,6 +4,7 @@
 package ui
 
 import (
+	resources "hexone"
 	"image"
 	"os"
 	"path/filepath"
@@ -240,6 +241,73 @@ func TestFileViewerTabAnimationFollowsHistoryToggle(t *testing.T) {
 	}
 	if fillHistory <= 0 || fillHistory >= 1 {
 		t.Fatalf("history fill=%v want between 0 and 1", fillHistory)
+	}
+}
+
+func TestFileViewerModeTabsUseRegularConfiguredTabWidths(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Tabs.WidthMode = "fixed"
+	cfg.Tabs.FixedWidthDp = 84
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	st := &fileViewerState{mode: "hex"}
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(640, 24),
+		},
+	}
+	items := []appTabItem{{title: "File"}, {title: "Hex"}, {title: "Cmd"}}
+	widths := ui.tabStripWidths(th, gtx, cfg, items)
+
+	dims := ui.layoutFileViewerModeTabs(th, gtx, st, 24)
+	separatorW := tabStripSeparatorWidth(gtx)
+	historyW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "..") + gtx.Dp(unit.Dp(14))
+	if minW := tabStripControlWidth(gtx); historyW < minW {
+		historyW = minW
+	}
+	wantW := widths[0] + widths[1] + widths[2] + separatorW*3 + historyW
+	if dims.Size.X != wantW {
+		t.Fatalf("mode tab strip width=%d want regular tab width total %d", dims.Size.X, wantW)
+	}
+	wantActive := image.Rect(widths[0]+separatorW, 0, widths[0]+separatorW+widths[1], 24)
+	if st.activeTabRect != wantActive {
+		t.Fatalf("active Hex tab rect=%v want %v", st.activeTabRect, wantActive)
+	}
+}
+
+func TestFileViewerHistoryUsesInterfaceFontAndFullWidth(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Interface.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.Interface.FontSizeSp = 16
+	cfg.Viewer.Typeface = resources.BundledFontFamilyHackNerdFontMono
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	st := &fileViewerState{mode: "command", historyOpen: true}
+
+	if got, want := ui.fileViewerHistoryTypeface(), font.Typeface(cfg.Interface.Typeface); got != want {
+		t.Fatalf("history typeface=%q want interface typeface %q", got, want)
+	}
+	if got, want := ui.fileViewerHistoryTextSize(), ui.scaleInterfaceFontSize(9); got != want {
+		t.Fatalf("history text size=%v want interface-scaled %v", got, want)
+	}
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(720, 120),
+		},
+	}
+	dims := ui.layoutFileViewerHistoryList(th, gtx, st, []string{"tail -f {path}", "tail -n200 {path}"})
+	if dims.Size.X != gtx.Constraints.Max.X {
+		t.Fatalf("history width=%d want full available width %d", dims.Size.X, gtx.Constraints.Max.X)
 	}
 }
 

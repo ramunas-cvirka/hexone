@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"hexone/filesys"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -1230,7 +1229,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 				}),
 			)
 		}),

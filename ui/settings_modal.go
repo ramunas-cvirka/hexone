@@ -108,6 +108,14 @@ type settingsModalState struct {
 	colorViewerBackground        string
 	colorViewerText              string
 	colorViewerSelection         string
+	colorViewerHexSelection      string
+	colorViewerHexOffsetText     string
+	colorViewerHexBytesText      string
+	colorViewerHexASCIIText      string
+	viewerPreviewMode            string
+	viewerPreviewFileClick       widget.Clickable
+	viewerPreviewHexClick        widget.Clickable
+	viewerPreviewModeAnim        settingsChoiceAnim
 	filenameDefaultText          string
 	filenameDefaultTextEdit      widget.Editor
 	filenameDefaultIcon          string
@@ -343,6 +351,10 @@ var settingsPaneColorOptions = []settingsColorOption{
 var settingsViewerColorOptions = []settingsColorOption{
 	{key: "normal", label: "Normal"},
 	{key: "selection", label: "Selection"},
+	{key: "hex_selection", label: "Hex Selection"},
+	{key: "hex_offset", label: "Hex Offset"},
+	{key: "hex_bytes", label: "Hex Bytes"},
+	{key: "hex_ascii", label: "Hex ASCII"},
 }
 
 var settingsTabOrder = []string{
@@ -522,6 +534,14 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.colorViewerBackground = cfg.Viewer.Background
 	st.colorViewerText = cfg.Viewer.Text
 	st.colorViewerSelection = cfg.Viewer.Selection
+	st.colorViewerHexSelection = cfg.Viewer.HexSelection
+	st.colorViewerHexOffsetText = cfg.Viewer.HexOffsetText
+	st.colorViewerHexBytesText = cfg.Viewer.HexBytesText
+	st.colorViewerHexASCIIText = cfg.Viewer.HexASCIIText
+	if st.viewerPreviewMode != "file" && st.viewerPreviewMode != "hex" {
+		st.viewerPreviewMode = "file"
+		st.viewerPreviewModeAnim = settingsChoiceAnim{}
+	}
 	st.loadFilenameColorsFromConfig(cfg)
 	st.colorCategory = normalizeSettingsColorCategory(st.colorScope, st.colorCategory)
 	st.syncColorEditors()
@@ -641,6 +661,14 @@ func (st *settingsModalState) colorValue(key string) string {
 		switch key {
 		case "selection":
 			return st.colorViewerSelection
+		case "hex_selection":
+			return st.colorViewerHexSelection
+		case "hex_offset":
+			return st.colorViewerHexOffsetText
+		case "hex_bytes":
+			return st.colorViewerHexBytesText
+		case "hex_ascii":
+			return st.colorViewerHexASCIIText
 		default:
 			return st.colorViewerBackground
 		}
@@ -673,6 +701,14 @@ func (st *settingsModalState) setColorValue(key, value string) {
 		switch key {
 		case "selection":
 			st.colorViewerSelection = value
+		case "hex_selection":
+			st.colorViewerHexSelection = value
+		case "hex_offset":
+			st.colorViewerHexOffsetText = value
+		case "hex_bytes":
+			st.colorViewerHexBytesText = value
+		case "hex_ascii":
+			st.colorViewerHexASCIIText = value
 		default:
 			st.colorViewerBackground = value
 		}
@@ -754,12 +790,7 @@ func (st *settingsModalState) setColorTextValue(key, value string) {
 }
 
 func settingsViewerCategoryHasText(key string) bool {
-	switch key {
-	case "selection":
-		return false
-	default:
-		return true
-	}
+	return key == "normal"
 }
 
 func (st *settingsModalState) syncColorEditors() {
@@ -1331,9 +1362,30 @@ func (st *settingsModalState) draftViewerTheme(cfg *fm.Config) (fileViewerTheme,
 			errText = "Viewer selection must use #RRGGBB"
 		}
 	}
+	hexColors := []struct {
+		label string
+		value string
+	}{
+		{label: "Hex selection", value: strings.TrimSpace(st.colorViewerHexSelection)},
+		{label: "Hex offset text", value: strings.TrimSpace(st.colorViewerHexOffsetText)},
+		{label: "Hex bytes text", value: strings.TrimSpace(st.colorViewerHexBytesText)},
+		{label: "Hex ASCII text", value: strings.TrimSpace(st.colorViewerHexASCIIText)},
+	}
+	for _, field := range hexColors {
+		if field.value == "" {
+			continue
+		}
+		if _, ok := fm.ParseHexColor(field.value); !ok && errText == "" {
+			errText = field.label + " must use #RRGGBB"
+		}
+	}
 	draft.Viewer.Background = fm.NormalizeHexColor(viewBg, viewBgFallback)
 	draft.Viewer.Text = fm.NormalizeHexColor(viewText, viewTextFallback)
 	draft.Viewer.Selection = fm.NormalizeHexColor(viewSelection, viewSelectionFallback)
+	draft.Viewer.HexSelection = fm.NormalizeOptionalHexColor(st.colorViewerHexSelection)
+	draft.Viewer.HexOffsetText = fm.NormalizeOptionalHexColor(st.colorViewerHexOffsetText)
+	draft.Viewer.HexBytesText = fm.NormalizeOptionalHexColor(st.colorViewerHexBytesText)
+	draft.Viewer.HexASCIIText = fm.NormalizeOptionalHexColor(st.colorViewerHexASCIIText)
 	return fileViewerThemeFromConfig(draft), errText
 }
 
@@ -2817,6 +2869,33 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 		return fmt.Errorf("viewer selection color must use #RRGGBB")
 	}
 	viewerSelection := fm.FormatHexColor(c)
+	parseOptionalViewerColor := func(label, raw string) (string, error) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return "", nil
+		}
+		parsed, ok := fm.ParseHexColor(raw)
+		if !ok {
+			return "", fmt.Errorf("%s color must use #RRGGBB", label)
+		}
+		return fm.FormatHexColor(parsed), nil
+	}
+	viewerHexSelection, err := parseOptionalViewerColor("hex selection", st.colorViewerHexSelection)
+	if err != nil {
+		return err
+	}
+	viewerHexOffsetText, err := parseOptionalViewerColor("hex offset text", st.colorViewerHexOffsetText)
+	if err != nil {
+		return err
+	}
+	viewerHexBytesText, err := parseOptionalViewerColor("hex bytes text", st.colorViewerHexBytesText)
+	if err != nil {
+		return err
+	}
+	viewerHexASCIIText, err := parseOptionalViewerColor("hex ASCII text", st.colorViewerHexASCIIText)
+	if err != nil {
+		return err
+	}
 
 	viewerFontSize := st.viewFontSizeSp
 	if viewerFontSize < settingsFontSizeMin {
@@ -2869,6 +2948,10 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.Background = viewerBg
 	ui.fmCfg.Viewer.Text = viewerText
 	ui.fmCfg.Viewer.Selection = viewerSelection
+	ui.fmCfg.Viewer.HexSelection = viewerHexSelection
+	ui.fmCfg.Viewer.HexOffsetText = viewerHexOffsetText
+	ui.fmCfg.Viewer.HexBytesText = viewerHexBytesText
+	ui.fmCfg.Viewer.HexASCIIText = viewerHexASCIIText
 	ui.fmCfg.Viewer.FontSizeSp = viewerFontSize
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
 	ui.fmCfg.General.OpenFavoritesInNewTab = st.generalFavoritesNewTabBool.Value
@@ -3251,7 +3334,7 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return ui.layoutSettingsModalBody(th, gtx, st)
 								}),
-								layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+								layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return ui.layoutSettingsModalFooter(th, gtx, st)
 								}),
@@ -3308,7 +3391,7 @@ func (ui *UI) layoutSettingsModalHeader(th *material.Theme, gtx layout.Context, 
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+			return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 		}),
 	)
 }
@@ -5088,6 +5171,10 @@ func (st *settingsModalState) previewViewerConfig(cfg *fm.Config) *fm.Config {
 	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorViewerSelection)); ok {
 		draft.Viewer.Selection = fm.FormatHexColor(c)
 	}
+	draft.Viewer.HexSelection = fm.NormalizeOptionalHexColor(st.colorViewerHexSelection)
+	draft.Viewer.HexOffsetText = fm.NormalizeOptionalHexColor(st.colorViewerHexOffsetText)
+	draft.Viewer.HexBytesText = fm.NormalizeOptionalHexColor(st.colorViewerHexBytesText)
+	draft.Viewer.HexASCIIText = fm.NormalizeOptionalHexColor(st.colorViewerHexASCIIText)
 	if draft.Viewer.Typeface == "" {
 		draft.Viewer.Typeface = draft.General.Typeface
 	}
@@ -5137,9 +5224,14 @@ func (st *settingsModalState) previewViewerLineHeight(ui *UI, th *material.Theme
 	return lineH
 }
 
-func settingsViewerPreviewSelectionFill(theme fileViewerTheme, strong bool) color.NRGBA {
+func settingsViewerPreviewSelectionFill(theme fileViewerTheme, strong, hexMode bool) color.NRGBA {
 	fill := theme.Selection
-	if strong {
+	if hexMode {
+		fill = theme.HexSelection
+		if strong {
+			fill = theme.HexStrongSelection
+		}
+	} else if strong {
 		fill = theme.StrongSelection
 	}
 	fill.A = 0xFF
@@ -5164,6 +5256,23 @@ func (ui *UI) settingsViewerPreviewLabelStyle(th *material.Theme, face font.Type
 	return lbl
 }
 
+func (ui *UI) layoutSettingsViewerPreviewMonoCells(th *material.Theme, gtx layout.Context, size unit.Sp, text string, cellW, rowH int, fg color.NRGBA) layout.Dimensions {
+	children := make([]layout.FlexChild, 0, len([]rune(text)))
+	for _, r := range text {
+		cell := string(r)
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, cellW, func(gtx layout.Context) layout.Dimensions {
+				lineGtx := gtx
+				lineGtx.Constraints.Min.Y = rowH
+				lineGtx.Constraints.Max.Y = rowH
+				lbl := ui.settingsViewerPreviewLabelStyle(th, ui.viewerMonospaceTypeface(), size, cell, fg)
+				return layoutVCenteredLabel(lineGtx, lbl)
+			})
+		}))
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
 func (ui *UI) layoutSettingsViewerPreviewTextRow(th *material.Theme, gtx layout.Context, st *settingsModalState, theme fileViewerTheme, txt string, fg color.NRGBA, selected bool) layout.Dimensions {
 	rowH := st.previewViewerLineHeight(ui, th, gtx, false)
 	return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
@@ -5171,7 +5280,7 @@ func (ui *UI) layoutSettingsViewerPreviewTextRow(th *material.Theme, gtx layout.
 		return layout.Stack{}.Layout(gtx,
 			layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 				if selected {
-					bg := settingsViewerPreviewSelectionFill(theme, false)
+					bg := settingsViewerPreviewSelectionFill(theme, false, false)
 					if rect := settingsViewerPreviewSelectionRect(gtx.Constraints.Max.X, rowH); !rect.Empty() {
 						paint.FillShape(gtx.Ops, bg, clip.Rect(rect).Op())
 					}
@@ -5201,10 +5310,7 @@ func (ui *UI) layoutSettingsViewerPreviewHexRow(th *material.Theme, gtx layout.C
 	if leftPad < 2 {
 		leftPad = 2
 	}
-	columnGap := gtx.Dp(unit.Dp(12))
-	if columnGap < charW {
-		columnGap = charW
-	}
+	columnGap := hexSectionColumnGap(gtx, charW)
 	offsetDigits := len(strings.TrimSpace(offset))
 	if offsetDigits < 8 {
 		offsetDigits = 8
@@ -5220,7 +5326,7 @@ func (ui *UI) layoutSettingsViewerPreviewHexRow(th *material.Theme, gtx layout.C
 	hexW := hexLineColumns(bytesPerLine, 0) * charW
 	asciiW := bytesPerLine * charW
 	offsetColor := theme.OffsetText
-	hexColor := theme.Text
+	hexColor := theme.HexText
 	asciiColor := theme.ASCIIText
 	return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
 		defer clip.Rect(image.Rect(0, 0, gtx.Constraints.Max.X, rowH)).Push(gtx.Ops).Pop()
@@ -5232,15 +5338,13 @@ func (ui *UI) layoutSettingsViewerPreviewHexRow(th *material.Theme, gtx layout.C
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return fixedWidth(gtx, offsetW, func(gtx layout.Context) layout.Dimensions {
-					lineGtx := gtx
-					lineGtx.Constraints.Min.Y = rowH
-					lineGtx.Constraints.Max.Y = rowH
-					lbl := ui.settingsViewerPreviewLabelStyle(th, ui.viewerMonospaceTypeface(), st.previewViewerTextSize(ui), offset, offsetColor)
-					return layoutVCenteredLabel(lineGtx, lbl)
+					return ui.layoutSettingsViewerPreviewMonoCells(th, gtx, st.previewViewerTextSize(ui), offset, charW, rowH, offsetColor)
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return fixedWidth(gtx, columnGap, func(gtx layout.Context) layout.Dimensions {
+					x := gtx.Constraints.Max.X / 2
+					paint.FillShape(gtx.Ops, theme.Separator, clip.Rect(image.Rect(x, 0, x+1, rowH)).Op())
 					return layout.Dimensions{Size: image.Pt(columnGap, rowH)}
 				})
 			}),
@@ -5249,7 +5353,7 @@ func (ui *UI) layoutSettingsViewerPreviewHexRow(th *material.Theme, gtx layout.C
 					return layout.Stack{}.Layout(gtx,
 						layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 							if selected {
-								bg := settingsViewerPreviewSelectionFill(theme, false)
+								bg := settingsViewerPreviewSelectionFill(theme, false, true)
 								if rect := settingsViewerPreviewSelectionRect(gtx.Constraints.Max.X, rowH); !rect.Empty() {
 									paint.FillShape(gtx.Ops, bg, clip.Rect(rect).Op())
 								}
@@ -5257,17 +5361,15 @@ func (ui *UI) layoutSettingsViewerPreviewHexRow(th *material.Theme, gtx layout.C
 							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, rowH)}
 						}),
 						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-							lineGtx := gtx
-							lineGtx.Constraints.Min.Y = rowH
-							lineGtx.Constraints.Max.Y = rowH
-							lbl := ui.settingsViewerPreviewLabelStyle(th, ui.viewerMonospaceTypeface(), st.previewViewerTextSize(ui), hexText, hexColor)
-							return layoutVCenteredLabel(lineGtx, lbl)
+							return ui.layoutSettingsViewerPreviewMonoCells(th, gtx, st.previewViewerTextSize(ui), hexText, charW, rowH, hexColor)
 						}),
 					)
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return fixedWidth(gtx, columnGap, func(gtx layout.Context) layout.Dimensions {
+					x := gtx.Constraints.Max.X / 2
+					paint.FillShape(gtx.Ops, theme.Separator, clip.Rect(image.Rect(x, 0, x+1, rowH)).Op())
 					return layout.Dimensions{Size: image.Pt(columnGap, rowH)}
 				})
 			}),
@@ -5276,7 +5378,7 @@ func (ui *UI) layoutSettingsViewerPreviewHexRow(th *material.Theme, gtx layout.C
 					return layout.Stack{}.Layout(gtx,
 						layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 							if selected {
-								bg := settingsViewerPreviewSelectionFill(theme, true)
+								bg := settingsViewerPreviewSelectionFill(theme, true, true)
 								if rect := settingsViewerPreviewSelectionRect(gtx.Constraints.Max.X, rowH); !rect.Empty() {
 									paint.FillShape(gtx.Ops, bg, clip.Rect(rect).Op())
 								}
@@ -5284,11 +5386,7 @@ func (ui *UI) layoutSettingsViewerPreviewHexRow(th *material.Theme, gtx layout.C
 							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, rowH)}
 						}),
 						layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-							lineGtx := gtx
-							lineGtx.Constraints.Min.Y = rowH
-							lineGtx.Constraints.Max.Y = rowH
-							lbl := ui.settingsViewerPreviewLabelStyle(th, ui.viewerMonospaceTypeface(), st.previewViewerTextSize(ui), ascii, asciiColor)
-							return layoutVCenteredLabel(lineGtx, lbl)
+							return ui.layoutSettingsViewerPreviewMonoCells(th, gtx, st.previewViewerTextSize(ui), ascii, charW, rowH, asciiColor)
 						}),
 					)
 				})
@@ -5300,8 +5398,57 @@ func (ui *UI) layoutSettingsViewerPreviewHexRow(th *material.Theme, gtx layout.C
 	})
 }
 
+func (st *settingsModalState) normalizedViewerPreviewMode() string {
+	if st != nil && st.viewerPreviewMode == "hex" {
+		return "hex"
+	}
+	return "file"
+}
+
+func (ui *UI) layoutSettingsViewerPreviewModeToggle(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	if st == nil {
+		return layout.Dimensions{}
+	}
+	if st.viewerPreviewFileClick.Clicked(gtx) {
+		st.viewerPreviewModeAnim.anim.setPulse("file", gtx.Now)
+		st.viewerPreviewModeAnim.setValue(&st.viewerPreviewMode, "file", gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if st.viewerPreviewHexClick.Clicked(gtx) {
+		st.viewerPreviewModeAnim.anim.setPulse("hex", gtx.Now)
+		st.viewerPreviewModeAnim.setValue(&st.viewerPreviewMode, "hex", gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	hoverKey := ""
+	if st.viewerPreviewFileClick.Hovered() {
+		hoverKey = "file"
+	} else if st.viewerPreviewHexClick.Hovered() {
+		hoverKey = "hex"
+	}
+	st.viewerPreviewModeAnim.anim.setHover(hoverKey, gtx.Now)
+	mode := st.normalizedViewerPreviewMode()
+	fileFill, fileAnim := st.viewerPreviewModeAnim.fill(gtx.Now, mode, "file")
+	hexFill, hexAnim := st.viewerPreviewModeAnim.fill(gtx.Now, mode, "hex")
+	fileHover, fileHoverAnim := st.viewerPreviewModeAnim.anim.hoverFill(gtx.Now, "file")
+	hexHover, hexHoverAnim := st.viewerPreviewModeAnim.anim.hoverFill(gtx.Now, "hex")
+	filePulse, filePulseAnim := st.viewerPreviewModeAnim.anim.pulseFill(gtx.Now, "file")
+	hexPulse, hexPulseAnim := st.viewerPreviewModeAnim.anim.pulseFill(gtx.Now, "hex")
+	pos, posAnim := st.viewerPreviewModeAnim.position(gtx.Now, mode, []string{"file", "hex"})
+	if fileAnim || hexAnim || fileHoverAnim || hexHoverAnim || filePulseAnim || hexPulseAnim || posAnim {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	stripH := gtx.Dp(unit.Dp(20))
+	if stripH < 1 {
+		stripH = 1
+	}
+	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, ui.scaleModalFontSize(9), []slidingTabSpec{
+		{Label: "File", Click: &st.viewerPreviewFileClick, ActiveFill: fileFill, HoverFill: fileHover, PulseFill: filePulse},
+		{Label: "Hex", Click: &st.viewerPreviewHexClick, ActiveFill: hexFill, HoverFill: hexHover, PulseFill: hexPulse},
+	})
+}
+
 func (st *settingsModalState) previewViewerContentHeight(ui *UI, th *material.Theme, gtx layout.Context) int {
-	lineH := st.previewViewerLineHeight(ui, th, gtx, false)
+	lineH := st.previewViewerLineHeight(ui, th, gtx, st.normalizedViewerPreviewMode() == "hex")
 	return lineH * 4
 }
 
@@ -5328,6 +5475,24 @@ func (ui *UI) settingsPanePreviewHostHeight(gtx layout.Context) int {
 }
 
 func (ui *UI) layoutSettingsViewerPreviewContent(th *material.Theme, gtx layout.Context, st *settingsModalState, theme fileViewerTheme, previewUI *UI) layout.Dimensions {
+	if st.normalizedViewerPreviewMode() == "hex" {
+		return fixedWidth(gtx, gtx.Constraints.Max.X, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return previewUI.layoutSettingsViewerPreviewHexRow(th, gtx, st, theme, "00000000", "48 65 78 6F 6E 65", "Hexone", false)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return previewUI.layoutSettingsViewerPreviewHexRow(th, gtx, st, theme, "00000006", "20 76 69 65 77 65", " viewe", true)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return previewUI.layoutSettingsViewerPreviewHexRow(th, gtx, st, theme, "0000000C", "72 20 70 72 65 76", "r prev", false)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return previewUI.layoutSettingsViewerPreviewHexRow(th, gtx, st, theme, "00000012", "69 65 77 0A 00 FF", "iew...", false)
+				}),
+			)
+		})
+	}
 	return fixedWidth(gtx, gtx.Constraints.Max.X, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -5351,9 +5516,14 @@ func (ui *UI) layoutSettingsViewerPreview(th *material.Theme, gtx layout.Context
 	previewUI := *ui
 	previewUI.fmCfg = previewCfg
 	previewUI.typeface = font.Typeface(previewCfg.General.Typeface)
+	previewMode := st.normalizedViewerPreviewMode()
+	previewName := "README.md"
+	if previewMode == "hex" {
+		previewName = "sample.bin"
+	}
 	previewState := &fileViewerState{
-		mode: "file",
-		name: "README.md",
+		mode: previewMode,
+		name: previewName,
 	}
 
 	height := settingsColorsPreviewHostHeight(gtx)
@@ -5559,6 +5729,14 @@ func (ui *UI) layoutSettingsColorsTabContent(th *material.Theme, gtx layout.Cont
 		switch st.colorCategory {
 		case "selection":
 			currentBg = previewTheme.Selection
+		case "hex_selection":
+			currentBg = previewTheme.HexSelection
+		case "hex_offset":
+			currentBg = previewTheme.OffsetText
+		case "hex_bytes":
+			currentBg = previewTheme.HexText
+		case "hex_ascii":
+			currentBg = previewTheme.ASCIIText
 		default:
 			currentBg = previewTheme.PanelBg
 		}
@@ -5574,6 +5752,9 @@ func (ui *UI) layoutSettingsColorsTabContent(th *material.Theme, gtx layout.Cont
 	showTextField := st.colorScope != "viewer" || settingsViewerCategoryHasText(st.colorCategory)
 	bgFieldLabel := "Background"
 	textFieldLabel := "Text"
+	if st.colorScope == "viewer" && strings.HasPrefix(st.colorCategory, "hex_") {
+		bgFieldLabel = "Text"
+	}
 	if st.colorScope == "panes" && st.colorCategory == "scrollbar" {
 		bgFieldLabel = "Thumb"
 		textFieldLabel = "Track"
@@ -5621,7 +5802,7 @@ func (ui *UI) layoutSettingsColorsTabContent(th *material.Theme, gtx layout.Cont
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			note := "Use the same category for both background and text. Popup Hover controls menu and submenu row hover colors."
 			if st.colorScope == "viewer" {
-				note = "Viewer background/text and selection are saved separately from pane colors. Selection only needs a background override."
+				note = "File and Hex selection backgrounds can be set separately. Leave Hex Selection empty to derive it from Selection."
 			} else if st.colorCategory == "scrollbar" {
 				note = "Leave scrollbar fields empty to derive contrast from the active pane palette."
 			}
@@ -5648,6 +5829,18 @@ func (ui *UI) layoutSettingsColorsTabContent(th *material.Theme, gtx layout.Cont
 		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Rigid(rowLabel("Preview", true)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.colorScope != "viewer" {
+				return layout.Dimensions{}
+			}
+			return ui.layoutSettingsViewerPreviewModeToggle(th, gtx, st)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if st.colorScope == "viewer" {
+				return layout.Spacer{Height: unit.Dp(4)}.Layout(gtx)
+			}
+			return layout.Dimensions{}
+		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			hostH := settingsColorsPreviewHostHeight(gtx)
 			if st.colorScope != "viewer" {
@@ -6831,7 +7024,23 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if st.errText == "" {
+				return layout.Dimensions{}
+			}
+			return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Caption(th, st.errText)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleModalFontSize(9)
+				lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
+				lbl.MaxLines = 2
+				lbl.Truncator = "..."
+				return lbl.Layout(gtx)
+			})
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutDialogActionPairState(
 				th,
@@ -6849,21 +7058,6 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 				cancelVisual,
 				saveVisual,
 			)
-		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			if st.errText == "" {
-				return layout.Dimensions{}
-			}
-			return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(th, st.errText)
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleModalFontSize(9)
-				lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
-				lbl.MaxLines = 2
-				lbl.Truncator = "..."
-				return lbl.Layout(gtx)
-			})
 		}),
 	)
 }

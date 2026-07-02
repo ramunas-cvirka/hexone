@@ -16,6 +16,7 @@ type fileViewerTheme struct {
 	PanelBg            color.NRGBA
 	PanelBorder        color.NRGBA
 	Text               color.NRGBA
+	HexText            color.NRGBA
 	Muted              color.NRGBA
 	Hint               color.NRGBA
 	Error              color.NRGBA
@@ -25,6 +26,8 @@ type fileViewerTheme struct {
 	Divider            color.NRGBA
 	Selection          color.NRGBA
 	StrongSelection    color.NRGBA
+	HexSelection       color.NRGBA
+	HexStrongSelection color.NRGBA
 	ScrollTrack        color.NRGBA
 	ScrollTrackHover   color.NRGBA
 	ScrollThumb        color.NRGBA
@@ -123,6 +126,19 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 	strongSelection := mixNRGBA(baseBg, selectionBase, 0.95)
 	strongSelection = mixNRGBA(strongSelection, selectionText, 0.14)
 	strongSelection.A = 214
+	hexSelectionBase := selectionBase
+	if cfg != nil {
+		if c, ok := fm.ParseHexColor(strings.TrimSpace(cfg.Viewer.HexSelection)); ok {
+			hexSelectionBase = c
+		}
+	}
+	hexSelectionText := bestContrastColor(hexSelectionBase, popup.ActiveText, popup.HoverText, baseText)
+	hexSelection := mixNRGBA(baseBg, hexSelectionBase, 0.88)
+	hexSelection = mixNRGBA(hexSelection, hexSelectionText, 0.08)
+	hexSelection.A = 168
+	hexStrongSelection := mixNRGBA(baseBg, hexSelectionBase, 0.95)
+	hexStrongSelection = mixNRGBA(hexStrongSelection, hexSelectionText, 0.14)
+	hexStrongSelection.A = 214
 
 	scrollThumbOverride := ""
 	scrollTrackOverride := ""
@@ -139,12 +155,25 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 	tooltipText := bestContrastColor(tooltipBg, headerText, popup.Text, baseText)
 	tooltipText.A = 0xFF
 
-	separator := mixNRGBA(baseText, baseBg, 0.76)
-	separator.A = 16
+	separatorBase := bestContrastColor(baseBg, baseText, headerText, palette.CurrentDirFg, popup.HoverText)
+	separator := mixNRGBA(separatorBase, baseBg, 0.48)
+	separator.A = 176
 	offsetText := mixNRGBA(headerText, baseBg, 0.40)
 	offsetText.A = 0xFF
+	hexText := baseText
 	asciiText := mixNRGBA(baseText, palette.CurrentDirFg, 0.22)
 	asciiText.A = 0xFF
+	if cfg != nil {
+		if c, ok := fm.ParseHexColor(strings.TrimSpace(cfg.Viewer.HexOffsetText)); ok {
+			offsetText = c
+		}
+		if c, ok := fm.ParseHexColor(strings.TrimSpace(cfg.Viewer.HexBytesText)); ok {
+			hexText = c
+		}
+		if c, ok := fm.ParseHexColor(strings.TrimSpace(cfg.Viewer.HexASCIIText)); ok {
+			asciiText = c
+		}
+	}
 
 	commandBg := mixNRGBA(baseBg, palette.CurrentDirBg, 0.32)
 	commandBg.A = 0xFF
@@ -164,22 +193,22 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 	commandHint := mixNRGBA(commandText, commandBg, 0.40)
 	commandHint.A = 0xFF
 
-	historyBg := mixNRGBA(baseBg, popup.Bg, 0.22)
+	historyBg := mixNRGBA(baseBg, popup.Bg, 0.34)
 	historyBg.A = 0xFF
-	historyBorder := mixNRGBA(panelBorder, popup.Border, 0.36)
-	historyBorder.A = 22
 	historyText := bestContrastColor(historyBg, baseText, popup.Text, headerText)
 	historyText.A = 0xFF
+	historyBorder := mixNRGBA(historyText, historyBg, 0.74)
+	historyBorder.A = 78
 	historyMuted := mixNRGBA(historyText, historyBg, 0.44)
 	historyMuted.A = 0xFF
-	historyChipBg := mixNRGBA(commandBg, popup.ButtonBg, 0.36)
+	historyChipBg := mixNRGBA(historyBg, historyText, 0.08)
 	historyChipBg.A = 0xFF
-	historyChipBgHover := mixNRGBA(historyChipBg, popup.HoverBg, 0.46)
+	historyChipBgHover := mixNRGBA(historyChipBg, historyText, 0.09)
 	historyChipBgHover.A = 0xFF
-	historyChipBorder := mixNRGBA(commandBorder, popup.ButtonBorder, 0.32)
-	historyChipBorder.A = 46
-	historyChipBorderH := mixNRGBA(commandBorderHover, popup.HoverText, 0.18)
-	historyChipBorderH.A = 76
+	historyChipBorder := mixNRGBA(historyText, historyChipBg, 0.70)
+	historyChipBorder.A = 86
+	historyChipBorderH := mixNRGBA(historyText, historyChipBgHover, 0.54)
+	historyChipBorderH.A = 122
 	historyChipText := bestContrastColor(historyChipBg, commandText, historyText, popup.Text)
 	historyChipText.A = 0xFF
 
@@ -190,6 +219,7 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 		PanelBg:            baseBg,
 		PanelBorder:        panelBorder,
 		Text:               baseText,
+		HexText:            hexText,
 		Muted:              muted,
 		Hint:               hint,
 		Error:              errorText,
@@ -199,6 +229,8 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 		Divider:            divider,
 		Selection:          selection,
 		StrongSelection:    strongSelection,
+		HexSelection:       hexSelection,
+		HexStrongSelection: hexStrongSelection,
 		ScrollTrack:        scrollTrack,
 		ScrollTrackHover:   scrollTrackHover,
 		ScrollThumb:        scrollThumb,

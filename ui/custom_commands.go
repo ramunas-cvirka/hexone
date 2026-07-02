@@ -6,7 +6,6 @@ package ui
 import (
 	"fmt"
 	"hexone/fm"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	pathpkg "path"
@@ -1230,7 +1229,7 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 				}),
 			)
 		}),

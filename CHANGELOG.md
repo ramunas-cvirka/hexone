@@ -65,3 +65,18 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Improved terminal key repeat, drag selection, and smooth scrolling behavior.
 - Terminal now uses all available bottom space.
 - Fixed SSH favorites opened in new tabs using the previous local pane path.
+
+## v0.9.0
+
+- Added theme-aware separators between the offset, byte, and ASCII sections of the hex viewer without changing selection hit-boxes.
+- Added independent text color settings for all three hex viewer sections.
+- Added an independent hex-selection color setting.
+- Restyled the sticky File, Hex, and Cmd viewer tabs to use the configured tab font and color styling.
+- Added a File/Hex toggle to the viewer color preview in Settings.
+- Improved past-command visibility with a flat, full-width history list using the Interface font.
+- Centered labels across viewer, file-pane, and terminal tabs.
+- Replaced rounded dialog close buttons with flat tab-style controls and red hover feedback.
+- Fixed newly created folders remaining outside the visible file-pane rows when the terminal drawer reduces the viewport.
+- Disabled visual smoothing during active selection auto-scroll in File, Hex, Cmd, and Terminal views to keep text and selection row-aligned.
+- Improved SSH tabs and favorites with clean directory-only tab titles, hoverable host-detail indicators, and stable theme-aware colors per host.
+- Aligned SSH Setup and Settings actions with the file-operation dialogs, including right-aligned footers, improved spacing, and a flatter, roomier SSH setup layout.

@@ -1638,7 +1638,7 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 							}),
 							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layoutTinyIconModeButton(th, gtx, &st.find.closeClick, uitheme.CloseIcon(), false)
+								return ui.layoutFlatCloseButton(gtx, &st.find.closeClick, false)
 							}),
 						)
 					})

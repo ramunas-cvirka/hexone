@@ -6,7 +6,6 @@ package ui
 import (
 	"errors"
 	"hexone/fm"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -455,6 +454,7 @@ func (ui *UI) finishFileCreate(now time.Time) {
 		st.remote = nil
 	}
 	noticeText, noticeDur := fileCreateSuccessNotice(st.kind)
+	ensureCreatedVisible := st.kind == fileCreateKindFolder
 	ui.fileCreate = nil
 	ui.clearFileCreateHotkeyHold()
 
@@ -494,7 +494,7 @@ func (ui *UI) finishFileCreate(now time.Time) {
 			reloadNoticeText = noticeText
 			reloadNoticeDur = noticeDur
 		}
-		if ui.requestPaneLoadWithSelectionAndScroll(i, pane.dir, createdPath, selectedPath, selectedRow, restorePos, true, restoreAnchor, reloadNoticeText, reloadNoticeDur) && i == st.pane {
+		if ui.requestPaneLoadWithSelectionScrollAndVisibility(i, pane.dir, createdPath, selectedPath, selectedRow, restorePos, true, ensureCreatedVisible, restoreAnchor, reloadNoticeText, reloadNoticeDur) && i == st.pane {
 			noticeShown = true
 		}
 	}
@@ -808,7 +808,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 				}),
 			)
 		}),

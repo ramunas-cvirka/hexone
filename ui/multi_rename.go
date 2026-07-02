@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"hexone/filesys"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -1051,7 +1050,7 @@ func (ui *UI) layoutMultiRenameBody(th *material.Theme, gtx layout.Context, st *
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), st.running)
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, st.running)
 				}),
 			)
 		}),

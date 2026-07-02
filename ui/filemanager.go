@@ -375,6 +375,7 @@ type filePaneLoadResult struct {
 	fallbackRow   int
 	restorePos    layout.Position
 	restoreScroll bool
+	ensureVisible bool
 	restoreAnchor string
 	noticeText    string
 	noticeDur     time.Duration
@@ -387,6 +388,7 @@ type filePaneApplyOptions struct {
 	fallbackRow         int
 	restorePos          layout.Position
 	restoreScroll       bool
+	ensureVisible       bool
 	restoreAnchor       string
 	preserveMarks       bool
 	preserveNotice      bool
@@ -588,12 +590,17 @@ func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secon
 }
 
 func (p *filePaneState) applyListingWithRestore(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor string) {
+	p.applyListingWithRestoreAndVisibility(listing, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, false, restoreAnchor)
+}
+
+func (p *filePaneState) applyListingWithRestoreAndVisibility(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll, ensureVisible bool, restoreAnchor string) {
 	p.applyListingWithOptions(listing, filePaneApplyOptions{
 		primaryPath:   primaryPath,
 		secondaryPath: secondaryPath,
 		fallbackRow:   fallbackRow,
 		restorePos:    restorePos,
 		restoreScroll: restoreScroll,
+		ensureVisible: ensureVisible,
 		restoreAnchor: restoreAnchor,
 	})
 }
@@ -662,7 +669,7 @@ func (p *filePaneState) applyListingWithOptions(listing filesys.Listing, opts fi
 	} else {
 		p.table.List.Position = layout.Position{}
 	}
-	p.applySelection(opts.primaryPath, opts.secondaryPath, opts.fallbackRow, !opts.restoreScroll)
+	p.applySelection(opts.primaryPath, opts.secondaryPath, opts.fallbackRow, opts.ensureVisible || !opts.restoreScroll)
 	if opts.preserveMarks {
 		p.restoreMarkedPaths(markedPaths)
 	}
@@ -1686,6 +1693,7 @@ func (p *filePaneState) contextMenuEntry() *filesys.Entry {
 type fileFavoriteItem struct {
 	label      string
 	targetDir  string
+	remoteKey  string
 	addCurrent bool
 	active     bool
 	disabled   bool
@@ -1784,6 +1792,14 @@ func displayRemoteFavoriteLocation(loc remoteFavoriteLocation) string {
 		base += ":" + strconv.Itoa(loc.Port)
 	}
 	return base + normalizeRemoteFavoriteDir(loc.Dir)
+}
+
+func remoteFavoriteHostIdentity(loc remoteFavoriteLocation) string {
+	return sshSetupIdentity(fm.SSHSetup{
+		User: loc.User,
+		Host: loc.Host,
+		Port: loc.Port,
+	})
 }
 
 func remoteFavoriteFromPane(pane *filePaneState) (string, bool) {
@@ -1893,6 +1909,7 @@ func (ui *UI) paneFavoriteItems(pane *filePaneState) []fileFavoriteItem {
 			items = append(items, fileFavoriteItem{
 				label:     displayRemoteFavoriteLocation(remoteLoc),
 				targetDir: loc,
+				remoteKey: remoteFavoriteHostIdentity(remoteLoc),
 				active:    paneMatchesRemoteFavorite(pane, remoteLoc),
 				removable: true,
 			})
@@ -2839,12 +2856,17 @@ func startLocalPaneLoad(pane *filePaneState, dir, primaryPath, secondaryPath str
 }
 
 func startLocalPaneLoadWithRestore(pane *filePaneState, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
+	return startLocalPaneLoadWithRestoreAndVisibility(pane, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, false, restoreAnchor, noticeText, noticeDur)
+}
+
+func startLocalPaneLoadWithRestoreAndVisibility(pane *filePaneState, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll, ensureVisible bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
 	return startLocalPaneLoadRequest(pane, dir, filePaneLoadResult{
 		primaryPath:   primaryPath,
 		secondaryPath: secondaryPath,
 		fallbackRow:   fallbackRow,
 		restorePos:    restorePos,
 		restoreScroll: restoreScroll,
+		ensureVisible: ensureVisible,
 		restoreAnchor: restoreAnchor,
 		noticeText:    noticeText,
 		noticeDur:     noticeDur,
@@ -2908,6 +2930,10 @@ func (ui *UI) requestPaneLoadWithSelection(idx int, dir, primaryPath, secondaryP
 }
 
 func (ui *UI) requestPaneLoadWithSelectionAndScroll(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
+	return ui.requestPaneLoadWithSelectionScrollAndVisibility(idx, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, false, restoreAnchor, noticeText, noticeDur)
+}
+
+func (ui *UI) requestPaneLoadWithSelectionScrollAndVisibility(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll, ensureVisible bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return false
 	}
@@ -2935,13 +2961,13 @@ func (ui *UI) requestPaneLoadWithSelectionAndScroll(idx int, dir, primaryPath, s
 		if restoreScroll {
 			pane.table.List.Position = restorePaneListPosition(pane.model.entries, restorePos, restoreAnchor)
 		}
-		pane.applySelection(primaryPath, secondaryPath, fallbackRow, !restoreScroll)
+		pane.applySelection(primaryPath, secondaryPath, fallbackRow, ensureVisible || !restoreScroll)
 		if noticeText != "" {
 			pane.setNoticeFor(noticeText, time.Now(), noticeDur)
 		}
 		return true
 	}
-	return startLocalPaneLoadWithRestore(pane, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, restoreAnchor, noticeText, noticeDur)
+	return startLocalPaneLoadWithRestoreAndVisibility(pane, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, ensureVisible, restoreAnchor, noticeText, noticeDur)
 }
 
 func (ui *UI) loadPaneDir(idx int, dir string) bool {
@@ -2982,7 +3008,7 @@ func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {
 				if res.background {
 					pane.applyListingRefresh(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreAnchor)
 				} else {
-					pane.applyListingWithRestore(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreScroll, res.restoreAnchor)
+					pane.applyListingWithRestoreAndVisibility(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreScroll, res.ensureVisible, res.restoreAnchor)
 				}
 				if res.noticeText != "" {
 					pane.setNoticeFor(res.noticeText, gtx.Now, res.noticeDur)

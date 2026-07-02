@@ -1409,7 +1409,8 @@ func (s *terminalSession) prepareVisualScroll(now time.Time, smooth bool) bool {
 		s.visualAt = now
 		return false
 	}
-	if !smooth || s.scrollbarDragging {
+	selectionAutoScroll := s.selectionSelecting && s.autoScrollDir != 0 && s.autoScrollStep > 0
+	if !smooth || s.scrollbarDragging || selectionAutoScroll {
 		s.visualTop = target
 		s.visualAt = now
 		return false

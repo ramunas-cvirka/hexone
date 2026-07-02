@@ -475,6 +475,10 @@ type ViewerConfig struct {
 	Background              string              `yaml:"background,omitempty"`
 	Text                    string              `yaml:"text,omitempty"`
 	Selection               string              `yaml:"selection,omitempty"`
+	HexSelection            string              `yaml:"hex_selection,omitempty"`
+	HexOffsetText           string              `yaml:"hex_offset_text,omitempty"`
+	HexBytesText            string              `yaml:"hex_bytes_text,omitempty"`
+	HexASCIIText            string              `yaml:"hex_ascii_text,omitempty"`
 	SmoothScrolling         bool                `yaml:"smooth_scrolling"`
 	Shell                   string              `yaml:"shell"`
 	Command                 string              `yaml:"command"`
@@ -976,6 +980,10 @@ func (c *Config) normalize() {
 	c.Viewer.Background = NormalizeHexColor(c.Viewer.Background, c.Colors.FilePaneBackground)
 	c.Viewer.Text = NormalizeHexColor(c.Viewer.Text, c.Colors.FilePaneText)
 	c.Viewer.Selection = NormalizeHexColor(c.Viewer.Selection, c.Colors.Selection)
+	c.Viewer.HexSelection = NormalizeOptionalHexColor(c.Viewer.HexSelection)
+	c.Viewer.HexOffsetText = NormalizeOptionalHexColor(c.Viewer.HexOffsetText)
+	c.Viewer.HexBytesText = NormalizeOptionalHexColor(c.Viewer.HexBytesText)
+	c.Viewer.HexASCIIText = NormalizeOptionalHexColor(c.Viewer.HexASCIIText)
 	c.Colors.FilePaneBackground = NormalizeHexColor(c.Colors.FilePaneBackground, DefaultFilePaneBackgroundHex)
 	c.Colors.FilePaneText = NormalizeHexColor(c.Colors.FilePaneText, DefaultFilePaneTextHex)
 	c.Colors.Hover = NormalizeHexColor(c.Colors.Hover, DefaultFilePaneHoverHex)

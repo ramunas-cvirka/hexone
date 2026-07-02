@@ -16,11 +16,13 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -32,6 +34,7 @@ const (
 	tabStripTitlePadDp     = 7
 	tabStripCloseWidthDp   = 16
 	tabStripMaxTabsPerPane = 64
+	remoteIndicatorWidthDp = 11
 )
 
 type filePaneTabSet struct {
@@ -40,6 +43,7 @@ type filePaneTabSet struct {
 	scroll      int
 	tabClicks   []widget.Clickable
 	closeClicks []widget.Clickable
+	remoteHover []*remoteIndicatorHover
 	prevClick   widget.Clickable
 	nextClick   widget.Clickable
 	addClick    widget.Clickable
@@ -51,6 +55,7 @@ type terminalTabSet struct {
 	scroll      int
 	tabClicks   []widget.Clickable
 	closeClicks []widget.Clickable
+	remoteHover []*remoteIndicatorHover
 	prevClick   widget.Clickable
 	nextClick   widget.Clickable
 	addClick    widget.Clickable
@@ -58,8 +63,16 @@ type terminalTabSet struct {
 }
 
 type appTabItem struct {
-	title  string
-	active bool
+	title     string
+	active    bool
+	remoteKey string
+	remoteTip string
+	remote    *remoteIndicatorHover
+}
+
+type remoteIndicatorHover struct {
+	identity string
+	hovered  bool
 }
 
 type appTabStripActions struct {
@@ -295,12 +308,13 @@ func (ui *UI) layoutFilePaneTabStrip(th *material.Theme, gtx layout.Context, pan
 		return layout.Dimensions{}
 	}
 	set := &ui.filePaneTabs[paneIdx]
+	ensureRemoteIndicatorHovers(&set.remoteHover, len(set.tabs))
 	items := make([]appTabItem, 0, len(set.tabs))
 	for i, pane := range set.tabs {
-		items = append(items, appTabItem{
-			title:  filePaneTabTitle(pane),
-			active: i == set.active,
-		})
+		item := filePaneTabItem(pane)
+		item.active = i == set.active
+		item.remote = prepareRemoteIndicatorHover(set.remoteHover[i], item.remoteKey)
+		items = append(items, item)
 	}
 	actions, dims := ui.layoutAppTabStrip(th, gtx, items, &set.scroll, &set.tabClicks, &set.closeClicks, &set.prevClick, &set.nextClick, &set.addClick)
 	if actions.selectIdx >= 0 {
@@ -451,12 +465,13 @@ func (ui *UI) layoutTerminalTabStrip(th *material.Theme, gtx layout.Context) lay
 		return layout.Dimensions{}
 	}
 	ui.ensureTerminalTabs()
+	ensureRemoteIndicatorHovers(&ui.terminalTabs.remoteHover, len(ui.terminalTabs.sessions))
 	items := make([]appTabItem, 0, len(ui.terminalTabs.sessions))
 	for i, st := range ui.terminalTabs.sessions {
-		items = append(items, appTabItem{
-			title:  terminalTabTitle(st),
-			active: i == ui.terminalTabs.active,
-		})
+		item := terminalTabItem(st, ui.fmCfg)
+		item.active = i == ui.terminalTabs.active
+		item.remote = prepareRemoteIndicatorHover(ui.terminalTabs.remoteHover[i], item.remoteKey)
+		items = append(items, item)
 	}
 	for ui.terminalTabs.maxClick.Clicked(gtx) {
 		if ui.toggleTerminalMaximized() {
@@ -603,8 +618,18 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 			}
 			paint.FillShape(gtx.Ops, ui.tabStripAccentColor(idx), clip.Rect(image.Rect(0, h-1, gtx.Constraints.Max.X, h)).Op())
 		}
-		return layout.Inset{Left: unit.Dp(tabStripTitlePadDp), Right: unit.Dp(2), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		rightPad := unit.Dp(2)
+		if !closable {
+			rightPad = unit.Dp(tabStripTitlePadDp)
+		}
+		return layout.Inset{Left: unit.Dp(tabStripTitlePadDp), Right: rightPad, Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if item.remoteKey == "" {
+						return layout.Dimensions{}
+					}
+					return ui.layoutRemoteTabIndicator(th, gtx, item)
+				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, item.title)
 					lbl.Font.Typeface = ui.tabStripTypeface()
@@ -613,11 +638,12 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 					lbl.Color = fg
 					lbl.MaxLines = 1
 					lbl.Truncator = ".."
+					lbl.Alignment = text.Middle
 					return layoutVCenteredLabel(gtx, lbl)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if !closable {
-						return layout.Spacer{Width: unit.Dp(2)}.Layout(gtx)
+						return layout.Dimensions{}
 					}
 					return fixedWidth(gtx, gtx.Dp(unit.Dp(tabStripCloseWidthDp)), func(gtx layout.Context) layout.Dimensions {
 						return closeClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -661,6 +687,56 @@ func (ui *UI) drawTabStripCloseSpot(gtx layout.Context, highlighted bool) {
 	}
 	accent := color.NRGBA{R: 255, G: 126, B: 142, A: 232}
 	paint.FillShape(gtx.Ops, accent, clip.Rect(image.Rect(0, size.Y-1, size.X, size.Y)).Op())
+}
+
+func (ui *UI) layoutFlatCloseButton(gtx layout.Context, click *widget.Clickable, disabled bool) layout.Dimensions {
+	return ui.layoutFlatCloseButtonState(gtx, click, disabled, false)
+}
+
+func (ui *UI) layoutFlatCloseButtonState(gtx layout.Context, click *widget.Clickable, disabled, focused bool) layout.Dimensions {
+	if click == nil {
+		return layout.Dimensions{}
+	}
+	buttonW := gtx.Dp(unit.Dp(20))
+	buttonH := gtx.Dp(unit.Dp(18))
+	if buttonW < 16 {
+		buttonW = 16
+	}
+	if buttonH < 16 {
+		buttonH = 16
+	}
+	return fixedWidth(gtx, buttonW, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, buttonH, func(gtx layout.Context) layout.Dimensions {
+			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if !disabled {
+					pointer.CursorPointer.Add(gtx.Ops)
+				}
+				highlighted := !disabled && (click.Hovered() || click.Pressed())
+				ui.drawTabStripCloseSpot(gtx, highlighted)
+				if focused && !disabled && !highlighted {
+					h := gtx.Dp(unit.Dp(2))
+					if h < 1 {
+						h = 1
+					}
+					focusColor := ui.tabStripAccentColor(0)
+					focusColor.A = 190
+					paint.FillShape(gtx.Ops, focusColor, clip.Rect(image.Rect(0, buttonH-h, buttonW, buttonH)).Op())
+				}
+				iconColor := ui.tabStripCloseColor(tabStripInactiveColor(), highlighted)
+				if disabled {
+					iconColor.A = 72
+				}
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					size := gtx.Dp(unit.Dp(9))
+					if size < 7 {
+						size = 7
+					}
+					drawTabCloseIcon(gtx, size, iconColor)
+					return layout.Dimensions{Size: image.Pt(size, size)}
+				})
+			})
+		})
+	})
 }
 
 func (ui *UI) layoutTabStripButton(_ *material.Theme, gtx layout.Context, click *widget.Clickable, icon *widget.Icon, enabled bool) layout.Dimensions {
@@ -787,6 +863,141 @@ func (ui *UI) tabStripAccentColor(idx int) color.NRGBA {
 		return c
 	}
 	return bestContrastColor(palette.PaneBg, palette.CurrentDirFg, palette.HoverFg, color.NRGBA{R: 245, G: 247, B: 255, A: 255})
+}
+
+func (ui *UI) remoteHostAccent(identity string) color.NRGBA {
+	return remoteHostAccentForBackground(identity, filePanePaletteFromConfig(ui.fmCfg).PaneBg)
+}
+
+func remoteHostAccentForBackground(identity string, bg color.NRGBA) color.NRGBA {
+	colors := [...]color.NRGBA{
+		{R: 84, G: 184, B: 255, A: 255},
+		{R: 86, G: 211, B: 146, A: 255},
+		{R: 255, G: 181, B: 71, A: 255},
+		{R: 194, G: 139, B: 255, A: 255},
+		{R: 255, G: 113, B: 133, A: 255},
+		{R: 75, G: 216, B: 211, A: 255},
+		{R: 123, G: 156, B: 255, A: 255},
+		{R: 164, G: 207, B: 83, A: 255},
+		{R: 255, G: 144, B: 82, A: 255},
+		{R: 224, G: 112, B: 218, A: 255},
+		{R: 235, G: 203, B: 78, A: 255},
+		{R: 82, G: 197, B: 236, A: 255},
+	}
+	hash := uint32(2166136261)
+	for _, b := range []byte(strings.ToLower(strings.TrimSpace(identity))) {
+		hash ^= uint32(b)
+		hash *= 16777619
+	}
+	accent := colors[int(hash%uint32(len(colors)))]
+	if contrastScore(bg, accent) < 2.1 {
+		if relativeLuminance(bg) >= 0.42 {
+			accent = mixNRGBA(accent, color.NRGBA{A: 255}, 0.38)
+		} else {
+			accent = mixNRGBA(accent, color.NRGBA{R: 255, G: 255, B: 255, A: 255}, 0.42)
+		}
+	}
+	accent.A = 255
+	return accent
+}
+
+func (ui *UI) layoutRemoteIndicator(gtx layout.Context, identity string, alpha float32) layout.Dimensions {
+	return ui.layoutRemoteIndicatorOn(gtx, identity, alpha, filePanePaletteFromConfig(ui.fmCfg).PaneBg)
+}
+
+func (ui *UI) layoutRemoteTabIndicator(th *material.Theme, gtx layout.Context, item appTabItem) layout.Dimensions {
+	state := item.remote
+	if state != nil {
+		for {
+			ev, ok := gtx.Event(pointer.Filter{Target: state, Kinds: pointer.Enter | pointer.Move | pointer.Leave})
+			if !ok {
+				break
+			}
+			pe, ok := ev.(pointer.Event)
+			if !ok {
+				continue
+			}
+			switch pe.Kind {
+			case pointer.Enter, pointer.Move:
+				state.hovered = true
+			case pointer.Leave:
+				state.hovered = false
+			}
+		}
+	}
+	dims := ui.layoutRemoteIndicator(gtx, item.remoteKey, 1)
+	if state != nil {
+		area := clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops)
+		pass := pointer.PassOp{}.Push(gtx.Ops)
+		event.Op(gtx.Ops, state)
+		pass.Pop()
+		area.Pop()
+	}
+	if state != nil && state.hovered && strings.TrimSpace(item.remoteTip) != "" {
+		ui.deferRemoteTabTooltip(th, gtx, dims.Size, item.remoteTip)
+	}
+	return dims
+}
+
+func (ui *UI) deferRemoteTabTooltip(th *material.Theme, gtx layout.Context, indicatorSize image.Point, tip string) {
+	tip = strings.TrimSpace(tip)
+	if tip == "" {
+		return
+	}
+	m := op.Record(gtx.Ops)
+	offset := op.Offset(image.Pt(-gtx.Dp(unit.Dp(4)), gtx.Dp(unit.Dp(tabStripHeightDp+3))))
+	offset.Add(gtx.Ops)
+	tipGtx := gtx
+	tipGtx.Constraints.Min = image.Point{}
+	tipGtx.Constraints.Max = image.Pt(gtx.Dp(unit.Dp(320)), gtx.Dp(unit.Dp(44)))
+	ui.layoutRemoteTabTooltip(th, tipGtx, tip)
+	op.Defer(gtx.Ops, m.Stop())
+}
+
+func (ui *UI) layoutRemoteTabTooltip(th *material.Theme, gtx layout.Context, tip string) layout.Dimensions {
+	theme := ui.filePanePopupTheme()
+	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(4)), theme.Bg, theme.Border, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, tip)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.functionBarTextSize()
+			lbl.Color = theme.Text
+			lbl.MaxLines = 1
+			return lbl.Layout(gtx)
+		})
+	})
+}
+
+func (ui *UI) layoutRemoteIndicatorOn(gtx layout.Context, identity string, alpha float32, bg color.NRGBA) layout.Dimensions {
+	w := gtx.Dp(unit.Dp(remoteIndicatorWidthDp))
+	size := gtx.Dp(unit.Dp(8))
+	if w < 8 {
+		w = 8
+	}
+	if size < 6 {
+		size = 6
+	}
+	return fixedWidth(gtx, w, func(gtx layout.Context) layout.Dimensions {
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			c := scaleColorAlpha(remoteHostAccentForBackground(identity, bg), alpha)
+			stroke := float32(gtx.Dp(unit.Dp(1)))
+			if stroke < 1 {
+				stroke = 1
+			}
+			pad := float32(size) * 0.18
+			end := float32(size) - pad
+			arm := float32(size) * 0.36
+			var p clip.Path
+			p.Begin(gtx.Ops)
+			p.MoveTo(f32.Pt(pad, end))
+			p.LineTo(f32.Pt(end, pad))
+			p.MoveTo(f32.Pt(end-arm, pad))
+			p.LineTo(f32.Pt(end, pad))
+			p.LineTo(f32.Pt(end, pad+arm))
+			paint.FillShape(gtx.Ops, c, clip.Stroke{Path: p.End(), Width: stroke}.Op())
+			return layout.Dimensions{Size: image.Pt(size, size)}
+		})
+	})
 }
 
 func (ui *UI) tabStripSeparatorColor() color.NRGBA {
@@ -1074,6 +1285,9 @@ func tabStripWidthsForTheme(th *material.Theme, gtx layout.Context, cfg *fm.Conf
 				closeW = 2
 			}
 			padding := gtx.Dp(unit.Dp(tabStripTitlePadDp + 2 + closeW + 4))
+			if item.remoteKey != "" {
+				padding += gtx.Dp(unit.Dp(remoteIndicatorWidthDp))
+			}
 			w = padding + tabStripTitleTextWidth(th, gtx, face, size, item.title)
 			if w < minW {
 				w = minW
@@ -1185,6 +1399,26 @@ func ensureClickableSlice(dst *[]widget.Clickable, n int) {
 	*dst = append(*dst, make([]widget.Clickable, n-len(*dst))...)
 }
 
+func ensureRemoteIndicatorHovers(dst *[]*remoteIndicatorHover, n int) {
+	if dst == nil {
+		return
+	}
+	for len(*dst) < n {
+		*dst = append(*dst, &remoteIndicatorHover{})
+	}
+}
+
+func prepareRemoteIndicatorHover(state *remoteIndicatorHover, identity string) *remoteIndicatorHover {
+	if state == nil || identity == "" {
+		return nil
+	}
+	if state.identity != identity {
+		state.identity = identity
+		state.hovered = false
+	}
+	return state
+}
+
 func clampTabIndex(idx, n int) int {
 	if n <= 0 {
 		return 0
@@ -1228,7 +1462,15 @@ func filePaneTabTitle(pane *filePaneState) string {
 	if pane == nil {
 		return "tab"
 	}
-	dir := strings.TrimSpace(pane.displayDir())
+	dir := ""
+	if pane.remoteConnected() {
+		dir = strings.TrimSpace(pane.dir)
+		if dir == "" {
+			dir = "/"
+		}
+	} else {
+		dir = strings.TrimSpace(pane.displayDir())
+	}
 	if dir == "" {
 		dir = strings.TrimSpace(pane.dir)
 	}
@@ -1241,12 +1483,7 @@ func filePaneTabTitle(pane *filePaneState) string {
 		if base == "." || base == "/" {
 			base = clean
 		}
-		if pane.remote != nil {
-			if prefix := strings.TrimSpace(pane.remote.displayPrefix()); prefix != "" {
-				return prefix + ":" + base
-			}
-		}
-		return "ssh:" + base
+		return base
 	}
 	clean := filepath.Clean(dir)
 	base := filepath.Base(clean)
@@ -1254,6 +1491,24 @@ func filePaneTabTitle(pane *filePaneState) string {
 		return clean
 	}
 	return base
+}
+
+func filePaneTabItem(pane *filePaneState) appTabItem {
+	item := appTabItem{title: filePaneTabTitle(pane)}
+	if pane != nil && pane.remoteConnected() && pane.remote != nil {
+		item.remoteKey = sshSetupIdentity(pane.remote.setup)
+		item.remoteTip = sshSetupRemoteTooltip(pane.remote.setup)
+	}
+	return item
+}
+
+func sshSetupRemoteTooltip(setup fm.SSHSetup) string {
+	identity := sshSetupIdentity(setup)
+	name := strings.TrimSpace(setup.Name)
+	if name != "" && name != identity {
+		return name + " · " + identity
+	}
+	return identity
 }
 
 func terminalTabTitle(st *terminalSession) string {
@@ -1268,9 +1523,6 @@ func terminalTabTitle(st *terminalSession) string {
 		if base == "." || base == "/" {
 			base = path.Clean(loc.Dir)
 		}
-		if host := strings.TrimSpace(loc.Host); host != "" {
-			return host + ":" + base
-		}
 		return base
 	}
 	if title, ok := st.reportedDirectoryTitle(); ok {
@@ -1283,6 +1535,30 @@ func terminalTabTitle(st *terminalSession) string {
 		return terminalDirTitle(dir)
 	}
 	return "terminal"
+}
+
+func terminalTabItem(st *terminalSession, cfg *fm.Config) appTabItem {
+	item := appTabItem{title: terminalTabTitle(st)}
+	loc, ok := st.osc7Location()
+	if !ok || terminalOSC7HostIsLocal(loc.Host) {
+		return item
+	}
+	host := terminalOSC7DisplayHost(loc)
+	if setup, found, ambiguous := findSSHSetupForTerminalOSC7(cfg, loc); found && !ambiguous {
+		item.remoteKey = sshSetupIdentity(setup)
+		item.remoteTip = sshSetupRemoteTooltip(setup)
+	} else {
+		item.remoteKey = host
+		item.remoteTip = host
+	}
+	if strings.TrimSpace(loc.Dir) != "" {
+		base := path.Base(path.Clean(loc.Dir))
+		if base == "." || base == "/" {
+			base = path.Clean(loc.Dir)
+		}
+		item.title = base
+	}
+	return item
 }
 
 func (st *terminalSession) reportedDirectoryTitle() (string, bool) {

@@ -42,6 +42,22 @@ func TestSettingsTabIndexOrder(t *testing.T) {
 	}
 }
 
+func TestSettingsModalFooterClaimsFullWidthForRightAlignedActions(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(500, 60),
+		},
+	}
+
+	if got, want := ui.layoutSettingsModalFooter(th, gtx, &settingsModalState{}).Size.X, 500; got != want {
+		t.Fatalf("settings footer width=%d want %d", got, want)
+	}
+}
+
 func TestSettingsShiftTabWraps(t *testing.T) {
 	cases := []struct {
 		key  string
@@ -1990,11 +2006,52 @@ func TestSettingsViewerColorCategoryUsesSelectionValue(t *testing.T) {
 	}
 }
 
+func TestSettingsViewerHexSectionCategoriesUseIndependentColors(t *testing.T) {
+	st := &settingsModalState{
+		colorScope:               "viewer",
+		colorViewerHexSelection:  "#224466",
+		colorViewerHexOffsetText: "#112233",
+		colorViewerHexBytesText:  "#445566",
+		colorViewerHexASCIIText:  "#778899",
+	}
+
+	for key, want := range map[string]string{
+		"hex_selection": "#224466",
+		"hex_offset":    "#112233",
+		"hex_bytes":     "#445566",
+		"hex_ascii":     "#778899",
+	} {
+		if got := st.colorValue(key); got != want {
+			t.Fatalf("%s color=%q want %q", key, got, want)
+		}
+		if settingsViewerCategoryHasText(key) {
+			t.Fatalf("%s should expose one text-color field", key)
+		}
+	}
+
+	theme, errText := st.draftViewerTheme(fm.DefaultConfig())
+	if errText != "" {
+		t.Fatalf("unexpected viewer preview error: %q", errText)
+	}
+	if got := fm.FormatHexColor(theme.OffsetText); got != "#112233" {
+		t.Fatalf("OffsetText=%q", got)
+	}
+	if theme.HexSelection == theme.Selection {
+		t.Fatal("hex selection preview should use its independent override")
+	}
+	if got := fm.FormatHexColor(theme.HexText); got != "#445566" {
+		t.Fatalf("HexText=%q", got)
+	}
+	if got := fm.FormatHexColor(theme.ASCIIText); got != "#778899" {
+		t.Fatalf("ASCIIText=%q", got)
+	}
+}
+
 func TestSettingsViewerPreviewSelectionFillIsOpaque(t *testing.T) {
 	fill := settingsViewerPreviewSelectionFill(fileViewerTheme{
 		Selection:       colorNRGBA(0x11, 0x22, 0x33, 0x80),
 		StrongSelection: colorNRGBA(0x44, 0x55, 0x66, 0x99),
-	}, false)
+	}, false, false)
 	if fill.A != 0xFF {
 		t.Fatalf("selection alpha=%d want 255", fill.A)
 	}
@@ -2002,7 +2059,7 @@ func TestSettingsViewerPreviewSelectionFillIsOpaque(t *testing.T) {
 	strong := settingsViewerPreviewSelectionFill(fileViewerTheme{
 		Selection:       colorNRGBA(0x11, 0x22, 0x33, 0x80),
 		StrongSelection: colorNRGBA(0x44, 0x55, 0x66, 0x99),
-	}, true)
+	}, true, false)
 	if strong.A != 0xFF {
 		t.Fatalf("strong selection alpha=%d want 255", strong.A)
 	}
@@ -2035,11 +2092,28 @@ func TestSettingsViewerPreviewContentUsesContiguousRows(t *testing.T) {
 	}
 
 	theme := ui.fileViewerTheme()
-	wantH := st.previewViewerContentHeight(ui, th, gtx)
-	got := ui.layoutSettingsViewerPreviewContent(th, gtx, st, theme, ui)
+	for _, mode := range []string{"file", "hex"} {
+		st.viewerPreviewMode = mode
+		wantH := st.previewViewerContentHeight(ui, th, gtx)
+		got := ui.layoutSettingsViewerPreviewContent(th, gtx, st, theme, ui)
+		if got.Size.Y != wantH {
+			t.Fatalf("%s preview content height=%d want %d", mode, got.Size.Y, wantH)
+		}
+	}
+}
 
-	if got.Size.Y != wantH {
-		t.Fatalf("preview content height=%d want %d", got.Size.Y, wantH)
+func TestSettingsViewerPreviewModeDefaultsAndNormalizes(t *testing.T) {
+	st := &settingsModalState{}
+	if got := st.normalizedViewerPreviewMode(); got != "file" {
+		t.Fatalf("empty preview mode=%q want file", got)
+	}
+	st.viewerPreviewMode = "hex"
+	if got := st.normalizedViewerPreviewMode(); got != "hex" {
+		t.Fatalf("hex preview mode=%q want hex", got)
+	}
+	st.viewerPreviewMode = "command"
+	if got := st.normalizedViewerPreviewMode(); got != "file" {
+		t.Fatalf("unsupported preview mode=%q want file", got)
 	}
 }
 

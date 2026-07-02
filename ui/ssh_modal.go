@@ -6,6 +6,7 @@ package ui
 import (
 	"fmt"
 	"hexone/fm"
+	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"strconv"
@@ -999,7 +1000,7 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		paint.FillShape(gtx.Ops, color.NRGBA{A: 140}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
 		width := gtx.Dp(unit.Dp(760))
-		height := gtx.Dp(unit.Dp(240))
+		height := gtx.Dp(unit.Dp(280))
 		maxW := gtx.Constraints.Max.X - gtx.Dp(unit.Dp(20))
 		maxH := gtx.Constraints.Max.Y - gtx.Dp(unit.Dp(20))
 		if width > maxW {
@@ -1011,8 +1012,8 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		if width < 560 {
 			width = 560
 		}
-		if height < 210 {
-			height = 210
+		if height < 240 {
+			height = 240
 		}
 
 		m := op.Record(gtx.Ops)
@@ -1033,7 +1034,7 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return ui.layoutSSHModalBody(th, gtx, st)
 								}),
-								layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+								layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return ui.layoutSSHModalFooter(th, gtx, st)
 								}),
@@ -1071,7 +1072,7 @@ func (ui *UI) layoutSSHModalHeader(th *material.Theme, gtx layout.Context, st *s
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSSHCloseButton(gtx, &st.closeClick, false)
+			return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 		}),
 	)
 }
@@ -1079,7 +1080,7 @@ func (ui *UI) layoutSSHModalHeader(th *material.Theme, gtx layout.Context, st *s
 func (ui *UI) layoutSSHModalBody(th *material.Theme, gtx layout.Context, st *sshModalState) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, gtx.Dp(unit.Dp(250)), func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, gtx.Dp(unit.Dp(270)), func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutSSHSetupsList(th, gtx, st)
 			})
 		}),
@@ -1135,39 +1136,19 @@ func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *ss
 }
 
 func (ui *UI) layoutSSHAddButton(th *material.Theme, gtx layout.Context, c *widget.Clickable, focused bool) layout.Dimensions {
-	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		bg := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
-		border := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
-		fg := color.NRGBA{R: 232, G: 232, B: 232, A: 255}
-		if c.Hovered() {
-			bg = color.NRGBA{R: 34, G: 34, B: 34, A: 255}
-			border = color.NRGBA{R: 255, G: 255, B: 255, A: 30}
-		}
-		if c.Pressed() {
-			bg = color.NRGBA{R: 44, G: 44, B: 44, A: 255}
-		}
+	height := gtx.Dp(unit.Dp(20))
+	return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+		dims := ui.layoutTabStripButton(th, gtx, c, uitheme.AddIcon(), true)
 		if focused {
-			bg = mixNRGBA(bg, color.NRGBA{R: 42, G: 54, B: 80, A: 255}, 0.6)
-			border = mixNRGBA(border, color.NRGBA{R: 150, G: 180, B: 255, A: 255}, 0.72)
-			border.A = 168
-			fg = mixNRGBA(fg, color.NRGBA{R: 244, G: 248, B: 255, A: 255}, 0.4)
+			h := gtx.Dp(unit.Dp(2))
+			if h < 1 {
+				h = 1
+			}
+			focus := ui.tabStripAccentColor(0)
+			focus.A = 210
+			paint.FillShape(gtx.Ops, focus, clip.Rect(image.Rect(0, height-h, dims.Size.X, height)).Op())
 		}
-		return fillRoundedBox(
-			gtx,
-			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-			bg,
-			border,
-			func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(th, "+")
-					lbl.Font.Typeface = ui.interfaceTypeface()
-					lbl.Font.Weight = font.Bold
-					lbl.TextSize = ui.scaleModalFontSize(12)
-					lbl.Color = fg
-					return lbl.Layout(gtx)
-				})
-			},
-		)
+		return dims
 	})
 }
 
@@ -1392,6 +1373,7 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
+	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if st.errText == "" {

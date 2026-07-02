@@ -1072,6 +1072,10 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	cfg.Viewer.Background = "viewerbg"
 	cfg.Viewer.Text = "viewtext"
 	cfg.Viewer.Selection = "viewsel"
+	cfg.Viewer.HexSelection = "hexsel"
+	cfg.Viewer.HexOffsetText = "offset"
+	cfg.Viewer.HexBytesText = "bytes"
+	cfg.Viewer.HexASCIIText = "ascii"
 
 	cfg.normalize()
 
@@ -1084,10 +1088,17 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	if cfg.Viewer.Selection != DefaultFilePaneSelectionHex {
 		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, DefaultFilePaneSelectionHex)
 	}
+	if cfg.Viewer.HexSelection != "" || cfg.Viewer.HexOffsetText != "" || cfg.Viewer.HexBytesText != "" || cfg.Viewer.HexASCIIText != "" {
+		t.Fatal("invalid optional hex colors should normalize to empty")
+	}
 
 	cfg.Viewer.Background = "#112233"
 	cfg.Viewer.Text = "aabbcc"
 	cfg.Viewer.Selection = "3355dd"
+	cfg.Viewer.HexSelection = "223344"
+	cfg.Viewer.HexOffsetText = "445566"
+	cfg.Viewer.HexBytesText = "#778899"
+	cfg.Viewer.HexASCIIText = "aabbcc"
 	cfg.normalize()
 
 	if cfg.Viewer.Background != "#112233" {
@@ -1098,6 +1109,12 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	}
 	if cfg.Viewer.Selection != "#3355DD" {
 		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, "#3355DD")
+	}
+	if cfg.Viewer.HexSelection != "#223344" {
+		t.Fatalf("Viewer.HexSelection=%q, want #223344", cfg.Viewer.HexSelection)
+	}
+	if cfg.Viewer.HexOffsetText != "#445566" || cfg.Viewer.HexBytesText != "#778899" || cfg.Viewer.HexASCIIText != "#AABBCC" {
+		t.Fatalf("normalized hex text colors = %q, %q, %q", cfg.Viewer.HexOffsetText, cfg.Viewer.HexBytesText, cfg.Viewer.HexASCIIText)
 	}
 }
 

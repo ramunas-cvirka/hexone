@@ -271,7 +271,7 @@ func TestStreamPrepareVisualScrollSnapsLargeJump(t *testing.T) {
 	}
 }
 
-func TestStreamPrepareVisualScrollAnimatesDuringSelectionAutoScroll(t *testing.T) {
+func TestStreamPrepareVisualScrollSnapsDuringSelectionAutoScroll(t *testing.T) {
 	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
 	v := &streamOutputView{
 		lines:            make([]string, 40),
@@ -280,22 +280,24 @@ func TestStreamPrepareVisualScrollAnimatesDuringSelectionAutoScroll(t *testing.T
 		topLine:          0,
 		selectingText:    true,
 		autoScrollActive: true,
+		autoScrollDir:    1,
+		autoScrollStep:   4,
 	}
 	v.syncVisualTop()
 	v.topLine = 7
 
-	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); !animating {
-		t.Fatal("prepareVisualScroll should keep smoothing active during selection autoscroll")
+	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); animating {
+		t.Fatal("selection autoscroll should bypass smooth scrolling")
 	}
-	if v.visualTop <= 0 || v.visualTop >= 7 {
-		t.Fatalf("visualTop=%v want between 0 and 7", v.visualTop)
+	if v.visualTop != 7 {
+		t.Fatalf("visualTop=%v want snapped target 7", v.visualTop)
 	}
-	if lag := float32(v.topLine) - v.visualTop; lag > streamSmoothAutoMaxLag+0.01 {
-		t.Fatalf("autoscroll visual lag=%v want <= %v", lag, streamSmoothAutoMaxLag)
+	if v.displayTop != 7 || v.displayY != 0 {
+		t.Fatalf("display state=%d/%d want snapped 7/0", v.displayTop, v.displayY)
 	}
 }
 
-func TestStreamRunAutoScrollDoesNotSnapVisualTop(t *testing.T) {
+func TestStreamRunAutoScrollSnapsVisualTopBeforeRender(t *testing.T) {
 	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
 	v := &streamOutputView{
 		lines:            []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"},
@@ -321,6 +323,12 @@ func TestStreamRunAutoScrollDoesNotSnapVisualTop(t *testing.T) {
 	}
 	if v.visualTop != 1 {
 		t.Fatalf("visualTop=%v want preserved previous display position 1", v.visualTop)
+	}
+	if animating := v.prepareVisualScroll(now, true); animating {
+		t.Fatal("selection autoscroll should not schedule a smooth animation")
+	}
+	if v.visualTop != 5 {
+		t.Fatalf("visualTop=%v want snapped logical top 5", v.visualTop)
 	}
 }
 

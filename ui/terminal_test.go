@@ -1694,6 +1694,52 @@ func TestTerminalVisualScrollAnimatesShortSteps(t *testing.T) {
 	}
 }
 
+func TestTerminalVisualScrollSnapsDuringSelectionAutoScroll(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.parserMu.Lock()
+	st.term.Resize(3, 12)
+	if _, err := st.term.Write([]byte("line0\r\nline1\r\nline2\r\nline3\r\nline4\r\nline5")); err != nil {
+		st.parserMu.Unlock()
+		t.Fatalf("Write lines: %v", err)
+	}
+	st.parserMu.Unlock()
+	st.snapshot()
+
+	now := time.Now()
+	st.prepareVisualScroll(now, true)
+	if !st.scrollByDelta(-1) {
+		t.Fatal("scroll should move into terminal history")
+	}
+	st.viewMu.Lock()
+	st.selectionSelecting = true
+	st.autoScrollDir = 1
+	st.autoScrollStep = 1
+	st.viewMu.Unlock()
+
+	if animating := st.prepareVisualScroll(now.Add(terminalSmoothTick), true); animating {
+		t.Fatal("terminal selection autoscroll should bypass smooth scrolling")
+	}
+	st.State.Mu.RLock()
+	target := float32(st.State.ViewStart)
+	st.State.Mu.RUnlock()
+	st.viewMu.Lock()
+	visual := st.visualTop
+	st.selectionSelecting = false
+	st.autoScrollDir = 0
+	st.autoScrollStep = 0
+	st.viewMu.Unlock()
+	if visual != target {
+		t.Fatalf("terminal visual top=%v want snapped target %v", visual, target)
+	}
+
+	if !st.scrollByDelta(-1) {
+		t.Fatal("second scroll should move farther into terminal history")
+	}
+	if animating := st.prepareVisualScroll(now.Add(2*terminalSmoothTick), true); !animating {
+		t.Fatal("normal smooth scrolling should resume after selection autoscroll stops")
+	}
+}
+
 func TestTerminalPointFromPositionOutsideGridUsesLogicalViewStart(t *testing.T) {
 	st := newTerminalSession(nil)
 	st.parserMu.Lock()

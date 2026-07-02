@@ -660,7 +660,7 @@ func (ui *UI) layoutHelpModalHeader(th *material.Theme, gtx layout.Context, st *
 			)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+			return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 		}),
 	)
 }
