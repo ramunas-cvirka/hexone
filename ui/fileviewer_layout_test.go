@@ -516,13 +516,40 @@ func TestFileViewerInlineCommandDisplayWidthLeavesFullTextPadding(t *testing.T) 
 	dims := ui.layoutFileViewerInlineCommand(th, gtx, st, 24)
 
 	lbl := material.Body2(th, st.command)
-	lbl.Font.Typeface = ui.viewerTypeface()
+	lbl.Font.Typeface = ui.tabStripTypeface()
 	lbl.Font.Weight = font.Medium
-	lbl.TextSize = ui.viewerTextSize()
+	lbl.TextSize = ui.tabStripTextSize()
 	labelW := measureLabelUnconstrained(gtx, lbl).Size.X
-	wantPadding := gtx.Dp(unit.Dp(viewerInlineCommandDisplayInsetDp * 2))
+	wantPadding := gtx.Dp(unit.Dp(viewerInlineCommandMeasurePaddingDp))
 	if got := dims.Size.X - labelW; got < wantPadding {
 		t.Fatalf("inline command padding=%dpx want at least %dpx", got, wantPadding)
+	}
+}
+
+func TestFileViewerInlineCommandKeepsPlateGeometryWhileEditing(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	command := "tail -f {path}"
+	st := &fileViewerState{mode: "command", command: command}
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(960, 48),
+		},
+	}
+
+	display := ui.layoutFileViewerInlineCommand(th, gtx, st, 24)
+	gtx.Ops.Reset()
+	st.commandEditOn = true
+	st.commandFocus = true
+	st.commandEditor.SetText(command)
+	editing := ui.layoutFileViewerInlineCommand(th, gtx, st, 24)
+
+	if editing.Size != display.Size {
+		t.Fatalf("inline command geometry changed while editing: display=%v editing=%v", display.Size, editing.Size)
 	}
 }
 

@@ -80,3 +80,5 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Disabled visual smoothing during active selection auto-scroll in File, Hex, Cmd, and Terminal views to keep text and selection row-aligned.
 - Improved SSH tabs and favorites with clean directory-only tab titles, hoverable host-detail indicators, and stable theme-aware colors per host.
 - Aligned SSH Setup and Settings actions with the file-operation dialogs, including right-aligned footers, improved spacing, and a flatter, roomier SSH setup layout.
+- Changed the SSH Disconnect action to close the current remote tab when alternatives exist, while preserving the last tab and returning it to its previous local directory.
+- Restyled the active Cmd command as a compact fully bordered recessed field using the Tabs font and consistent display and edit-mode geometry.

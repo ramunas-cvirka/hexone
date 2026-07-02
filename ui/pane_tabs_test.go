@@ -9,6 +9,7 @@ import (
 	"image"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -55,6 +56,54 @@ func TestFilePaneTabsAddActivateAndClose(t *testing.T) {
 	}
 	if ui.closeFilePaneTab(0, 0) {
 		t.Fatal("closing the last tab should be ignored")
+	}
+}
+
+func TestDisconnectCurrentRemoteTabClosesItWhenAnotherTabExists(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	local := newFilePaneState(t.TempDir(), cfg)
+	remote := newFilePaneState("/srv/app", cfg)
+	remote.remote = &paneSSHSession{identity: "root@srv.test:22"}
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{remote},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{local, remote}, active: 1}},
+	}
+
+	if !ui.disconnectCurrentFilePaneTab(0, time.Now()) {
+		t.Fatal("disconnect should close the current remote tab")
+	}
+	if got, want := len(ui.filePaneTabs[0].tabs), 1; got != want {
+		t.Fatalf("tab count=%d want %d", got, want)
+	}
+	if ui.filePanes[0] != local {
+		t.Fatal("remaining local tab should become active")
+	}
+}
+
+func TestDisconnectLastRemoteTabKeepsItAndReturnsLocal(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	localDir := t.TempDir()
+	pane := newFilePaneState("/srv/app", cfg)
+	pane.localDirBeforeRemote = localDir
+	pane.remote = &paneSSHSession{identity: "root@srv.test:22"}
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{pane},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{pane}, active: 0}},
+	}
+
+	if !ui.disconnectCurrentFilePaneTab(0, time.Now()) {
+		t.Fatal("disconnect should convert the last remote tab to local")
+	}
+	if got, want := len(ui.filePaneTabs[0].tabs), 1; got != want {
+		t.Fatalf("tab count=%d want %d", got, want)
+	}
+	if pane.remoteConnected() {
+		t.Fatal("last tab should no longer be remote")
+	}
+	if got, want := pane.loadingDir, filepath.Clean(localDir); got != want {
+		t.Fatalf("local loading dir=%q want %q", got, want)
 	}
 }
 

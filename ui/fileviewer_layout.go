@@ -33,6 +33,7 @@ type viewerHeaderDetailPart struct {
 const (
 	viewerInlineCommandMinWidthDp       = 96
 	viewerInlineCommandDisplayInsetDp   = 10
+	viewerInlineCommandVerticalInsetDp  = 2
 	viewerInlineCommandMeasurePaddingDp = viewerInlineCommandDisplayInsetDp * 2
 	fileViewerOverlayEdgeInsetXDp       = 4
 	fileViewerOverlayEdgeInsetYDp       = 2
@@ -1582,12 +1583,6 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 	}
 	theme := ui.fileViewerTheme()
 	fg := theme.CommandStaticText
-	bg := theme.CommandBg
-	border := theme.CommandBorder
-	if st.commandClick.Hovered() {
-		bg = theme.CommandBgHover
-		border = theme.CommandBorderHover
-	}
 	commandText := st.command
 	if st.commandEditOn {
 		commandText = st.commandEditor.Text()
@@ -1596,44 +1591,44 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 	host := func(gtx layout.Context) layout.Dimensions {
 		return fixedWidth(gtx, desiredW, func(gtx layout.Context) layout.Dimensions {
 			return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-				if st.commandEditOn {
-					ed := material.Editor(th, &st.commandEditor, "cat {fullpath}")
-					ed.Font.Typeface = ui.viewerTypeface()
-					ed.TextSize = ui.viewerTextSize()
-					ed.Color = theme.CommandText
-					ed.HintColor = theme.CommandHint
-					focused := st.commandFocus || gtx.Focused(&st.commandEditor)
-					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						return layoutNeutralEditorBox(gtx, focused, true, func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								gtx.Constraints.Min.X = gtx.Constraints.Max.X
-								return ed.Layout(gtx)
+				plateH := stripH - gtx.Dp(unit.Dp(viewerInlineCommandVerticalInsetDp*2))
+				if plateH < gtx.Dp(unit.Dp(16)) {
+					plateH = gtx.Dp(unit.Dp(16))
+				}
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return fixedHeight(gtx, plateH, func(gtx layout.Context) layout.Dimensions {
+						if st.commandEditOn {
+							ed := material.Editor(th, &st.commandEditor, "cat {fullpath}")
+							ed.Font.Typeface = ui.tabStripTypeface()
+							ed.TextSize = ui.tabStripTextSize()
+							ed.Color = theme.CommandText
+							ed.HintColor = theme.CommandHint
+							focused := st.commandFocus || gtx.Focused(&st.commandEditor)
+							return ui.layoutFileViewerCommandPlate(gtx, theme, true, false, focused, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(viewerInlineCommandDisplayInsetDp), Right: unit.Dp(viewerInlineCommandDisplayInsetDp), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									gtx.Constraints.Min.X = gtx.Constraints.Max.X
+									return layout.Center.Layout(gtx, ed.Layout)
+								})
+							})
+						}
+						label := commandText
+						return st.commandClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							pointer.CursorText.Add(gtx.Ops)
+							return ui.layoutFileViewerCommandPlate(gtx, theme, false, st.commandClick.Hovered(), false, func(gtx layout.Context) layout.Dimensions {
+								return layout.Inset{Left: unit.Dp(viewerInlineCommandDisplayInsetDp), Right: unit.Dp(viewerInlineCommandDisplayInsetDp)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									gtx.Constraints.Min.X = gtx.Constraints.Max.X
+									lbl := material.Body2(th, label)
+									lbl.Font.Typeface = ui.tabStripTypeface()
+									lbl.TextSize = ui.tabStripTextSize()
+									lbl.Font.Weight = font.Medium
+									lbl.Color = fg
+									lbl.MaxLines = 1
+									lbl.Truncator = "..."
+									return layoutVCenteredLabel(gtx, lbl)
+								})
 							})
 						})
 					})
-				}
-				label := commandText
-				return st.commandClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return fillRoundedBox(
-						gtx,
-						gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-						bg,
-						border,
-						func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(10), Right: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								gtx.Constraints.Min.X = gtx.Constraints.Max.X
-								lbl := material.Body2(th, label)
-								lbl.Font.Typeface = ui.viewerTypeface()
-								lbl.TextSize = ui.viewerTextSize()
-								lbl.Font.Weight = font.Medium
-								lbl.Color = fg
-								lbl.MaxLines = 1
-								lbl.Truncator = "..."
-								return layoutVCenteredLabel(gtx, lbl)
-							})
-						},
-					)
 				})
 			})
 		})
@@ -1655,14 +1650,73 @@ func (ui *UI) layoutFileViewerInlineCommand(th *material.Theme, gtx layout.Conte
 	return host(gtx)
 }
 
+func (ui *UI) layoutFileViewerCommandPlate(gtx layout.Context, theme fileViewerTheme, editable, hovered, focused bool, content layout.Widget) layout.Dimensions {
+	if content == nil {
+		return layout.Dimensions{}
+	}
+	bg := mixNRGBA(theme.CommandBg, theme.PanelBg, 0.28)
+	edge := theme.CommandBorder
+	if hovered {
+		bg = mixNRGBA(theme.CommandBgHover, theme.PanelBg, 0.18)
+		edge = theme.CommandBorderHover
+	}
+	if editable {
+		bg = mixNRGBA(theme.CommandBgHover, theme.PanelBg, 0.12)
+		edge = theme.CommandBorderHover
+	}
+	if focused {
+		bg = mixNRGBA(bg, theme.CommandText, 0.07)
+	}
+
+	m := op.Record(gtx.Ops)
+	gtx.Constraints.Min = gtx.Constraints.Max
+	dims := content(gtx)
+	call := m.Stop()
+	if dims.Size.X < 1 || dims.Size.Y < 1 {
+		call.Add(gtx.Ops)
+		return dims
+	}
+
+	rect := image.Rectangle{Max: dims.Size}
+	paint.FillShape(gtx.Ops, bg, clip.Rect(rect).Op())
+	line := gtx.Dp(unit.Dp(1))
+	if line < 1 {
+		line = 1
+	}
+	edge.A = 92
+	if hovered || editable {
+		edge.A = 138
+	}
+	topEdge := edge
+	topEdge.A = 118
+	if hovered || editable {
+		topEdge.A = 158
+	}
+	paint.FillShape(gtx.Ops, topEdge, clip.Rect(image.Rect(0, 0, dims.Size.X, line)).Op())
+	paint.FillShape(gtx.Ops, edge, clip.Rect(image.Rect(0, dims.Size.Y-line, dims.Size.X, dims.Size.Y)).Op())
+	paint.FillShape(gtx.Ops, edge, clip.Rect(image.Rect(0, line, line, dims.Size.Y-line)).Op())
+	paint.FillShape(gtx.Ops, edge, clip.Rect(image.Rect(dims.Size.X-line, line, dims.Size.X, dims.Size.Y-line)).Op())
+	if editable && focused {
+		focusH := gtx.Dp(unit.Dp(2))
+		if focusH < 1 {
+			focusH = 1
+		}
+		focus := theme.CommandText
+		focus.A = 214
+		paint.FillShape(gtx.Ops, focus, clip.Rect(image.Rect(0, dims.Size.Y-focusH, dims.Size.X, dims.Size.Y)).Op())
+	}
+	call.Add(gtx.Ops)
+	return dims
+}
+
 func (ui *UI) fileViewerInlineCommandWidth(th *material.Theme, gtx layout.Context, commandText string) int {
 	if strings.TrimSpace(commandText) == "" {
 		commandText = "cat {fullpath}"
 	}
 	measure := material.Body2(th, commandText)
-	measure.Font.Typeface = ui.viewerTypeface()
+	measure.Font.Typeface = ui.tabStripTypeface()
 	measure.Font.Weight = font.Medium
-	measure.TextSize = ui.viewerTextSize()
+	measure.TextSize = ui.tabStripTextSize()
 	desiredW := measureLabelUnconstrained(gtx, measure).Size.X + gtx.Dp(unit.Dp(viewerInlineCommandMeasurePaddingDp))
 	if desiredW < gtx.Dp(unit.Dp(viewerInlineCommandMinWidthDp)) {
 		desiredW = gtx.Dp(unit.Dp(viewerInlineCommandMinWidthDp))

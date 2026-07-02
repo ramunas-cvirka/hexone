@@ -2276,16 +2276,18 @@ func (ui *UI) processFilePaneFavoriteBadgeInput(gtx layout.Context, idx int, pan
 	}
 }
 
-func (ui *UI) processFilePaneDisconnectInput(gtx layout.Context, idx int, pane *filePaneState) {
+func (ui *UI) processFilePaneDisconnectInput(gtx layout.Context, idx int, pane *filePaneState) bool {
 	if pane == nil || !pane.remoteConnected() {
-		return
+		return false
 	}
 	if pane.disconnectClick.Clicked(gtx) {
 		ui.setActiveFilePane(idx)
 		pane.closeDriveMenu()
-		ui.disconnectPaneSSH(idx, gtx.Now)
+		ui.disconnectCurrentFilePaneTab(idx, gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
+		return true
 	}
+	return false
 }
 
 func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
@@ -2295,7 +2297,12 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 	ui.processFileModeBadgeInput(gtx, idx, pane)
 	ui.processFilePaneSortBadgeInput(gtx, idx, pane)
 	ui.processFilePaneFavoriteBadgeInput(gtx, idx, pane)
-	ui.processFilePaneDisconnectInput(gtx, idx, pane)
+	if ui.processFilePaneDisconnectInput(gtx, idx, pane) {
+		pane = ui.filePanes[idx]
+		if pane == nil {
+			return layout.Dimensions{}
+		}
+	}
 
 	stripH := gtx.Dp(unit.Dp(22))
 	if stripH < 1 {

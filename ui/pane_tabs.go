@@ -287,6 +287,30 @@ func (ui *UI) closeFilePaneTab(paneIdx, tabIdx int) bool {
 	return true
 }
 
+func (ui *UI) disconnectCurrentFilePaneTab(paneIdx int, now time.Time) bool {
+	if ui == nil {
+		return false
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) || paneIdx >= len(ui.filePanes) {
+		return false
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	if len(set.tabs) == 0 {
+		return false
+	}
+	tabIdx := clampTabIndex(set.active, len(set.tabs))
+	pane := set.tabs[tabIdx]
+	if pane == nil || !pane.remoteConnected() {
+		return false
+	}
+	if len(set.tabs) > 1 {
+		return ui.closeFilePaneTab(paneIdx, tabIdx)
+	}
+	ui.disconnectPaneSSH(paneIdx, now)
+	return !pane.remoteConnected()
+}
+
 func closeFilePaneTabTransient(pane *filePaneState) {
 	if pane == nil {
 		return
