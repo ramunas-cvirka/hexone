@@ -112,7 +112,7 @@ func (ui *UI) applyFilePaneHeaderCursor(gtx layout.Context) {
 }
 
 func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
-	if ui.settingsModal != nil || ui.sshModal != nil {
+	if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
 		return
 	}
 	if ui.terminalFocused(gtx) {
@@ -394,7 +394,7 @@ func (ui *UI) HandlePlatformInsertKeyState(now time.Time, down bool) bool {
 }
 
 func (ui *UI) handleFileManagerInsert() bool {
-	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil {
+	if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
 		return false
 	}
 	if ui.fileViewer != nil {
@@ -415,7 +415,7 @@ func (ui *UI) handleFileManagerInsert() bool {
 }
 
 func (ui *UI) handleFileManagerSelectAll(_ time.Time) bool {
-	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil {
+	if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
 		return false
 	}
 	if ui.fileViewer != nil {
@@ -436,7 +436,7 @@ func (ui *UI) handleFileManagerSelectAll(_ time.Time) bool {
 }
 
 func (ui *UI) handleFileManagerSelectMatching(_ time.Time) bool {
-	if ui == nil || ui.settingsModal != nil || ui.sshModal != nil {
+	if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
 		return false
 	}
 	if ui.fileViewer != nil {
@@ -2850,7 +2850,6 @@ func (ui *UI) layoutFilePaneFavoriteMenu(th *material.Theme, gtx layout.Context,
 	if pane == nil || !pane.favoriteMenuOpen {
 		return layout.Dimensions{}
 	}
-
 	items := ui.paneFavoriteItems(pane)
 	pane.ensureFavoriteOptionClicks(len(items))
 	pane.ensureFavoriteRemoveClicks(len(items))
@@ -2945,15 +2944,46 @@ func (ui *UI) layoutFilePaneFavoriteMenu(th *material.Theme, gtx layout.Context,
 		if !ok || pe.Kind != pointer.Press {
 			continue
 		}
-		if !pe.Buttons.Contain(pointer.ButtonPrimary) {
-			continue
-		}
 		pos := pe.Position.Round()
 		inMenu := pane.favoriteMenuRect.Dx() > 0 && pane.favoriteMenuRect.Dy() > 0 &&
 			pos.X >= pane.favoriteMenuRect.Min.X && pos.X < pane.favoriteMenuRect.Max.X &&
 			pos.Y >= pane.favoriteMenuRect.Min.Y && pos.Y < pane.favoriteMenuRect.Max.Y
+		inOrderMenu := pane.favoriteOrderOpen && filePaneFavoriteRectContains(pane.favoriteOrderRect, pos)
+		if pe.Buttons.Contain(pointer.ButtonSecondary) {
+			if itemIndex, ok := ui.filePaneFavoriteSavedItemAt(gtx, menuRect, items, pos); ok {
+				pane.openFavoriteOrderMenu(items[itemIndex].configIndex, pos)
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
+			pane.closeFavoriteOrderMenu()
+			if !inMenu {
+				pane.closeFavoriteMenu()
+			}
+			gtx.Execute(op.InvalidateCmd{})
+			continue
+		}
+		if !pe.Buttons.Contain(pointer.ButtonPrimary) {
+			continue
+		}
+		if inOrderMenu {
+			if step, ok := ui.filePaneFavoriteOrderStepAt(gtx, pane, pos); ok {
+				moved, err := ui.moveFavoriteLocation(pane.favoriteOrderIndex, step)
+				if err != nil {
+					pane.setNotice("failed to save favorites: "+err.Error(), gtx.Now)
+				}
+				if moved {
+					pane.closeFavoriteOrderMenu()
+				}
+				gtx.Execute(op.InvalidateCmd{})
+			}
+			continue
+		}
+		if pane.favoriteOrderOpen && !inOrderMenu {
+			pane.closeFavoriteOrderMenu()
+			gtx.Execute(op.InvalidateCmd{})
+		}
 		overFavoriteToggle := pane.favoriteClick.Pressed() || pane.favoriteClick.Hovered()
-		if !inMenu && !overFavoriteToggle {
+		if !inMenu && !inOrderMenu && !overFavoriteToggle {
 			pane.closeFavoriteMenu()
 			gtx.Execute(op.InvalidateCmd{})
 		}
@@ -2972,6 +3002,7 @@ func (ui *UI) layoutFilePaneFavoriteMenu(th *material.Theme, gtx layout.Context,
 	call.Add(gtx.Ops)
 	offset.Pop()
 	ui.layoutFilePaneFavoriteReveal(th, gtx, pane, menuRect, items, alpha)
+	ui.layoutFilePaneFavoriteOrderMenu(th, gtx, pane, alpha)
 	bodyClip.Pop()
 
 	defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
@@ -2980,6 +3011,102 @@ func (ui *UI) layoutFilePaneFavoriteMenu(th *material.Theme, gtx layout.Context,
 	pass.Pop()
 
 	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+func (ui *UI) filePaneFavoriteSavedItemAt(gtx layout.Context, menuRect image.Rectangle, items []fileFavoriteItem, pos image.Point) (int, bool) {
+	if !filePaneFavoriteRectContains(menuRect, pos) {
+		return -1, false
+	}
+	rowH := ui.filePaneFavoriteMenuRowHeight(gtx)
+	for i, item := range items {
+		if !item.removable || item.configIndex < 0 {
+			continue
+		}
+		y := menuRect.Min.Y + ui.filePaneFavoriteMenuItemOffsetY(gtx, items, i)
+		if pos.Y >= y && pos.Y < y+rowH {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+func (ui *UI) filePaneFavoriteOrderStepAt(gtx layout.Context, pane *filePaneState, pos image.Point) (int, bool) {
+	if ui == nil || pane == nil || !pane.favoriteOrderOpen || ui.fmCfg == nil || !filePaneFavoriteRectContains(pane.favoriteOrderRect, pos) {
+		return 0, false
+	}
+	items := filePaneFavoriteOrderItems(pane.favoriteOrderIndex, len(ui.fmCfg.FavoriteLocations))
+	y := pane.favoriteOrderRect.Min.Y
+	for i, item := range items {
+		rowH := ui.fileContextMenuRowHeight(gtx, item)
+		if pos.Y >= y && pos.Y < y+rowH {
+			if item.Disabled {
+				return 0, false
+			}
+			if i == 0 {
+				return -1, true
+			}
+			return 1, true
+		}
+		y += rowH
+	}
+	return 0, false
+}
+
+func (ui *UI) layoutFilePaneFavoriteOrderMenu(th *material.Theme, gtx layout.Context, pane *filePaneState, alpha float32) layout.Dimensions {
+	if ui == nil || pane == nil || !pane.favoriteOrderOpen || ui.fmCfg == nil {
+		return layout.Dimensions{}
+	}
+	for i := range pane.favoriteOrderClicks {
+		for pane.favoriteOrderClicks[i].Clicked(gtx) {
+		}
+	}
+	index := pane.favoriteOrderIndex
+	items := filePaneFavoriteOrderItems(index, len(ui.fmCfg.FavoriteLocations))
+	spec := fileContextMenuSpec{Key: "favorite-order", WidthDp: filePaneContextMenuCompactWidthDp, Items: items}
+	size := ui.fileContextMenuPanelSize(th, gtx, spec)
+	anchor := clampFilePaneMenuPoint(pane.favoriteOrderPos.Add(image.Pt(2, 2)), size, gtx.Constraints.Max)
+	pane.favoriteOrderRect = image.Rectangle{Min: anchor, Max: anchor.Add(size)}
+
+	theme := ui.filePanePopupTheme()
+	childGTX := gtx
+	childGTX.Constraints = layout.Exact(size)
+	offset := op.Offset(anchor).Push(gtx.Ops)
+	dims := fixedWidth(childGTX, size.X, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedClipBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+			scaleColorAlpha(theme.Bg, alpha),
+			scaleColorAlpha(theme.Border, alpha),
+			func(gtx layout.Context) layout.Dimensions {
+				children := make([]layout.FlexChild, 0, len(items))
+				y := anchor.Y
+				for i, item := range items {
+					i, item := i, item
+					rowH := ui.fileContextMenuRowHeight(gtx, item)
+					rowRect := image.Rect(anchor.X, y, anchor.X+size.X, y+rowH)
+					y += rowH
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						hoverFill := float32(0)
+						if pane.favoritePointerPosSet && filePaneFavoriteRectContains(rowRect, pane.favoritePointerPos) {
+							hoverFill = 1
+						}
+						dims, _, _ := ui.layoutFilePaneContextMenuItem(th, gtx, theme, &pane.favoriteOrderClicks[i], item, false, hoverFill, alpha, rowH)
+						return dims
+					}))
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			},
+		)
+	})
+	offset.Pop()
+	return dims
+}
+
+func filePaneFavoriteOrderItems(index, count int) []fileContextMenuItem {
+	return []fileContextMenuItem{
+		{ID: "favorite-move-up", Label: "Move up", Disabled: index <= 0},
+		{ID: "favorite-move-down", Label: "Move down", Disabled: index < 0 || index >= count-1},
+	}
 }
 
 func filePaneSortOptionID(key fileSortKey) string {

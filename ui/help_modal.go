@@ -556,25 +556,19 @@ func (ui *UI) layoutHelpModal(th *material.Theme, gtx layout.Context) layout.Dim
 		paint.FillShape(gtx.Ops, color.NRGBA{A: 150}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
 		width := gtx.Dp(unit.Dp(900))
-		height := gtx.Dp(unit.Dp(560))
 		maxW := gtx.Constraints.Max.X - gtx.Dp(unit.Dp(18))
 		maxH := gtx.Constraints.Max.Y - gtx.Dp(unit.Dp(18))
+		height := responsiveModalHeight(gtx, maxH)
 		if width > maxW {
 			width = maxW
-		}
-		if height > maxH {
-			height = maxH
 		}
 		if width < 560 {
 			width = 560
 		}
-		if height < 360 {
-			height = 360
-		}
 
 		m := op.Record(gtx.Ops)
 		card := fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
-			return minHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+			return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
 				return fillRoundedBox(
 					gtx,
 					gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),

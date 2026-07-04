@@ -2002,7 +2002,10 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 			Max: image.Pt(1<<20, lineHeight),
 		}
 		lineDraw, textX := v.linePaintSpec(line)
-		offset := op.Offset(image.Pt(textX, y)).Push(gtx.Ops)
+		// Selection, find, and syntax-span positions already include textPad.
+		// Keep the shared line transform vertical-only so asynchronously applying
+		// syntax highlighting cannot add the inset a second time.
+		offset := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 		if from, to, ok := fileViewerFindColsForLine(st, i); ok {
 			x0 := v.textPad + v.colOffsetPx(from-v.hCol)
 			x1 := v.textPad + v.colOffsetPx(to-v.hCol)
@@ -2046,7 +2049,9 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 		if spans, ok := v.syntaxLine(i); ok && len(spans) > 0 {
 			ui.drawStreamOutputSyntaxLine(th, lineGTX, v, line, lineDraw, spans, v.hCol, textW, lineFace, lineSize, theme)
 		} else {
+			textOffset := op.Offset(image.Pt(textX, 0)).Push(gtx.Ops)
 			ui.drawStreamOutputPlainLine(th, lineGTX, lineDraw, lineFace, lineSize, theme.Text)
+			textOffset.Pop()
 		}
 		offset.Pop()
 		y += lineHeight
@@ -2070,8 +2075,13 @@ func (ui *UI) drawStreamOutputPlainLine(th *material.Theme, gtx layout.Context, 
 }
 
 func (ui *UI) drawStreamOutputSyntaxLine(th *material.Theme, gtx layout.Context, v *streamOutputView, line, fallback string, spans []viewerSyntaxSpan, hCol, textW int, face font.Typeface, size unit.Sp, theme fileViewerTheme) {
-	if len(spans) == 0 {
+	drawFallback := func() {
+		offset := op.Offset(image.Pt(v.textPad, 0)).Push(gtx.Ops)
 		ui.drawStreamOutputPlainLine(th, gtx, fallback, face, size, theme.Text)
+		offset.Pop()
+	}
+	if len(spans) == 0 {
+		drawFallback()
 		return
 	}
 	visibleCols := 0
@@ -2122,7 +2132,7 @@ func (ui *UI) drawStreamOutputSyntaxLine(th *material.Theme, gtx layout.Context,
 		drew = true
 	}
 	if !drew {
-		ui.drawStreamOutputPlainLine(th, gtx, fallback, face, size, theme.Text)
+		drawFallback()
 	}
 }
 

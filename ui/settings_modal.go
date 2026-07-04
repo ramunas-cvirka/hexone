@@ -3300,25 +3300,19 @@ func (ui *UI) layoutSettingsModal(th *material.Theme, gtx layout.Context) layout
 		paint.FillShape(gtx.Ops, color.NRGBA{A: 140}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
 		width := gtx.Dp(unit.Dp(760))
-		height := gtx.Dp(unit.Dp(460))
 		maxW := gtx.Constraints.Max.X - gtx.Dp(unit.Dp(20))
 		maxH := gtx.Constraints.Max.Y - gtx.Dp(unit.Dp(20))
+		height := responsiveModalHeight(gtx, maxH)
 		if width > maxW {
 			width = maxW
-		}
-		if height > maxH {
-			height = maxH
 		}
 		if width < 520 {
 			width = 520
 		}
-		if height < 320 {
-			height = 320
-		}
 
 		m := op.Record(gtx.Ops)
 		card := fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
-			return minHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+			return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
 				return fillRoundedBox(
 					gtx,
 					gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
@@ -3378,6 +3372,21 @@ func (ui *UI) applySettingsNavCursor(gtx layout.Context, st *settingsModalState)
 		st.tabConfigClick.Hovered() {
 		pointer.CursorPointer.Add(gtx.Ops)
 	}
+}
+
+func responsiveModalHeight(gtx layout.Context, available int) int {
+	if available < 1 {
+		return 1
+	}
+	height := available * 4 / 5
+	minHeight := gtx.Dp(unit.Dp(460))
+	if height < minHeight {
+		height = minHeight
+	}
+	if height > available {
+		height = available
+	}
+	return height
 }
 
 func (ui *UI) layoutSettingsModalHeader(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
@@ -7025,39 +7034,40 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 	}
 
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.errText == "" {
 				return layout.Dimensions{}
 			}
-			return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, st.errText)
 				lbl.Font.Typeface = ui.interfaceTypeface()
 				lbl.TextSize = ui.scaleModalFontSize(9)
 				lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
 				lbl.MaxLines = 2
 				lbl.Truncator = "..."
-				return lbl.Layout(gtx)
+				return layout.W.Layout(gtx, lbl.Layout)
 			})
 		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutDialogActionPairState(
-				th,
-				gtx,
-				&st.cancelClick,
-				"Cancel",
-				hoverCancel,
-				pulseCancel,
-				false,
-				&st.saveClick,
-				"Save",
-				hoverSave,
-				pulseSave,
-				false,
-				cancelVisual,
-				saveVisual,
-			)
+			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogActionPairState(
+					th,
+					gtx,
+					&st.cancelClick,
+					"Cancel",
+					hoverCancel,
+					pulseCancel,
+					false,
+					&st.saveClick,
+					"Save",
+					hoverSave,
+					pulseSave,
+					false,
+					cancelVisual,
+					saveVisual,
+				)
+			})
 		}),
 	)
 }

@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/color"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -147,6 +148,99 @@ func TestFavoriteMenuCardWidthStaysFixedWhileRevealExpandsAfterDelay(t *testing.
 	}
 	if fullWidth <= trimmedWidth {
 		t.Fatalf("full width=%d want > trimmed width %d", fullWidth, trimmedWidth)
+	}
+}
+
+func TestMoveFavoriteLocationPersistsOrderAndHonorsBoundaries(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.FavoriteLocations = []string{"/alpha", "/beta", "/gamma"}
+	configPath := filepath.Join(t.TempDir(), "hexone.yaml")
+	if err := fm.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	ui := NewUI(cfg)
+	ui.configPath = configPath
+
+	if moved, err := ui.moveFavoriteLocation(1, -1); err != nil || !moved {
+		t.Fatalf("move favorite up = (%v, %v), want (true, nil)", moved, err)
+	}
+	want := []string{"/beta", "/alpha", "/gamma"}
+	if got := ui.fmCfg.FavoriteLocations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("runtime favorite order=%v want %v", got, want)
+	}
+	if got := fm.LoadConfig(configPath).FavoriteLocations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("saved favorite order=%v want %v", got, want)
+	}
+	if moved, err := ui.moveFavoriteLocation(0, -1); err != nil || moved {
+		t.Fatalf("move top favorite up = (%v, %v), want (false, nil)", moved, err)
+	}
+	if moved, err := ui.moveFavoriteLocation(2, 1); err != nil || moved {
+		t.Fatalf("move bottom favorite down = (%v, %v), want (false, nil)", moved, err)
+	}
+}
+
+func TestFavoriteOrderMenuDisablesBoundaryActions(t *testing.T) {
+	top := filePaneFavoriteOrderItems(0, 3)
+	if len(top) != 2 || !top[0].Disabled || top[1].Disabled {
+		t.Fatalf("top favorite actions=%+v", top)
+	}
+	bottom := filePaneFavoriteOrderItems(2, 3)
+	if bottom[0].Disabled || !bottom[1].Disabled {
+		t.Fatalf("bottom favorite actions=%+v", bottom)
+	}
+}
+
+func TestFavoriteRightClickOpensOrderMenuAndMovesItem(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.FavoriteLocations = []string{"/alpha", "/beta", "/gamma"}
+	configPath := filepath.Join(t.TempDir(), "hexone.yaml")
+	if err := fm.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	ui := NewUI(cfg)
+	ui.configPath = configPath
+	pane := ui.filePanes[0]
+	now := time.Date(2026, time.July, 4, 12, 0, 0, 0, time.UTC)
+	pane.openFavoriteMenu(now)
+	th := material.NewTheme()
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Now:    now,
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(640, 360),
+		},
+	}
+	frame := func() {
+		gtx.Now = gtx.Now.Add(time.Millisecond)
+		gtx.Ops.Reset()
+		ui.layoutFilePaneFavoriteMenu(th, gtx, 0, pane)
+		router.Frame(gtx.Ops)
+	}
+
+	frame()
+	items := ui.paneFavoriteItems(pane)
+	menuRect := ui.filePaneFavoriteMenuBaseRect(gtx, pane, items, 0)
+	rowY := menuRect.Min.Y + ui.filePaneFavoriteMenuItemOffsetY(gtx, items, 1) + ui.filePaneFavoriteMenuRowHeight(gtx)/2
+	rowPos := f32.Pt(float32(menuRect.Min.X+20), float32(rowY))
+	router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonSecondary, Position: rowPos})
+	frame()
+	if !pane.favoriteOrderOpen || pane.favoriteOrderIndex != 1 {
+		t.Fatalf("favorite order menu state open=%v index=%d, want open at 1", pane.favoriteOrderOpen, pane.favoriteOrderIndex)
+	}
+
+	orderRect := pane.favoriteOrderRect
+	moveUpPos := f32.Pt(float32(orderRect.Min.X+orderRect.Dx()/2), float32(orderRect.Min.Y+ui.fileContextMenuRowHeight(gtx, fileContextMenuItem{Label: "Move up"})/2))
+	router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: moveUpPos})
+	frame()
+	router.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: moveUpPos})
+	frame()
+
+	want := []string{"/beta", "/alpha", "/gamma"}
+	if got := ui.fmCfg.FavoriteLocations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("favorite order after context action=%v want %v", got, want)
 	}
 }
 

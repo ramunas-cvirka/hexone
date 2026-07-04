@@ -82,3 +82,7 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Aligned SSH Setup and Settings actions with the file-operation dialogs, including right-aligned footers, improved spacing, and a flatter, roomier SSH setup layout.
 - Changed the SSH Disconnect action to close the current remote tab when alternatives exist, while preserving the last tab and returning it to its previous local directory.
 - Restyled the active Cmd command as a compact fully bordered recessed field using the Tabs font and consistent display and edit-mode geometry.
+- Made Settings height responsive at roughly 80% of the window so dense tabs remain comfortable without filling the entire screen, retained right-aligned actions, and tightened Custom Commands so its editor aligns with the slot list and wastes less footer space.
+- Prevented Custom Commands editor navigation and shortcut keys from leaking through to the underlying file pane.
+- Applied the same responsive 80%-of-window height policy to the F1 Help modal as Settings.
+- Fixed File-mode text shifting horizontally when asynchronous syntax highlighting appears.

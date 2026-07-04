@@ -312,6 +312,11 @@ type filePaneState struct {
 	favoriteRevealHideAt  time.Time
 	favoritePointerPos    image.Point
 	favoritePointerPosSet bool
+	favoriteOrderOpen     bool
+	favoriteOrderIndex    int
+	favoriteOrderPos      image.Point
+	favoriteOrderRect     image.Rectangle
+	favoriteOrderClicks   [2]widget.Clickable
 	headerHeight          int
 	ctxPointerTag         uiEventTag
 	ctxMenuClicks         map[string]*widget.Clickable
@@ -960,6 +965,7 @@ func (p *filePaneState) closeFavoriteMenu() {
 	p.favoriteRevealHideAt = time.Time{}
 	p.favoritePointerPos = image.Point{}
 	p.favoritePointerPosSet = false
+	p.closeFavoriteOrderMenu()
 }
 
 func (p *filePaneState) openFavoriteMenu(now time.Time) {
@@ -977,6 +983,31 @@ func (p *filePaneState) openFavoriteMenu(now time.Time) {
 	p.favoriteRevealHideAt = time.Time{}
 	p.favoritePointerPos = image.Point{}
 	p.favoritePointerPosSet = false
+	p.closeFavoriteOrderMenu()
+}
+
+func (p *filePaneState) closeFavoriteOrderMenu() {
+	if p == nil {
+		return
+	}
+	p.favoriteOrderOpen = false
+	p.favoriteOrderIndex = -1
+	p.favoriteOrderPos = image.Point{}
+	p.favoriteOrderRect = image.Rectangle{}
+	p.favoriteOrderClicks = [2]widget.Clickable{}
+}
+
+func (p *filePaneState) openFavoriteOrderMenu(index int, pos image.Point) {
+	if p == nil || index < 0 {
+		return
+	}
+	p.favoriteOrderOpen = true
+	p.favoriteOrderIndex = index
+	p.favoriteOrderPos = pos
+	p.favoriteOrderRect = image.Rectangle{}
+	p.favoriteOrderClicks = [2]widget.Clickable{}
+	p.favoriteRevealKey = ""
+	p.favoriteRevealHideAt = time.Time{}
 }
 
 func (p *filePaneState) closeSortMenu() {
@@ -1691,13 +1722,14 @@ func (p *filePaneState) contextMenuEntry() *filesys.Entry {
 }
 
 type fileFavoriteItem struct {
-	label      string
-	targetDir  string
-	remoteKey  string
-	addCurrent bool
-	active     bool
-	disabled   bool
-	removable  bool
+	label       string
+	targetDir   string
+	remoteKey   string
+	configIndex int
+	addCurrent  bool
+	active      bool
+	disabled    bool
+	removable   bool
 }
 
 func normalizeFavoriteLocation(raw string) string {
@@ -1899,7 +1931,7 @@ func (ui *UI) paneFavoriteItems(pane *filePaneState) []fileFavoriteItem {
 	if pane != nil {
 		current = normalizeFavoriteLocation(pane.dir)
 	}
-	for _, raw := range ui.fmCfg.FavoriteLocations {
+	for configIndex, raw := range ui.fmCfg.FavoriteLocations {
 		loc := normalizeFavoriteLocation(raw)
 		if loc == "" {
 			continue
@@ -1907,19 +1939,21 @@ func (ui *UI) paneFavoriteItems(pane *filePaneState) []fileFavoriteItem {
 		hasFavorites = true
 		if remoteLoc, ok := parseRemoteFavoriteLocation(loc); ok {
 			items = append(items, fileFavoriteItem{
-				label:     displayRemoteFavoriteLocation(remoteLoc),
-				targetDir: loc,
-				remoteKey: remoteFavoriteHostIdentity(remoteLoc),
-				active:    paneMatchesRemoteFavorite(pane, remoteLoc),
-				removable: true,
+				label:       displayRemoteFavoriteLocation(remoteLoc),
+				targetDir:   loc,
+				remoteKey:   remoteFavoriteHostIdentity(remoteLoc),
+				configIndex: configIndex,
+				active:      paneMatchesRemoteFavorite(pane, remoteLoc),
+				removable:   true,
 			})
 			continue
 		}
 		items = append(items, fileFavoriteItem{
-			label:     loc,
-			targetDir: loc,
-			active:    !pane.remoteConnected() && current != "" && favoriteLocationEqual(loc, current),
-			removable: true,
+			label:       loc,
+			targetDir:   loc,
+			configIndex: configIndex,
+			active:      !pane.remoteConnected() && current != "" && favoriteLocationEqual(loc, current),
+			removable:   true,
 		})
 	}
 	if !hasFavorites {
@@ -2012,6 +2046,29 @@ func (ui *UI) removeFavoriteLocation(raw string) (bool, error) {
 	ui.fmCfg.FavoriteLocations = next
 	if err := ui.saveFMConfigWithOptions("favorites-remove", false); err != nil {
 		ui.fmCfg.FavoriteLocations = prev
+		return false, err
+	}
+	return true, nil
+}
+
+func (ui *UI) moveFavoriteLocation(index, step int) (bool, error) {
+	if ui == nil {
+		return false, nil
+	}
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return false, err
+	}
+	if ui.fmCfg == nil || step == 0 || index < 0 || index >= len(ui.fmCfg.FavoriteLocations) {
+		return false, nil
+	}
+	nextIndex := index + step
+	if nextIndex < 0 || nextIndex >= len(ui.fmCfg.FavoriteLocations) {
+		return false, nil
+	}
+	previous := append([]string(nil), ui.fmCfg.FavoriteLocations...)
+	ui.fmCfg.FavoriteLocations[index], ui.fmCfg.FavoriteLocations[nextIndex] = ui.fmCfg.FavoriteLocations[nextIndex], ui.fmCfg.FavoriteLocations[index]
+	if err := ui.saveFMConfigWithOptions("favorites-reorder", false); err != nil {
+		ui.fmCfg.FavoriteLocations = previous
 		return false, err
 	}
 	return true, nil

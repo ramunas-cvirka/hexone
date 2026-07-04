@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -55,6 +57,87 @@ func TestSettingsModalFooterClaimsFullWidthForRightAlignedActions(t *testing.T) 
 
 	if got, want := ui.layoutSettingsModalFooter(th, gtx, &settingsModalState{}).Size.X, 500; got != want {
 		t.Fatalf("settings footer width=%d want %d", got, want)
+	}
+}
+
+func TestSettingsModalHeightTracksWindowWithoutFillingIt(t *testing.T) {
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	for _, tc := range []struct {
+		available int
+		want      int
+	}{
+		{available: 1000, want: 800},
+		{available: 500, want: 460},
+		{available: 400, want: 400},
+	} {
+		if got := responsiveModalHeight(gtx, tc.available); got != tc.want {
+			t.Fatalf("responsive settings height for %dpx=%d want %d", tc.available, got, tc.want)
+		}
+	}
+}
+
+func TestSettingsModalSaveActionIsAtRightEdge(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &settingsModalState{}
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(500, 60),
+		},
+	}
+	frame := func() bool {
+		clicked := st.saveClick.Clicked(gtx)
+		gtx.Ops.Reset()
+		ui.layoutSettingsModalFooter(th, gtx, st)
+		router.Frame(gtx.Ops)
+		return clicked
+	}
+
+	frame()
+	pos := f32.Pt(470, 12)
+	router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos})
+	frame()
+	router.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos})
+	if !frame() {
+		t.Fatal("Save action should occupy the right edge of the settings footer")
+	}
+}
+
+func TestSettingsViewerIntroductionFitsWithoutScrolling(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal should open")
+	}
+	st.activeTab = "viewer"
+	th := material.NewTheme()
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(744, 444), // 760x460 card after its 8 dp inset.
+		},
+	}
+
+	header := ui.layoutSettingsModalHeader(th, gtx, st)
+	gtx.Ops.Reset()
+	footer := ui.layoutSettingsModalFooter(th, gtx, st)
+	bodyH := gtx.Constraints.Max.Y - header.Size.Y - footer.Size.Y - 14
+	if bodyH < 1 {
+		t.Fatalf("invalid settings body height %d", bodyH)
+	}
+	gtx.Ops.Reset()
+	gtx.Constraints = layout.Exact(image.Pt(584, bodyH))
+	ui.layoutSettingsViewerTab(th, gtx, st)
+	if got := st.viewerTabList.Position.Count; got < 6 {
+		t.Fatalf("viewer introduction and first priority section are cramped: visible sections=%d want at least 6", got)
 	}
 }
 
