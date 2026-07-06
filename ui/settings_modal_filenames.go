@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"hexone/filesys"
 	"hexone/fm"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"strings"
@@ -373,6 +372,10 @@ func (st *settingsModalState) loadFilenameAgeFields(offset, unit, textHex, icon 
 	st.filenameAgeTextEdit.SetText(textHex)
 	st.filenameAgeIcon = fm.NormalizeFilenameIcon(icon)
 	st.filenameAgeLookup = filenameAgeRuleKeyFromFields(offset, st.filenameAgeUnit)
+	st.filenameAgeEditingKey = ""
+	if st.filenameAgeLookup != "" && (fm.NormalizeOptionalHexColor(textHex) != "" || st.filenameAgeIcon != "") {
+		st.filenameAgeEditingKey = st.filenameAgeLookup
+	}
 }
 
 func (st *settingsModalState) syncFilenameAgeEditors() {
@@ -384,9 +387,13 @@ func (st *settingsModalState) syncFilenameAgeEditors() {
 		return
 	}
 	st.filenameAgeLookup = maxAge
+	if st.filenameAgeEditingKey != "" {
+		return
+	}
 	if rule, ok := st.filenameAgeRule(maxAge); ok {
-		st.filenameAgeTextEdit.SetText(rule.Text)
-		st.filenameAgeIcon = rule.Icon
+		if offset, unit, splitOK := splitFilenameAgeValue(rule.MaxAge); splitOK {
+			st.loadFilenameAgeFields(offset, unit, rule.Text, rule.Icon)
+		}
 		return
 	}
 	st.filenameAgeTextEdit.SetText("")
@@ -413,12 +420,16 @@ func (st *settingsModalState) refreshFilenameAgeDraftInfo() {
 		st.filenameAgeInfoText = "Pick a color, icon, or both"
 		return
 	}
-	existing, ok := st.filenameAgeRule(maxAge)
+	existingKey := maxAge
+	if st.filenameAgeEditingKey != "" {
+		existingKey = st.filenameAgeEditingKey
+	}
+	existing, ok := st.filenameAgeRule(existingKey)
 	if !ok {
 		st.filenameAgeInfoText = "Click Add"
 		return
 	}
-	if existing.Text == textHex && existing.Icon == icon {
+	if existingKey == maxAge && existing.Text == textHex && existing.Icon == icon {
 		return
 	}
 	st.filenameAgeInfoText = "Click Update"
@@ -438,6 +449,12 @@ func (st *settingsModalState) filenameAgeNoticeText() string {
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameAgeTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameAgeIcon)
+	if st.filenameAgeEditingKey != "" {
+		if editingRule, ok := st.filenameAgeRule(st.filenameAgeEditingKey); ok &&
+			(st.filenameAgeEditingKey != maxAge || editingRule.Text != textHex || editingRule.Icon != icon) {
+			return "Click Update"
+		}
+	}
 	savedRule, savedExists := st.filenameSavedAgeRule(maxAge)
 	currentRule, currentExists := st.filenameAgeRule(maxAge)
 	switch {
@@ -487,8 +504,16 @@ func (st *settingsModalState) upsertCurrentFilenameAgeRule() (string, error) {
 		return "Add", err
 	}
 	action := "Add"
-	if idx := st.filenameAgeRuleIndex(rule.MaxAge); idx >= 0 {
-		st.filenameAgeEntries[idx] = rule
+	oldIdx := st.filenameAgeRuleIndex(st.filenameAgeEditingKey)
+	newIdx := st.filenameAgeRuleIndex(rule.MaxAge)
+	if oldIdx >= 0 {
+		if newIdx >= 0 && newIdx != oldIdx {
+			return "Update", fmt.Errorf("an age rule for %s already exists", rule.MaxAge)
+		}
+		st.filenameAgeEntries[oldIdx] = rule
+		action = "Update"
+	} else if newIdx >= 0 {
+		st.filenameAgeEntries[newIdx] = rule
 		action = "Update"
 	} else {
 		st.filenameAgeEntries = append(st.filenameAgeEntries, rule)
@@ -496,6 +521,7 @@ func (st *settingsModalState) upsertCurrentFilenameAgeRule() (string, error) {
 	st.filenameAgeEntries = fm.NormalizeFilenameAgeRules(st.filenameAgeEntries)
 	if offset, unit, ok := splitFilenameAgeValue(rule.MaxAge); ok {
 		st.loadFilenameAgeFields(offset, unit, rule.Text, rule.Icon)
+		st.filenameAgeEditingKey = ""
 	}
 	return action, nil
 }
@@ -504,7 +530,10 @@ func (st *settingsModalState) removeCurrentFilenameAgeRule() bool {
 	if st == nil {
 		return false
 	}
-	maxAge := filenameAgeRuleKeyFromFields(st.filenameAgeOffsetEdit.Text(), st.filenameAgeUnit)
+	maxAge := st.filenameAgeEditingKey
+	if maxAge == "" {
+		maxAge = filenameAgeRuleKeyFromFields(st.filenameAgeOffsetEdit.Text(), st.filenameAgeUnit)
+	}
 	idx := st.filenameAgeRuleIndex(maxAge)
 	if idx < 0 {
 		return false
@@ -641,6 +670,10 @@ func (st *settingsModalState) loadFilenamePermissionFields(perm, match, textHex,
 	st.filenamePermIcon = fm.NormalizeFilenameIcon(icon)
 	st.setFilenamePermissionChecks(perm)
 	st.filenamePermLookup = filenamePermissionRuleKey(perm, st.filenamePermMatch)
+	st.filenamePermEditingKey = ""
+	if st.filenamePermLookup != "" && (fm.NormalizeOptionalHexColor(textHex) != "" || st.filenamePermIcon != "") {
+		st.filenamePermEditingKey = st.filenamePermLookup
+	}
 }
 
 func (st *settingsModalState) syncFilenamePermissionEditors() {
@@ -656,10 +689,11 @@ func (st *settingsModalState) syncFilenamePermissionEditors() {
 		return
 	}
 	st.filenamePermLookup = key
+	if st.filenamePermEditingKey != "" {
+		return
+	}
 	if rule, ok := st.filenamePermissionRule(key); ok {
-		st.filenamePermTextEdit.SetText(rule.Text)
-		st.filenamePermIcon = rule.Icon
-		st.filenamePermMatch = normalizeFilenamePermissionMatch(rule.Match)
+		st.loadFilenamePermissionFields(rule.Permissions, rule.Match, rule.Text, rule.Icon)
 		return
 	}
 	st.filenamePermTextEdit.SetText("")
@@ -681,12 +715,16 @@ func (st *settingsModalState) refreshFilenamePermissionDraftInfo() {
 		st.filenamePermInfoText = "Pick a color, icon, or both"
 		return
 	}
-	existing, ok := st.filenamePermissionRule(key)
+	existingKey := key
+	if st.filenamePermEditingKey != "" {
+		existingKey = st.filenamePermEditingKey
+	}
+	existing, ok := st.filenamePermissionRule(existingKey)
 	if !ok {
 		st.filenamePermInfoText = "Click Add"
 		return
 	}
-	if existing.Text == textHex && existing.Icon == icon && normalizeFilenamePermissionMatch(existing.Match) == normalizeFilenamePermissionMatch(st.filenamePermMatch) {
+	if existingKey == key && existing.Text == textHex && existing.Icon == icon && normalizeFilenamePermissionMatch(existing.Match) == normalizeFilenamePermissionMatch(st.filenamePermMatch) {
 		return
 	}
 	st.filenamePermInfoText = "Click Update"
@@ -702,6 +740,12 @@ func (st *settingsModalState) filenamePermissionNoticeText() string {
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenamePermTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenamePermIcon)
+	if st.filenamePermEditingKey != "" {
+		if editingRule, ok := st.filenamePermissionRule(st.filenamePermEditingKey); ok &&
+			(st.filenamePermEditingKey != key || editingRule.Text != textHex || editingRule.Icon != icon) {
+			return "Click Update"
+		}
+	}
 	savedRule, savedExists := st.filenameSavedPermissionRule(key)
 	currentRule, currentExists := st.filenamePermissionRule(key)
 	switch {
@@ -757,14 +801,23 @@ func (st *settingsModalState) upsertCurrentFilenamePermissionRule() (string, err
 	}
 	action := "Add"
 	key := filenamePermissionRuleKey(rule.Permissions, rule.Match)
-	if idx := st.filenamePermissionRuleIndex(key); idx >= 0 {
-		st.filenamePermEntries[idx] = rule
+	oldIdx := st.filenamePermissionRuleIndex(st.filenamePermEditingKey)
+	newIdx := st.filenamePermissionRuleIndex(key)
+	if oldIdx >= 0 {
+		if newIdx >= 0 && newIdx != oldIdx {
+			return "Update", fmt.Errorf("a permission rule for %s already exists", key)
+		}
+		st.filenamePermEntries[oldIdx] = rule
+		action = "Update"
+	} else if newIdx >= 0 {
+		st.filenamePermEntries[newIdx] = rule
 		action = "Update"
 	} else {
 		st.filenamePermEntries = append(st.filenamePermEntries, rule)
 	}
 	st.filenamePermEntries = fm.NormalizeFilenamePermissionRules(st.filenamePermEntries)
 	st.loadFilenamePermissionFields(rule.Permissions, rule.Match, rule.Text, rule.Icon)
+	st.filenamePermEditingKey = ""
 	return action, nil
 }
 
@@ -772,7 +825,10 @@ func (st *settingsModalState) removeCurrentFilenamePermissionRule() bool {
 	if st == nil {
 		return false
 	}
-	key := filenamePermissionRuleKey(st.filenamePermEdit.Text(), st.filenamePermMatch)
+	key := st.filenamePermEditingKey
+	if key == "" {
+		key = filenamePermissionRuleKey(st.filenamePermEdit.Text(), st.filenamePermMatch)
+	}
 	idx := st.filenamePermissionRuleIndex(key)
 	if idx < 0 {
 		return false
@@ -1378,7 +1434,7 @@ func (ui *UI) layoutSettingsFilenameRuleList(th *material.Theme, gtx layout.Cont
 							}),
 							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return layoutTinyIconModeButton(th, gtx, removeClick, uitheme.CloseIcon(), false)
+								return ui.layoutSettingsFlatRemoveButton(gtx, removeClick, false)
 							}),
 						)
 					})
@@ -1758,24 +1814,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	}
 	st.ensureColorSwatchClicks(settingsColorSwatchCount(activeSwatchGroups))
 	st.ensureFilenameIconSwatchClicks(len(filenameIconOptions))
-	if st.colorPickerOpen {
-		clickIdx := 0
-		for _, group := range activeSwatchGroups {
-			for _, hex := range group.hexes {
-				if clickIdx >= len(st.colorSwatchClicks) {
-					break
-				}
-				if st.colorSwatchClicks[clickIdx].Clicked(gtx) {
-					st.setPopupKeyboardFocus(settingsPopupKeyboardColor, clickIdx, settingsPopupKeyboardActionRow)
-					st.setColorPickerHexValue(st.colorPickerTarget, hex)
-					st.colorPickerOpen = false
-					st.colorPickerTarget = ""
-					st.errText = ""
-				}
-				clickIdx++
-			}
-		}
-	}
+	st.handleColorPickerActions(gtx, activeSwatchGroups)
 	if st.filenameIconPickerOpen {
 		for i, opt := range filenameIconOptions {
 			if i >= len(st.filenameIconSwatchClicks) {
@@ -1919,24 +1958,36 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	}
 	currentAge := filenameAgeRuleKeyFromFields(st.filenameAgeOffsetEdit.Text(), st.filenameAgeUnit)
 	_, currentAgeExists := st.filenameAgeRule(currentAge)
+	if !currentAgeExists && st.filenameAgeEditingKey != "" {
+		_, currentAgeExists = st.filenameAgeRule(st.filenameAgeEditingKey)
+	}
 	ageAction := "Add"
 	if currentAgeExists {
 		ageAction = "Update"
 	}
 	currentPerm := filenamePermissionRuleKey(st.filenamePermEdit.Text(), st.filenamePermMatch)
 	_, currentPermExists := st.filenamePermissionRule(currentPerm)
+	if !currentPermExists && st.filenamePermEditingKey != "" {
+		_, currentPermExists = st.filenamePermissionRule(st.filenamePermEditingKey)
+	}
 	permAction := "Add"
 	if currentPermExists {
 		permAction = "Update"
 	}
 	currentExt := filenameExtensionRuleKey(st.filenameExtEdit.Text())
 	_, currentExtExists := st.filenameExtensionRule(currentExt)
+	if !currentExtExists && st.filenameExtEditingKey != "" {
+		_, currentExtExists = st.filenameExtensionRule(st.filenameExtEditingKey)
+	}
 	extAction := "Add"
 	if currentExtExists {
 		extAction = "Update"
 	}
 	currentSize := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeMatch)
 	_, currentSizeExists := st.filenameSizeRule(currentSize)
+	if !currentSizeExists && st.filenameSizeEditingKey != "" {
+		_, currentSizeExists = st.filenameSizeRule(st.filenameSizeEditingKey)
+	}
 	sizeAction := "Add"
 	if currentSizeExists {
 		sizeAction = "Update"
@@ -1973,11 +2024,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.filenamePermApplyClick, permAction, currentPermExists, st.focus == settingsKeyboardFocusFilenamePermApply)
+							return ui.layoutSettingsFlatActionButton(th, gtx, &st.filenamePermApplyClick, permAction, currentPermExists, st.focus == settingsKeyboardFocusFilenamePermApply, false)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.filenamePermRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenamePermRemove)
+							return ui.layoutSettingsFlatActionButton(th, gtx, &st.filenamePermRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenamePermRemove, true)
 						}),
 					)
 				}),
@@ -2014,11 +2065,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.filenameExtApplyClick, extAction, currentExtExists, st.focus == settingsKeyboardFocusFilenameExtApply)
+							return ui.layoutSettingsFlatActionButton(th, gtx, &st.filenameExtApplyClick, extAction, currentExtExists, st.focus == settingsKeyboardFocusFilenameExtApply, false)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.filenameExtRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenameExtRemove)
+							return ui.layoutSettingsFlatActionButton(th, gtx, &st.filenameExtRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenameExtRemove, true)
 						}),
 					)
 				}),
@@ -2059,11 +2110,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.filenameSizeApplyClick, sizeAction, currentSizeExists, st.focus == settingsKeyboardFocusFilenameSizeApply)
+							return ui.layoutSettingsFlatActionButton(th, gtx, &st.filenameSizeApplyClick, sizeAction, currentSizeExists, st.focus == settingsKeyboardFocusFilenameSizeApply, false)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.filenameSizeRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenameSizeRemove)
+							return ui.layoutSettingsFlatActionButton(th, gtx, &st.filenameSizeRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenameSizeRemove, true)
 						}),
 					)
 				}),
@@ -2108,11 +2159,11 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.filenameAgeApplyClick, ageAction, currentAgeExists, st.focus == settingsKeyboardFocusFilenameAgeApply)
+							return ui.layoutSettingsFlatActionButton(th, gtx, &st.filenameAgeApplyClick, ageAction, currentAgeExists, st.focus == settingsKeyboardFocusFilenameAgeApply, false)
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutTinyModeButtonState(th, gtx, ui.interfaceTypeface(), &st.filenameAgeRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenameAgeRemove)
+							return ui.layoutSettingsFlatActionButton(th, gtx, &st.filenameAgeRemoveClick, "Remove", false, st.focus == settingsKeyboardFocusFilenameAgeRemove, true)
 						}),
 					)
 				}),

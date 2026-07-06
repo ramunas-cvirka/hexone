@@ -1026,6 +1026,7 @@ func TestSettingsModalKeyboardColorPickerTabMovesAndEnterAppliesColor(t *testing
 	st.colorScope = "panes"
 	st.focus = settingsKeyboardFocusColorsBgPicker
 	st.keyFocus.wantFocus = true
+	originalHex := strings.TrimSpace(st.colorValueEdit.Text())
 
 	frame := func(at time.Time) {
 		gtx.Now = at
@@ -1078,11 +1079,28 @@ func TestSettingsModalKeyboardColorPickerTabMovesAndEnterAppliesColor(t *testing
 	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
 	frame(now.Add(3 * time.Millisecond))
 
-	if st.colorPickerOpen {
-		t.Fatal("Enter on the focused color swatch should close the color picker")
+	if !st.colorPickerOpen {
+		t.Fatal("selecting a base color should keep the color picker open")
 	}
-	if got := strings.TrimSpace(st.colorValueEdit.Text()); got != wantHex {
-		t.Fatalf("background color after keyboard selection = %q, want %q", got, wantHex)
+	if st.colorPickerBase != wantHex {
+		t.Fatalf("selected base=%q want %q", st.colorPickerBase, wantHex)
+	}
+	if got := strings.TrimSpace(st.colorValueEdit.Text()); got != originalHex {
+		t.Fatalf("base selection changed background to %q, want unchanged %q", got, originalHex)
+	}
+
+	st.colorPickerShade.Value = 0.25
+	wantShade := settingsColorShade(wantHex, st.colorPickerShade.Value)
+	setIndex := settingsColorSwatchCount(groups)
+	st.setPopupKeyboardFocus(settingsPopupKeyboardColor, setIndex, settingsPopupKeyboardActionRow)
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(now.Add(4 * time.Millisecond))
+
+	if st.colorPickerOpen {
+		t.Fatal("activating Set should close the color picker")
+	}
+	if got := strings.TrimSpace(st.colorValueEdit.Text()); got != wantShade {
+		t.Fatalf("background after shade selection=%q want %q", got, wantShade)
 	}
 }
 
@@ -1925,24 +1943,47 @@ func TestViewerCommandRuleNoticeTextPromptsAddForNewRule(t *testing.T) {
 	}
 }
 
-func TestSettingsColorSwatchGroupsIncludeNearbyCurrentColor(t *testing.T) {
+func TestSettingsColorSwatchGroupsAlwaysContainOnlyHive(t *testing.T) {
+	initial := settingsColorSwatchGroups("")
+	if got := settingsColorSwatchCount(initial); got != 127 {
+		t.Fatalf("initial swatch count=%d want 127", got)
+	}
 	groups := settingsColorSwatchGroups("#2D9AA5")
-	if len(groups) == 0 {
-		t.Fatal("expected swatch groups")
+	if got := settingsColorSwatchCount(groups); got != 127 {
+		t.Fatalf("selected-base swatch count=%d want 127", got)
 	}
-	if groups[0].label != "Nearby" {
-		t.Fatalf("first group label=%q want Nearby", groups[0].label)
+}
+
+func TestSettingsColorHiveHasCompactHexagonalRows(t *testing.T) {
+	groups := settingsColorHiveGroups()
+	wantRows := []int{7, 8, 9, 10, 11, 12, 13, 12, 11, 10, 9, 8, 7}
+	if len(groups) != len(wantRows) {
+		t.Fatalf("hive rows=%d want %d", len(groups), len(wantRows))
 	}
-	want := fm.NormalizeHexColor("#2D9AA5", "")
-	found := false
-	for _, hex := range groups[0].hexes {
-		if fm.NormalizeHexColor(hex, "") == want {
-			found = true
-			break
+	seen := make(map[string]bool)
+	for row, want := range wantRows {
+		if got := len(groups[row].hexes); got != want {
+			t.Fatalf("row %d swatches=%d want %d", row, got, want)
+		}
+		for _, hex := range groups[row].hexes {
+			if seen[hex] {
+				t.Fatalf("duplicate hive color %s", hex)
+			}
+			seen[hex] = true
 		}
 	}
-	if !found {
-		t.Fatalf("nearby swatches do not include current color %q: %#v", want, groups[0].hexes)
+}
+
+func TestSettingsColorShadeUsesBaseAtCenterAndTintsBothWays(t *testing.T) {
+	const base = "#4080C0"
+	if got := settingsColorShade(base, 0.5); got != base {
+		t.Fatalf("center shade=%q want %q", got, base)
+	}
+	if got := settingsColorShade(base, 0); got != "#000000" {
+		t.Fatalf("dark endpoint=%q want black", got)
+	}
+	if got := settingsColorShade(base, 1); got != "#FFFFFF" {
+		t.Fatalf("light endpoint=%q want white", got)
 	}
 }
 
@@ -2558,6 +2599,129 @@ func TestUpsertCurrentFilenameAgeRuleNormalizesAndSortsEntries(t *testing.T) {
 	}
 	if st.filenameAgeEntries[0].MaxAge != "1d" || st.filenameAgeEntries[1].MaxAge != "1w" {
 		t.Fatalf("filenameAgeEntries=%#v want sorted 1d then 1w", st.filenameAgeEntries)
+	}
+}
+
+func TestFilenameRuleUpdatesCanChangeIdentityFields(t *testing.T) {
+	t.Run("age", func(t *testing.T) {
+		st := &settingsModalState{filenameAgeEntries: []fm.FilenameAgeRule{{MaxAge: "1d", Text: "#112233"}}}
+		st.loadFilenameAgeFields("1", "d", "#112233", "")
+		st.filenameAgeOffsetEdit.SetText("2")
+		st.syncFilenameAgeEditors()
+		if got := st.filenameAgeTextEdit.Text(); got != "#112233" {
+			t.Fatalf("color cleared while changing age: %q", got)
+		}
+		action, err := st.upsertCurrentFilenameAgeRule()
+		if err != nil || action != "Update" {
+			t.Fatalf("age update action=%q err=%v", action, err)
+		}
+		if len(st.filenameAgeEntries) != 1 || st.filenameAgeEntries[0].MaxAge != "2d" {
+			t.Fatalf("age entries=%#v want one 2d rule", st.filenameAgeEntries)
+		}
+	})
+
+	t.Run("permissions", func(t *testing.T) {
+		st := &settingsModalState{filenamePermEntries: []fm.FilenamePermissionRule{{Permissions: "0644", Match: fm.FilenamePermissionMatchExact, Text: "#223344"}}}
+		st.loadFilenamePermissionFields("0644", fm.FilenamePermissionMatchExact, "#223344", "")
+		st.filenamePermEdit.SetText("0755")
+		st.syncFilenamePermissionEditors()
+		action, err := st.upsertCurrentFilenamePermissionRule()
+		if err != nil || action != "Update" {
+			t.Fatalf("permission update action=%q err=%v", action, err)
+		}
+		if len(st.filenamePermEntries) != 1 || st.filenamePermEntries[0].Permissions != "0755" {
+			t.Fatalf("permission entries=%#v want one 0755 rule", st.filenamePermEntries)
+		}
+	})
+
+	t.Run("extension", func(t *testing.T) {
+		st := &settingsModalState{filenameExtEntries: []fm.FilenameExtensionRule{{Extension: ".go", Text: "#334455"}}}
+		st.loadFilenameExtensionFields(".go", "#334455", "")
+		st.filenameExtEdit.SetText("md")
+		st.syncFilenameExtensionEditors()
+		action, err := st.upsertCurrentFilenameExtensionRule()
+		if err != nil || action != "Update" {
+			t.Fatalf("extension update action=%q err=%v", action, err)
+		}
+		if len(st.filenameExtEntries) != 1 || st.filenameExtEntries[0].Extension != ".md" {
+			t.Fatalf("extension entries=%#v want one .md rule", st.filenameExtEntries)
+		}
+	})
+
+	t.Run("size", func(t *testing.T) {
+		st := &settingsModalState{filenameSizeEntries: []fm.FilenameSizeRule{{Size: "1m", Match: fm.FilenameSizeMatchAtMost, Text: "#445566"}}}
+		st.loadFilenameSizeFields("1m", fm.FilenameSizeMatchAtMost, "#445566", "")
+		st.filenameSizeEdit.SetText("2m")
+		st.syncFilenameSizeEditors()
+		action, err := st.upsertCurrentFilenameSizeRule()
+		if err != nil || action != "Update" {
+			t.Fatalf("size update action=%q err=%v", action, err)
+		}
+		if len(st.filenameSizeEntries) != 1 || st.filenameSizeEntries[0].Size != "2m" {
+			t.Fatalf("size entries=%#v want one 2m rule", st.filenameSizeEntries)
+		}
+	})
+}
+
+func TestViewerSettingsUpdatesCanChangeIdentityFields(t *testing.T) {
+	t.Run("target", func(t *testing.T) {
+		oldKey := normalizeViewerCommandTargetInput("local:/tmp/old.log")
+		newKey := normalizeViewerCommandTargetInput("local:/tmp/new.log")
+		st := &settingsModalState{viewTargetEntries: []viewerCommandTargetEntry{{Key: oldKey, Command: "old-command"}}}
+		st.loadViewerCommandTargetFields(oldKey, "old-command")
+		st.viewTargetKeyEdit.SetText(newKey)
+		st.syncViewerCommandTargetEditors()
+		action, err := st.upsertCurrentViewerCommandTarget()
+		if err != nil || action != "Update" {
+			t.Fatalf("target update action=%q err=%v", action, err)
+		}
+		if len(st.viewTargetEntries) != 1 || st.viewTargetEntries[0].Key != newKey {
+			t.Fatalf("target entries=%#v want renamed target", st.viewTargetEntries)
+		}
+	})
+
+	t.Run("rule", func(t *testing.T) {
+		st := &settingsModalState{viewRuleEntries: []fm.ViewerCommandRule{{Pattern: `\.log$`, Command: "old-command"}}}
+		st.loadViewerCommandRuleFields(`\.log$`, "old-command")
+		st.viewRulePatternEdit.SetText(`\.txt$`)
+		st.syncViewerCommandRuleEditors()
+		action, err := st.upsertCurrentViewerCommandRule()
+		if err != nil || action != "Update" {
+			t.Fatalf("rule update action=%q err=%v", action, err)
+		}
+		if len(st.viewRuleEntries) != 1 || st.viewRuleEntries[0].Pattern != `\.txt$` {
+			t.Fatalf("rule entries=%#v want renamed pattern", st.viewRuleEntries)
+		}
+	})
+
+	t.Run("association", func(t *testing.T) {
+		st := &settingsModalState{viewAssocEntries: []fm.ViewerAssociation{{Extension: ".log", AppPath: "old-app"}}}
+		st.loadViewerAssociationFields(".log", "old-app")
+		st.viewAssocExtEdit.SetText("txt")
+		st.syncViewerAssociationEditors()
+		action, err := st.upsertCurrentViewerAssociation()
+		if err != nil || action != "Update" {
+			t.Fatalf("association update action=%q err=%v", action, err)
+		}
+		if len(st.viewAssocEntries) != 1 || st.viewAssocEntries[0].Extension != ".txt" {
+			t.Fatalf("association entries=%#v want renamed extension", st.viewAssocEntries)
+		}
+	})
+}
+
+func TestKeyedSettingsUpdateRejectsExistingDestination(t *testing.T) {
+	st := &settingsModalState{filenameAgeEntries: []fm.FilenameAgeRule{
+		{MaxAge: "1d", Text: "#112233"},
+		{MaxAge: "2d", Text: "#445566"},
+	}}
+	st.loadFilenameAgeFields("1", "d", "#112233", "")
+	st.filenameAgeOffsetEdit.SetText("2")
+
+	if action, err := st.upsertCurrentFilenameAgeRule(); err == nil || action != "Update" {
+		t.Fatalf("conflicting update action=%q err=%v, want Update error", action, err)
+	}
+	if len(st.filenameAgeEntries) != 2 || st.filenameAgeEntries[0].Text != "#112233" || st.filenameAgeEntries[1].Text != "#445566" {
+		t.Fatalf("conflicting update mutated entries: %#v", st.filenameAgeEntries)
 	}
 }
 

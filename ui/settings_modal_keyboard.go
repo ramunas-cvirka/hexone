@@ -824,7 +824,7 @@ func (st *settingsModalState) normalizePopupKeyboardFocus(targetCount, ruleCount
 				if len(colorGroups) == 0 {
 					return st.setPopupKeyboardFocus(settingsPopupKeyboardNone, -1, settingsPopupKeyboardActionRow)
 				}
-				if st.popupFocusIndex >= 0 && st.popupFocusIndex < settingsColorSwatchCount(colorGroups) {
+				if st.popupFocusIndex >= 0 && st.popupFocusIndex <= settingsColorSwatchCount(colorGroups) {
 					return false
 				}
 				kind, index, ok := st.popupKeyboardDefaultFocus(nil, nil, nil, colorOptions, colorGroups, iconOptions)
@@ -1000,12 +1000,14 @@ func settingsPopupGridStep(index, dx, dy int, rowLengths []int) int {
 }
 
 func settingsColorPopupRowLengths(groups []settingsColorSwatchGroup) []int {
-	rows := make([]int, 0, len(groups))
+	rows := make([]int, 0, len(groups)+1)
 	for _, group := range groups {
 		if len(group.hexes) > 0 {
 			rows = append(rows, len(group.hexes))
 		}
 	}
+	// The final single-cell row represents the slider/current-color/Set area.
+	rows = append(rows, 1)
 	return rows
 }
 
@@ -1038,6 +1040,11 @@ func (st *settingsModalState) stepPopupKeyboardMove(dx, dy int, targetCount, rul
 		rows := settingsColorPopupRowLengths(colorGroups)
 		if len(rows) == 0 {
 			return false
+		}
+		if st.popupFocusIndex == settingsColorSwatchCount(colorGroups) && dx != 0 {
+			st.colorPickerShade.Value += float32(dx) * 0.05
+			st.colorPickerShade.Value = max(float32(0), min(float32(1), st.colorPickerShade.Value))
+			return true
 		}
 		next := settingsPopupGridStep(st.popupFocusIndex, dx, dy, rows)
 		return st.setPopupKeyboardFocus(settingsPopupKeyboardColor, next, settingsPopupKeyboardActionRow)
@@ -1072,7 +1079,7 @@ func (st *settingsModalState) popupKeyboardDefaultFocus(targetEntries []viewerCo
 		if len(colorGroups) == 0 {
 			return settingsPopupKeyboardNone, -1, false
 		}
-		currentHex := fm.NormalizeHexColor(st.colorPickerHexValue(st.colorPickerTarget), fm.DefaultFilePaneSelectionHex)
+		currentHex := fm.NormalizeHexColor(st.colorPickerBase, fm.DefaultFilePaneSelectionHex)
 		index := 0
 		for _, group := range colorGroups {
 			for _, hex := range group.hexes {
@@ -1165,15 +1172,22 @@ func (st *settingsModalState) activatePopupKeyboardFocus(targetEntries []viewerC
 		if st.popupFocusIndex < 0 {
 			return false
 		}
+		if st.popupFocusIndex == settingsColorSwatchCount(colorGroups) {
+			st.setColorPickerHexValue(st.colorPickerTarget, settingsColorShade(st.colorPickerBase, st.colorPickerShade.Value))
+			st.colorPickerOpen = false
+			st.colorPickerTarget = ""
+			st.colorPickerBase = ""
+			st.errText = ""
+			st.resetPopupKeyboardFocus()
+			return true
+		}
 		index := 0
 		for _, group := range colorGroups {
 			for _, hex := range group.hexes {
 				if index == st.popupFocusIndex {
-					st.setColorPickerHexValue(st.colorPickerTarget, hex)
-					st.colorPickerOpen = false
-					st.colorPickerTarget = ""
+					st.colorPickerBase = fm.NormalizeHexColor(hex, fm.DefaultFilePaneSelectionHex)
+					st.colorPickerShade.Value = 0.5
 					st.errText = ""
-					st.resetPopupKeyboardFocus()
 					return true
 				}
 				index++

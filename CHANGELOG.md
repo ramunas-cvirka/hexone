@@ -68,6 +68,10 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## v0.9.0
 
+- Reworked the Settings color picker with an RGB honeycomb, tonal slider, live color indicator, and explicit Set action.
+- Replaced rounded Settings remove icons with flat close controls and red hover feedback matching Favorites.
+- Flattened the Settings Browse, Add, Update, and Remove actions for a lighter visual hierarchy.
+- Fixed keyed Settings entries so Update can change ages, permission modes, extensions, sizes, viewer targets, command patterns, and association extensions without creating a duplicate.
 - Added theme-aware separators between the offset, byte, and ASCII sections of the hex viewer without changing selection hit-boxes.
 - Added independent text color settings for all three hex viewer sections.
 - Added an independent hex-selection color setting.
