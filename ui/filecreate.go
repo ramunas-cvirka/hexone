@@ -812,7 +812,9 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Caption(th, "Type")
 			lbl.Font.Typeface = ui.interfaceTypeface()
@@ -846,9 +848,8 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Truncator = "…"
-				return fillRoundedBox(
+				return fillFlatBox(
 					gtx,
-					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
 					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
 					func(gtx layout.Context) layout.Dimensions {
@@ -894,7 +895,8 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutDialogActionPair(

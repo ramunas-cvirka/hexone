@@ -29,6 +29,8 @@ import (
 	"gioui.org/widget/material"
 )
 
+var dialogDividerColor = color.NRGBA{R: 255, G: 255, B: 255, A: 30}
+
 type fileCopyState struct {
 	pane    int
 	srcPane int
@@ -1233,7 +1235,9 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.op == fileCopyOpExtract {
 				srcHdr.Text = "Archive"
@@ -1273,9 +1277,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Truncator = "…"
-				return fillRoundedBox(
+				return fillFlatBox(
 					gtx,
-					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
 					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
 					func(gtx layout.Context) layout.Dimensions {
@@ -1290,9 +1293,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Truncator = "…"
-				return fillRoundedBox(
+				return fillFlatBox(
 					gtx,
-					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
 					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
 					func(gtx layout.Context) layout.Dimensions {
@@ -1344,7 +1346,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				if st.running {
@@ -1433,9 +1436,8 @@ func (ui *UI) layoutFileOverwriteDiffInfo(th *material.Theme, gtx layout.Context
 	style := ui.fileOverwriteDiffStyle(panelBg)
 	rows := fileOverwriteDiffRows(srcInfo, dstInfo)
 	columns := ui.fileOverwriteDiffColumns(th, gtx, rows)
-	return fillRoundedBox(
+	return fillFlatBox(
 		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 		panelBg,
 		panelBorder,
 		func(gtx layout.Context) layout.Dimensions {
@@ -1545,9 +1547,8 @@ func (ui *UI) layoutFileOverwriteDiffPart(th *material.Theme, gtx layout.Context
 		})
 	}
 	return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return fillRoundedBox(
+		return fillFlatBox(
 			gtx,
-			gtx.Dp(unit.Dp(2)),
 			style.HighlightBg,
 			style.HighlightBr,
 			func(gtx layout.Context) layout.Dimensions {
@@ -1778,19 +1779,9 @@ func (ui *UI) layoutDialogActionSingle(th *material.Theme, gtx layout.Context, c
 	if stripH < 1 {
 		stripH = 1
 	}
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutDialogActionSegment(th, gtx, click, label, hover, pulse, segW, stripH, true, true, disabled, state)
-				})
-			})
-		},
-	)
+	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutDialogFlatActionSegment(th, gtx, click, label, hover, pulse, segW, stripH, disabled, state)
+	})
 }
 
 func (ui *UI) layoutDialogActionPairState(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool, leftState, rightState dialogActionVisualState) layout.Dimensions {
@@ -1803,43 +1794,28 @@ func (ui *UI) layoutDialogActionPairState(th *material.Theme, gtx layout.Context
 	if stripH < 1 {
 		stripH = 1
 	}
-	sepW := gtx.Dp(unit.Dp(1))
-	if sepW < 1 {
-		sepW = 1
-	}
+	gap := dialogActionGapPx(gtx)
 	maxW := gtx.Constraints.Max.X
-	if maxW > 0 && leftW+sepW+rightW > maxW {
-		segW := (maxW - sepW) / 2
-		minSegW := gtx.Dp(unit.Dp(64))
+	if maxW > 0 && leftW+gap+rightW > maxW {
+		segW := (maxW - gap) / 2
+		minSegW := gtx.Dp(unit.Dp(52))
 		if segW < minSegW {
 			segW = minSegW
 		}
 		leftW = segW
 		rightW = segW
 	}
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled, leftState)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return toolbarSeparator(gtx, stripH)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, false, true, rightDisabled, rightState)
-						}),
-					)
-				})
-			})
-		},
-	)
+	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, leftDisabled, leftState)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, rightDisabled, rightState)
+			}),
+		)
+	})
 }
 
 func (ui *UI) layoutDialogActionTriple(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, middleClick *widget.Clickable, middleLabel string, middleHover, middlePulse float32, middleDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool, leftState, middleState, rightState dialogActionVisualState) layout.Dimensions {
@@ -1862,15 +1838,12 @@ func (ui *UI) layoutDialogActionTripleState(th *material.Theme, gtx layout.Conte
 		stripH = 1
 	}
 
-	sepW := gtx.Dp(unit.Dp(1))
-	if sepW < 1 {
-		sepW = 1
-	}
+	gap := dialogActionGapPx(gtx)
 	maxW := gtx.Constraints.Max.X
-	totalW := leftW + middleW + rightW + sepW*2
+	totalW := leftW + middleW + rightW + gap*2
 	if maxW > 0 && totalW > maxW {
-		segW := (maxW - sepW*2) / 3
-		minSegW := gtx.Dp(unit.Dp(64))
+		segW := (maxW - gap*2) / 3
+		minSegW := gtx.Dp(unit.Dp(52))
 		if segW < minSegW {
 			segW = minSegW
 		}
@@ -1879,35 +1852,139 @@ func (ui *UI) layoutDialogActionTripleState(th *material.Theme, gtx layout.Conte
 		rightW = segW
 	}
 
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled, leftState)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return toolbarSeparator(gtx, stripH)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, middleClick, middleLabel, middleHover, middlePulse, middleW, stripH, false, false, middleDisabled, middleState)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return toolbarSeparator(gtx, stripH)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, false, true, rightDisabled, rightState)
-						}),
-					)
+	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, leftDisabled, leftState)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, middleClick, middleLabel, middleHover, middlePulse, middleW, stripH, middleDisabled, middleState)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, rightDisabled, rightState)
+			}),
+		)
+	})
+}
+
+func dialogActionGapPx(gtx layout.Context) int {
+	gap := gtx.Dp(unit.Dp(4))
+	if gap < 1 {
+		gap = 1
+	}
+	return gap
+}
+
+func layoutDialogHorizontalDivider(gtx layout.Context) layout.Dimensions {
+	h := gtx.Dp(unit.Dp(1))
+	if h < 1 {
+		h = 1
+	}
+	w := gtx.Constraints.Max.X
+	if w < 1 {
+		w = 1
+	}
+	paint.FillShape(gtx.Ops, dialogDividerColor, clip.Rect(image.Rect(0, 0, w, h)).Op())
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+func layoutDialogVerticalDivider(gtx layout.Context) layout.Dimensions {
+	w := gtx.Dp(unit.Dp(1))
+	if w < 1 {
+		w = 1
+	}
+	h := gtx.Constraints.Max.Y
+	if h < 1 {
+		h = 1
+	}
+	paint.FillShape(gtx.Ops, dialogDividerColor, clip.Rect(image.Rect(0, 0, w, h)).Op())
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+func (ui *UI) layoutDialogFlatActionSegment(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, hoverFill, pulseFill float32, segW, stripH int, disabled bool, state dialogActionVisualState) layout.Dimensions {
+	if click == nil {
+		return layout.Dimensions{}
+	}
+	hoverFill = clamp01(hoverFill)
+	pulseFill = clamp01(pulseFill)
+	focusFill := float32(0)
+	defaultFill := float32(0)
+	if state.Focused {
+		focusFill = 1
+	}
+	if state.Default {
+		defaultFill = 1
+	}
+	if disabled {
+		hoverFill = 0
+		pulseFill = 0
+		if focusFill == 0 {
+			defaultFill = 0
+		}
+	}
+
+	dims := fixedWidth(gtx, segW, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if click.Pressed() && !disabled && pulseFill < 0.5 {
+					pulseFill = 0.5
+				}
+
+				bg := color.NRGBA{}
+				bg = mixNRGBA(bg, color.NRGBA{R: 34, G: 34, B: 34, A: 190}, hoverFill)
+				bg = mixNRGBA(bg, color.NRGBA{R: 48, G: 48, B: 48, A: 210}, pulseFill*0.35)
+				bg = mixNRGBA(bg, color.NRGBA{R: 60, G: 54, B: 44, A: 210}, defaultFill*0.5)
+				bg = mixNRGBA(bg, color.NRGBA{R: 72, G: 66, B: 54, A: 230}, focusFill*0.42)
+
+				fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, hoverFill*0.75)
+				fg = mixNRGBA(fg, color.NRGBA{R: 248, G: 248, B: 248, A: 255}, pulseFill*0.25)
+				fg = mixNRGBA(fg, color.NRGBA{R: 244, G: 234, B: 206, A: 255}, defaultFill*0.32)
+				fg = mixNRGBA(fg, color.NRGBA{R: 250, G: 246, B: 236, A: 255}, focusFill*0.3)
+
+				line := color.NRGBA{}
+				lineH := 1
+				if hoverFill > 0 {
+					line = mixNRGBA(line, color.NRGBA{R: 255, G: 255, B: 255, A: 70}, hoverFill)
+				}
+				if defaultFill > 0 {
+					line = mixNRGBA(line, color.NRGBA{R: 200, G: 182, B: 144, A: 168}, defaultFill)
+				}
+				if focusFill > 0 {
+					line = color.NRGBA{R: 214, G: 198, B: 166, A: 225}
+					lineH = 2
+				}
+				if disabled {
+					fg = color.NRGBA{R: 160, G: 166, B: 180, A: 255}
+					bg = color.NRGBA{}
+				}
+
+				dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(th, label)
+							lbl.Font.Typeface = ui.interfaceTypeface()
+							lbl.Font.Weight = font.Medium
+							lbl.TextSize = ui.scaleDialogFontSize(10)
+							lbl.Color = fg
+							lbl.MaxLines = 1
+							return lbl.Layout(gtx)
+						})
+					})
 				})
+				if dims.Size.X > 0 && dims.Size.Y >= lineH && line.A != 0 {
+					paint.FillShape(gtx.Ops, line, clip.Rect(image.Rect(0, dims.Size.Y-lineH, dims.Size.X, dims.Size.Y)).Op())
+				}
+				return dims
 			})
-		},
-	)
+		})
+	})
+	if dims.Size.X > 0 && dims.Size.Y > 0 && !disabled {
+		defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
+	}
+	return dims
 }
 
 func layoutProgressBar(gtx layout.Context, frac float32) layout.Dimensions {

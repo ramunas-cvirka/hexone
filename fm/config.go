@@ -54,6 +54,9 @@ const (
 	CompletionSoundNever      = "never"
 	CompletionSoundAlways     = "always"
 	CompletionSoundBackground = "background"
+
+	FontWeightRegular = "regular"
+	FontWeightBold    = "bold"
 )
 
 type NameCompact struct {
@@ -378,6 +381,11 @@ func NormalizeTabWidthDp(v, fallback int) int {
 type GeneralConfig struct {
 	Typeface              string  `yaml:"typeface"`
 	FontSizeSp            float32 `yaml:"font_size_sp"`
+	FileWeight            string  `yaml:"file_weight"`
+	DirWeight             string  `yaml:"dir_weight"`
+	PermissionsWeight     string  `yaml:"permissions_weight"`
+	SizeWeight            string  `yaml:"size_weight"`
+	DateWeight            string  `yaml:"date_weight"`
 	DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 	OpenFavoritesInNewTab bool    `yaml:"open_favorites_in_new_tab"`
 	CompletionSound       string  `yaml:"completion_sound"`
@@ -387,6 +395,11 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	var raw struct {
 		Typeface              string  `yaml:"typeface"`
 		FontSizeSp            float32 `yaml:"font_size_sp"`
+		FileWeight            string  `yaml:"file_weight"`
+		DirWeight             string  `yaml:"dir_weight"`
+		PermissionsWeight     string  `yaml:"permissions_weight"`
+		SizeWeight            string  `yaml:"size_weight"`
+		DateWeight            string  `yaml:"date_weight"`
 		DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 		OpenFavoritesInNewTab *bool   `yaml:"open_favorites_in_new_tab"`
 		CompletionSound       string  `yaml:"completion_sound"`
@@ -396,6 +409,11 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	}
 	g.Typeface = raw.Typeface
 	g.FontSizeSp = raw.FontSizeSp
+	g.FileWeight = NormalizeFontWeight(raw.FileWeight, FontWeightRegular)
+	g.DirWeight = NormalizeFontWeight(raw.DirWeight, FontWeightBold)
+	g.PermissionsWeight = NormalizeFontWeight(raw.PermissionsWeight, FontWeightRegular)
+	g.SizeWeight = NormalizeFontWeight(raw.SizeWeight, FontWeightRegular)
+	g.DateWeight = NormalizeFontWeight(raw.DateWeight, FontWeightRegular)
 	g.DimInactivePanes = raw.DimInactivePanes
 	g.OpenFavoritesInNewTab = true
 	if raw.OpenFavoritesInNewTab != nil {
@@ -403,6 +421,30 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	}
 	g.CompletionSound = NormalizeCompletionSound(raw.CompletionSound)
 	return nil
+}
+
+func NormalizeFontWeight(raw, fallback string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", FontWeightRegular, "normal":
+		if strings.TrimSpace(raw) == "" {
+			break
+		}
+		return FontWeightRegular
+	case "light", "medium":
+		return FontWeightRegular
+	case FontWeightBold:
+		return FontWeightBold
+	}
+	switch strings.ToLower(strings.TrimSpace(fallback)) {
+	case FontWeightRegular, "normal":
+		return FontWeightRegular
+	case "light", "medium":
+		return FontWeightRegular
+	case FontWeightBold:
+		return FontWeightBold
+	default:
+		return FontWeightRegular
+	}
 }
 
 func NormalizeCompletionSound(raw string) string {
@@ -633,6 +675,11 @@ func DefaultConfig() *Config {
 		General: GeneralConfig{
 			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp:            14,
+			FileWeight:            FontWeightRegular,
+			DirWeight:             FontWeightBold,
+			PermissionsWeight:     FontWeightRegular,
+			SizeWeight:            FontWeightRegular,
+			DateWeight:            FontWeightRegular,
 			DimInactivePanes:      true,
 			OpenFavoritesInNewTab: true,
 			CompletionSound:       CompletionSoundBackground,
@@ -940,6 +987,11 @@ func (c *Config) normalize() {
 	if c.General.FontSizeSp <= 0 {
 		c.General.FontSizeSp = 14
 	}
+	c.General.FileWeight = NormalizeFontWeight(c.General.FileWeight, FontWeightRegular)
+	c.General.DirWeight = NormalizeFontWeight(c.General.DirWeight, FontWeightBold)
+	c.General.PermissionsWeight = NormalizeFontWeight(c.General.PermissionsWeight, FontWeightRegular)
+	c.General.SizeWeight = NormalizeFontWeight(c.General.SizeWeight, FontWeightRegular)
+	c.General.DateWeight = NormalizeFontWeight(c.General.DateWeight, FontWeightRegular)
 	c.General.CompletionSound = NormalizeCompletionSound(c.General.CompletionSound)
 	if c.Interface.Typeface == "" || !resources.IsBundledFontFamily(c.Interface.Typeface) {
 		c.Interface.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
@@ -1000,6 +1052,7 @@ func (c *Config) normalize() {
 	c.Colors.CurrentDirText = NormalizeHexColor(c.Colors.CurrentDirText, DefaultCurrentDirTextHex)
 	c.Colors.ScrollbarThumb = NormalizeOptionalHexColor(c.Colors.ScrollbarThumb)
 	c.Colors.ScrollbarTrack = NormalizeOptionalHexColor(c.Colors.ScrollbarTrack)
+	c.Colors.Filenames.Target = NormalizeFilenameTarget(c.Colors.Filenames.Target)
 	c.Colors.Filenames.Text = NormalizeOptionalHexColor(c.Colors.Filenames.Text)
 	c.Colors.Filenames.Icon = NormalizeFilenameIcon(c.Colors.Filenames.Icon)
 	c.Colors.Filenames.AgeRules = NormalizeFilenameAgeRules(c.Colors.Filenames.AgeRules)

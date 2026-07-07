@@ -21,7 +21,13 @@ const (
 	settingsKeyboardFocusGeneralDimInactive
 	settingsKeyboardFocusGeneralFavoritesNewTab
 	settingsKeyboardFocusGeneralCompletionSound
-	settingsKeyboardFocusGeneralTerminalAcceleratedKeys
+	settingsKeyboardFocusFilePaneFileWeight
+	settingsKeyboardFocusFilePaneDirWeight
+	settingsKeyboardFocusFilePanePermissionsWeight
+	settingsKeyboardFocusFilePaneSizeWeight
+	settingsKeyboardFocusFilePaneDateWeight
+	settingsKeyboardFocusTerminalShell
+	settingsKeyboardFocusTerminalAcceleratedKeys
 	settingsKeyboardFocusFontsInterfaceFont
 	settingsKeyboardFocusFontsInterfaceFontSize
 	settingsKeyboardFocusGeneralPaneFont
@@ -32,7 +38,6 @@ const (
 	settingsKeyboardFocusGeneralViewFontSize
 	settingsKeyboardFocusFontsTerminalFont
 	settingsKeyboardFocusFontsTerminalFontSize
-	settingsKeyboardFocusViewerShell
 	settingsKeyboardFocusViewerRemoteSearch
 	settingsKeyboardFocusViewerSmoothScrolling
 	settingsKeyboardFocusViewerHideFunctionBar
@@ -59,9 +64,11 @@ const (
 	settingsKeyboardFocusFilenameDefaultTextPicker
 	settingsKeyboardFocusFilenameDefaultText
 	settingsKeyboardFocusFilenameDefaultIconPicker
+	settingsKeyboardFocusFilenameDefaultTarget
 	settingsKeyboardFocusFilenameRuleMode
 	settingsKeyboardFocusFilenameAgeOffset
 	settingsKeyboardFocusFilenameAgeUnit
+	settingsKeyboardFocusFilenameAgeTarget
 	settingsKeyboardFocusFilenameAgeTextPicker
 	settingsKeyboardFocusFilenameAgeText
 	settingsKeyboardFocusFilenameAgeIconPicker
@@ -70,12 +77,14 @@ const (
 	settingsKeyboardFocusFilenamePermMask
 	settingsKeyboardFocusFilenamePermPicker
 	settingsKeyboardFocusFilenamePermMatch
+	settingsKeyboardFocusFilenamePermTarget
 	settingsKeyboardFocusFilenamePermTextPicker
 	settingsKeyboardFocusFilenamePermText
 	settingsKeyboardFocusFilenamePermIconPicker
 	settingsKeyboardFocusFilenamePermApply
 	settingsKeyboardFocusFilenamePermRemove
 	settingsKeyboardFocusFilenameExt
+	settingsKeyboardFocusFilenameExtTarget
 	settingsKeyboardFocusFilenameExtTextPicker
 	settingsKeyboardFocusFilenameExtText
 	settingsKeyboardFocusFilenameExtIconPicker
@@ -83,6 +92,7 @@ const (
 	settingsKeyboardFocusFilenameExtRemove
 	settingsKeyboardFocusFilenameSize
 	settingsKeyboardFocusFilenameSizeMatch
+	settingsKeyboardFocusFilenameSizeTarget
 	settingsKeyboardFocusFilenameSizeTextPicker
 	settingsKeyboardFocusFilenameSizeText
 	settingsKeyboardFocusFilenameSizeIconPicker
@@ -151,8 +161,8 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 	switch target {
 	case settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
-		settingsKeyboardFocusGeneralTerminalAcceleratedKeys,
-		settingsKeyboardFocusViewerShell,
+		settingsKeyboardFocusTerminalShell,
+		settingsKeyboardFocusTerminalAcceleratedKeys,
 		settingsKeyboardFocusViewerRemoteSearch,
 		settingsKeyboardFocusViewerSmoothScrolling,
 		settingsKeyboardFocusViewerHideFunctionBar,
@@ -199,9 +209,9 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 	case gtx.Focused(&st.generalFavoritesNewTabBool):
 		st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
 	case gtx.Focused(&st.terminalAcceleratedKeysBool):
-		st.focus = settingsKeyboardFocusGeneralTerminalAcceleratedKeys
+		st.focus = settingsKeyboardFocusTerminalAcceleratedKeys
 	case gtx.Focused(&st.viewShellEdit):
-		st.focus = settingsKeyboardFocusViewerShell
+		st.focus = settingsKeyboardFocusTerminalShell
 	case gtx.Focused(&st.viewRemoteSearchCommandEdit):
 		st.focus = settingsKeyboardFocusViewerRemoteSearch
 	case gtx.Focused(&st.viewSmoothScrollingBool):
@@ -282,7 +292,18 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		order = append(order, settingsKeyboardFocusGeneralDimInactive)
 		order = append(order, settingsKeyboardFocusGeneralFavoritesNewTab)
 		order = append(order, settingsKeyboardFocusGeneralCompletionSound)
-		order = append(order, settingsKeyboardFocusGeneralTerminalAcceleratedKeys)
+		order = append(order,
+			settingsKeyboardFocusFilePaneFileWeight,
+			settingsKeyboardFocusFilePaneDirWeight,
+			settingsKeyboardFocusFilePanePermissionsWeight,
+			settingsKeyboardFocusFilePaneSizeWeight,
+			settingsKeyboardFocusFilePaneDateWeight,
+		)
+	case "terminal":
+		order = append(order,
+			settingsKeyboardFocusTerminalShell,
+			settingsKeyboardFocusTerminalAcceleratedKeys,
+		)
 	case "fonts":
 		if len(resources.BundledFontFamilies()) > 0 {
 			order = append(order, settingsKeyboardFocusFontsInterfaceFont)
@@ -306,7 +327,6 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		order = append(order, settingsKeyboardFocusFontsTerminalFontSize)
 	case "viewer":
 		order = append(order,
-			settingsKeyboardFocusViewerShell,
 			settingsKeyboardFocusViewerRemoteSearch,
 			settingsKeyboardFocusViewerSmoothScrolling,
 			settingsKeyboardFocusViewerHideFunctionBar,
@@ -335,13 +355,14 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 	case "colors":
 		order = append(order, settingsKeyboardFocusColorsScope)
 		if st.colorScope == "filenames" {
-			order = append(order, settingsKeyboardFocusFilenameDefaultTextPicker, settingsKeyboardFocusFilenameDefaultText, settingsKeyboardFocusFilenameDefaultIconPicker, settingsKeyboardFocusFilenameRuleMode)
+			order = append(order, settingsKeyboardFocusFilenameRuleMode)
 			switch normalizeFilenameRuleMode(st.filenameRuleMode) {
 			case "permissions":
 				order = append(order,
 					settingsKeyboardFocusFilenamePermMask,
 					settingsKeyboardFocusFilenamePermPicker,
 					settingsKeyboardFocusFilenamePermMatch,
+					settingsKeyboardFocusFilenamePermTarget,
 					settingsKeyboardFocusFilenamePermTextPicker,
 					settingsKeyboardFocusFilenamePermText,
 					settingsKeyboardFocusFilenamePermIconPicker,
@@ -351,6 +372,7 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 			case "extensions":
 				order = append(order,
 					settingsKeyboardFocusFilenameExt,
+					settingsKeyboardFocusFilenameExtTarget,
 					settingsKeyboardFocusFilenameExtTextPicker,
 					settingsKeyboardFocusFilenameExtText,
 					settingsKeyboardFocusFilenameExtIconPicker,
@@ -361,6 +383,7 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 				order = append(order,
 					settingsKeyboardFocusFilenameSize,
 					settingsKeyboardFocusFilenameSizeMatch,
+					settingsKeyboardFocusFilenameSizeTarget,
 					settingsKeyboardFocusFilenameSizeTextPicker,
 					settingsKeyboardFocusFilenameSizeText,
 					settingsKeyboardFocusFilenameSizeIconPicker,
@@ -371,6 +394,7 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 				order = append(order,
 					settingsKeyboardFocusFilenameAgeOffset,
 					settingsKeyboardFocusFilenameAgeUnit,
+					settingsKeyboardFocusFilenameAgeTarget,
 					settingsKeyboardFocusFilenameAgeTextPicker,
 					settingsKeyboardFocusFilenameAgeText,
 					settingsKeyboardFocusFilenameAgeIconPicker,
@@ -491,7 +515,7 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 	case settingsKeyboardFocusViewerHideFunctionBar:
 		st.viewHideFunctionBarBool.Value = !st.viewHideFunctionBarBool.Value
 		return true
-	case settingsKeyboardFocusGeneralTerminalAcceleratedKeys:
+	case settingsKeyboardFocusTerminalAcceleratedKeys:
 		st.terminalAcceleratedKeysBool.Value = !st.terminalAcceleratedKeysBool.Value
 		return true
 	default:
@@ -582,12 +606,6 @@ func (st *settingsModalState) activateFocusedAction(now time.Time) bool {
 		return true
 	case settingsKeyboardFocusColorsTextPicker:
 		st.toggleColorPicker("text")
-		return true
-	case settingsKeyboardFocusFilenameDefaultTextPicker:
-		st.toggleColorPicker("filename-default-text")
-		return true
-	case settingsKeyboardFocusFilenameDefaultIconPicker:
-		st.toggleFilenameIconPicker("filename-default-icon")
 		return true
 	case settingsKeyboardFocusFilenameAgeTextPicker:
 		st.toggleColorPicker("filename-age-text")
@@ -688,8 +706,6 @@ func settingsColorPickerFocusTarget(target string) settingsKeyboardFocus {
 		return settingsKeyboardFocusColorsBgPicker
 	case "text":
 		return settingsKeyboardFocusColorsTextPicker
-	case "filename-default-text":
-		return settingsKeyboardFocusFilenameDefaultTextPicker
 	case "filename-age-text":
 		return settingsKeyboardFocusFilenameAgeTextPicker
 	case "filename-perm-text":
@@ -705,8 +721,6 @@ func settingsColorPickerFocusTarget(target string) settingsKeyboardFocus {
 
 func settingsFilenameIconPickerFocusTarget(target string) settingsKeyboardFocus {
 	switch target {
-	case "filename-default-icon":
-		return settingsKeyboardFocusFilenameDefaultIconPicker
 	case "filename-age-icon":
 		return settingsKeyboardFocusFilenameAgeIconPicker
 	case "filename-perm-icon":
@@ -1377,6 +1391,26 @@ func (st *settingsModalState) stepCompletionSound(step int, now time.Time) bool 
 	return true
 }
 
+func (st *settingsModalState) stepPaneWeight(current *string, anim *settingsChoiceAnim, fallback string, step int, now time.Time) bool {
+	if st == nil || current == nil || anim == nil {
+		return false
+	}
+	options := settingsPaneWeightOptions()
+	keys := make([]string, len(options))
+	value := fm.NormalizeFontWeight(*current, fallback)
+	for i, opt := range options {
+		keys[i] = opt.Key
+	}
+	next := settingsChoiceStep(value, keys, step)
+	if next == "" || next == value {
+		return false
+	}
+	anim.setValue(current, next, now)
+	anim.anim.setPulse(next, now)
+	st.errText = ""
+	return true
+}
+
 func settingsNormalizedFontSize(value, fallback float32) float32 {
 	if !(value >= settingsFontSizeMin) {
 		if fallback >= settingsFontSizeMin {
@@ -1528,6 +1562,25 @@ func (st *settingsModalState) stepFilenameSizeMatch(step int, now time.Time) boo
 	return true
 }
 
+func (st *settingsModalState) stepFilenameTarget(current *string, anim *settingsChoiceAnim, step int, now time.Time) bool {
+	if st == nil || current == nil || anim == nil || len(filenameTargetOptions) == 0 {
+		return false
+	}
+	keys := make([]string, len(filenameTargetOptions))
+	active := normalizeFilenameTargetChoice(*current)
+	for i, opt := range filenameTargetOptions {
+		keys[i] = opt.key
+	}
+	next := settingsChoiceStep(active, keys, step)
+	if next == "" || next == active {
+		return false
+	}
+	anim.anim.setPulse(next, now)
+	anim.setValue(current, next, now)
+	st.errText = ""
+	return true
+}
+
 func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []resources.BundledFontFamily, now time.Time) bool {
 	if st == nil {
 		return false
@@ -1543,16 +1596,34 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 		return st.stepViewFontFamily(step, families, now)
 	case settingsKeyboardFocusFontsTerminalFont:
 		return st.stepTerminalFontFamily(step, families, now)
+	case settingsKeyboardFocusFilePaneFileWeight:
+		return st.stepPaneWeight(&st.paneFileWeight, &st.paneFileWeightAnim, fm.FontWeightRegular, step, now)
+	case settingsKeyboardFocusFilePaneDirWeight:
+		return st.stepPaneWeight(&st.paneDirWeight, &st.paneDirWeightAnim, fm.FontWeightBold, step, now)
+	case settingsKeyboardFocusFilePanePermissionsWeight:
+		return st.stepPaneWeight(&st.panePermissionsWeight, &st.panePermissionsWeightAnim, fm.FontWeightRegular, step, now)
+	case settingsKeyboardFocusFilePaneSizeWeight:
+		return st.stepPaneWeight(&st.paneSizeWeight, &st.paneSizeWeightAnim, fm.FontWeightRegular, step, now)
+	case settingsKeyboardFocusFilePaneDateWeight:
+		return st.stepPaneWeight(&st.paneDateWeight, &st.paneDateWeightAnim, fm.FontWeightRegular, step, now)
 	case settingsKeyboardFocusColorsScope:
 		return st.stepColorScope(step, now)
 	case settingsKeyboardFocusFilenameRuleMode:
 		return st.stepFilenameRuleMode(step, now)
 	case settingsKeyboardFocusFilenameAgeUnit:
 		return st.stepFilenameAgeUnit(step, now)
+	case settingsKeyboardFocusFilenameAgeTarget:
+		return st.stepFilenameTarget(&st.filenameAgeTarget, &st.filenameAgeTargetAnim, step, now)
 	case settingsKeyboardFocusFilenamePermMatch:
 		return st.stepFilenamePermMatch(step, now)
+	case settingsKeyboardFocusFilenamePermTarget:
+		return st.stepFilenameTarget(&st.filenamePermTarget, &st.filenamePermTargetAnim, step, now)
+	case settingsKeyboardFocusFilenameExtTarget:
+		return st.stepFilenameTarget(&st.filenameExtTarget, &st.filenameExtTargetAnim, step, now)
 	case settingsKeyboardFocusFilenameSizeMatch:
 		return st.stepFilenameSizeMatch(step, now)
+	case settingsKeyboardFocusFilenameSizeTarget:
+		return st.stepFilenameTarget(&st.filenameSizeTarget, &st.filenameSizeTargetAnim, step, now)
 	case settingsKeyboardFocusGeneralCompletionSound:
 		return st.stepCompletionSound(step, now)
 	case settingsKeyboardFocusFooter:

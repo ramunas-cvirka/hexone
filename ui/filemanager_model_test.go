@@ -87,6 +87,53 @@ func TestFilePaneModelDisplaysSymlinkTarget(t *testing.T) {
 	}
 }
 
+func TestFilePaneModelUsesConfiguredColumnWeights(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Columns.ShowPermissions = true
+	cfg.General.FileWeight = fm.FontWeightRegular
+	cfg.General.DirWeight = fm.FontWeightRegular
+	cfg.General.PermissionsWeight = fm.FontWeightBold
+	cfg.General.SizeWeight = fm.FontWeightRegular
+	cfg.General.DateWeight = fm.FontWeightRegular
+	model := &filePaneModel{
+		entries: []filesys.Entry{
+			{
+				Name:        "file.txt",
+				DisplayName: "file.txt",
+				Kind:        filesys.EntryFile,
+				PermText:    "-rw-r--r--",
+				SizeText:    "12 B",
+				DateText:    "Jan 02",
+			},
+			{
+				Name:        "docs",
+				DisplayName: "docs",
+				Kind:        filesys.EntryDir,
+				PermText:    "drwxr-xr-x",
+				SizeText:    "-",
+				DateText:    "Jan 02",
+			},
+		},
+		cfg: cfg,
+	}
+
+	if _, st := model.Cell(0, 0); st.Weight != font.Normal {
+		t.Fatalf("file name weight=%v want regular", st.Weight)
+	}
+	if _, st := model.Cell(1, 0); st.Weight != font.Normal {
+		t.Fatalf("dir name weight=%v want regular", st.Weight)
+	}
+	if _, st := model.Cell(0, 1); st.Weight != font.Bold {
+		t.Fatalf("permissions weight=%v want bold", st.Weight)
+	}
+	if _, st := model.Cell(0, 2); st.Weight != font.Normal {
+		t.Fatalf("size weight=%v want regular", st.Weight)
+	}
+	if _, st := model.Cell(0, 3); st.Weight != font.Normal {
+		t.Fatalf("date weight=%v want regular", st.Weight)
+	}
+}
+
 func TestFilePaneModelBrokenSymlinkSuffixIsRed(t *testing.T) {
 	model := &filePaneModel{
 		entries: []filesys.Entry{{

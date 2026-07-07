@@ -1054,7 +1054,9 @@ func (ui *UI) layoutMultiRenameBody(th *material.Theme, gtx layout.Context, st *
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutMultiRenameEditorRow(th, gtx, st)
 		}),
@@ -1094,6 +1096,7 @@ func (ui *UI) layoutMultiRenameBody(th *material.Theme, gtx layout.Context, st *
 			lbl.Truncator = "…"
 			return fixedHeight(gtx, gtx.Dp(unit.Dp(18)), lbl.Layout)
 		}),
+		layout.Rigid(layoutDialogHorizontalDivider),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1295,7 +1298,7 @@ func (ui *UI) layoutMultiRenamePreview(th *material.Theme, gtx layout.Context, s
 			return lbl.Layout(gtx)
 		}
 	}
-	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(4)), color.NRGBA{R: 24, G: 24, B: 24, A: 255}, color.NRGBA{R: 255, G: 255, B: 255, A: 20}, func(gtx layout.Context) layout.Dimensions {
+	return fillFlatBox(gtx, color.NRGBA{R: 24, G: 24, B: 24, A: 255}, color.NRGBA{R: 255, G: 255, B: 255, A: 20}, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {

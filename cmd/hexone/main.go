@@ -77,21 +77,19 @@ func mustFont(path string) font.Face {
 	return face
 }
 
-func appendTypefaceFaces(dst []text.FontFace, typeface string, regularPath, mediumPath, boldPath string) []text.FontFace {
+func appendTypefaceFaces(dst []text.FontFace, typeface string, regularPath, boldPath string) []text.FontFace {
 	regular := mustFont(regularPath)
-	medium := mustFont(mediumPath)
 	bold := mustFont(boldPath)
 	return append(dst,
 		text.FontFace{Font: font.Font{Typeface: font.Typeface(typeface), Weight: font.Normal}, Face: regular},
-		text.FontFace{Font: font.Font{Typeface: font.Typeface(typeface), Weight: font.Medium}, Face: medium},
 		text.FontFace{Font: font.Font{Typeface: font.Typeface(typeface), Weight: font.Bold}, Face: bold},
 	)
 }
 
 func buildFontCollection() []text.FontFace {
-	collection := make([]text.FontFace, 0, 12)
+	collection := make([]text.FontFace, 0, 8)
 	for _, family := range resources.BundledFontFamilies() {
-		collection = appendTypefaceFaces(collection, family.Name, family.RegularPath, family.MediumPath, family.BoldPath)
+		collection = appendTypefaceFaces(collection, family.Name, family.RegularPath, family.BoldPath)
 	}
 	return collection
 }

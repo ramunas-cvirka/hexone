@@ -38,7 +38,14 @@ const (
 	FilenameSizeMatchAtMost  = "at_most"
 )
 
+const (
+	FilenameTargetBoth  = ""
+	FilenameTargetFiles = "files"
+	FilenameTargetDirs  = "dirs"
+)
+
 type FilenameColorsConfig struct {
+	Target          string                   `yaml:"target,omitempty"`
 	Text            string                   `yaml:"text,omitempty"`
 	Icon            string                   `yaml:"icon,omitempty"`
 	AgeRules        []FilenameAgeRule        `yaml:"age_rules,omitempty"`
@@ -49,6 +56,7 @@ type FilenameColorsConfig struct {
 
 type FilenameAgeRule struct {
 	MaxAge string `yaml:"max_age,omitempty"`
+	Target string `yaml:"target,omitempty"`
 	Text   string `yaml:"text,omitempty"`
 	Icon   string `yaml:"icon,omitempty"`
 }
@@ -56,21 +64,48 @@ type FilenameAgeRule struct {
 type FilenamePermissionRule struct {
 	Permissions string `yaml:"permissions,omitempty"`
 	Match       string `yaml:"match,omitempty"`
+	Target      string `yaml:"target,omitempty"`
 	Text        string `yaml:"text,omitempty"`
 	Icon        string `yaml:"icon,omitempty"`
 }
 
 type FilenameExtensionRule struct {
 	Extension string `yaml:"extension,omitempty"`
+	Target    string `yaml:"target,omitempty"`
 	Text      string `yaml:"text,omitempty"`
 	Icon      string `yaml:"icon,omitempty"`
 }
 
 type FilenameSizeRule struct {
-	Size  string `yaml:"size,omitempty"`
-	Match string `yaml:"match,omitempty"`
-	Text  string `yaml:"text,omitempty"`
-	Icon  string `yaml:"icon,omitempty"`
+	Size   string `yaml:"size,omitempty"`
+	Match  string `yaml:"match,omitempty"`
+	Target string `yaml:"target,omitempty"`
+	Text   string `yaml:"text,omitempty"`
+	Icon   string `yaml:"icon,omitempty"`
+}
+
+func NormalizeFilenameTarget(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "both", "all", "any", "files_and_dirs", "files+dirs", "file_and_dir", "file+dir":
+		return FilenameTargetBoth
+	case "file", "files", "regular", "regular_file", "regular_files":
+		return FilenameTargetFiles
+	case "dir", "dirs", "directory", "directories", "folder", "folders":
+		return FilenameTargetDirs
+	default:
+		return FilenameTargetBoth
+	}
+}
+
+func FilenameTargetMatchesKind(target string, isDir bool) bool {
+	switch NormalizeFilenameTarget(target) {
+	case FilenameTargetFiles:
+		return !isDir
+	case FilenameTargetDirs:
+		return isDir
+	default:
+		return true
+	}
 }
 
 func NormalizeFilenameIcon(raw string) string {
@@ -331,6 +366,13 @@ func FilenameSizeMatches(sizeBytes int64, rule FilenameSizeRule) bool {
 	}
 }
 
+func filenameRuleTargetKey(target string) string {
+	if NormalizeFilenameTarget(target) == FilenameTargetBoth {
+		return "both"
+	}
+	return NormalizeFilenameTarget(target)
+}
+
 func NormalizeFilenameAgeRules(raw []FilenameAgeRule) []FilenameAgeRule {
 	if len(raw) == 0 {
 		return nil
@@ -347,11 +389,14 @@ func NormalizeFilenameAgeRules(raw []FilenameAgeRule) []FilenameAgeRule {
 		if text == "" && icon == "" {
 			continue
 		}
-		if _, exists := byAge[maxAge]; !exists {
-			order = append(order, maxAge)
+		target := NormalizeFilenameTarget(item.Target)
+		key := filenameRuleTargetKey(target) + ":" + maxAge
+		if _, exists := byAge[key]; !exists {
+			order = append(order, key)
 		}
-		byAge[maxAge] = FilenameAgeRule{
+		byAge[key] = FilenameAgeRule{
 			MaxAge: maxAge,
+			Target: target,
 			Text:   text,
 			Icon:   icon,
 		}
@@ -360,13 +405,13 @@ func NormalizeFilenameAgeRules(raw []FilenameAgeRule) []FilenameAgeRule {
 		return nil
 	}
 	sort.SliceStable(order, func(i, j int) bool {
-		left, _ := ParseFilenameAge(order[i])
-		right, _ := ParseFilenameAge(order[j])
+		left, _ := ParseFilenameAge(byAge[order[i]].MaxAge)
+		right, _ := ParseFilenameAge(byAge[order[j]].MaxAge)
 		return left < right
 	})
 	out := make([]FilenameAgeRule, 0, len(order))
-	for _, maxAge := range order {
-		out = append(out, byAge[maxAge])
+	for _, key := range order {
+		out = append(out, byAge[key])
 	}
 	return out
 }
@@ -391,13 +436,15 @@ func NormalizeFilenamePermissionRules(raw []FilenamePermissionRule) []FilenamePe
 		if text == "" && icon == "" {
 			continue
 		}
-		key := match + ":" + perm
+		target := NormalizeFilenameTarget(item.Target)
+		key := filenameRuleTargetKey(target) + ":" + match + ":" + perm
 		if _, exists := byKey[key]; !exists {
 			order = append(order, key)
 		}
 		byKey[key] = FilenamePermissionRule{
 			Permissions: perm,
 			Match:       match,
+			Target:      target,
 			Text:        text,
 			Icon:        icon,
 		}
@@ -428,11 +475,14 @@ func NormalizeFilenameExtensionRules(raw []FilenameExtensionRule) []FilenameExte
 		if text == "" && icon == "" {
 			continue
 		}
-		if _, exists := byExt[ext]; !exists {
-			order = append(order, ext)
+		target := NormalizeFilenameTarget(item.Target)
+		key := filenameRuleTargetKey(target) + ":" + ext
+		if _, exists := byExt[key]; !exists {
+			order = append(order, key)
 		}
-		byExt[ext] = FilenameExtensionRule{
+		byExt[key] = FilenameExtensionRule{
 			Extension: ext,
+			Target:    target,
 			Text:      text,
 			Icon:      icon,
 		}
@@ -441,8 +491,8 @@ func NormalizeFilenameExtensionRules(raw []FilenameExtensionRule) []FilenameExte
 		return nil
 	}
 	out := make([]FilenameExtensionRule, 0, len(order))
-	for _, ext := range order {
-		out = append(out, byExt[ext])
+	for _, key := range order {
+		out = append(out, byExt[key])
 	}
 	return out
 }
@@ -464,15 +514,17 @@ func NormalizeFilenameSizeRules(raw []FilenameSizeRule) []FilenameSizeRule {
 		if text == "" && icon == "" {
 			continue
 		}
-		key := match + ":" + size
+		target := NormalizeFilenameTarget(item.Target)
+		key := filenameRuleTargetKey(target) + ":" + match + ":" + size
 		if _, exists := byKey[key]; !exists {
 			order = append(order, key)
 		}
 		byKey[key] = FilenameSizeRule{
-			Size:  size,
-			Match: match,
-			Text:  text,
-			Icon:  icon,
+			Size:   size,
+			Match:  match,
+			Target: target,
+			Text:   text,
+			Icon:   icon,
 		}
 	}
 	if len(order) == 0 {

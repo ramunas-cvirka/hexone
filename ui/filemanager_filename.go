@@ -43,6 +43,7 @@ type filePaneFilenameVisual struct {
 }
 
 type filePaneFilenameAgeRule struct {
+	target string
 	maxAge time.Duration
 	visual filePaneFilenameVisual
 }
@@ -53,6 +54,7 @@ type filePaneFilenamePermissionRule struct {
 }
 
 type filePaneFilenameExtensionRule struct {
+	target string
 	suffix string
 	visual filePaneFilenameVisual
 }
@@ -64,7 +66,6 @@ type filePaneFilenameSizeRule struct {
 }
 
 type filePaneFilenameTheme struct {
-	defaultVisual   filePaneFilenameVisual
 	ageRules        []filePaneFilenameAgeRule
 	permissionRules []filePaneFilenamePermissionRule
 	extensionRules  []filePaneFilenameExtensionRule
@@ -164,9 +165,7 @@ func newFilePaneFilenameTheme(cfg *fm.Config) filePaneFilenameTheme {
 	if cfg == nil {
 		cfg = fm.DefaultConfig()
 	}
-	theme := filePaneFilenameTheme{
-		defaultVisual: parseFilePaneFilenameVisual(cfg.Colors.Filenames.Text, cfg.Colors.Filenames.Icon),
-	}
+	theme := filePaneFilenameTheme{}
 	if len(cfg.Colors.Filenames.AgeRules) > 0 {
 		theme.ageRules = make([]filePaneFilenameAgeRule, 0, len(cfg.Colors.Filenames.AgeRules))
 		for _, rule := range cfg.Colors.Filenames.AgeRules {
@@ -179,6 +178,7 @@ func newFilePaneFilenameTheme(cfg *fm.Config) filePaneFilenameTheme {
 				continue
 			}
 			theme.ageRules = append(theme.ageRules, filePaneFilenameAgeRule{
+				target: fm.NormalizeFilenameTarget(rule.Target),
 				maxAge: maxAge,
 				visual: visual,
 			})
@@ -196,6 +196,7 @@ func newFilePaneFilenameTheme(cfg *fm.Config) filePaneFilenameTheme {
 				continue
 			}
 			theme.extensionRules = append(theme.extensionRules, filePaneFilenameExtensionRule{
+				target: fm.NormalizeFilenameTarget(rule.Target),
 				suffix: suffix,
 				visual: visual,
 			})
@@ -260,17 +261,33 @@ func (v filePaneFilenameVisual) merge(next filePaneFilenameVisual) filePaneFilen
 	return v
 }
 
+func filenameTargetMatchesEntry(target string, entry filesys.Entry) bool {
+	switch entry.Kind {
+	case filesys.EntryFile:
+		return fm.FilenameTargetMatchesKind(target, false)
+	case filesys.EntryDir:
+		return fm.FilenameTargetMatchesKind(target, true)
+	default:
+		return false
+	}
+}
+
 func (t filePaneFilenameTheme) visualForEntry(entry filesys.Entry, now time.Time) filePaneFilenameVisual {
-	if entry.Kind != filesys.EntryFile {
+	switch entry.Kind {
+	case filesys.EntryFile, filesys.EntryDir:
+	default:
 		return filePaneFilenameVisual{}
 	}
-	visual := t.defaultVisual
+	visual := filePaneFilenameVisual{}
 	if !entry.ModTime.IsZero() && len(t.ageRules) > 0 {
 		age := now.Sub(entry.ModTime)
 		if age < 0 {
 			age = 0
 		}
 		for _, rule := range t.ageRules {
+			if !filenameTargetMatchesEntry(rule.target, entry) {
+				continue
+			}
 			if age <= rule.maxAge {
 				visual = visual.merge(rule.visual)
 				break
@@ -280,6 +297,9 @@ func (t filePaneFilenameTheme) visualForEntry(entry filesys.Entry, now time.Time
 	if len(t.extensionRules) > 0 {
 		name := strings.ToLower(entry.Name)
 		for _, rule := range t.extensionRules {
+			if !filenameTargetMatchesEntry(rule.target, entry) {
+				continue
+			}
 			if strings.HasSuffix(name, rule.suffix) {
 				visual = visual.merge(rule.visual)
 			}
@@ -287,6 +307,9 @@ func (t filePaneFilenameTheme) visualForEntry(entry filesys.Entry, now time.Time
 	}
 	if len(t.sizeRules) > 0 {
 		for _, rule := range t.sizeRules {
+			if !filenameTargetMatchesEntry(rule.rule.Target, entry) {
+				continue
+			}
 			if fm.FilenameSizeMatches(entry.SizeBytes, rule.rule) {
 				visual = visual.merge(rule.visual)
 			}
@@ -294,6 +317,9 @@ func (t filePaneFilenameTheme) visualForEntry(entry filesys.Entry, now time.Time
 	}
 	if len(t.permissionRules) > 0 {
 		for _, rule := range t.permissionRules {
+			if !filenameTargetMatchesEntry(rule.rule.Target, entry) {
+				continue
+			}
 			if fm.FilenamePermissionMatches(entry.PermOctal, rule.rule) {
 				visual = visual.merge(rule.visual)
 			}

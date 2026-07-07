@@ -68,18 +68,16 @@ func (m *filePaneModel) Entry(row int) *filesys.Entry {
 
 func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 	entry := m.entries[r]
-	st := table.CellStyle{Color: m.paneTextColor(), Weight: font.Medium}
+	st := table.CellStyle{Color: m.paneTextColor(), Weight: m.filePaneFileWeight()}
 
 	switch entry.Kind {
-	case filesys.EntryDir, filesys.EntryParent:
-		st.Color = color.NRGBA{R: 170, G: 200, B: 255, A: 255}
 	case filesys.EntryBroken:
 		st.Color = color.NRGBA{R: 255, G: 120, B: 120, A: 255}
 	}
 	if c == 0 {
 		switch entry.Kind {
 		case filesys.EntryDir, filesys.EntryParent, filesys.EntryBroken:
-			st.Weight = font.Bold
+			st.Weight = m.filePaneDirWeight()
 		}
 		if visual := m.filenameVisual(r); visual.hasColor {
 			st.Color = visual.color
@@ -93,15 +91,20 @@ func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 		return m.filePaneEntryNameCell(entry, st, 0)
 	case 1:
 		if showPerms {
+			st.Weight = m.filePanePermissionsWeight()
 			return m.defaultPermissionText(entry), st
 		}
+		st.Weight = m.filePaneSizeWeight()
 		return entry.SizeText, st
 	case 2:
 		if showPerms {
+			st.Weight = m.filePaneSizeWeight()
 			return entry.SizeText, st
 		}
+		st.Weight = m.filePaneDateWeight()
 		return entry.DateText, st
 	default:
+		st.Weight = m.filePaneDateWeight()
 		return entry.DateText, st
 	}
 }
@@ -140,6 +143,52 @@ func (m *filePaneModel) paneTextColor() color.NRGBA {
 		return m.baseTextColor
 	}
 	return txtColor
+}
+
+func filePaneFontWeight(raw string, fallback font.Weight) font.Weight {
+	switch fm.NormalizeFontWeight(raw, fm.FontWeightRegular) {
+	case fm.FontWeightRegular:
+		return font.Normal
+	case fm.FontWeightBold:
+		return font.Bold
+	default:
+		return fallback
+	}
+}
+
+func (m *filePaneModel) filePaneFileWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Normal
+	}
+	return filePaneFontWeight(m.cfg.General.FileWeight, font.Normal)
+}
+
+func (m *filePaneModel) filePaneDirWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Bold
+	}
+	return filePaneFontWeight(m.cfg.General.DirWeight, font.Bold)
+}
+
+func (m *filePaneModel) filePanePermissionsWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Normal
+	}
+	return filePaneFontWeight(m.cfg.General.PermissionsWeight, font.Normal)
+}
+
+func (m *filePaneModel) filePaneSizeWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Normal
+	}
+	return filePaneFontWeight(m.cfg.General.SizeWeight, font.Normal)
+}
+
+func (m *filePaneModel) filePaneDateWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Normal
+	}
+	return filePaneFontWeight(m.cfg.General.DateWeight, font.Normal)
 }
 
 func (m *filePaneModel) permissionFormat() string {
@@ -198,9 +247,17 @@ func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
 			Color: color.NRGBA{R: 214, G: 186, B: 96, A: 255},
 		}, true
 	case filesys.EntryDir:
+		baseColor := color.NRGBA{R: 205, G: 176, B: 88, A: 255}
+		if visual := m.filenameVisual(r); visual.iconKey != "" {
+			return table.LeadingIcon{
+				Kind:   table.IconFolder,
+				Color:  baseColor,
+				Widget: filenameRuleIcon(visual.iconKey),
+			}, true
+		}
 		return table.LeadingIcon{
 			Kind:  table.IconFolder,
-			Color: color.NRGBA{R: 205, G: 176, B: 88, A: 255},
+			Color: baseColor,
 		}, true
 	case filesys.EntryBroken:
 		return table.LeadingIcon{

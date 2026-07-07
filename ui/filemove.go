@@ -929,7 +929,9 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.multiSource() {
 				sourceHdr.Text = "Sources"
@@ -965,9 +967,8 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 				lbl.Color = txtColor
 				lbl.MaxLines = 1
 				lbl.Truncator = "…"
-				return fillRoundedBox(
+				return fillFlatBox(
 					gtx,
-					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
 					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
 					func(gtx layout.Context) layout.Dimensions {
@@ -1019,7 +1020,8 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				label, runningLabel := st.actionLabels()

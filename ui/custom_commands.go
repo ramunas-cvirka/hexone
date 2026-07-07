@@ -1234,7 +1234,9 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			leftW := gtx.Dp(unit.Dp(190))
 			if gtx.Constraints.Max.X < gtx.Dp(unit.Dp(520)) {
@@ -1243,13 +1245,18 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 			if leftW <= 0 {
 				return ui.layoutCustomCommandEditorFields(th, gtx, st)
 			}
+			_, _, totalH := customCommandEditorListMetrics(gtx)
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Start}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedWidth(gtx, leftW, func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutCustomCommandEditorList(th, gtx, st)
 					})
 				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedHeight(gtx, totalH, layoutDialogVerticalDivider)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutCustomCommandEditorFields(th, gtx, st)
 				}),
@@ -1268,7 +1275,9 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 				return lbl.Layout(gtx)
 			})
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutDialogActionTriple(

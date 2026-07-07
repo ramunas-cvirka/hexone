@@ -32,10 +32,11 @@ func TestSettingsTabIndexOrder(t *testing.T) {
 	}{
 		{key: "general", want: 0},
 		{key: "fonts", want: 1},
-		{key: "viewer", want: 2},
-		{key: "associations", want: 3},
-		{key: "colors", want: 4},
-		{key: "config", want: 5},
+		{key: "terminal", want: 2},
+		{key: "viewer", want: 3},
+		{key: "associations", want: 4},
+		{key: "colors", want: 5},
+		{key: "config", want: 6},
 	}
 	for _, tc := range cases {
 		if got := settingsTabIndex(tc.key); got != tc.want {
@@ -136,8 +137,8 @@ func TestSettingsViewerIntroductionFitsWithoutScrolling(t *testing.T) {
 	gtx.Ops.Reset()
 	gtx.Constraints = layout.Exact(image.Pt(584, bodyH))
 	ui.layoutSettingsViewerTab(th, gtx, st)
-	if got := st.viewerTabList.Position.Count; got < 6 {
-		t.Fatalf("viewer introduction and first priority section are cramped: visible sections=%d want at least 6", got)
+	if got := st.viewerTabList.Position.Count; got < 5 {
+		t.Fatalf("viewer introduction and first priority section are cramped: visible sections=%d want at least 5", got)
 	}
 }
 
@@ -149,7 +150,8 @@ func TestSettingsShiftTabWraps(t *testing.T) {
 	}{
 		{key: "general", step: -1, want: "config"},
 		{key: "config", step: 1, want: "general"},
-		{key: "fonts", step: 1, want: "viewer"},
+		{key: "fonts", step: 1, want: "terminal"},
+		{key: "terminal", step: 1, want: "viewer"},
 		{key: "viewer", step: 1, want: "associations"},
 		{key: "colors", step: -1, want: "associations"},
 	}
@@ -223,13 +225,11 @@ func TestSettingsKeyboardFocusOrderTracksVisibleControls(t *testing.T) {
 	want := []settingsKeyboardFocus{
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusColorsScope,
-		settingsKeyboardFocusFilenameDefaultTextPicker,
-		settingsKeyboardFocusFilenameDefaultText,
-		settingsKeyboardFocusFilenameDefaultIconPicker,
 		settingsKeyboardFocusFilenameRuleMode,
 		settingsKeyboardFocusFilenamePermMask,
 		settingsKeyboardFocusFilenamePermPicker,
 		settingsKeyboardFocusFilenamePermMatch,
+		settingsKeyboardFocusFilenamePermTarget,
 		settingsKeyboardFocusFilenamePermTextPicker,
 		settingsKeyboardFocusFilenamePermText,
 		settingsKeyboardFocusFilenamePermIconPicker,
@@ -251,7 +251,26 @@ func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
 		settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
 		settingsKeyboardFocusGeneralCompletionSound,
-		settingsKeyboardFocusGeneralTerminalAcceleratedKeys,
+		settingsKeyboardFocusFilePaneFileWeight,
+		settingsKeyboardFocusFilePaneDirWeight,
+		settingsKeyboardFocusFilePanePermissionsWeight,
+		settingsKeyboardFocusFilePaneSizeWeight,
+		settingsKeyboardFocusFilePaneDateWeight,
+		settingsKeyboardFocusFooter,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsKeyboardFocusOrderIncludesTerminalControls(t *testing.T) {
+	st := &settingsModalState{activeTab: "terminal"}
+
+	got := st.focusOrder()
+	want := []settingsKeyboardFocus{
+		settingsKeyboardFocusNav,
+		settingsKeyboardFocusTerminalShell,
+		settingsKeyboardFocusTerminalAcceleratedKeys,
 		settingsKeyboardFocusFooter,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -453,7 +472,6 @@ func TestSettingsKeyboardFocusOrderIncludesViewerControls(t *testing.T) {
 	got := st.focusOrder()
 	want := []settingsKeyboardFocus{
 		settingsKeyboardFocusNav,
-		settingsKeyboardFocusViewerShell,
 		settingsKeyboardFocusViewerRemoteSearch,
 		settingsKeyboardFocusViewerSmoothScrolling,
 		settingsKeyboardFocusViewerHideFunctionBar,
@@ -518,8 +536,8 @@ func TestSettingsModalKeyboardUsesUpDownOnlyForNavFocus(t *testing.T) {
 	if st == nil {
 		t.Fatal("settings modal did not open")
 	}
-	st.activeTab = "viewer"
-	st.focus = settingsKeyboardFocusViewerShell
+	st.activeTab = "terminal"
+	st.focus = settingsKeyboardFocusTerminalShell
 	st.viewShellEdit.SetText("auto")
 	st.footerFocus = settingsFooterActionSave
 	st.keyFocus.wantFocus = true
@@ -535,14 +553,14 @@ func TestSettingsModalKeyboardUsesUpDownOnlyForNavFocus(t *testing.T) {
 
 	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
 	frame(now.Add(time.Millisecond))
-	if st.activeTab != "viewer" {
-		t.Fatalf("activeTab after DownArrow = %q, want viewer", st.activeTab)
+	if st.activeTab != "terminal" {
+		t.Fatalf("activeTab after DownArrow = %q, want terminal", st.activeTab)
 	}
 
 	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press})
 	frame(now.Add(2 * time.Millisecond))
 	if got := st.viewShellEdit.Text(); got != "auto" {
-		t.Fatalf("viewer shell after RightArrow = %q, want auto", got)
+		t.Fatalf("terminal shell after RightArrow = %q, want auto", got)
 	}
 }
 
@@ -624,8 +642,8 @@ func TestSettingsModalKeyboardSpaceTogglesTerminalAcceleratedKeys(t *testing.T) 
 	if st == nil {
 		t.Fatal("settings modal did not open")
 	}
-	st.activeTab = "general"
-	st.focus = settingsKeyboardFocusGeneralTerminalAcceleratedKeys
+	st.activeTab = "terminal"
+	st.focus = settingsKeyboardFocusTerminalAcceleratedKeys
 	st.keyFocus.wantFocus = true
 	st.terminalAcceleratedKeysBool.Value = true
 
@@ -642,6 +660,58 @@ func TestSettingsModalKeyboardSpaceTogglesTerminalAcceleratedKeys(t *testing.T) 
 
 	if st.terminalAcceleratedKeysBool.Value {
 		t.Fatal("Space should toggle the focused terminal accelerated-keys checkbox")
+	}
+}
+
+func TestSettingsModalLoadsAndSavesPaneWeights(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.FileWeight = "light"
+	cfg.General.DirWeight = fm.FontWeightRegular
+	cfg.General.PermissionsWeight = fm.FontWeightBold
+	cfg.General.SizeWeight = "medium"
+	cfg.General.DateWeight = fm.FontWeightRegular
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	if got, want := st.paneFileWeight, fm.FontWeightRegular; got != want {
+		t.Fatalf("pane file weight=%q want normalized %q", got, want)
+	}
+	if got, want := st.paneDirWeight, fm.FontWeightRegular; got != want {
+		t.Fatalf("pane dir weight=%q want %q", got, want)
+	}
+	if got, want := st.panePermissionsWeight, fm.FontWeightBold; got != want {
+		t.Fatalf("pane permissions weight=%q want %q", got, want)
+	}
+
+	st.paneFileWeight = fm.FontWeightRegular
+	st.paneDirWeight = fm.FontWeightBold
+	st.panePermissionsWeight = fm.FontWeightRegular
+	st.paneSizeWeight = fm.FontWeightBold
+	st.paneDateWeight = fm.FontWeightRegular
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+
+	saved := fm.LoadConfig(ui.configPath)
+	if got, want := saved.General.FileWeight, st.paneFileWeight; got != want {
+		t.Fatalf("saved file weight=%q want %q", got, want)
+	}
+	if got, want := saved.General.DirWeight, st.paneDirWeight; got != want {
+		t.Fatalf("saved dir weight=%q want %q", got, want)
+	}
+	if got, want := saved.General.PermissionsWeight, st.panePermissionsWeight; got != want {
+		t.Fatalf("saved permissions weight=%q want %q", got, want)
+	}
+	if got, want := saved.General.SizeWeight, st.paneSizeWeight; got != want {
+		t.Fatalf("saved size weight=%q want %q", got, want)
+	}
+	if got, want := saved.General.DateWeight, st.paneDateWeight; got != want {
+		t.Fatalf("saved date weight=%q want %q", got, want)
 	}
 }
 
@@ -1193,7 +1263,7 @@ func TestSettingsModalKeyboardFilenameIconPickerMovesAndAppliesSelection(t *test
 	st.activeTab = "colors"
 	st.colorScope = "filenames"
 	st.filenameRuleMode = "age"
-	st.focus = settingsKeyboardFocusFilenameDefaultIconPicker
+	st.focus = settingsKeyboardFocusFilenameAgeIconPicker
 	st.keyFocus.wantFocus = true
 
 	frame := func(at time.Time) {
@@ -1207,8 +1277,8 @@ func TestSettingsModalKeyboardFilenameIconPickerMovesAndAppliesSelection(t *test
 	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
 	frame(now.Add(time.Millisecond))
 
-	if !st.filenameIconPickerOpen || st.filenameIconPickerTarget != "filename-default-icon" {
-		t.Fatal("Enter on the default icon picker should open the icon picker")
+	if !st.filenameIconPickerOpen || st.filenameIconPickerTarget != "filename-age-icon" {
+		t.Fatal("Enter on the age icon picker should open the icon picker")
 	}
 	_, startIndex, ok := st.popupKeyboardDefaultFocus(nil, nil, nil, nil, nil, filenameIconOptions)
 	if !ok {
@@ -1233,8 +1303,8 @@ func TestSettingsModalKeyboardFilenameIconPickerMovesAndAppliesSelection(t *test
 	if st.filenameIconPickerOpen {
 		t.Fatal("Enter on the focused icon swatch should close the icon picker")
 	}
-	if got := st.filenameDefaultIcon; got != wantIcon {
-		t.Fatalf("default filename icon after keyboard selection = %q, want %q", got, wantIcon)
+	if got := st.filenameAgeIcon; got != wantIcon {
+		t.Fatalf("age filename icon after keyboard selection = %q, want %q", got, wantIcon)
 	}
 }
 
@@ -1284,16 +1354,16 @@ func TestSettingsTabPositionSlidesToAssociations(t *testing.T) {
 	if !anim {
 		t.Fatal("tabPosition should still animate mid-transition")
 	}
-	if mid <= 0 || mid >= 3 {
-		t.Fatalf("mid position=%v want between 0 and 3", mid)
+	if mid <= 0 || mid >= 4 {
+		t.Fatalf("mid position=%v want between 0 and 4", mid)
 	}
 
 	end, anim := st.tabPosition(now.Add(toolbarAnimDur))
 	if anim {
 		t.Fatal("tabPosition should stop animating at the end of the transition")
 	}
-	if end != 3 {
-		t.Fatalf("end position=%v want 3", end)
+	if end != 4 {
+		t.Fatalf("end position=%v want 4", end)
 	}
 	if st.navPrevTab != "" {
 		t.Fatalf("navPrevTab should clear after transition, got %q", st.navPrevTab)
@@ -2367,15 +2437,16 @@ func TestSettingsViewerPreviewContentHeightUsesTextRows(t *testing.T) {
 
 func TestDraftFilenameColorsNormalizesAllRuleTypes(t *testing.T) {
 	st := &settingsModalState{
-		filenameDefaultText: "#AABBCC",
-		filenameDefaultIcon: fm.FilenameIconDocument,
+		filenameDefaultText:   "#AABBCC",
+		filenameDefaultIcon:   fm.FilenameIconDocument,
+		filenameDefaultTarget: "dirs",
 		filenameAgeEntries: []fm.FilenameAgeRule{
-			{MaxAge: "24h", Text: "#112233", Icon: fm.FilenameIconRecent},
+			{MaxAge: "24h", Target: "files", Text: "#112233", Icon: fm.FilenameIconRecent},
 			{MaxAge: "1w", Text: "", Icon: ""},
 			{MaxAge: "3d", Text: "#334455", Icon: ""},
 		},
 		filenamePermEntries: []fm.FilenamePermissionRule{
-			{Permissions: "111", Match: "any", Text: "#556677", Icon: fm.FilenameIconLocked},
+			{Permissions: "111", Match: "any", Target: "dirs", Text: "#556677", Icon: fm.FilenameIconLocked},
 		},
 		filenameExtEntries: []fm.FilenameExtensionRule{
 			{Extension: "GO", Text: "#223344", Icon: fm.FilenameIconCode},
@@ -2389,11 +2460,14 @@ func TestDraftFilenameColorsNormalizesAllRuleTypes(t *testing.T) {
 	if errText != "" {
 		t.Fatalf("unexpected draft filename error: %q", errText)
 	}
-	if got.Text != "#AABBCC" {
-		t.Fatalf("default text=%q want %q", got.Text, "#AABBCC")
+	if got.Text != "" {
+		t.Fatalf("default text=%q want empty", got.Text)
 	}
-	if got.Icon != fm.FilenameIconDocument {
-		t.Fatalf("default icon=%q want %q", got.Icon, fm.FilenameIconDocument)
+	if got.Icon != "" {
+		t.Fatalf("default icon=%q want empty", got.Icon)
+	}
+	if got.Target != "" {
+		t.Fatalf("default target=%q want empty", got.Target)
 	}
 	if len(got.AgeRules) != 2 {
 		t.Fatalf("len(AgeRules)=%d want 2", len(got.AgeRules))
@@ -2401,11 +2475,17 @@ func TestDraftFilenameColorsNormalizesAllRuleTypes(t *testing.T) {
 	if got.AgeRules[0].MaxAge != "1d" || got.AgeRules[1].MaxAge != "3d" {
 		t.Fatalf("age rules=%#v want normalized 1d and 3d", got.AgeRules)
 	}
+	if got.AgeRules[0].Target != fm.FilenameTargetFiles {
+		t.Fatalf("age target=%q want %q", got.AgeRules[0].Target, fm.FilenameTargetFiles)
+	}
 	if len(got.PermissionRules) != 1 || got.PermissionRules[0].Permissions != "0111" {
 		t.Fatalf("permission rules=%#v want normalized 0111", got.PermissionRules)
 	}
 	if got.PermissionRules[0].Match != fm.FilenamePermissionMatchAny {
 		t.Fatalf("permission match=%q want %q", got.PermissionRules[0].Match, fm.FilenamePermissionMatchAny)
+	}
+	if got.PermissionRules[0].Target != fm.FilenameTargetDirs {
+		t.Fatalf("permission target=%q want %q", got.PermissionRules[0].Target, fm.FilenameTargetDirs)
 	}
 	if len(got.ExtensionRules) != 1 || got.ExtensionRules[0].Extension != ".go" {
 		t.Fatalf("extension rules=%#v want normalized .go", got.ExtensionRules)
@@ -2418,22 +2498,27 @@ func TestDraftFilenameColorsNormalizesAllRuleTypes(t *testing.T) {
 	}
 }
 
-func TestLoadFilenameColorsFromConfigKeepsPaneTextInheritedUntilEdited(t *testing.T) {
+func TestDraftFilenameColorsIgnoresDeprecatedDefaultFilenameFields(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.Colors.FilePaneText = "#13579B"
+	cfg.Colors.Filenames.Text = "#2468AC"
 	cfg.Colors.Filenames.Icon = fm.FilenameIconCode
+	cfg.Colors.Filenames.Target = fm.FilenameTargetDirs
 
 	st := &settingsModalState{}
 	st.loadFilenameColorsFromConfig(cfg)
 
 	if st.filenameDefaultText != "" {
-		t.Fatalf("filenameDefaultText=%q want empty inherited override", st.filenameDefaultText)
+		t.Fatalf("filenameDefaultText=%q want empty deprecated override", st.filenameDefaultText)
 	}
-	if got := st.filenameDefaultTextEdit.Text(); got != "#13579B" {
-		t.Fatalf("filenameDefaultTextEdit=%q want pane text color", got)
+	if got := st.filenameDefaultTextEdit.Text(); got != "" {
+		t.Fatalf("filenameDefaultTextEdit=%q want empty deprecated override", got)
 	}
-	if st.filenameDefaultIcon != fm.FilenameIconCode {
-		t.Fatalf("filenameDefaultIcon=%q want %q", st.filenameDefaultIcon, fm.FilenameIconCode)
+	if st.filenameDefaultIcon != "" {
+		t.Fatalf("filenameDefaultIcon=%q want empty", st.filenameDefaultIcon)
+	}
+	if st.filenameDefaultTarget != "both" {
+		t.Fatalf("filenameDefaultTarget=%q want both", st.filenameDefaultTarget)
 	}
 
 	got, errText := st.draftFilenameColors()
@@ -2443,8 +2528,11 @@ func TestLoadFilenameColorsFromConfigKeepsPaneTextInheritedUntilEdited(t *testin
 	if got.Text != "" {
 		t.Fatalf("draft filename text=%q want empty inherited override", got.Text)
 	}
-	if got.Icon != fm.FilenameIconCode {
-		t.Fatalf("draft filename icon=%q want %q", got.Icon, fm.FilenameIconCode)
+	if got.Icon != "" {
+		t.Fatalf("draft filename icon=%q want empty", got.Icon)
+	}
+	if got.Target != "" {
+		t.Fatalf("draft filename target=%q want empty", got.Target)
 	}
 }
 
@@ -2455,7 +2543,6 @@ func TestFilenameIconPickerValueMapsTargets(t *testing.T) {
 		target string
 		icon   string
 	}{
-		{target: "filename-default-icon", icon: fm.FilenameIconBook},
 		{target: "filename-age-icon", icon: fm.FilenameIconAudio},
 		{target: "filename-perm-icon", icon: fm.FilenameIconLink},
 		{target: "filename-ext-icon", icon: fm.FilenameIconTable},
@@ -2472,18 +2559,21 @@ func TestFilenameIconPickerValueMapsTargets(t *testing.T) {
 
 func TestFilenameExtensionUIUsesBareSuffixDisplay(t *testing.T) {
 	st := &settingsModalState{}
-	st.loadFilenameExtensionFields(".tar.gz", "", fm.FilenameIconArchive)
+	st.loadFilenameExtensionFields(".tar.gz", "", fm.FilenameIconArchive, "both")
 
 	if got := st.filenameExtEdit.Text(); got != "tar.gz" {
 		t.Fatalf("filenameExtEdit=%q want bare suffix", got)
 	}
 
-	rule, err := parseFilenameExtensionRuleFields("go", "", fm.FilenameIconCode)
+	rule, err := parseFilenameExtensionRuleFields("go", "", fm.FilenameIconCode, "files")
 	if err != nil {
 		t.Fatalf("parseFilenameExtensionRuleFields error: %v", err)
 	}
 	if rule.Extension != ".go" {
 		t.Fatalf("rule.Extension=%q want %q", rule.Extension, ".go")
+	}
+	if rule.Target != fm.FilenameTargetFiles {
+		t.Fatalf("rule.Target=%q want %q", rule.Target, fm.FilenameTargetFiles)
 	}
 	if got := formatFilenameExtensionRuleLabel(rule); got != "go" {
 		t.Fatalf("formatFilenameExtensionRuleLabel=%q want %q", got, "go")
@@ -2605,7 +2695,7 @@ func TestUpsertCurrentFilenameAgeRuleNormalizesAndSortsEntries(t *testing.T) {
 func TestFilenameRuleUpdatesCanChangeIdentityFields(t *testing.T) {
 	t.Run("age", func(t *testing.T) {
 		st := &settingsModalState{filenameAgeEntries: []fm.FilenameAgeRule{{MaxAge: "1d", Text: "#112233"}}}
-		st.loadFilenameAgeFields("1", "d", "#112233", "")
+		st.loadFilenameAgeFields("1", "d", "#112233", "", "both")
 		st.filenameAgeOffsetEdit.SetText("2")
 		st.syncFilenameAgeEditors()
 		if got := st.filenameAgeTextEdit.Text(); got != "#112233" {
@@ -2622,7 +2712,7 @@ func TestFilenameRuleUpdatesCanChangeIdentityFields(t *testing.T) {
 
 	t.Run("permissions", func(t *testing.T) {
 		st := &settingsModalState{filenamePermEntries: []fm.FilenamePermissionRule{{Permissions: "0644", Match: fm.FilenamePermissionMatchExact, Text: "#223344"}}}
-		st.loadFilenamePermissionFields("0644", fm.FilenamePermissionMatchExact, "#223344", "")
+		st.loadFilenamePermissionFields("0644", fm.FilenamePermissionMatchExact, "#223344", "", "both")
 		st.filenamePermEdit.SetText("0755")
 		st.syncFilenamePermissionEditors()
 		action, err := st.upsertCurrentFilenamePermissionRule()
@@ -2636,7 +2726,7 @@ func TestFilenameRuleUpdatesCanChangeIdentityFields(t *testing.T) {
 
 	t.Run("extension", func(t *testing.T) {
 		st := &settingsModalState{filenameExtEntries: []fm.FilenameExtensionRule{{Extension: ".go", Text: "#334455"}}}
-		st.loadFilenameExtensionFields(".go", "#334455", "")
+		st.loadFilenameExtensionFields(".go", "#334455", "", "both")
 		st.filenameExtEdit.SetText("md")
 		st.syncFilenameExtensionEditors()
 		action, err := st.upsertCurrentFilenameExtensionRule()
@@ -2650,7 +2740,7 @@ func TestFilenameRuleUpdatesCanChangeIdentityFields(t *testing.T) {
 
 	t.Run("size", func(t *testing.T) {
 		st := &settingsModalState{filenameSizeEntries: []fm.FilenameSizeRule{{Size: "1m", Match: fm.FilenameSizeMatchAtMost, Text: "#445566"}}}
-		st.loadFilenameSizeFields("1m", fm.FilenameSizeMatchAtMost, "#445566", "")
+		st.loadFilenameSizeFields("1m", fm.FilenameSizeMatchAtMost, "#445566", "", "both")
 		st.filenameSizeEdit.SetText("2m")
 		st.syncFilenameSizeEditors()
 		action, err := st.upsertCurrentFilenameSizeRule()
@@ -2714,7 +2804,7 @@ func TestKeyedSettingsUpdateRejectsExistingDestination(t *testing.T) {
 		{MaxAge: "1d", Text: "#112233"},
 		{MaxAge: "2d", Text: "#445566"},
 	}}
-	st.loadFilenameAgeFields("1", "d", "#112233", "")
+	st.loadFilenameAgeFields("1", "d", "#112233", "", "both")
 	st.filenameAgeOffsetEdit.SetText("2")
 
 	if action, err := st.upsertCurrentFilenameAgeRule(); err == nil || action != "Update" {
@@ -2726,10 +2816,10 @@ func TestKeyedSettingsUpdateRejectsExistingDestination(t *testing.T) {
 }
 
 func TestParseFilenameAgeRuleFieldsRequiresPositiveOffsetAndVisual(t *testing.T) {
-	if _, err := parseFilenameAgeRuleFields("0", "d", "#112233", ""); err == nil {
+	if _, err := parseFilenameAgeRuleFields("0", "d", "#112233", "", "both"); err == nil {
 		t.Fatal("parseFilenameAgeRuleFields should reject zero offsets")
 	}
-	if _, err := parseFilenameAgeRuleFields("3", "d", "", ""); err == nil {
+	if _, err := parseFilenameAgeRuleFields("3", "d", "", "", "both"); err == nil {
 		t.Fatal("parseFilenameAgeRuleFields should require a color or icon")
 	}
 }

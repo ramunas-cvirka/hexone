@@ -818,7 +818,9 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(desc.Layout),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(targetLabel.Layout),
@@ -831,7 +833,6 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(meta.Layout),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.lastErr == "" {
 				return layout.Dimensions{}
@@ -854,6 +855,8 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 			return lbl.Layout(gtx)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				label := "Delete"

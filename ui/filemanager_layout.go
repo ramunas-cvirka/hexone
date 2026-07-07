@@ -1553,7 +1553,6 @@ func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx i
 			}
 			return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
 		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFilePaneControlStrip(th, gtx, idx, pane)
 		}),
@@ -1579,8 +1578,8 @@ func (ui *UI) layoutFilePanePathArea(th *material.Theme, gtx layout.Context, idx
 		if stripH < 1 {
 			stripH = 1
 		}
-		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), rowBg, rowBorder, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return fillFlatBox(gtx, rowBg, rowBorder, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
 					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -1724,7 +1723,7 @@ func (ui *UI) layoutFilePanePathSegmentLabel(th *material.Theme, gtx layout.Cont
 	if bg.A == 0 && border.A == 0 {
 		return content(gtx)
 	}
-	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(4)), bg, border, content)
+	return fillFlatBox(gtx, bg, border, content)
 }
 
 func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
@@ -2308,9 +2307,8 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 	if stripH < 1 {
 		stripH = 1
 	}
-	return fillRoundedClipBox(
+	return fillFlatBox(
 		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 		color.NRGBA{R: 18, G: 22, B: 30, A: 255},
 		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
 		func(gtx layout.Context) layout.Dimensions {
@@ -2446,7 +2444,7 @@ func (ui *UI) layoutFileModeBadge(th *material.Theme, gtx layout.Context, idx in
 			iconColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
 		}
 
-		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, border, func(gtx layout.Context) layout.Dimensions {
+		return fillFlatBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutFilePaneModeIcon(gtx, pane.table.Mode, iconColor)
 			})
@@ -3868,7 +3866,7 @@ func layoutTinyModeButtonState(th *material.Theme, gtx layout.Context, typeface 
 			labelColor = mixNRGBA(labelColor, color.NRGBA{R: 244, G: 248, B: 255, A: 255}, 0.4)
 		}
 
-		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, border, func(gtx layout.Context) layout.Dimensions {
+		return fillFlatBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, label)
 				lbl.Font.Typeface = typeface
@@ -3907,7 +3905,7 @@ func layoutTinyIconModeButtonState(gtx layout.Context, c *widget.Clickable, icon
 			iconColor = mixNRGBA(iconColor, color.NRGBA{R: 244, G: 248, B: 255, A: 255}, 0.4)
 		}
 
-		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, border, func(gtx layout.Context) layout.Dimensions {
+		return fillFlatBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				size := gtx.Dp(unit.Dp(12))
 				if size < 1 {
@@ -3941,7 +3939,7 @@ func layoutModeButton(th *material.Theme, gtx layout.Context, typeface font.Type
 			labelColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
 		}
 
-		return fillRoundedBox(gtx, gtx.Dp(unit.Dp(filePaneControlCornerDp)), bg, border, func(gtx layout.Context) layout.Dimensions {
+		return fillFlatBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, label)
 				lbl.Font.Typeface = typeface

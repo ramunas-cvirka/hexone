@@ -11,12 +11,10 @@ const (
 	EmbeddedNoticeSource  = "bundled NOTICE"
 
 	EmbeddedFiraCodeNerdFontMonoRegularPath      = "embedded:FiraCodeNerdFontMono-Regular.ttf"
-	EmbeddedFiraCodeNerdFontMonoMediumPath       = "embedded:FiraCodeNerdFontMono-Medium.ttf"
 	EmbeddedFiraCodeNerdFontMonoBoldPath         = "embedded:FiraCodeNerdFontMono-Bold.ttf"
 	EmbeddedHackNerdFontMonoRegularPath          = "embedded:HackNerdFontMono-Regular.ttf"
 	EmbeddedHackNerdFontMonoBoldPath             = "embedded:HackNerdFontMono-Bold.ttf"
 	EmbeddedJetBrainsMonoNerdFontMonoRegularPath = "embedded:JetBrainsMonoNerdFontMono-Regular.ttf"
-	EmbeddedJetBrainsMonoNerdFontMonoMediumPath  = "embedded:JetBrainsMonoNerdFontMono-Medium.ttf"
 	EmbeddedJetBrainsMonoNerdFontMonoBoldPath    = "embedded:JetBrainsMonoNerdFontMono-Bold.ttf"
 	EmbeddedIosevkaNerdFontMonoRegularPath       = "embedded:IosevkaNerdFontMono-Regular.ttf"
 	EmbeddedIosevkaNerdFontMonoBoldPath          = "embedded:IosevkaNerdFontMono-Bold.ttf"
@@ -31,7 +29,6 @@ type BundledFontFamily struct {
 	Name        string
 	Label       string
 	RegularPath string
-	MediumPath  string
 	BoldPath    string
 	Monospace   bool
 }
@@ -51,9 +48,6 @@ var embeddedProtocolsYAML []byte
 //go:embed assets/FiraCodeNerdFontMono-Regular.ttf
 var embeddedFiraCodeNerdFontMonoRegular []byte
 
-//go:embed assets/FiraCodeNerdFontMono-Medium.ttf
-var embeddedFiraCodeNerdFontMonoMedium []byte
-
 //go:embed assets/FiraCodeNerdFontMono-Bold.ttf
 var embeddedFiraCodeNerdFontMonoBold []byte
 
@@ -65,9 +59,6 @@ var embeddedHackNerdFontMonoBold []byte
 
 //go:embed assets/JetBrainsMonoNerdFontMono-Regular.ttf
 var embeddedJetBrainsMonoNerdFontMonoRegular []byte
-
-//go:embed assets/JetBrainsMonoNerdFontMono-Medium.ttf
-var embeddedJetBrainsMonoNerdFontMonoMedium []byte
 
 //go:embed assets/JetBrainsMonoNerdFontMono-Bold.ttf
 var embeddedJetBrainsMonoNerdFontMonoBold []byte
@@ -83,7 +74,6 @@ var bundledFontFamilies = []BundledFontFamily{
 		Name:        BundledFontFamilyFiraCodeNerdFontMono,
 		Label:       "FiraCode",
 		RegularPath: EmbeddedFiraCodeNerdFontMonoRegularPath,
-		MediumPath:  EmbeddedFiraCodeNerdFontMonoMediumPath,
 		BoldPath:    EmbeddedFiraCodeNerdFontMonoBoldPath,
 		Monospace:   true,
 	},
@@ -91,7 +81,6 @@ var bundledFontFamilies = []BundledFontFamily{
 		Name:        BundledFontFamilyJetBrainsMonoNerdFontMono,
 		Label:       "JetBrains",
 		RegularPath: EmbeddedJetBrainsMonoNerdFontMonoRegularPath,
-		MediumPath:  EmbeddedJetBrainsMonoNerdFontMonoMediumPath,
 		BoldPath:    EmbeddedJetBrainsMonoNerdFontMonoBoldPath,
 		Monospace:   true,
 	},
@@ -99,7 +88,6 @@ var bundledFontFamilies = []BundledFontFamily{
 		Name:        BundledFontFamilyHackNerdFontMono,
 		Label:       "Hack",
 		RegularPath: EmbeddedHackNerdFontMonoRegularPath,
-		MediumPath:  EmbeddedHackNerdFontMonoRegularPath,
 		BoldPath:    EmbeddedHackNerdFontMonoBoldPath,
 		Monospace:   true,
 	},
@@ -107,7 +95,6 @@ var bundledFontFamilies = []BundledFontFamily{
 		Name:        BundledFontFamilyIosevkaNerdFontMono,
 		Label:       "Iosevka",
 		RegularPath: EmbeddedIosevkaNerdFontMonoRegularPath,
-		MediumPath:  EmbeddedIosevkaNerdFontMonoRegularPath,
 		BoldPath:    EmbeddedIosevkaNerdFontMonoBoldPath,
 		Monospace:   true,
 	},
@@ -154,8 +141,6 @@ func BundledFont(path string) ([]byte, bool) {
 	switch path {
 	case EmbeddedFiraCodeNerdFontMonoRegularPath:
 		return append([]byte(nil), embeddedFiraCodeNerdFontMonoRegular...), true
-	case EmbeddedFiraCodeNerdFontMonoMediumPath:
-		return append([]byte(nil), embeddedFiraCodeNerdFontMonoMedium...), true
 	case EmbeddedFiraCodeNerdFontMonoBoldPath:
 		return append([]byte(nil), embeddedFiraCodeNerdFontMonoBold...), true
 	case EmbeddedHackNerdFontMonoRegularPath:
@@ -164,8 +149,6 @@ func BundledFont(path string) ([]byte, bool) {
 		return append([]byte(nil), embeddedHackNerdFontMonoBold...), true
 	case EmbeddedJetBrainsMonoNerdFontMonoRegularPath:
 		return append([]byte(nil), embeddedJetBrainsMonoNerdFontMonoRegular...), true
-	case EmbeddedJetBrainsMonoNerdFontMonoMediumPath:
-		return append([]byte(nil), embeddedJetBrainsMonoNerdFontMonoMedium...), true
 	case EmbeddedJetBrainsMonoNerdFontMonoBoldPath:
 		return append([]byte(nil), embeddedJetBrainsMonoNerdFontMonoBold...), true
 	case EmbeddedIosevkaNerdFontMonoRegularPath:

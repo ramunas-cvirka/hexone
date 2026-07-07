@@ -708,7 +708,8 @@ func TestActivatePaneDriveMenuSelectionLoadsSelectedDrive(t *testing.T) {
 
 func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 	cfg := fm.DefaultConfig()
-	cfg.Colors.Filenames.Text = "#8899AA"
+	cfg.Colors.FilePaneText = "#8899AA"
+	cfg.Colors.Filenames.Text = "#CCDDEE"
 	cfg.Colors.Filenames.AgeRules = []fm.FilenameAgeRule{
 		{MaxAge: "1h", Text: "#112233", Icon: fm.FilenameIconRecent},
 	}
@@ -719,7 +720,7 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 	now := time.Date(2026, time.March, 20, 12, 0, 0, 0, time.UTC)
 	model := &filePaneModel{
 		cfg:           cfg,
-		baseTextColor: color.NRGBA{R: 210, G: 210, B: 210, A: 255},
+		baseTextColor: color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF},
 		filenameTheme: newFilePaneFilenameTheme(cfg),
 		entries: []filesys.Entry{
 			{Name: "fresh.log", DisplayName: "fresh.log", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-20 * time.Minute)},
@@ -728,6 +729,8 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 			{Name: "bundle.zip", DisplayName: "bundle.zip", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
 			{Name: "photo.png", DisplayName: "photo.png", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
 			{Name: "clip.mp4", DisplayName: "clip.mp4", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
+			{Name: "bin", DisplayName: "bin", Kind: filesys.EntryDir, PermOctal: "0755", ModTime: now.Add(-48 * time.Hour)},
+			{Name: "docs", DisplayName: "docs", Kind: filesys.EntryDir, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
 		},
 	}
 	model.rebuildFilenameVisuals(now)
@@ -751,12 +754,12 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 	}
 
 	if _, st := model.Cell(2, 0); st.Color != (color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF}) {
-		t.Fatalf("default filename color=%v want #8899AA", st.Color)
-	} else if !st.PreserveColor {
-		t.Fatal("default filename rule should preserve custom filename color on row states")
+		t.Fatalf("normal filename color=%v want #8899AA", st.Color)
+	} else if st.PreserveColor {
+		t.Fatal("normal filename color should remain row-state overridable")
 	}
 	if icon, ok := model.LeadingIcon(2, 0); !ok || icon.Widget != nil {
-		t.Fatal("default filename rule should keep the stock file icon")
+		t.Fatal("normal filename should keep the stock file icon")
 	}
 
 	if icon, ok := model.LeadingIcon(3, 0); !ok || icon.Widget == nil {
@@ -769,6 +772,24 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 
 	if icon, ok := model.LeadingIcon(5, 0); !ok || icon.Widget == nil {
 		t.Fatal("video files should use the stock video icon by default")
+	}
+
+	if _, st := model.Cell(6, 0); st.Color != (color.NRGBA{R: 0x44, G: 0x55, B: 0x66, A: 0xFF}) {
+		t.Fatalf("directory permission override color=%v want #445566", st.Color)
+	} else if !st.PreserveColor {
+		t.Fatal("directory permission override should preserve custom filename color on row states")
+	}
+	if icon, ok := model.LeadingIcon(6, 0); !ok || icon.Widget == nil || icon.Color != (color.NRGBA{R: 205, G: 176, B: 88, A: 255}) {
+		t.Fatalf("directory permission override icon=%#v want custom icon and folder color", icon)
+	}
+
+	if _, st := model.Cell(7, 0); st.Color != (color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF}) {
+		t.Fatalf("normal directory color=%v want #8899AA", st.Color)
+	} else if st.PreserveColor {
+		t.Fatal("normal directory color should remain row-state overridable")
+	}
+	if icon, ok := model.LeadingIcon(7, 0); !ok || icon.Widget != nil || icon.Color != (color.NRGBA{R: 205, G: 176, B: 88, A: 255}) {
+		t.Fatalf("normal directory icon=%#v want stock folder icon and folder color", icon)
 	}
 }
 
@@ -846,6 +867,35 @@ func TestFilePaneFilenameThemeRulePrecedenceSupportsPartialPermissions(t *testin
 	}
 	if extVisual.iconKey != fm.FilenameIconArchive {
 		t.Fatalf("extension visual icon=%q want %q", extVisual.iconKey, fm.FilenameIconArchive)
+	}
+
+	dirOnlyTheme := newFilePaneFilenameTheme(&fm.Config{
+		Colors: fm.ColorsConfig{
+			Filenames: fm.FilenameColorsConfig{
+				Target: fm.FilenameTargetFiles,
+				PermissionRules: []fm.FilenamePermissionRule{
+					{Permissions: "0755", Target: fm.FilenameTargetDirs, Text: "#667788", Icon: fm.FilenameIconLocked},
+				},
+			},
+		},
+	})
+	dirVisual := dirOnlyTheme.visualForEntry(filesys.Entry{
+		Name:      "bin",
+		Kind:      filesys.EntryDir,
+		PermOctal: "0755",
+		ModTime:   now.Add(-48 * time.Hour),
+	}, now)
+	if dirVisual.color != (color.NRGBA{R: 0x66, G: 0x77, B: 0x88, A: 0xFF}) {
+		t.Fatalf("directory target visual color=%v want #667788", dirVisual.color)
+	}
+	fileVisual := dirOnlyTheme.visualForEntry(filesys.Entry{
+		Name:      "deploy.sh",
+		Kind:      filesys.EntryFile,
+		PermOctal: "0755",
+		ModTime:   now.Add(-48 * time.Hour),
+	}, now)
+	if fileVisual.hasColor || fileVisual.iconKey != "" {
+		t.Fatalf("directory-only rule should not style regular files: %#v", fileVisual)
 	}
 }
 

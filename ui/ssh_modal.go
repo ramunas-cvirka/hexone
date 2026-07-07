@@ -1030,11 +1030,11 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return ui.layoutSSHModalHeader(th, gtx, st)
 								}),
-								layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+								layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return ui.layoutSSHModalBody(th, gtx, st)
 								}),
-								layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+								layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 									return ui.layoutSSHModalFooter(th, gtx, st)
 								}),
@@ -1062,18 +1062,24 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 }
 
 func (ui *UI) layoutSSHModalHeader(th *material.Theme, gtx layout.Context, st *sshModalState) layout.Dimensions {
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Body1(th, "SSH Sessions")
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.Font.Weight = font.Bold
-			lbl.TextSize = ui.scaleModalFontSize(12)
-			lbl.Color = txtColor
-			return lbl.Layout(gtx)
-		}),
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body1(th, "SSH Sessions")
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.Font.Weight = font.Bold
+					lbl.TextSize = ui.scaleModalFontSize(12)
+					lbl.Color = txtColor
+					return lbl.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
+				}),
+			)
 		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
 	)
 }
 
@@ -1084,7 +1090,9 @@ func (ui *UI) layoutSSHModalBody(th *material.Theme, gtx layout.Context, st *ssh
 				return ui.layoutSSHSetupsList(th, gtx, st)
 			})
 		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Rigid(layoutDialogVerticalDivider),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSSHSetupForm(th, gtx, st)
 		}),
@@ -1093,46 +1101,38 @@ func (ui *UI) layoutSSHModalBody(th *material.Theme, gtx layout.Context, st *ssh
 
 func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *sshModalState) layout.Dimensions {
 	visibleFocus := st.visibleFocus()
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 18},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(5)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Caption(th, "Saved setups")
-								lbl.Font.Typeface = ui.interfaceTypeface()
-								lbl.TextSize = ui.scaleModalFontSize(9)
-								lbl.Color = hintColor
-								return lbl.Layout(gtx)
-							}),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutSSHAddButton(th, gtx, &st.addClick, visibleFocus == sshModalFocusAdd)
-							}),
-						)
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+	return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						if len(st.setups) == 0 {
-							lbl := material.Body2(th, "No setups yet. Press + to add one.")
-							lbl.Font.Typeface = ui.interfaceTypeface()
-							lbl.TextSize = ui.scaleModalFontSize(10)
-							lbl.Color = hintColor
-							lbl.MaxLines = 3
-							return lbl.Layout(gtx)
-						}
-						return st.setupList.Layout(gtx, len(st.setups), func(gtx layout.Context, index int) layout.Dimensions {
-							return ui.layoutSSHSetupRow(th, gtx, st, index)
-						})
+						lbl := material.Caption(th, "Saved setups")
+						lbl.Font.Typeface = ui.interfaceTypeface()
+						lbl.TextSize = ui.scaleModalFontSize(9)
+						lbl.Color = hintColor
+						return lbl.Layout(gtx)
+					}),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutSSHAddButton(th, gtx, &st.addClick, visibleFocus == sshModalFocusAdd)
 					}),
 				)
-			})
-		},
-	)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				if len(st.setups) == 0 {
+					lbl := material.Body2(th, "No setups yet. Press + to add one.")
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(10)
+					lbl.Color = hintColor
+					lbl.MaxLines = 3
+					return lbl.Layout(gtx)
+				}
+				return st.setupList.Layout(gtx, len(st.setups), func(gtx layout.Context, index int) layout.Dimensions {
+					return ui.layoutSSHSetupRow(th, gtx, st, index)
+				})
+			}),
+		)
+	})
 }
 
 func (ui *UI) layoutSSHAddButton(th *material.Theme, gtx layout.Context, c *widget.Clickable, focused bool) layout.Dimensions {
@@ -1250,72 +1250,62 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 	identity, _ := st.currentEditorSetup()
 	identityLabel := sshSetupIdentity(identity)
 	visibleFocus := st.visibleFocus()
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 18},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(5)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Caption(th, "Setup details")
-						lbl.Font.Typeface = ui.interfaceTypeface()
-						lbl.TextSize = ui.scaleModalFontSize(9)
-						lbl.Color = hintColor
-						return lbl.Layout(gtx)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, identityLabel)
-						lbl.Font.Typeface = ui.interfaceTypeface()
-						lbl.Font.Weight = font.Medium
-						lbl.TextSize = ui.scaleModalFontSize(10)
-						lbl.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
-						lbl.MaxLines = 1
-						lbl.Truncator = "..."
-						return lbl.Layout(gtx)
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-							layout.Flexed(1.0, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutSSHField(th, gtx, "IP / Host", &st.hostEdit, "example.com", true, visibleFocus == sshModalFocusHost)
-							}),
-							layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return fixedWidth(gtx, gtx.Dp(unit.Dp(72)), func(gtx layout.Context) layout.Dimensions {
-									return ui.layoutSSHField(th, gtx, "Port", &st.portEdit, "22", true, visibleFocus == sshModalFocusPort)
-								})
-							}),
-						)
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutSSHField(th, gtx, "User", &st.userEdit, "root", true, visibleFocus == sshModalFocusUser)
-							}),
-							layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutSSHField(th, gtx, "Password", &st.passEdit, "optional", true, visibleFocus == sshModalFocusPassword)
-							}),
-						)
-					}),
-					layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
-							layout.Flexed(1.3, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutSSHField(th, gtx, "Key path", &st.keyPathEdit, "C:\\Users\\me\\.ssh\\id_ed25519", true, visibleFocus == sshModalFocusKeyPath)
-							}),
-							layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-							layout.Flexed(0.7, func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutSSHField(th, gtx, "Passphrase", &st.keyPassEdit, "optional", true, visibleFocus == sshModalFocusPassphrase)
-							}),
-						)
-					}),
-				)
-			})
-		},
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "Setup details")
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
+			lbl.Color = hintColor
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, identityLabel)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.Font.Weight = font.Medium
+			lbl.TextSize = ui.scaleModalFontSize(10)
+			lbl.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
+			lbl.MaxLines = 1
+			lbl.Truncator = "..."
+			return lbl.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Flexed(1.0, func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSSHField(th, gtx, "IP / Host", &st.hostEdit, "example.com", true, visibleFocus == sshModalFocusHost)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, gtx.Dp(unit.Dp(72)), func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutSSHField(th, gtx, "Port", &st.portEdit, "22", true, visibleFocus == sshModalFocusPort)
+					})
+				}),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSSHField(th, gtx, "User", &st.userEdit, "root", true, visibleFocus == sshModalFocusUser)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSSHField(th, gtx, "Password", &st.passEdit, "optional", true, visibleFocus == sshModalFocusPassword)
+				}),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+				layout.Flexed(1.3, func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSSHField(th, gtx, "Key path", &st.keyPathEdit, "C:\\Users\\me\\.ssh\\id_ed25519", true, visibleFocus == sshModalFocusKeyPath)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Flexed(0.7, func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSSHField(th, gtx, "Passphrase", &st.keyPassEdit, "optional", true, visibleFocus == sshModalFocusPassphrase)
+				}),
+			)
+		}),
 	)
 }
 
@@ -1374,45 +1364,57 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 	}
 
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			if st.errText == "" {
-				return layout.Dimensions{}
-			}
-			lbl := material.Caption(th, st.errText)
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleModalFontSize(9)
-			lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
-			lbl.MaxLines = 2
-			lbl.Truncator = "..."
-			return lbl.Layout(gtx)
-		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, ui.sshFooterActionWidthPx(th, gtx), func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutDialogActionTripleState(
-					th,
-					gtx,
-					&st.cancelClick,
-					"Cancel",
-					hoverCancel,
-					pulseCancel,
-					false,
-					&st.saveClick,
-					"Save",
-					hoverSave,
-					pulseSave,
-					false,
-					&st.connectClick,
-					"Connect",
-					hoverConnect,
-					pulseConnect,
-					false,
-					cancelVisual,
-					saveVisual,
-					connectVisual,
-				)
-			})
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					maxX := gtx.Constraints.Max.X
+					if st.errText == "" {
+						return layout.Dimensions{Size: image.Pt(maxX, 1)}
+					}
+					lbl := material.Caption(th, st.errText)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(9)
+					lbl.Color = color.NRGBA{R: 255, G: 170, B: 170, A: 255}
+					lbl.MaxLines = 2
+					lbl.Truncator = "..."
+					dims := lbl.Layout(gtx)
+					if dims.Size.X < maxX {
+						dims.Size.X = maxX
+					}
+					return dims
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, ui.sshFooterActionWidthPx(th, gtx), func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutDialogActionTripleState(
+							th,
+							gtx,
+							&st.cancelClick,
+							"Cancel",
+							hoverCancel,
+							pulseCancel,
+							false,
+							&st.saveClick,
+							"Save",
+							hoverSave,
+							pulseSave,
+							false,
+							&st.connectClick,
+							"Connect",
+							hoverConnect,
+							pulseConnect,
+							false,
+							cancelVisual,
+							saveVisual,
+							connectVisual,
+						)
+					})
+				}),
+			)
 		}),
 	)
 }
@@ -1421,10 +1423,9 @@ func (ui *UI) sshFooterActionWidthPx(th *material.Theme, gtx layout.Context) int
 	leftW, _ := ui.dialogActionSegmentMetricsPx(th, gtx, "Cancel")
 	middleW, _ := ui.dialogActionSegmentMetricsPx(th, gtx, "Save")
 	rightW, _ := ui.dialogActionSegmentMetricsPx(th, gtx, "Connect")
-	sepW := gtx.Dp(unit.Dp(1))
-	if sepW < 1 {
-		sepW = 1
+	gap := gtx.Dp(unit.Dp(4))
+	if gap < 1 {
+		gap = 1
 	}
-	inset := gtx.Dp(unit.Dp(1)) * 2
-	return leftW + middleW + rightW + sepW*2 + inset
+	return leftW + middleW + rightW + gap*2
 }

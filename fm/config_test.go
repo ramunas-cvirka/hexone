@@ -124,6 +124,49 @@ general:
 	}
 }
 
+func TestGeneralPaneWeightDefaultsAndNormalization(t *testing.T) {
+	cfg := DefaultConfig()
+	if got, want := cfg.General.FileWeight, FontWeightRegular; got != want {
+		t.Fatalf("default file weight=%q want %q", got, want)
+	}
+	if got, want := cfg.General.DirWeight, FontWeightBold; got != want {
+		t.Fatalf("default dir weight=%q want %q", got, want)
+	}
+	if got, want := cfg.General.PermissionsWeight, FontWeightRegular; got != want {
+		t.Fatalf("default permissions weight=%q want %q", got, want)
+	}
+
+	raw := `
+general:
+  file_weight: light
+  dir_weight: normal
+  permissions_weight: invalid
+  size_weight: bold
+  date_weight: regular
+`
+	cfg = DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.General.FileWeight, FontWeightRegular; got != want {
+		t.Fatalf("file weight=%q want normalized %q", got, want)
+	}
+	if got, want := cfg.General.DirWeight, FontWeightRegular; got != want {
+		t.Fatalf("dir weight=%q want %q", got, want)
+	}
+	if got, want := cfg.General.PermissionsWeight, FontWeightRegular; got != want {
+		t.Fatalf("permissions weight=%q want fallback %q", got, want)
+	}
+	if got, want := cfg.General.SizeWeight, FontWeightBold; got != want {
+		t.Fatalf("size weight=%q want %q", got, want)
+	}
+	if got, want := cfg.General.DateWeight, FontWeightRegular; got != want {
+		t.Fatalf("date weight=%q want %q", got, want)
+	}
+}
+
 func TestTerminalAcceleratedKeysDefaultsOnAndCanBeDisabled(t *testing.T) {
 	cfg := DefaultConfig()
 	if !cfg.Terminal.AcceleratedKeys {
@@ -1120,15 +1163,16 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 
 func TestNormalizeFilenameColors(t *testing.T) {
 	cfg := DefaultConfig()
+	cfg.Colors.Filenames.Target = "dirs"
 	cfg.Colors.Filenames.Text = "oops"
 	cfg.Colors.Filenames.Icon = "mystery"
 	cfg.Colors.Filenames.AgeRules = []FilenameAgeRule{
-		{MaxAge: "24h", Text: "aabbcc", Icon: "schedule"},
+		{MaxAge: "24h", Target: "regular", Text: "aabbcc", Icon: "schedule"},
 		{MaxAge: "bad", Text: "#112233", Icon: "lock"},
 		{MaxAge: "1w", Text: "", Icon: ""},
 	}
 	cfg.Colors.Filenames.PermissionRules = []FilenamePermissionRule{
-		{Permissions: "755", Match: "partial", Text: "#556677", Icon: "lock"},
+		{Permissions: "755", Match: "partial", Target: "folders", Text: "#556677", Icon: "lock"},
 		{Permissions: "oops", Text: "#123456", Icon: "document"},
 		{Permissions: "0644", Text: "bad", Icon: "description"},
 		{Permissions: "0000", Match: "any", Text: "#654321", Icon: "document"},
@@ -1139,7 +1183,7 @@ func TestNormalizeFilenameColors(t *testing.T) {
 		{Extension: "bad/name", Text: "#123456", Icon: "document"},
 	}
 	cfg.Colors.Filenames.SizeRules = []FilenameSizeRule{
-		{Size: "10mb", Match: "max", Text: "102030", Icon: "movie"},
+		{Size: "10mb", Match: "max", Target: "dir", Text: "102030", Icon: "movie"},
 		{Size: "1g", Text: "", Icon: ""},
 		{Size: "oops", Text: "#123456", Icon: "lock"},
 	}
@@ -1151,6 +1195,9 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	}
 	if cfg.Colors.Filenames.Icon != "" {
 		t.Fatalf("Filenames.Icon=%q want empty", cfg.Colors.Filenames.Icon)
+	}
+	if cfg.Colors.Filenames.Target != FilenameTargetDirs {
+		t.Fatalf("Filenames.Target=%q want %q", cfg.Colors.Filenames.Target, FilenameTargetDirs)
 	}
 	if len(cfg.Colors.Filenames.AgeRules) != 1 {
 		t.Fatalf("len(Filenames.AgeRules)=%d want 1", len(cfg.Colors.Filenames.AgeRules))
@@ -1164,6 +1211,9 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	if got := cfg.Colors.Filenames.AgeRules[0].Icon; got != FilenameIconRecent {
 		t.Fatalf("AgeRules[0].Icon=%q want %q", got, FilenameIconRecent)
 	}
+	if got := cfg.Colors.Filenames.AgeRules[0].Target; got != FilenameTargetFiles {
+		t.Fatalf("AgeRules[0].Target=%q want %q", got, FilenameTargetFiles)
+	}
 	if len(cfg.Colors.Filenames.PermissionRules) != 2 {
 		t.Fatalf("len(Filenames.PermissionRules)=%d want 2", len(cfg.Colors.Filenames.PermissionRules))
 	}
@@ -1175,6 +1225,9 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	}
 	if got := cfg.Colors.Filenames.PermissionRules[0].Icon; got != FilenameIconLocked {
 		t.Fatalf("PermissionRules[0].Icon=%q want %q", got, FilenameIconLocked)
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[0].Target; got != FilenameTargetDirs {
+		t.Fatalf("PermissionRules[0].Target=%q want %q", got, FilenameTargetDirs)
 	}
 	if got := cfg.Colors.Filenames.PermissionRules[1].Permissions; got != "0644" {
 		t.Fatalf("PermissionRules[1].Permissions=%q want %q", got, "0644")
@@ -1221,6 +1274,9 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	if got := cfg.Colors.Filenames.SizeRules[0].Icon; got != FilenameIconVideo {
 		t.Fatalf("SizeRules[0].Icon=%q want %q", got, FilenameIconVideo)
 	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Target; got != FilenameTargetDirs {
+		t.Fatalf("SizeRules[0].Target=%q want %q", got, FilenameTargetDirs)
+	}
 }
 
 func TestNormalizeFilenameAgeRulesSortsAndDedupes(t *testing.T) {
@@ -1239,6 +1295,20 @@ func TestNormalizeFilenameAgeRulesSortsAndDedupes(t *testing.T) {
 	}
 	if got[1].Text != "#556677" || got[1].Icon != FilenameIconRecent {
 		t.Fatalf("NormalizeFilenameAgeRules duplicate merge=%#v want last 1d rule", got[1])
+	}
+}
+
+func TestNormalizeFilenameRulesKeepDistinctTargets(t *testing.T) {
+	got := NormalizeFilenameExtensionRules([]FilenameExtensionRule{
+		{Extension: ".go", Target: "files", Text: "#112233"},
+		{Extension: ".go", Target: "dirs", Text: "#445566"},
+		{Extension: ".go", Target: "both", Text: "#778899"},
+	})
+	if len(got) != 3 {
+		t.Fatalf("len(NormalizeFilenameExtensionRules)=%d want 3", len(got))
+	}
+	if got[0].Target != FilenameTargetFiles || got[1].Target != FilenameTargetDirs || got[2].Target != FilenameTargetBoth {
+		t.Fatalf("targets=%#v want files, dirs, both", got)
 	}
 }
 
