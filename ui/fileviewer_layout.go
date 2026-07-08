@@ -202,6 +202,9 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 											return ui.layoutHexOutputView(th, gtx, st)
 										}
 										if st.detectedImagePreview {
+											if viewerPDFPreviewActive(st) {
+												return ui.layoutPDFDocOutputView(th, gtx, st)
+											}
 											return ui.layoutImageOutputView(th, gtx, st)
 										}
 										return ui.layoutStreamOutputView(th, gtx, st)
@@ -1020,6 +1023,9 @@ func viewerImageFormatDisplayName(format string) string {
 func viewerImageZoomLabel(st *fileViewerState) string {
 	if st == nil || !st.detectedImagePreview {
 		return ""
+	}
+	if viewerPDFPreviewActive(st) {
+		return fmt.Sprintf("%.0f%%", float64(st.pdfDoc.effectiveZoom()*100))
 	}
 	return fmt.Sprintf("%.0f%%", float64(st.imageView.effectiveZoom()*100))
 }

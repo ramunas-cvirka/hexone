@@ -1460,19 +1460,16 @@ func (ui *UI) startCustomCommandViewer(raw fm.CustomCommand, now time.Time) bool
 	}
 	targetPath := ui.customCommandViewerTarget(pane, remote)
 	st := &fileViewerState{
-		pane:            idx,
-		path:            targetPath,
-		name:            cmd.Name,
-		remote:          remote,
-		status:          "loading...",
-		fileEncoding:    fm.ViewerFileEncodingAuto,
-		wrapEnabled:     viewerWordWrap(ui.fmCfg),
-		commandOnly:     true,
-		resultCh:        make(chan fileViewerResult, 4),
-		previewRenderCh: make(chan fileViewerPreviewRenderResult, 2),
-		previewCacheCh:  make(chan fileViewerPDFCacheResult, 4),
-		pdfPageCache:    make(map[int]viewerPDFRenderResult, 3),
-		pdfPreloadPages: make(map[int]struct{}, 2),
+		pane:         idx,
+		path:         targetPath,
+		name:         cmd.Name,
+		remote:       remote,
+		status:       "loading...",
+		fileEncoding: fm.ViewerFileEncodingAuto,
+		wrapEnabled:  viewerWordWrap(ui.fmCfg),
+		commandOnly:  true,
+		resultCh:     make(chan fileViewerResult, 4),
+		pdfDocCh:     make(chan pdfDocResult, 16),
 	}
 	st.mode = "command"
 	st.command = cmd.Command

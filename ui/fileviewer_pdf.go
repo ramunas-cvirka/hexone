@@ -28,9 +28,38 @@ type viewerPDFRenderResult struct {
 	Size      image.Point
 }
 
+// viewerPDFPageSize is a native page size in PDF points.
+type viewerPDFPageSize struct {
+	W float64
+	H float64
+}
+
+type viewerPDFDocInfo struct {
+	PageCount int
+	PageSizes []viewerPDFPageSize
+}
+
+// viewerPDFTextChar is one character of page text. The rect is in page
+// points with the origin at the top-left corner of the page (already
+// flipped from pdfium's bottom-left origin).
+type viewerPDFTextChar struct {
+	Rune   rune
+	Left   float64
+	Top    float64
+	Right  float64
+	Bottom float64
+}
+
+type viewerPDFPageText struct {
+	Page  int
+	Chars []viewerPDFTextChar
+}
+
 type viewerPDFRenderer interface {
 	Available() bool
 	RenderPage(req viewerPDFRenderRequest) (viewerPDFRenderResult, error)
+	DocInfo(req viewerPDFRenderRequest) (viewerPDFDocInfo, error)
+	PageText(req viewerPDFRenderRequest) (viewerPDFPageText, error)
 }
 
 type viewerNoopPDFRenderer struct{}
@@ -41,6 +70,14 @@ func (viewerNoopPDFRenderer) Available() bool {
 
 func (viewerNoopPDFRenderer) RenderPage(_ viewerPDFRenderRequest) (viewerPDFRenderResult, error) {
 	return viewerPDFRenderResult{}, errors.New("pdf preview is unavailable")
+}
+
+func (viewerNoopPDFRenderer) DocInfo(_ viewerPDFRenderRequest) (viewerPDFDocInfo, error) {
+	return viewerPDFDocInfo{}, errors.New("pdf preview is unavailable")
+}
+
+func (viewerNoopPDFRenderer) PageText(_ viewerPDFRenderRequest) (viewerPDFPageText, error) {
+	return viewerPDFPageText{}, errors.New("pdf preview is unavailable")
 }
 
 var viewerPDFPreviewBackend viewerPDFRenderer = viewerNoopPDFRenderer{}
@@ -98,10 +135,8 @@ func viewerPDFDisplayedPage(st *fileViewerState) int {
 		return 0
 	}
 	page := st.imagePreviewPage
-	if st.imageView.pdfDragging {
-		page = st.imageView.pdfDragPage
-	} else if st.previewRenderActive {
-		page = st.previewRenderPage
+	if st.pdfDoc.pageCount() > 0 {
+		page = st.pdfDoc.currentPage()
 	}
 	if page < 0 {
 		return 0

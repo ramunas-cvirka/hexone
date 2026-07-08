@@ -269,10 +269,13 @@ Remote panes support `command` mode too, so the same log-following patterns work
 
 ### PDF Preview
 
-- rendered PDF pages use the same pan and zoom controls as image preview
-- `Up` / `Down` and `PageUp` / `PageDown` scroll inside the current page first, then move to the previous or next page at the edge
-- the vertical scrollbar represents the whole PDF and can be dragged to jump between pages quickly
-- mouse-wheel scrolling crosses page boundaries at the top and bottom, just like the keyboard controls
+- PDFs open as one continuous document: pages are stacked vertically and fitted to the window width
+- scrolling is smooth and seamless across page boundaries with the mouse wheel, `Up` / `Down`, and `PageUp` / `PageDown`
+- the vertical scrollbar represents the combined height of all pages, not the page count
+- dragging over text selects it (the cursor becomes a text beam); dragging anywhere else pans the page
+- holding a selection drag past the top or bottom edge auto-scrolls the document; double-click selects the word under the cursor
+- `Shift`+drag forces text selection; `Ctrl+C` / `Cmd+C` or the right-click `Copy` menu copies the selection
+- `Ctrl++` / `Ctrl+-` or `Cmd++` / `Cmd+-` zoom in and out around the viewport center; `100%` means fit-to-width
 - `[` moves to the previous page and `]` moves to the next page
 
 ## Customization

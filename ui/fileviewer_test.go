@@ -20,6 +20,8 @@ import (
 	"unicode"
 	"unicode/utf16"
 
+	"gioui.org/layout"
+	"gioui.org/op"
 	"hexone/filesys"
 	"hexone/fm"
 )
@@ -145,6 +147,8 @@ type fakeViewerPDFRenderer struct {
 	available bool
 	requests  []viewerPDFRenderRequest
 	result    viewerPDFRenderResult
+	docInfo   viewerPDFDocInfo
+	pageText  viewerPDFPageText
 	err       error
 }
 
@@ -155,6 +159,32 @@ func (f *fakeViewerPDFRenderer) Available() bool {
 func (f *fakeViewerPDFRenderer) RenderPage(req viewerPDFRenderRequest) (viewerPDFRenderResult, error) {
 	f.requests = append(f.requests, req)
 	return f.result, f.err
+}
+
+func (f *fakeViewerPDFRenderer) DocInfo(_ viewerPDFRenderRequest) (viewerPDFDocInfo, error) {
+	if f.err != nil {
+		return viewerPDFDocInfo{}, f.err
+	}
+	info := f.docInfo
+	if info.PageCount == 0 {
+		info.PageCount = f.result.PageCount
+	}
+	if len(info.PageSizes) == 0 && info.PageCount > 0 {
+		info.PageSizes = make([]viewerPDFPageSize, info.PageCount)
+		for i := range info.PageSizes {
+			info.PageSizes[i] = viewerPDFPageSize{W: 612, H: 792}
+		}
+	}
+	return info, nil
+}
+
+func (f *fakeViewerPDFRenderer) PageText(req viewerPDFRenderRequest) (viewerPDFPageText, error) {
+	if f.err != nil {
+		return viewerPDFPageText{}, f.err
+	}
+	text := f.pageText
+	text.Page = req.Page
+	return text, nil
 }
 
 func testViewerPreviewImage() image.Image {
@@ -690,13 +720,13 @@ func TestViewerUpdateActionTreatsSameImageBytesAsSame(t *testing.T) {
 	}
 }
 
-func TestStepFileViewerPDFPageStartsRender(t *testing.T) {
+func TestEnsurePDFDocAssetsRendersVisiblePages(t *testing.T) {
 	prev := viewerPDFPreviewBackend
 	fake := &fakeViewerPDFRenderer{
 		available: true,
 		result: viewerPDFRenderResult{
 			Image:     image.NewNRGBA(image.Rect(0, 0, 90, 140)),
-			Page:      1,
+			Page:      0,
 			PageCount: 3,
 			Size:      image.Pt(90, 140),
 		},
@@ -714,96 +744,80 @@ func TestStepFileViewerPDFPageStartsRender(t *testing.T) {
 		imagePreviewData:      []byte("%PDF-1.7"),
 		imagePreviewPage:      0,
 		imagePreviewPageCount: 3,
-		previewRenderCh:       make(chan fileViewerPreviewRenderResult, 1),
+		pdfDocCh:              make(chan pdfDocResult, 16),
 		seq:                   7,
 	}
+	sizes := make([]viewerPDFPageSize, 3)
+	for i := range sizes {
+		sizes[i] = viewerPDFPageSize{W: 612, H: 792}
+	}
+	st.pdfDoc.viewportRect = image.Rect(0, 0, 160, 120)
+	st.pdfDoc.configure(viewerPDFDocInfo{PageCount: 3, PageSizes: sizes})
 	ui.fileViewer = st
 
-	if !ui.stepFileViewerPDFPage(now, 1) {
-		t.Fatal("expected pdf page step to start rendering")
-	}
-	if st.status != "rendering page 2/3" {
-		t.Fatalf("status=%q want %q", st.status, "rendering page 2/3")
-	}
+	gtx := layout.Context{Ops: new(op.Ops), Now: now}
+	ui.ensurePDFDocAssets(gtx, st)
 
-	select {
-	case res := <-st.previewRenderCh:
-		if res.seq != st.seq {
-			t.Fatalf("seq=%d want %d", res.seq, st.seq)
-		}
-		if res.page != 1 || res.pageCount != 3 {
-			t.Fatalf("page result=(%d,%d) want (1,3)", res.page, res.pageCount)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for pdf page render result")
+	if len(st.pdfDoc.renderPending) == 0 {
+		t.Fatal("expected page renders to be requested for visible pages")
 	}
-	if len(fake.requests) != 1 {
-		t.Fatalf("render requests=%d want 1", len(fake.requests))
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, ok := st.pdfDoc.pages[0]; ok {
+			break
+		}
+		select {
+		case res := <-st.pdfDocCh:
+			if res.seq != st.seq {
+				t.Fatalf("seq=%d want %d", res.seq, st.seq)
+			}
+			if res.render != nil {
+				st.pdfDoc.storeRender(res.page, *res.render)
+				delete(st.pdfDoc.renderPending, res.page)
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for visible page 0 render result")
+		}
 	}
-	if fake.requests[0].Page != 1 {
-		t.Fatalf("requested page=%d want 1", fake.requests[0].Page)
+	found := false
+	for _, req := range fake.requests {
+		if req.Page == 0 {
+			found = true
+			if req.Width != st.pdfDoc.renderWidthFor(0) {
+				t.Fatalf("render width=%d want %d", req.Width, st.pdfDoc.renderWidthFor(0))
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a render request for page 0")
 	}
 }
 
-func TestStartFileViewerPDFPageRenderUsesCachedPage(t *testing.T) {
-	prev := viewerPDFPreviewBackend
-	fake := &fakeViewerPDFRenderer{available: true}
-	viewerPDFPreviewBackend = fake
-	t.Cleanup(func() {
-		viewerPDFPreviewBackend = prev
-	})
+func TestPDFDocConfigurePreservesReadingPosition(t *testing.T) {
+	var v pdfDocView
+	v.viewportRect = image.Rect(0, 0, 200, 300)
+	fallback := make([]viewerPDFPageSize, 4)
+	for i := range fallback {
+		fallback[i] = viewerPDFPageSize{W: 612, H: 792}
+	}
+	v.configure(viewerPDFDocInfo{PageCount: 4, PageSizes: fallback})
+	// Move to page 2, halfway down.
+	v.scrollY = v.layoutTops[2] + v.layoutHeights[2]/2
+	v.clampScroll()
 
-	ui := NewUI(fm.DefaultConfig())
-	now := time.Date(2026, time.April, 11, 9, 0, 0, 0, time.UTC)
-	cachedImage := image.NewNRGBA(image.Rect(0, 0, 95, 145))
-	st := &fileViewerState{
-		detectedImagePreview:  true,
-		imagePreview:          image.NewNRGBA(image.Rect(0, 0, 90, 140)),
-		imagePreviewFormat:    "pdf",
-		imagePreviewData:      []byte("%PDF-1.7"),
-		imagePreviewSize:      image.Pt(90, 140),
-		imagePreviewPage:      0,
-		imagePreviewPageCount: 3,
-		previewRenderCh:       make(chan fileViewerPreviewRenderResult, 1),
-		pdfPageCache: map[int]viewerPDFRenderResult{
-			1: {
-				Image:     cachedImage,
-				Page:      1,
-				PageCount: 3,
-				Size:      image.Pt(95, 145),
-			},
-		},
+	real := make([]viewerPDFPageSize, 4)
+	for i := range real {
+		real[i] = viewerPDFPageSize{W: 300, H: 1200}
 	}
-	st.imageView.zoom = 1.5
-	ui.fileViewer = st
+	v.infoLoaded = false
+	v.configure(viewerPDFDocInfo{PageCount: 4, PageSizes: real})
 
-	ui.startFileViewerPDFPageRender(now, 1, false)
-
-	if st.previewRenderActive {
-		t.Fatal("cached page should not keep previewRenderActive")
+	page, frac := v.readingPosition()
+	if page != 2 {
+		t.Fatalf("page=%d want 2 after configure", page)
 	}
-	if got := st.imagePreviewPage; got != 1 {
-		t.Fatalf("imagePreviewPage=%d want 1", got)
-	}
-	if st.imagePreview != cachedImage {
-		t.Fatal("cached page image was not applied")
-	}
-	if got := st.imagePreviewSize; got != image.Pt(95, 145) {
-		t.Fatalf("imagePreviewSize=%v want %v", got, image.Pt(95, 145))
-	}
-	if got := st.status; got != "ready" {
-		t.Fatalf("status=%q want %q", got, "ready")
-	}
-	if got := st.imageView.zoom; got != 1.5 {
-		t.Fatalf("zoom=%f want %f", got, 1.5)
-	}
-	select {
-	case res := <-st.previewRenderCh:
-		t.Fatalf("unexpected render result from cached page: %+v", res)
-	case <-time.After(100 * time.Millisecond):
-	}
-	if len(fake.requests) != 0 {
-		t.Fatalf("render requests=%d want 0", len(fake.requests))
+	if frac < 0.4 || frac > 0.6 {
+		t.Fatalf("frac=%f want ~0.5 after configure", frac)
 	}
 }
 

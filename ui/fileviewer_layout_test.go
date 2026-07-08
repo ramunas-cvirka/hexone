@@ -349,15 +349,20 @@ func TestViewerImageZoomLabelUsesCurrentZoom(t *testing.T) {
 	}
 }
 
-func TestViewerPDFPageLabelUsesDraggedTargetPage(t *testing.T) {
+func TestViewerPDFPageLabelUsesScrolledDocumentPage(t *testing.T) {
 	st := &fileViewerState{
 		detectedImagePreview:  true,
 		imagePreviewFormat:    "pdf",
 		imagePreviewPage:      1,
 		imagePreviewPageCount: 9,
 	}
-	st.imageView.pdfDragging = true
-	st.imageView.pdfDragPage = 6
+	sizes := make([]viewerPDFPageSize, 9)
+	for i := range sizes {
+		sizes[i] = viewerPDFPageSize{W: 612, H: 792}
+	}
+	st.pdfDoc.viewportRect = image.Rect(0, 0, 200, 260)
+	st.pdfDoc.configure(viewerPDFDocInfo{PageCount: 9, PageSizes: sizes})
+	st.pdfDoc.scrollToPage(6)
 
 	if got := viewerPDFPageLabel(st); got != "Page 7/9" {
 		t.Fatalf("page label=%q want %q", got, "Page 7/9")
