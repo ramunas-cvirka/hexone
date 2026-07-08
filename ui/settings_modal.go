@@ -84,6 +84,7 @@ type settingsModalState struct {
 	colorPickerBase              string
 	colorPickerShade             widget.Float
 	colorPickerSetClick          widget.Clickable
+	colorTextTransparentBool     widget.Bool
 	popupGlobalPointerTag        uiEventTag
 	colorCategoryPopupTag        uiEventTag
 	colorPickerPopupTag          uiEventTag
@@ -891,6 +892,67 @@ func (st *settingsModalState) setColorTextValue(key, value string) {
 	}
 }
 
+func settingsPaneTextAllowsTransparent(key string) bool {
+	switch key {
+	case "hover", "selection", "selected_files", "focused_selected":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeSettingsPaneRowTextColor(raw, label string) (string, error) {
+	txt := strings.TrimSpace(raw)
+	if fm.IsTransparentColor(txt) {
+		return fm.TransparentColor, nil
+	}
+	if c, ok := fm.ParseHexColor(txt); ok {
+		return fm.FormatHexColor(c), nil
+	}
+	return "", fmt.Errorf("%s color must use #RRGGBB or transparent", label)
+}
+
+func settingsDefaultPaneRowTextColor(key string) string {
+	switch key {
+	case "hover":
+		return fm.DefaultFilePaneHoverTextHex
+	case "selected_files":
+		return fm.DefaultFilePaneSelectedTextHex
+	case "focused_selected":
+		return fm.DefaultFilePaneFocusedSelectedTextHex
+	default:
+		return fm.DefaultFilePaneSelectionTextHex
+	}
+}
+
+func (st *settingsModalState) syncColorTextTransparentCheckbox() {
+	if st == nil || st.colorScope != "panes" || !settingsPaneTextAllowsTransparent(st.colorCategory) {
+		if st != nil {
+			st.colorTextTransparentBool.Value = false
+		}
+		return
+	}
+	st.colorTextTransparentBool.Value = fm.IsTransparentColor(st.colorTextValue(st.colorCategory))
+}
+
+func (st *settingsModalState) setColorTextTransparent(enabled bool) bool {
+	if st == nil || st.colorScope != "panes" || !settingsPaneTextAllowsTransparent(st.colorCategory) {
+		return false
+	}
+	next := settingsDefaultPaneRowTextColor(st.colorCategory)
+	if enabled {
+		next = fm.TransparentColor
+	}
+	if st.colorTextValue(st.colorCategory) == next && st.colorTextTransparentBool.Value == enabled {
+		return false
+	}
+	st.colorTextTransparentBool.Value = enabled
+	st.setColorTextValue(st.colorCategory, next)
+	st.colorTextValueEdit.SetText(next)
+	st.errText = ""
+	return true
+}
+
 func settingsViewerCategoryHasText(key string) bool {
 	return key == "normal"
 }
@@ -901,6 +963,7 @@ func (st *settingsModalState) syncColorEditors() {
 	}
 	st.colorValueEdit.SetText(st.colorValue(st.colorCategory))
 	st.colorTextValueEdit.SetText(st.colorTextValue(st.colorCategory))
+	st.syncColorTextTransparentCheckbox()
 }
 
 func (st *settingsModalState) setColorCategory(key string) {
@@ -1396,21 +1459,22 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 
 	errText := ""
 	for _, field := range []struct {
-		label string
-		value string
+		label            string
+		value            string
+		allowTransparent bool
 	}{
 		{label: "Pane background", value: bgRaw},
 		{label: "Pane text", value: paneTextRaw},
 		{label: "Hover background", value: hoverRaw},
-		{label: "Hover text", value: hoverTextRaw},
+		{label: "Hover text", value: hoverTextRaw, allowTransparent: true},
 		{label: "Popup hover background", value: popupHoverRaw},
 		{label: "Popup hover text", value: popupHoverTextRaw},
 		{label: "Focused selection background", value: selectionRaw},
-		{label: "Focused selection text", value: selectionTextRaw},
+		{label: "Focused selection text", value: selectionTextRaw, allowTransparent: true},
 		{label: "Selected files background", value: selectedFilesRaw},
-		{label: "Selected files text", value: selectedFilesTextRaw},
+		{label: "Selected files text", value: selectedFilesTextRaw, allowTransparent: true},
 		{label: "Focused + selected files background", value: focusedSelectedRaw},
-		{label: "Focused + selected files text", value: focusedSelectedTextRaw},
+		{label: "Focused + selected files text", value: focusedSelectedTextRaw, allowTransparent: true},
 		{label: "Current dir background", value: currentDirRaw},
 		{label: "Current dir text", value: currentDirTextRaw},
 		{label: "Scrollbar thumb", value: scrollbarThumbRaw},
@@ -1419,8 +1483,15 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 		if field.value == "" {
 			continue
 		}
+		if field.allowTransparent && fm.IsTransparentColor(field.value) {
+			continue
+		}
 		if _, ok := fm.ParseHexColor(field.value); !ok {
-			errText = field.label + " must use #RRGGBB"
+			if field.allowTransparent {
+				errText = field.label + " must use #RRGGBB or transparent"
+			} else {
+				errText = field.label + " must use #RRGGBB"
+			}
 			break
 		}
 	}
@@ -1429,15 +1500,15 @@ func (st *settingsModalState) draftFilePanePalette(cfg *fm.Config) (filePanePale
 	draft.Colors.FilePaneBackground = fm.NormalizeHexColor(bgRaw, bgFallback)
 	draft.Colors.FilePaneText = fm.NormalizeHexColor(paneTextRaw, paneTextFallback)
 	draft.Colors.Hover = fm.NormalizeHexColor(hoverRaw, hoverFallback)
-	draft.Colors.HoverText = fm.NormalizeHexColor(hoverTextRaw, hoverTextFallback)
+	draft.Colors.HoverText = fm.NormalizeHexOrTransparentColor(hoverTextRaw, hoverTextFallback)
 	draft.Colors.PopupHover = fm.NormalizeHexColor(popupHoverRaw, popupHoverFallback)
 	draft.Colors.PopupHoverText = fm.NormalizeHexColor(popupHoverTextRaw, popupHoverTextFallback)
 	draft.Colors.Selection = fm.NormalizeHexColor(selectionRaw, selectionFallback)
-	draft.Colors.SelectionText = fm.NormalizeHexColor(selectionTextRaw, selectionTextFallback)
+	draft.Colors.SelectionText = fm.NormalizeHexOrTransparentColor(selectionTextRaw, selectionTextFallback)
 	draft.Colors.SelectedFiles = fm.NormalizeHexColor(selectedFilesRaw, selectedFilesFallback)
-	draft.Colors.SelectedFilesText = fm.NormalizeHexColor(selectedFilesTextRaw, selectedFilesTextFallback)
+	draft.Colors.SelectedFilesText = fm.NormalizeHexOrTransparentColor(selectedFilesTextRaw, selectedFilesTextFallback)
 	draft.Colors.FocusedSelected = fm.NormalizeHexColor(focusedSelectedRaw, focusedSelectedFallback)
-	draft.Colors.FocusedSelectedText = fm.NormalizeHexColor(focusedSelectedTextRaw, focusedSelectedTextFallback)
+	draft.Colors.FocusedSelectedText = fm.NormalizeHexOrTransparentColor(focusedSelectedTextRaw, focusedSelectedTextFallback)
 	draft.Colors.CurrentDirBg = fm.NormalizeHexColor(currentDirRaw, currentDirFallback)
 	draft.Colors.CurrentDirText = fm.NormalizeHexColor(currentDirTextRaw, currentDirTextFallback)
 	draft.Colors.ScrollbarThumb = fm.NormalizeOptionalHexColor(scrollbarThumbRaw)
@@ -1450,20 +1521,27 @@ func filePanePaletteToConfigColors(palette filePanePalette) fm.ColorsConfig {
 		FilePaneBackground:  fm.FormatHexColor(palette.PaneBg),
 		FilePaneText:        fm.FormatHexColor(palette.PaneFg),
 		Hover:               fm.FormatHexColor(palette.HoverBg),
-		HoverText:           fm.FormatHexColor(palette.HoverFg),
+		HoverText:           formatPaneRowTextConfigColor(palette.HoverFg),
 		PopupHover:          fm.FormatHexColor(palette.PopupHoverBg),
 		PopupHoverText:      fm.FormatHexColor(palette.PopupHoverFg),
 		Selection:           fm.FormatHexColor(palette.SelectedBg),
-		SelectionText:       fm.FormatHexColor(palette.SelectedFg),
+		SelectionText:       formatPaneRowTextConfigColor(palette.SelectedFg),
 		SelectedFiles:       fm.FormatHexColor(palette.MarkedBg),
-		SelectedFilesText:   fm.FormatHexColor(palette.MarkedFg),
+		SelectedFilesText:   formatPaneRowTextConfigColor(palette.MarkedFg),
 		FocusedSelected:     fm.FormatHexColor(palette.MarkedSelBg),
-		FocusedSelectedText: fm.FormatHexColor(palette.MarkedSelFg),
+		FocusedSelectedText: formatPaneRowTextConfigColor(palette.MarkedSelFg),
 		CurrentDirBg:        fm.FormatHexColor(palette.CurrentDirBg),
 		CurrentDirText:      fm.FormatHexColor(palette.CurrentDirFg),
 		ScrollbarThumb:      fm.FormatHexColor(palette.ScrollThumb),
 		ScrollbarTrack:      fm.FormatHexColor(palette.ScrollTrack),
 	}
+}
+
+func formatPaneRowTextConfigColor(c color.NRGBA) string {
+	if c.A == 0 {
+		return fm.TransparentColor
+	}
+	return fm.FormatHexColor(c)
 }
 
 func (st *settingsModalState) draftViewerTheme(cfg *fm.Config) (fileViewerTheme, string) {
@@ -2995,10 +3073,10 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	} else {
 		ui.fmCfg.Colors.Hover = fm.FormatHexColor(c)
 	}
-	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorHoverText)); !ok {
-		return fmt.Errorf("hover text color must use #RRGGBB")
+	if text, err := normalizeSettingsPaneRowTextColor(st.colorHoverText, "hover text"); err != nil {
+		return err
 	} else {
-		ui.fmCfg.Colors.HoverText = fm.FormatHexColor(c)
+		ui.fmCfg.Colors.HoverText = text
 	}
 	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorPopupHover)); !ok {
 		return fmt.Errorf("popup hover color must use #RRGGBB")
@@ -3015,30 +3093,30 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	} else {
 		ui.fmCfg.Colors.Selection = fm.FormatHexColor(c)
 	}
-	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorSelectionText)); !ok {
-		return fmt.Errorf("focused selection text color must use #RRGGBB")
+	if text, err := normalizeSettingsPaneRowTextColor(st.colorSelectionText, "focused selection text"); err != nil {
+		return err
 	} else {
-		ui.fmCfg.Colors.SelectionText = fm.FormatHexColor(c)
+		ui.fmCfg.Colors.SelectionText = text
 	}
 	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorSelectedFiles)); !ok {
 		return fmt.Errorf("selected files color must use #RRGGBB")
 	} else {
 		ui.fmCfg.Colors.SelectedFiles = fm.FormatHexColor(c)
 	}
-	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorSelectedFilesText)); !ok {
-		return fmt.Errorf("selected files text color must use #RRGGBB")
+	if text, err := normalizeSettingsPaneRowTextColor(st.colorSelectedFilesText, "selected files text"); err != nil {
+		return err
 	} else {
-		ui.fmCfg.Colors.SelectedFilesText = fm.FormatHexColor(c)
+		ui.fmCfg.Colors.SelectedFilesText = text
 	}
 	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorFocusedSelected)); !ok {
 		return fmt.Errorf("focused + selected files color must use #RRGGBB")
 	} else {
 		ui.fmCfg.Colors.FocusedSelected = fm.FormatHexColor(c)
 	}
-	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorFocusedSelectedText)); !ok {
-		return fmt.Errorf("focused + selected files text color must use #RRGGBB")
+	if text, err := normalizeSettingsPaneRowTextColor(st.colorFocusedSelectedText, "focused + selected files text"); err != nil {
+		return err
 	} else {
-		ui.fmCfg.Colors.FocusedSelectedText = fm.FormatHexColor(c)
+		ui.fmCfg.Colors.FocusedSelectedText = text
 	}
 	if c, ok := fm.ParseHexColor(strings.TrimSpace(st.colorCurrentDir)); !ok {
 		return fmt.Errorf("current dir background color must use #RRGGBB")
@@ -6092,6 +6170,8 @@ func (ui *UI) layoutSettingsColorsTabContent(th *material.Theme, gtx layout.Cont
 	showTextField := st.colorScope != "viewer" || settingsViewerCategoryHasText(st.colorCategory)
 	bgFieldLabel := "Background"
 	textFieldLabel := "Text"
+	allowTransparentText := st.colorScope == "panes" && settingsPaneTextAllowsTransparent(st.colorCategory)
+	st.syncColorTextTransparentCheckbox()
 	if st.colorScope == "viewer" && strings.HasPrefix(st.colorCategory, "hex_") {
 		bgFieldLabel = "Text"
 	}
@@ -6117,7 +6197,13 @@ func (ui *UI) layoutSettingsColorsTabContent(th *material.Theme, gtx layout.Cont
 			return ui.layoutSettingsColorCategoryField(th, gtx, st, options)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(rowLabel("Colors (#RRGGBB)", true)),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			label := "Colors (#RRGGBB)"
+			if allowTransparentText {
+				label = "Colors (#RRGGBB or transparent)"
+			}
+			return rowLabel(label, true)(gtx)
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			children := []layout.FlexChild{
@@ -6132,6 +6218,14 @@ func (ui *UI) layoutSettingsColorsTabContent(th *material.Theme, gtx layout.Cont
 						return ui.layoutSettingsColorValueField(th, gtx, st, textFieldLabel, currentText, &st.colorTextValueEdit, &st.colorTextPickerClick, "text", textSwatchGroups, settingsKeyboardFocusColorsTextPicker, settingsKeyboardFocusColorsTextValue)
 					}),
 				)
+				if allowTransparentText {
+					children = append(children,
+						layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsColorTransparentCheckbox(th, gtx, st)
+						}),
+					)
+				}
 			}
 			children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 0)}
@@ -6145,6 +6239,8 @@ func (ui *UI) layoutSettingsColorsTabContent(th *material.Theme, gtx layout.Cont
 				note = "File and Hex selection backgrounds can be set separately. Leave Hex Selection empty to derive it from Selection."
 			} else if st.colorCategory == "scrollbar" {
 				note = "Leave scrollbar fields empty to derive contrast from the active pane palette."
+			} else if allowTransparentText {
+				note = "Use transparent for Text to keep filename color customizations visible on this row state."
 			}
 			lbl := material.Caption(th, note)
 			lbl.Font.Typeface = ui.interfaceTypeface()
@@ -6476,6 +6572,23 @@ func (ui *UI) layoutSettingsColorValueField(th *material.Theme, gtx layout.Conte
 		op.Defer(gtx.Ops, m.Stop())
 	}
 	return dims
+}
+
+func (ui *UI) layoutSettingsColorTransparentCheckbox(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	if st == nil {
+		return layout.Dimensions{}
+	}
+	return layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		before := st.colorTextTransparentBool.Value
+		dims := ui.layoutThemeCheckbox(th, gtx, &st.colorTextTransparentBool, "Transparent", ui.scaleModalFontSize(10))
+		if st.colorTextTransparentBool.Value != before {
+			st.focus = settingsKeyboardFocusColorsTextTransparent
+			st.setColorTextTransparent(st.colorTextTransparentBool.Value)
+			st.closeSettingsPopupsExcept("")
+		}
+		st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusColorsTextTransparent, &st.colorTextTransparentBool)
+		return dims
+	})
 }
 
 func settingsColorPickerButtonWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface) int {
@@ -6917,7 +7030,7 @@ func (ui *UI) layoutSettingsColorPreviewRows(th *material.Theme, gtx layout.Cont
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.HoverBg, palette.HoverFg, "Hover", "beta.txt")
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.HoverBg, settingsEffectivePaneRowTextColor(palette, palette.HoverFg), "Hover", "beta.txt")
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -6925,15 +7038,15 @@ func (ui *UI) layoutSettingsColorPreviewRows(th *material.Theme, gtx layout.Cont
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.SelectedBg, palette.SelectedFg, "Focused", "gamma.txt")
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.SelectedBg, settingsEffectivePaneRowTextColor(palette, palette.SelectedFg), "Focused", "gamma.txt")
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedBg, palette.MarkedFg, "Selected Files", "delta.txt")
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedBg, settingsEffectivePaneRowTextColor(palette, palette.MarkedFg), "Selected Files", "delta.txt")
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedSelBg, palette.MarkedSelFg, "Focused + Selected Files", "omega.txt")
+			return ui.layoutSettingsColorPreviewRow(th, gtx, palette.MarkedSelBg, settingsEffectivePaneRowTextColor(palette, palette.MarkedSelFg), "Focused + Selected Files", "omega.txt")
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -7121,6 +7234,13 @@ func settingsColorPreviewStateColor(bg color.NRGBA) color.NRGBA {
 	return muted
 }
 
+func settingsEffectivePaneRowTextColor(palette filePanePalette, fg color.NRGBA) color.NRGBA {
+	if fg.A == 0 {
+		return palette.PaneFg
+	}
+	return fg
+}
+
 func settingsPreviewColorForCategory(palette filePanePalette, key, part string) color.NRGBA {
 	switch key {
 	case "normal":
@@ -7130,7 +7250,7 @@ func settingsPreviewColorForCategory(palette filePanePalette, key, part string) 
 		return palette.PaneBg
 	case "hover":
 		if part == "text" {
-			return palette.HoverFg
+			return settingsEffectivePaneRowTextColor(palette, palette.HoverFg)
 		}
 		return palette.HoverBg
 	case "popup_hover":
@@ -7140,12 +7260,12 @@ func settingsPreviewColorForCategory(palette filePanePalette, key, part string) 
 		return palette.PopupHoverBg
 	case "selected_files":
 		if part == "text" {
-			return palette.MarkedFg
+			return settingsEffectivePaneRowTextColor(palette, palette.MarkedFg)
 		}
 		return palette.MarkedBg
 	case "focused_selected":
 		if part == "text" {
-			return palette.MarkedSelFg
+			return settingsEffectivePaneRowTextColor(palette, palette.MarkedSelFg)
 		}
 		return palette.MarkedSelBg
 	case "current_dir":
@@ -7160,7 +7280,7 @@ func settingsPreviewColorForCategory(palette filePanePalette, key, part string) 
 		return palette.ScrollThumb
 	default:
 		if part == "text" {
-			return palette.SelectedFg
+			return settingsEffectivePaneRowTextColor(palette, palette.SelectedFg)
 		}
 		return palette.SelectedBg
 	}

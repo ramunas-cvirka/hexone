@@ -1069,8 +1069,8 @@ func TestNormalizeColors(t *testing.T) {
 	if cfg.Colors.Hover != DefaultFilePaneHoverHex {
 		t.Fatalf("Hover=%q, want %q", cfg.Colors.Hover, DefaultFilePaneHoverHex)
 	}
-	if cfg.Colors.HoverText != DefaultFilePaneHoverTextHex {
-		t.Fatalf("HoverText=%q, want %q", cfg.Colors.HoverText, DefaultFilePaneHoverTextHex)
+	if cfg.Colors.HoverText != TransparentColor {
+		t.Fatalf("HoverText=%q, want %q", cfg.Colors.HoverText, TransparentColor)
 	}
 	if cfg.Colors.PopupHover != DefaultPopupHoverHex {
 		t.Fatalf("PopupHover=%q, want %q", cfg.Colors.PopupHover, DefaultPopupHoverHex)
@@ -1081,20 +1081,20 @@ func TestNormalizeColors(t *testing.T) {
 	if cfg.Colors.Selection != DefaultFilePaneSelectionHex {
 		t.Fatalf("Selection=%q, want %q", cfg.Colors.Selection, DefaultFilePaneSelectionHex)
 	}
-	if cfg.Colors.SelectionText != DefaultFilePaneSelectionTextHex {
-		t.Fatalf("SelectionText=%q, want %q", cfg.Colors.SelectionText, DefaultFilePaneSelectionTextHex)
+	if cfg.Colors.SelectionText != TransparentColor {
+		t.Fatalf("SelectionText=%q, want %q", cfg.Colors.SelectionText, TransparentColor)
 	}
 	if cfg.Colors.SelectedFiles != DefaultFilePaneSelectedFilesHex {
 		t.Fatalf("SelectedFiles=%q, want %q", cfg.Colors.SelectedFiles, DefaultFilePaneSelectedFilesHex)
 	}
-	if cfg.Colors.SelectedFilesText != DefaultFilePaneSelectedTextHex {
-		t.Fatalf("SelectedFilesText=%q, want %q", cfg.Colors.SelectedFilesText, DefaultFilePaneSelectedTextHex)
+	if cfg.Colors.SelectedFilesText != TransparentColor {
+		t.Fatalf("SelectedFilesText=%q, want %q", cfg.Colors.SelectedFilesText, TransparentColor)
 	}
 	if cfg.Colors.FocusedSelected != DefaultFilePaneFocusedSelectedHex {
 		t.Fatalf("FocusedSelected=%q, want %q", cfg.Colors.FocusedSelected, DefaultFilePaneFocusedSelectedHex)
 	}
-	if cfg.Colors.FocusedSelectedText != DefaultFilePaneFocusedSelectedTextHex {
-		t.Fatalf("FocusedSelectedText=%q, want %q", cfg.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
+	if cfg.Colors.FocusedSelectedText != TransparentColor {
+		t.Fatalf("FocusedSelectedText=%q, want %q", cfg.Colors.FocusedSelectedText, TransparentColor)
 	}
 	if cfg.Colors.CurrentDirBg != DefaultCurrentDirBackgroundHex {
 		t.Fatalf("CurrentDirBg=%q, want %q", cfg.Colors.CurrentDirBg, DefaultCurrentDirBackgroundHex)
@@ -1107,6 +1107,49 @@ func TestNormalizeColors(t *testing.T) {
 	}
 	if cfg.Colors.ScrollbarTrack != "" {
 		t.Fatalf("ScrollbarTrack=%q, want empty optional color", cfg.Colors.ScrollbarTrack)
+	}
+}
+
+func TestNormalizeColorsPreservesTransparentRowText(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Colors.HoverText = "Transparent"
+	cfg.Colors.SelectionText = "transparent"
+	cfg.Colors.SelectedFilesText = "TRANSPARENT"
+	cfg.Colors.FocusedSelectedText = "transparent"
+	cfg.Colors.PopupHoverText = "transparent"
+
+	cfg.normalize()
+
+	if cfg.Colors.HoverText != TransparentColor {
+		t.Fatalf("HoverText=%q want %q", cfg.Colors.HoverText, TransparentColor)
+	}
+	if cfg.Colors.SelectionText != TransparentColor {
+		t.Fatalf("SelectionText=%q want %q", cfg.Colors.SelectionText, TransparentColor)
+	}
+	if cfg.Colors.SelectedFilesText != TransparentColor {
+		t.Fatalf("SelectedFilesText=%q want %q", cfg.Colors.SelectedFilesText, TransparentColor)
+	}
+	if cfg.Colors.FocusedSelectedText != TransparentColor {
+		t.Fatalf("FocusedSelectedText=%q want %q", cfg.Colors.FocusedSelectedText, TransparentColor)
+	}
+	if cfg.Colors.PopupHoverText != DefaultPopupHoverTextHex {
+		t.Fatalf("PopupHoverText=%q want fallback %q", cfg.Colors.PopupHoverText, DefaultPopupHoverTextHex)
+	}
+}
+
+func TestDefaultConfigUsesTransparentRowText(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Colors.HoverText != TransparentColor {
+		t.Fatalf("HoverText=%q want %q", cfg.Colors.HoverText, TransparentColor)
+	}
+	if cfg.Colors.SelectionText != TransparentColor {
+		t.Fatalf("SelectionText=%q want %q", cfg.Colors.SelectionText, TransparentColor)
+	}
+	if cfg.Colors.SelectedFilesText != TransparentColor {
+		t.Fatalf("SelectedFilesText=%q want %q", cfg.Colors.SelectedFilesText, TransparentColor)
+	}
+	if cfg.Colors.FocusedSelectedText != TransparentColor {
+		t.Fatalf("FocusedSelectedText=%q want %q", cfg.Colors.FocusedSelectedText, TransparentColor)
 	}
 }
 

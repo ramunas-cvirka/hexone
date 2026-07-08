@@ -533,13 +533,13 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	palette := filePanePaletteFromConfig(cfg)
 	pane.table.Bg = palette.PaneBg
 	pane.table.HoverBg = palette.HoverBg
-	pane.table.HoverFg = &palette.HoverFg
+	pane.table.HoverFg = filePaneRowTextOverride(palette.HoverFg)
 	pane.table.MarkedBg = palette.MarkedBg
-	pane.table.MarkedFg = &palette.MarkedFg
+	pane.table.MarkedFg = filePaneRowTextOverride(palette.MarkedFg)
 	pane.table.SelectedBg = palette.SelectedBg
 	pane.table.MarkedSelBg = palette.MarkedSelBg
-	pane.table.MarkedSelFg = &palette.MarkedSelFg
-	pane.table.SelectedFg = &palette.SelectedFg
+	pane.table.MarkedSelFg = filePaneRowTextOverride(palette.MarkedSelFg)
+	pane.table.SelectedFg = filePaneRowTextOverride(palette.SelectedFg)
 	pane.table.ScrollbarWidth = scaleDp(10)
 	pane.table.ScrollbarMinThumb = scaleDp(22)
 	pane.table.ScrollbarTrack = palette.ScrollTrack
@@ -555,6 +555,13 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 		pane.localDirBeforeRemote = pane.dir
 	}
 	return pane
+}
+
+func filePaneRowTextOverride(c color.NRGBA) *color.NRGBA {
+	if c.A == 0 {
+		return nil
+	}
+	return &c
 }
 
 func filePaneFullDropPriority(cfg *fm.Config) map[string]int {

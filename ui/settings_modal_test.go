@@ -492,7 +492,7 @@ func TestSettingsKeyboardFocusOrderIncludesViewerControls(t *testing.T) {
 }
 
 func TestSettingsKeyboardFocusOrderIncludesColorTarget(t *testing.T) {
-	st := &settingsModalState{activeTab: "colors", colorScope: "panes"}
+	st := &settingsModalState{activeTab: "colors", colorScope: "panes", colorCategory: "normal"}
 
 	got := st.focusOrder()
 	want := []settingsKeyboardFocus{
@@ -503,6 +503,26 @@ func TestSettingsKeyboardFocusOrderIncludesColorTarget(t *testing.T) {
 		settingsKeyboardFocusColorsValue,
 		settingsKeyboardFocusColorsTextPicker,
 		settingsKeyboardFocusColorsTextValue,
+		settingsKeyboardFocusFooter,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsKeyboardFocusOrderIncludesTransparentColorToggle(t *testing.T) {
+	st := &settingsModalState{activeTab: "colors", colorScope: "panes", colorCategory: "hover"}
+
+	got := st.focusOrder()
+	want := []settingsKeyboardFocus{
+		settingsKeyboardFocusNav,
+		settingsKeyboardFocusColorsScope,
+		settingsKeyboardFocusColorsCategory,
+		settingsKeyboardFocusColorsBgPicker,
+		settingsKeyboardFocusColorsValue,
+		settingsKeyboardFocusColorsTextPicker,
+		settingsKeyboardFocusColorsTextValue,
+		settingsKeyboardFocusColorsTextTransparent,
 		settingsKeyboardFocusFooter,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -2142,6 +2162,97 @@ func TestDraftFilePanePaletteAppliesExplicitTextColors(t *testing.T) {
 	}
 	if got := fm.FormatHexColor(palette.MarkedSelFg); got != "#F6FBFF" {
 		t.Fatalf("MarkedSelFg=%q want %q", got, "#F6FBFF")
+	}
+}
+
+func TestDraftFilePanePaletteAllowsTransparentRowText(t *testing.T) {
+	st := &settingsModalState{
+		colorPaneBackground:      "#101820",
+		colorPaneText:            "#C8D0D8",
+		colorHover:               "#20354F",
+		colorHoverText:           "transparent",
+		colorSelection:           "#3456AA",
+		colorSelectionText:       "transparent",
+		colorSelectedFiles:       "#286F57",
+		colorSelectedFilesText:   "transparent",
+		colorFocusedSelected:     "#447F9C",
+		colorFocusedSelectedText: "transparent",
+	}
+
+	palette, errText := st.draftFilePanePalette(fm.DefaultConfig())
+	if errText != "" {
+		t.Fatalf("unexpected draft palette error: %q", errText)
+	}
+	if palette.HoverFg != (color.NRGBA{}) {
+		t.Fatalf("HoverFg=%v want transparent", palette.HoverFg)
+	}
+	if palette.SelectedFg != (color.NRGBA{}) {
+		t.Fatalf("SelectedFg=%v want transparent", palette.SelectedFg)
+	}
+	if palette.MarkedFg != (color.NRGBA{}) {
+		t.Fatalf("MarkedFg=%v want transparent", palette.MarkedFg)
+	}
+	if palette.MarkedSelFg != (color.NRGBA{}) {
+		t.Fatalf("MarkedSelFg=%v want transparent", palette.MarkedSelFg)
+	}
+
+	colors := filePanePaletteToConfigColors(palette)
+	if colors.HoverText != fm.TransparentColor || colors.SelectionText != fm.TransparentColor ||
+		colors.SelectedFilesText != fm.TransparentColor || colors.FocusedSelectedText != fm.TransparentColor {
+		t.Fatalf("transparent row text colors not preserved: %#v", colors)
+	}
+}
+
+func TestSettingsColorTextTransparentToggleUpdatesEditor(t *testing.T) {
+	st := &settingsModalState{
+		colorScope:     "panes",
+		colorCategory:  "hover",
+		colorHoverText: "#ABCDEF",
+	}
+	st.colorTextValueEdit.SetText(st.colorHoverText)
+
+	if !st.setColorTextTransparent(true) {
+		t.Fatal("setColorTextTransparent(true) should report a change")
+	}
+	if st.colorHoverText != fm.TransparentColor {
+		t.Fatalf("colorHoverText=%q want transparent", st.colorHoverText)
+	}
+	if got := st.colorTextValueEdit.Text(); got != fm.TransparentColor {
+		t.Fatalf("editor text=%q want transparent", got)
+	}
+	if !st.colorTextTransparentBool.Value {
+		t.Fatal("transparent checkbox should be checked")
+	}
+
+	if !st.setColorTextTransparent(false) {
+		t.Fatal("setColorTextTransparent(false) should report a change")
+	}
+	if st.colorHoverText != fm.DefaultFilePaneHoverTextHex {
+		t.Fatalf("colorHoverText=%q want default hover text", st.colorHoverText)
+	}
+	if got := st.colorTextValueEdit.Text(); got != fm.DefaultFilePaneHoverTextHex {
+		t.Fatalf("editor text=%q want default hover text", got)
+	}
+	if st.colorTextTransparentBool.Value {
+		t.Fatal("transparent checkbox should be unchecked")
+	}
+}
+
+func TestSettingsLoadDefaultsTransparentRowText(t *testing.T) {
+	st := &settingsModalState{
+		colorScope:    "panes",
+		colorCategory: "hover",
+	}
+	st.loadFromConfig(fm.DefaultConfig())
+
+	if got := st.colorTextValue("hover"); got != fm.TransparentColor {
+		t.Fatalf("hover text=%q want transparent", got)
+	}
+	if got := st.colorTextValueEdit.Text(); got != fm.TransparentColor {
+		t.Fatalf("text editor=%q want transparent", got)
+	}
+	if !st.colorTextTransparentBool.Value {
+		t.Fatal("transparent checkbox should be checked by default")
 	}
 }
 

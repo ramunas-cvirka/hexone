@@ -61,6 +61,7 @@ const (
 	settingsKeyboardFocusColorsValue
 	settingsKeyboardFocusColorsTextPicker
 	settingsKeyboardFocusColorsTextValue
+	settingsKeyboardFocusColorsTextTransparent
 	settingsKeyboardFocusFilenameDefaultTextPicker
 	settingsKeyboardFocusFilenameDefaultText
 	settingsKeyboardFocusFilenameDefaultIconPicker
@@ -175,6 +176,7 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 		settingsKeyboardFocusAssociationsApp,
 		settingsKeyboardFocusColorsValue,
 		settingsKeyboardFocusColorsTextValue,
+		settingsKeyboardFocusColorsTextTransparent,
 		settingsKeyboardFocusFilenameDefaultText,
 		settingsKeyboardFocusFilenameAgeOffset,
 		settingsKeyboardFocusFilenameAgeText,
@@ -236,6 +238,8 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 		st.focus = settingsKeyboardFocusColorsValue
 	case gtx.Focused(&st.colorTextValueEdit):
 		st.focus = settingsKeyboardFocusColorsTextValue
+	case gtx.Focused(&st.colorTextTransparentBool):
+		st.focus = settingsKeyboardFocusColorsTextTransparent
 	case gtx.Focused(&st.filenameDefaultTextEdit):
 		st.focus = settingsKeyboardFocusFilenameDefaultText
 	case gtx.Focused(&st.filenameAgeOffsetEdit):
@@ -406,6 +410,9 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 			order = append(order, settingsKeyboardFocusColorsCategory, settingsKeyboardFocusColorsBgPicker, settingsKeyboardFocusColorsValue)
 			if st.showColorTextField() {
 				order = append(order, settingsKeyboardFocusColorsTextPicker, settingsKeyboardFocusColorsTextValue)
+				if st.colorScope == "panes" && settingsPaneTextAllowsTransparent(st.colorCategory) {
+					order = append(order, settingsKeyboardFocusColorsTextTransparent)
+				}
 			}
 		}
 	case "config":
@@ -518,6 +525,8 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 	case settingsKeyboardFocusTerminalAcceleratedKeys:
 		st.terminalAcceleratedKeysBool.Value = !st.terminalAcceleratedKeysBool.Value
 		return true
+	case settingsKeyboardFocusColorsTextTransparent:
+		return st.setColorTextTransparent(!st.colorTextTransparentBool.Value)
 	default:
 		return false
 	}

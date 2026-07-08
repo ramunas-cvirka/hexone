@@ -573,6 +573,37 @@ func TestFileViewerOverlayTextUsesWidthAsMaximum(t *testing.T) {
 	}
 }
 
+func TestFileViewerOverlayBarKeepsPreviewControlsCompact(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(500, 60),
+		},
+	}
+	st := &fileViewerState{
+		name:                  "preview.pdf",
+		mode:                  "file",
+		detectedImagePreview:  true,
+		imagePreviewFormat:    "pdf",
+		imagePreviewPage:      2,
+		imagePreviewPageCount: 12,
+	}
+	st.imageView.zoom = 1.25
+
+	dims := ui.layoutFileViewerOverlayBar(th, gtx, st)
+
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		t.Fatalf("overlay dimensions=%v want visible bar", dims.Size)
+	}
+	if maxH := gtx.Dp(unit.Dp(20)); dims.Size.Y > maxH {
+		t.Fatalf("overlay height=%d want <= %d", dims.Size.Y, maxH)
+	}
+}
+
 func TestFileViewerOverlayStatusDropsPlainFileSizeStatus(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	got, _ := ui.fileViewerOverlayStatusText(&fileViewerState{status: "file: 2545 bytes"})

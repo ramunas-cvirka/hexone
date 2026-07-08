@@ -25,6 +25,7 @@ const (
 	DefaultFilePaneFocusedSelectedTextHex = "#F4F4F4"
 	DefaultCurrentDirBackgroundHex        = "#363636"
 	DefaultCurrentDirTextHex              = "#F0F0F0"
+	TransparentColor                      = "transparent"
 )
 
 type ColorsConfig struct {
@@ -72,6 +73,26 @@ func FormatHexColor(c color.NRGBA) string {
 func NormalizeHexColor(raw, fallback string) string {
 	if c, ok := ParseHexColor(raw); ok {
 		return FormatHexColor(c)
+	}
+	if c, ok := ParseHexColor(fallback); ok {
+		return FormatHexColor(c)
+	}
+	return DefaultFilePaneBackgroundHex
+}
+
+func IsTransparentColor(raw string) bool {
+	return strings.EqualFold(strings.TrimSpace(raw), TransparentColor)
+}
+
+func NormalizeHexOrTransparentColor(raw, fallback string) string {
+	if IsTransparentColor(raw) {
+		return TransparentColor
+	}
+	if c, ok := ParseHexColor(raw); ok {
+		return FormatHexColor(c)
+	}
+	if IsTransparentColor(fallback) {
+		return TransparentColor
 	}
 	if c, ok := ParseHexColor(fallback); ok {
 		return FormatHexColor(c)

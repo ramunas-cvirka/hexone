@@ -688,15 +688,15 @@ func DefaultConfig() *Config {
 			FilePaneBackground:  DefaultFilePaneBackgroundHex,
 			FilePaneText:        DefaultFilePaneTextHex,
 			Hover:               DefaultFilePaneHoverHex,
-			HoverText:           DefaultFilePaneHoverTextHex,
+			HoverText:           TransparentColor,
 			PopupHover:          DefaultPopupHoverHex,
 			PopupHoverText:      DefaultPopupHoverTextHex,
 			Selection:           DefaultFilePaneSelectionHex,
-			SelectionText:       DefaultFilePaneSelectionTextHex,
+			SelectionText:       TransparentColor,
 			SelectedFiles:       DefaultFilePaneSelectedFilesHex,
-			SelectedFilesText:   DefaultFilePaneSelectedTextHex,
+			SelectedFilesText:   TransparentColor,
 			FocusedSelected:     DefaultFilePaneFocusedSelectedHex,
-			FocusedSelectedText: DefaultFilePaneFocusedSelectedTextHex,
+			FocusedSelectedText: TransparentColor,
 			CurrentDirBg:        DefaultCurrentDirBackgroundHex,
 			CurrentDirText:      DefaultCurrentDirTextHex,
 		},
@@ -1039,15 +1039,15 @@ func (c *Config) normalize() {
 	c.Colors.FilePaneBackground = NormalizeHexColor(c.Colors.FilePaneBackground, DefaultFilePaneBackgroundHex)
 	c.Colors.FilePaneText = NormalizeHexColor(c.Colors.FilePaneText, DefaultFilePaneTextHex)
 	c.Colors.Hover = NormalizeHexColor(c.Colors.Hover, DefaultFilePaneHoverHex)
-	c.Colors.HoverText = NormalizeHexColor(c.Colors.HoverText, DefaultFilePaneHoverTextHex)
+	c.Colors.HoverText = NormalizeHexOrTransparentColor(c.Colors.HoverText, TransparentColor)
 	c.Colors.PopupHover = NormalizeHexColor(c.Colors.PopupHover, DefaultPopupHoverHex)
 	c.Colors.PopupHoverText = NormalizeHexColor(c.Colors.PopupHoverText, DefaultPopupHoverTextHex)
 	c.Colors.Selection = NormalizeHexColor(c.Colors.Selection, DefaultFilePaneSelectionHex)
-	c.Colors.SelectionText = NormalizeHexColor(c.Colors.SelectionText, DefaultFilePaneSelectionTextHex)
+	c.Colors.SelectionText = NormalizeHexOrTransparentColor(c.Colors.SelectionText, TransparentColor)
 	c.Colors.SelectedFiles = NormalizeHexColor(c.Colors.SelectedFiles, DefaultFilePaneSelectedFilesHex)
-	c.Colors.SelectedFilesText = NormalizeHexColor(c.Colors.SelectedFilesText, DefaultFilePaneSelectedTextHex)
+	c.Colors.SelectedFilesText = NormalizeHexOrTransparentColor(c.Colors.SelectedFilesText, TransparentColor)
 	c.Colors.FocusedSelected = NormalizeHexColor(c.Colors.FocusedSelected, DefaultFilePaneFocusedSelectedHex)
-	c.Colors.FocusedSelectedText = NormalizeHexColor(c.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
+	c.Colors.FocusedSelectedText = NormalizeHexOrTransparentColor(c.Colors.FocusedSelectedText, TransparentColor)
 	c.Colors.CurrentDirBg = NormalizeHexColor(c.Colors.CurrentDirBg, DefaultCurrentDirBackgroundHex)
 	c.Colors.CurrentDirText = NormalizeHexColor(c.Colors.CurrentDirText, DefaultCurrentDirTextHex)
 	c.Colors.ScrollbarThumb = NormalizeOptionalHexColor(c.Colors.ScrollbarThumb)

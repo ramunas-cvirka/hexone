@@ -700,13 +700,12 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 	if title == "" && statusText == "" && detailLabel == "" && pageLabel == "" && encodingLabel == "" {
 		return layout.Dimensions{}
 	}
-	return fillRoundedClipBox(
+	return fillFlatBox(
 		gtx,
-		gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
-		scaleColorAlpha(theme.TooltipBg, 0.9),
-		scaleColorAlpha(theme.TooltipBorder, 0.9),
+		scaleColorAlpha(theme.TooltipBg, 0.88),
+		scaleColorAlpha(theme.TooltipBorder, 0.78),
 		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				children := make([]layout.FlexChild, 0, 10)
 				addGap := func(width unit.Dp) {
 					if len(children) > 0 {
@@ -716,11 +715,11 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 				addSeparator := func() {
 					if len(children) > 0 {
 						children = append(children,
-							layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(3)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return ui.layoutFileViewerOverlayDivider(gtx)
 							}),
-							layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+							layout.Rigid(layout.Spacer{Width: unit.Dp(3)}.Layout),
 						)
 					}
 				}
@@ -741,19 +740,19 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 					}))
 				}
 				if detailLabel != "" {
-					addGap(unit.Dp(5))
+					addGap(unit.Dp(3))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutFileViewerOverlayChip(th, gtx, detailLabel, theme.CommandStaticText, false, nil)
 					}))
 				}
 				if pageLabel != "" {
-					addGap(unit.Dp(4))
+					addGap(unit.Dp(3))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutFileViewerOverlayChip(th, gtx, pageLabel, theme.CommandStaticText, false, nil)
 					}))
 				}
 				if encodingLabel != "" {
-					addGap(unit.Dp(4))
+					addGap(unit.Dp(3))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						click := &st.encodingMenuClick
 						if st.mode != "file" || st.detectedImagePreview {
@@ -792,23 +791,22 @@ func (ui *UI) layoutFileViewerOverlayChip(th *material.Theme, gtx layout.Context
 		return layout.Dimensions{}
 	}
 	theme := ui.fileViewerTheme()
-	bg := mixNRGBA(theme.CommandBg, theme.TooltipBg, 0.2)
-	border := theme.CommandBorder
+	bg := mixNRGBA(theme.CommandBg, theme.TooltipBg, 0.32)
+	border := scaleColorAlpha(theme.CommandBorder, 0.72)
 	if active {
-		bg = mixNRGBA(theme.CommandBgHover, theme.TooltipBg, 0.16)
-		border = theme.CommandBorderHover
-	} else if click != nil && click.Hovered() {
 		bg = mixNRGBA(theme.CommandBgHover, theme.TooltipBg, 0.22)
-		border = theme.CommandBorderHover
+		border = scaleColorAlpha(theme.CommandBorderHover, 0.86)
+	} else if click != nil && click.Hovered() {
+		bg = mixNRGBA(theme.CommandBgHover, theme.TooltipBg, 0.28)
+		border = scaleColorAlpha(theme.CommandBorderHover, 0.78)
 	}
 	layoutChip := func(gtx layout.Context) layout.Dimensions {
-		return fillRoundedBox(
+		return fillFlatBox(
 			gtx,
-			gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 			scaleColorAlpha(bg, 0.95),
-			scaleColorAlpha(border, 0.92),
+			border,
 			func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					lbl := material.Body2(th, label)
 					lbl.Font.Typeface = ui.viewerTypeface()
 					lbl.Font.Weight = font.Medium
