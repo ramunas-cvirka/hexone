@@ -1317,8 +1317,8 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	if got := cfg.Colors.Filenames.SizeRules[0].Icon; got != FilenameIconVideo {
 		t.Fatalf("SizeRules[0].Icon=%q want %q", got, FilenameIconVideo)
 	}
-	if got := cfg.Colors.Filenames.SizeRules[0].Target; got != FilenameTargetDirs {
-		t.Fatalf("SizeRules[0].Target=%q want %q", got, FilenameTargetDirs)
+	if got := cfg.Colors.Filenames.SizeRules[0].Target; got != "" {
+		t.Fatalf("SizeRules[0].Target=%q want empty file-only rule", got)
 	}
 }
 
@@ -1341,17 +1341,40 @@ func TestNormalizeFilenameAgeRulesSortsAndDedupes(t *testing.T) {
 	}
 }
 
-func TestNormalizeFilenameRulesKeepDistinctTargets(t *testing.T) {
-	got := NormalizeFilenameExtensionRules([]FilenameExtensionRule{
+func TestNormalizeFilenameRulesTargetsOnlyApplyToAgeAndPermissions(t *testing.T) {
+	age := NormalizeFilenameAgeRules([]FilenameAgeRule{
+		{MaxAge: "1d", Target: "files", Text: "#112233"},
+		{MaxAge: "1d", Target: "dirs", Text: "#445566"},
+		{MaxAge: "1d", Target: "both", Text: "#778899"},
+	})
+	if len(age) != 3 {
+		t.Fatalf("len(NormalizeFilenameAgeRules)=%d want 3 target variants", len(age))
+	}
+	if age[0].Target != FilenameTargetFiles || age[1].Target != FilenameTargetDirs || age[2].Target != FilenameTargetBoth {
+		t.Fatalf("age targets=%#v want files, dirs, both", age)
+	}
+
+	ext := NormalizeFilenameExtensionRules([]FilenameExtensionRule{
 		{Extension: ".go", Target: "files", Text: "#112233"},
 		{Extension: ".go", Target: "dirs", Text: "#445566"},
 		{Extension: ".go", Target: "both", Text: "#778899"},
 	})
-	if len(got) != 3 {
-		t.Fatalf("len(NormalizeFilenameExtensionRules)=%d want 3", len(got))
+	if len(ext) != 1 {
+		t.Fatalf("len(NormalizeFilenameExtensionRules)=%d want 1 file-only rule", len(ext))
 	}
-	if got[0].Target != FilenameTargetFiles || got[1].Target != FilenameTargetDirs || got[2].Target != FilenameTargetBoth {
-		t.Fatalf("targets=%#v want files, dirs, both", got)
+	if ext[0].Target != "" || ext[0].Text != "#778899" {
+		t.Fatalf("extension rule=%#v want targetless last rule", ext[0])
+	}
+
+	size := NormalizeFilenameSizeRules([]FilenameSizeRule{
+		{Size: "1m", Match: FilenameSizeMatchAtMost, Target: "files", Text: "#112233"},
+		{Size: "1m", Match: FilenameSizeMatchAtMost, Target: "dirs", Text: "#445566"},
+	})
+	if len(size) != 1 {
+		t.Fatalf("len(NormalizeFilenameSizeRules)=%d want 1 file-only rule", len(size))
+	}
+	if size[0].Target != "" || size[0].Text != "#445566" {
+		t.Fatalf("size rule=%#v want targetless last rule", size[0])
 	}
 }
 

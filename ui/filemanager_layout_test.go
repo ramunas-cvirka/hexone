@@ -752,11 +752,30 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 	if icon, ok := model.LeadingIcon(1, 0); !ok || icon.Widget == nil {
 		t.Fatal("permission override should expose a custom cached icon")
 	}
+	for _, tc := range []struct {
+		col  int
+		name string
+	}{
+		{col: 1, name: "permissions"},
+		{col: 2, name: "size"},
+		{col: 3, name: "date"},
+	} {
+		if _, st := model.Cell(1, tc.col); st.Color != (color.NRGBA{R: 0x44, G: 0x55, B: 0x66, A: 0xFF}) {
+			t.Fatalf("%s column color=%v want #445566", tc.name, st.Color)
+		} else if !st.PreserveColor {
+			t.Fatalf("%s column should preserve custom filename color on row states", tc.name)
+		}
+	}
 
 	if _, st := model.Cell(2, 0); st.Color != (color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF}) {
 		t.Fatalf("normal filename color=%v want #8899AA", st.Color)
 	} else if st.PreserveColor {
 		t.Fatal("normal filename color should remain row-state overridable")
+	}
+	if _, st := model.Cell(2, 1); st.Color != (color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF}) {
+		t.Fatalf("normal metadata color=%v want #8899AA", st.Color)
+	} else if st.PreserveColor {
+		t.Fatal("normal metadata color should remain row-state overridable")
 	}
 	if icon, ok := model.LeadingIcon(2, 0); !ok || icon.Widget != nil {
 		t.Fatal("normal filename should keep the stock file icon")
@@ -869,6 +888,17 @@ func TestFilePaneFilenameThemeRulePrecedenceSupportsPartialPermissions(t *testin
 		t.Fatalf("extension visual icon=%q want %q", extVisual.iconKey, fm.FilenameIconArchive)
 	}
 
+	dirMetadataVisual := theme.visualForEntry(filesys.Entry{
+		Name:      "release.tar.gz",
+		Kind:      filesys.EntryDir,
+		PermOctal: "0644",
+		SizeBytes: 512,
+		ModTime:   now.Add(-48 * time.Hour),
+	}, now)
+	if dirMetadataVisual.hasColor || dirMetadataVisual.iconKey != "" {
+		t.Fatalf("extension and size rules should not style directories: %#v", dirMetadataVisual)
+	}
+
 	dirOnlyTheme := newFilePaneFilenameTheme(&fm.Config{
 		Colors: fm.ColorsConfig{
 			Filenames: fm.FilenameColorsConfig{
@@ -896,6 +926,35 @@ func TestFilePaneFilenameThemeRulePrecedenceSupportsPartialPermissions(t *testin
 	}, now)
 	if fileVisual.hasColor || fileVisual.iconKey != "" {
 		t.Fatalf("directory-only rule should not style regular files: %#v", fileVisual)
+	}
+}
+
+func TestFilePaneApplySortKeepsFilenameVisualsAligned(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Colors.Filenames.AgeRules = []fm.FilenameAgeRule{
+		{MaxAge: "1d", Text: "#123456", Target: fm.FilenameTargetFiles},
+	}
+
+	now := time.Now()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	pane.sortKey = fileSortDate
+	pane.sortDesc = true
+	pane.dirsFirst = false
+	pane.model.entries = []filesys.Entry{
+		{Name: "old.txt", DisplayName: "old.txt", Kind: filesys.EntryFile, ModTime: now.Add(-48 * time.Hour)},
+		{Name: "fresh.txt", DisplayName: "fresh.txt", Kind: filesys.EntryFile, ModTime: now.Add(-20 * time.Minute)},
+	}
+
+	pane.applySort("")
+
+	if got := pane.model.entries[0].Name; got != "fresh.txt" {
+		t.Fatalf("first row after date sort=%q want fresh.txt", got)
+	}
+	if visual := pane.model.filenameVisual(0); !visual.hasColor || visual.color != (color.NRGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xFF}) {
+		t.Fatalf("fresh row visual=%#v want age color #123456", visual)
+	}
+	if visual := pane.model.filenameVisual(1); visual.hasColor {
+		t.Fatalf("old row visual=%#v want no age color", visual)
 	}
 }
 

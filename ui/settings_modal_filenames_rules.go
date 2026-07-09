@@ -51,7 +51,7 @@ func filenameExtensionRuleKey(raw, targetRaw string) string {
 	if ext == "" {
 		return ""
 	}
-	return filenameTargetRuleKey(targetRaw) + ":" + ext
+	return ext
 }
 
 func filenameExtensionDisplayText(raw string) string {
@@ -66,12 +66,12 @@ func formatFilenameExtensionRuleLabel(rule fm.FilenameExtensionRule) string {
 	return filenameExtensionDisplayText(rule.Extension)
 }
 
-func filenameSizeRuleKey(sizeRaw, matchRaw, targetRaw string) string {
-	size, ok := fm.NormalizeFilenameSize(sizeRaw)
+func filenameSizeRuleKey(sizeRaw, unitRaw, matchRaw string) string {
+	size, ok := fm.NormalizeFilenameSize(filenameSizeValueFromFields(sizeRaw, unitRaw))
 	if !ok {
 		return ""
 	}
-	return filenameTargetRuleKey(targetRaw) + ":" + normalizeFilenameSizeMatch(matchRaw) + ":" + size
+	return normalizeFilenameSizeMatch(matchRaw) + ":" + size
 }
 
 func formatFilenameSizeRuleLabel(rule fm.FilenameSizeRule) string {
@@ -467,8 +467,7 @@ func (st *settingsModalState) loadFilenameExtensionFields(ext, textHex, icon, ta
 	st.filenameExtEdit.SetText(filenameExtensionDisplayText(ext))
 	st.filenameExtTextEdit.SetText(textHex)
 	st.filenameExtIcon = fm.NormalizeFilenameIcon(icon)
-	st.filenameExtTarget = normalizeFilenameTargetChoice(target)
-	st.filenameExtLookup = filenameExtensionRuleKey(ext, st.filenameExtTarget)
+	st.filenameExtLookup = filenameExtensionRuleKey(ext, "")
 	st.filenameExtEditingKey = ""
 	if st.filenameExtLookup != "" && (fm.NormalizeOptionalHexColor(textHex) != "" || st.filenameExtIcon != "") {
 		st.filenameExtEditingKey = st.filenameExtLookup
@@ -479,7 +478,7 @@ func (st *settingsModalState) syncFilenameExtensionEditors() {
 	if st == nil {
 		return
 	}
-	key := filenameExtensionRuleKey(st.filenameExtEdit.Text(), st.filenameExtTarget)
+	key := filenameExtensionRuleKey(st.filenameExtEdit.Text(), "")
 	if key == st.filenameExtLookup {
 		return
 	}
@@ -500,13 +499,12 @@ func (st *settingsModalState) refreshFilenameExtensionDraftInfo() {
 		return
 	}
 	st.filenameExtInfoText = ""
-	key := filenameExtensionRuleKey(st.filenameExtEdit.Text(), st.filenameExtTarget)
+	key := filenameExtensionRuleKey(st.filenameExtEdit.Text(), "")
 	if key == "" {
 		return
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameExtTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameExtIcon)
-	target := filenameTargetConfigValue(st.filenameExtTarget)
 	if textHex == "" && icon == "" {
 		st.filenameExtInfoText = "Pick a color, icon, or both"
 		return
@@ -520,7 +518,7 @@ func (st *settingsModalState) refreshFilenameExtensionDraftInfo() {
 		st.filenameExtInfoText = "Click Add"
 		return
 	}
-	if existingKey == key && existing.Text == textHex && existing.Icon == icon && fm.NormalizeFilenameTarget(existing.Target) == target {
+	if existingKey == key && existing.Text == textHex && existing.Icon == icon {
 		return
 	}
 	st.filenameExtInfoText = "Click Update"
@@ -530,16 +528,15 @@ func (st *settingsModalState) filenameExtensionNoticeText() string {
 	if st == nil {
 		return ""
 	}
-	key := filenameExtensionRuleKey(st.filenameExtEdit.Text(), st.filenameExtTarget)
+	key := filenameExtensionRuleKey(st.filenameExtEdit.Text(), "")
 	if key == "" {
-		return "Enter a lowercase suffix"
+		return ""
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameExtTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameExtIcon)
-	target := filenameTargetConfigValue(st.filenameExtTarget)
 	if st.filenameExtEditingKey != "" {
 		if editingRule, ok := st.filenameExtensionRule(st.filenameExtEditingKey); ok &&
-			(st.filenameExtEditingKey != key || editingRule.Text != textHex || editingRule.Icon != icon || fm.NormalizeFilenameTarget(editingRule.Target) != target) {
+			(st.filenameExtEditingKey != key || editingRule.Text != textHex || editingRule.Icon != icon) {
 			return "Click Update"
 		}
 	}
@@ -550,9 +547,9 @@ func (st *settingsModalState) filenameExtensionNoticeText() string {
 		return "Pending removal; Save to persist"
 	case !currentExists && (textHex != "" || icon != ""):
 		return "Click Add"
-	case currentExists && (currentRule.Text != textHex || currentRule.Icon != icon || fm.NormalizeFilenameTarget(currentRule.Target) != target):
+	case currentExists && (currentRule.Text != textHex || currentRule.Icon != icon):
 		return "Click Update"
-	case savedExists && currentExists && (savedRule.Text != currentRule.Text || savedRule.Icon != currentRule.Icon || fm.NormalizeFilenameTarget(savedRule.Target) != fm.NormalizeFilenameTarget(currentRule.Target)):
+	case savedExists && currentExists && (savedRule.Text != currentRule.Text || savedRule.Icon != currentRule.Icon):
 		return "Pending change; Save to persist"
 	case !savedExists && currentExists:
 		return "Pending add; Save to persist"
@@ -578,7 +575,6 @@ func parseFilenameExtensionRuleFields(extRaw, textRaw, iconRaw, targetRaw string
 	}
 	return fm.FilenameExtensionRule{
 		Extension: ext,
-		Target:    filenameTargetConfigValue(targetRaw),
 		Text:      textHex,
 		Icon:      icon,
 	}, nil
@@ -588,12 +584,12 @@ func (st *settingsModalState) upsertCurrentFilenameExtensionRule() (string, erro
 	if st == nil {
 		return "Add", nil
 	}
-	rule, err := parseFilenameExtensionRuleFields(st.filenameExtEdit.Text(), st.filenameExtTextEdit.Text(), st.filenameExtIcon, st.filenameExtTarget)
+	rule, err := parseFilenameExtensionRuleFields(st.filenameExtEdit.Text(), st.filenameExtTextEdit.Text(), st.filenameExtIcon, "")
 	if err != nil {
 		return "Add", err
 	}
 	action := "Add"
-	key := filenameExtensionRuleKey(rule.Extension, rule.Target)
+	key := filenameExtensionRuleKey(rule.Extension, "")
 	oldIdx := st.filenameExtensionRuleIndex(st.filenameExtEditingKey)
 	newIdx := st.filenameExtensionRuleIndex(key)
 	if oldIdx >= 0 {
@@ -620,14 +616,14 @@ func (st *settingsModalState) removeCurrentFilenameExtensionRule() bool {
 	}
 	key := st.filenameExtEditingKey
 	if key == "" {
-		key = filenameExtensionRuleKey(st.filenameExtEdit.Text(), st.filenameExtTarget)
+		key = filenameExtensionRuleKey(st.filenameExtEdit.Text(), "")
 	}
 	idx := st.filenameExtensionRuleIndex(key)
 	if idx < 0 {
 		return false
 	}
 	st.filenameExtEntries = append(st.filenameExtEntries[:idx], st.filenameExtEntries[idx+1:]...)
-	st.loadFilenameExtensionFields(fm.NormalizeFilenameExtension(st.filenameExtEdit.Text()), "", "", st.filenameExtTarget)
+	st.loadFilenameExtensionFields(fm.NormalizeFilenameExtension(st.filenameExtEdit.Text()), "", "", "")
 	return true
 }
 
@@ -666,7 +662,7 @@ func (st *settingsModalState) filenameSizeRuleIndex(key string) int {
 		return -1
 	}
 	for i, rule := range st.filenameSizeEntries {
-		if filenameSizeRuleKey(rule.Size, rule.Match, rule.Target) == key {
+		if filenameSizeRuleKey(rule.Size, "", rule.Match) == key {
 			return i
 		}
 	}
@@ -685,7 +681,7 @@ func (st *settingsModalState) filenameSavedSizeRule(key string) (fm.FilenameSize
 		return fm.FilenameSizeRule{}, false
 	}
 	for _, rule := range st.filenameSizeSavedEntries {
-		if filenameSizeRuleKey(rule.Size, rule.Match, rule.Target) == key {
+		if filenameSizeRuleKey(rule.Size, "", rule.Match) == key {
 			return rule, true
 		}
 	}
@@ -696,13 +692,17 @@ func (st *settingsModalState) loadFilenameSizeFields(size, match, textHex, icon,
 	if st == nil {
 		return
 	}
-	size, _ = fm.NormalizeFilenameSize(size)
-	st.filenameSizeEdit.SetText(size)
+	value, unit, ok := splitFilenameSizeValue(size)
+	if !ok {
+		value = strings.TrimSpace(size)
+		unit = normalizeFilenameSizeUnit(st.filenameSizeUnit)
+	}
+	st.filenameSizeEdit.SetText(value)
+	st.filenameSizeUnit = unit
 	st.filenameSizeMatch = normalizeFilenameSizeMatch(match)
 	st.filenameSizeTextEdit.SetText(textHex)
 	st.filenameSizeIcon = fm.NormalizeFilenameIcon(icon)
-	st.filenameSizeTarget = normalizeFilenameTargetChoice(target)
-	st.filenameSizeLookup = filenameSizeRuleKey(size, st.filenameSizeMatch, st.filenameSizeTarget)
+	st.filenameSizeLookup = filenameSizeRuleKey(value, unit, st.filenameSizeMatch)
 	st.filenameSizeEditingKey = ""
 	if st.filenameSizeLookup != "" && (fm.NormalizeOptionalHexColor(textHex) != "" || st.filenameSizeIcon != "") {
 		st.filenameSizeEditingKey = st.filenameSizeLookup
@@ -713,7 +713,7 @@ func (st *settingsModalState) syncFilenameSizeEditors() {
 	if st == nil {
 		return
 	}
-	key := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeMatch, st.filenameSizeTarget)
+	key := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeUnit, st.filenameSizeMatch)
 	if key == st.filenameSizeLookup {
 		return
 	}
@@ -734,13 +734,12 @@ func (st *settingsModalState) refreshFilenameSizeDraftInfo() {
 		return
 	}
 	st.filenameSizeInfoText = ""
-	key := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeMatch, st.filenameSizeTarget)
+	key := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeUnit, st.filenameSizeMatch)
 	if key == "" {
 		return
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameSizeTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameSizeIcon)
-	target := filenameTargetConfigValue(st.filenameSizeTarget)
 	if textHex == "" && icon == "" {
 		st.filenameSizeInfoText = "Pick a color, icon, or both"
 		return
@@ -754,7 +753,7 @@ func (st *settingsModalState) refreshFilenameSizeDraftInfo() {
 		st.filenameSizeInfoText = "Click Add"
 		return
 	}
-	if existingKey == key && existing.Text == textHex && existing.Icon == icon && fm.NormalizeFilenameTarget(existing.Target) == target {
+	if existingKey == key && existing.Text == textHex && existing.Icon == icon {
 		return
 	}
 	st.filenameSizeInfoText = "Click Update"
@@ -764,16 +763,15 @@ func (st *settingsModalState) filenameSizeNoticeText() string {
 	if st == nil {
 		return ""
 	}
-	key := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeMatch, st.filenameSizeTarget)
+	key := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeUnit, st.filenameSizeMatch)
 	if key == "" {
-		return "Enter a whole size"
+		return ""
 	}
 	textHex := fm.NormalizeOptionalHexColor(strings.TrimSpace(st.filenameSizeTextEdit.Text()))
 	icon := fm.NormalizeFilenameIcon(st.filenameSizeIcon)
-	target := filenameTargetConfigValue(st.filenameSizeTarget)
 	if st.filenameSizeEditingKey != "" {
 		if editingRule, ok := st.filenameSizeRule(st.filenameSizeEditingKey); ok &&
-			(st.filenameSizeEditingKey != key || editingRule.Text != textHex || editingRule.Icon != icon || fm.NormalizeFilenameTarget(editingRule.Target) != target) {
+			(st.filenameSizeEditingKey != key || editingRule.Text != textHex || editingRule.Icon != icon) {
 			return "Click Update"
 		}
 	}
@@ -784,9 +782,9 @@ func (st *settingsModalState) filenameSizeNoticeText() string {
 		return "Pending removal; Save to persist"
 	case !currentExists && (textHex != "" || icon != ""):
 		return "Click Add"
-	case currentExists && (currentRule.Text != textHex || currentRule.Icon != icon || fm.NormalizeFilenameTarget(currentRule.Target) != target):
+	case currentExists && (currentRule.Text != textHex || currentRule.Icon != icon):
 		return "Click Update"
-	case savedExists && currentExists && (savedRule.Text != currentRule.Text || savedRule.Icon != currentRule.Icon || fm.NormalizeFilenameTarget(savedRule.Target) != fm.NormalizeFilenameTarget(currentRule.Target)):
+	case savedExists && currentExists && (savedRule.Text != currentRule.Text || savedRule.Icon != currentRule.Icon):
 		return "Pending change; Save to persist"
 	case !savedExists && currentExists:
 		return "Pending add; Save to persist"
@@ -794,10 +792,10 @@ func (st *settingsModalState) filenameSizeNoticeText() string {
 	return ""
 }
 
-func parseFilenameSizeRuleFields(sizeRaw, matchRaw, textRaw, iconRaw, targetRaw string) (fm.FilenameSizeRule, error) {
-	size, ok := fm.NormalizeFilenameSize(sizeRaw)
+func parseFilenameSizeRuleFields(sizeRaw, unitRaw, matchRaw, textRaw, iconRaw string) (fm.FilenameSizeRule, error) {
+	size, ok := fm.NormalizeFilenameSize(filenameSizeValueFromFields(sizeRaw, unitRaw))
 	if !ok {
-		return fm.FilenameSizeRule{}, fmt.Errorf("size must use whole values like 0b, 4k, 10m, or 1g")
+		return fm.FilenameSizeRule{}, fmt.Errorf("size must use a whole number")
 	}
 	textHex := strings.TrimSpace(textRaw)
 	if textHex != "" {
@@ -811,11 +809,10 @@ func parseFilenameSizeRuleFields(sizeRaw, matchRaw, textRaw, iconRaw, targetRaw 
 		return fm.FilenameSizeRule{}, fmt.Errorf("size rule needs a color, an icon, or both")
 	}
 	return fm.FilenameSizeRule{
-		Size:   size,
-		Match:  normalizeFilenameSizeMatch(matchRaw),
-		Target: filenameTargetConfigValue(targetRaw),
-		Text:   textHex,
-		Icon:   icon,
+		Size:  size,
+		Match: normalizeFilenameSizeMatch(matchRaw),
+		Text:  textHex,
+		Icon:  icon,
 	}, nil
 }
 
@@ -823,12 +820,12 @@ func (st *settingsModalState) upsertCurrentFilenameSizeRule() (string, error) {
 	if st == nil {
 		return "Add", nil
 	}
-	rule, err := parseFilenameSizeRuleFields(st.filenameSizeEdit.Text(), st.filenameSizeMatch, st.filenameSizeTextEdit.Text(), st.filenameSizeIcon, st.filenameSizeTarget)
+	rule, err := parseFilenameSizeRuleFields(st.filenameSizeEdit.Text(), st.filenameSizeUnit, st.filenameSizeMatch, st.filenameSizeTextEdit.Text(), st.filenameSizeIcon)
 	if err != nil {
 		return "Add", err
 	}
 	action := "Add"
-	key := filenameSizeRuleKey(rule.Size, rule.Match, rule.Target)
+	key := filenameSizeRuleKey(rule.Size, "", rule.Match)
 	oldIdx := st.filenameSizeRuleIndex(st.filenameSizeEditingKey)
 	newIdx := st.filenameSizeRuleIndex(key)
 	if oldIdx >= 0 {
@@ -855,14 +852,14 @@ func (st *settingsModalState) removeCurrentFilenameSizeRule() bool {
 	}
 	key := st.filenameSizeEditingKey
 	if key == "" {
-		key = filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeMatch, st.filenameSizeTarget)
+		key = filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeUnit, st.filenameSizeMatch)
 	}
 	idx := st.filenameSizeRuleIndex(key)
 	if idx < 0 {
 		return false
 	}
 	st.filenameSizeEntries = append(st.filenameSizeEntries[:idx], st.filenameSizeEntries[idx+1:]...)
-	st.loadFilenameSizeFields(st.filenameSizeEdit.Text(), st.filenameSizeMatch, "", "", st.filenameSizeTarget)
+	st.loadFilenameSizeFields(st.filenameSizeEdit.Text(), st.filenameSizeMatch, "", "", "")
 	return true
 }
 
@@ -876,12 +873,12 @@ func (ui *UI) layoutSettingsFilenameExtensionList(th *material.Theme, gtx layout
 		items = append(items, settingsFilenameRuleListItem{
 			key:      filenameExtensionRuleKey(rule.Extension, rule.Target),
 			title:    formatFilenameExtensionRuleLabel(rule),
-			detail:   filenameTargetLabel(rule.Target) + " • " + filenameIconLabel(rule.Icon) + " • " + colorText,
+			detail:   filenameIconLabel(rule.Icon) + " • " + colorText,
 			colorHex: rule.Text,
 			iconKey:  rule.Icon,
 		})
 	}
-	currentKey := filenameExtensionRuleKey(st.filenameExtEdit.Text(), st.filenameExtTarget)
+	currentKey := filenameExtensionRuleKey(st.filenameExtEdit.Text(), "")
 	return ui.layoutSettingsFilenameRuleList(th, gtx, &st.filenameExtList, items, "No extension overrides yet", currentKey, st.filenameExtensionRuleRowClick, st.filenameExtensionRuleRowRemoveClick, func(key string) {
 		rule, ok := st.filenameExtensionRule(key)
 		if !ok {
@@ -905,14 +902,14 @@ func (ui *UI) layoutSettingsFilenameSizeList(th *material.Theme, gtx layout.Cont
 			colorText = "default color"
 		}
 		items = append(items, settingsFilenameRuleListItem{
-			key:      filenameSizeRuleKey(rule.Size, rule.Match, rule.Target),
+			key:      filenameSizeRuleKey(rule.Size, "", rule.Match),
 			title:    formatFilenameSizeRuleLabel(rule),
-			detail:   filenameTargetLabel(rule.Target) + " • " + filenameIconLabel(rule.Icon) + " • " + colorText,
+			detail:   filenameIconLabel(rule.Icon) + " • " + colorText,
 			colorHex: rule.Text,
 			iconKey:  rule.Icon,
 		})
 	}
-	currentKey := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeMatch, st.filenameSizeTarget)
+	currentKey := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeUnit, st.filenameSizeMatch)
 	return ui.layoutSettingsFilenameRuleList(th, gtx, &st.filenameSizeList, items, "No size overrides yet", currentKey, st.filenameSizeRuleRowClick, st.filenameSizeRuleRowRemoveClick, func(key string) {
 		rule, ok := st.filenameSizeRule(key)
 		if !ok {

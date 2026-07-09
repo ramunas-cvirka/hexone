@@ -50,6 +50,14 @@ var filenameAgeUnitOptions = []filenameAgeUnitOption{
 	{key: "w", label: "Week", singular: "week", plural: "weeks"},
 }
 
+var filenameSizeUnitOptions = []filenameRuleChoiceOption{
+	{key: "b", label: "B"},
+	{key: "k", label: "KB"},
+	{key: "m", label: "MB"},
+	{key: "g", label: "GB"},
+	{key: "t", label: "TB"},
+}
+
 func normalizeFilenameTargetChoice(raw string) string {
 	switch fm.NormalizeFilenameTarget(raw) {
 	case fm.FilenameTargetFiles:
@@ -95,6 +103,23 @@ func normalizeFilenameAgeUnit(raw string) string {
 	}
 }
 
+func normalizeFilenameSizeUnit(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "b", "byte", "bytes":
+		return "b"
+	case "k", "kb", "kib":
+		return "k"
+	case "g", "gb", "gib":
+		return "g"
+	case "t", "tb", "tib":
+		return "t"
+	case "m", "mb", "mib":
+		fallthrough
+	default:
+		return "m"
+	}
+}
+
 func filenameAgeUnitOptionForKey(key string) filenameAgeUnitOption {
 	key = normalizeFilenameAgeUnit(key)
 	for _, opt := range filenameAgeUnitOptions {
@@ -111,6 +136,31 @@ func splitFilenameAgeValue(raw string) (string, string, bool) {
 		return "", "", false
 	}
 	return age[:len(age)-1], string(age[len(age)-1]), true
+}
+
+func splitFilenameSizeValue(raw string) (string, string, bool) {
+	size, ok := fm.NormalizeFilenameSize(raw)
+	if !ok || len(size) < 2 {
+		return "", "", false
+	}
+	unit := string(size[len(size)-1])
+	switch unit {
+	case "b", "k", "m", "g", "t":
+		return size[:len(size)-1], unit, true
+	default:
+		return "", "", false
+	}
+}
+
+func filenameSizeValueFromFields(valueRaw, unitRaw string) string {
+	value := strings.TrimSpace(valueRaw)
+	if value == "" {
+		return ""
+	}
+	if strings.IndexFunc(value, func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
+		return value
+	}
+	return value + normalizeFilenameSizeUnit(unitRaw)
 }
 
 func filenameAgeRuleKey(maxAge, targetRaw string) string {
@@ -212,9 +262,7 @@ func (st *settingsModalState) loadFilenameColorsFromConfig(cfg *fm.Config) {
 	st.filenameAgeTargetAnim = settingsChoiceAnim{}
 	st.filenamePermMatchAnim = settingsChoiceAnim{}
 	st.filenamePermTargetAnim = settingsChoiceAnim{}
-	st.filenameExtTargetAnim = settingsChoiceAnim{}
 	st.filenameSizeMatchAnim = settingsChoiceAnim{}
-	st.filenameSizeTargetAnim = settingsChoiceAnim{}
 	st.filenameAgeEntries = nil
 	st.filenameAgeSavedEntries = nil
 	st.filenamePermEntries = nil
@@ -309,12 +357,12 @@ func (st *settingsModalState) previewFilenameColors(colors fm.FilenameColorsConf
 		rules = append(rules, rule)
 		colors.PermissionRules = fm.NormalizeFilenamePermissionRules(rules)
 	}
-	if rule, err := parseFilenameExtensionRuleFields(st.filenameExtEdit.Text(), st.filenameExtTextEdit.Text(), st.filenameExtIcon, st.filenameExtTarget); err == nil {
+	if rule, err := parseFilenameExtensionRuleFields(st.filenameExtEdit.Text(), st.filenameExtTextEdit.Text(), st.filenameExtIcon, ""); err == nil {
 		rules := append([]fm.FilenameExtensionRule(nil), colors.ExtensionRules...)
 		rules = append(rules, rule)
 		colors.ExtensionRules = fm.NormalizeFilenameExtensionRules(rules)
 	}
-	if rule, err := parseFilenameSizeRuleFields(st.filenameSizeEdit.Text(), st.filenameSizeMatch, st.filenameSizeTextEdit.Text(), st.filenameSizeIcon, st.filenameSizeTarget); err == nil {
+	if rule, err := parseFilenameSizeRuleFields(st.filenameSizeEdit.Text(), st.filenameSizeUnit, st.filenameSizeMatch, st.filenameSizeTextEdit.Text(), st.filenameSizeIcon); err == nil {
 		rules := append([]fm.FilenameSizeRule(nil), colors.SizeRules...)
 		rules = append(rules, rule)
 		colors.SizeRules = fm.NormalizeFilenameSizeRules(rules)
@@ -479,7 +527,7 @@ func (st *settingsModalState) filenameAgeNoticeText() string {
 	}
 	offset := strings.TrimSpace(st.filenameAgeOffsetEdit.Text())
 	if offset == "" {
-		return "Enter an age and unit"
+		return ""
 	}
 	maxAge := filenameAgeRuleKeyFromFields(offset, st.filenameAgeUnit, st.filenameAgeTarget)
 	if maxAge == "" {
@@ -1258,6 +1306,59 @@ func (ui *UI) layoutSettingsFilenameAgeUnitPicker(th *material.Theme, gtx layout
 	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, ui.scaleModalFontSize(10), specs)
 }
 
+func (ui *UI) layoutSettingsFilenameSizeUnitPicker(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	if ui == nil || st == nil {
+		return layout.Dimensions{}
+	}
+	selected := normalizeFilenameSizeUnit(st.filenameSizeUnit)
+	st.filenameSizeUnit = selected
+	keys := make([]string, len(filenameSizeUnitOptions))
+	hoverKey := ""
+	for i, opt := range filenameSizeUnitOptions {
+		keys[i] = opt.key
+		if st.filenameSizeUnitClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusFilenameSizeUnit)
+			st.filenameSizeUnitAnim.anim.setPulse(opt.key, gtx.Now)
+			st.filenameSizeUnitAnim.setValue(&st.filenameSizeUnit, opt.key, gtx.Now)
+			st.errText = ""
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		if st.filenameSizeUnitClicks[i].Hovered() {
+			hoverKey = opt.key
+		}
+	}
+	st.filenameSizeUnitAnim.anim.setHover(hoverKey, gtx.Now)
+	pos, animPos := st.filenameSizeUnitAnim.position(gtx.Now, st.filenameSizeUnit, keys)
+	specs := make([]slidingTabSpec, 0, len(filenameSizeUnitOptions))
+	animating := animPos
+	for i, opt := range filenameSizeUnitOptions {
+		activeFill, activeAnim := st.filenameSizeUnitAnim.fill(gtx.Now, st.filenameSizeUnit, opt.key)
+		hoverFill, hoverAnim := st.filenameSizeUnitAnim.anim.hoverFill(gtx.Now, opt.key)
+		pulseFill, pulseAnim := st.filenameSizeUnitAnim.anim.pulseFill(gtx.Now, opt.key)
+		focusFill := float32(0)
+		if st.focus == settingsKeyboardFocusFilenameSizeUnit && st.filenameSizeUnit == opt.key {
+			focusFill = 1
+		}
+		specs = append(specs, slidingTabSpec{
+			Label:      opt.label,
+			Click:      &st.filenameSizeUnitClicks[i],
+			ActiveFill: activeFill,
+			HoverFill:  hoverFill,
+			PulseFill:  pulseFill,
+			FocusFill:  focusFill,
+		})
+		animating = animating || activeAnim || hoverAnim || pulseAnim
+	}
+	if animating {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	stripH := gtx.Dp(unit.Dp(24))
+	if stripH < 1 {
+		stripH = 1
+	}
+	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, ui.scaleModalFontSize(10), specs)
+}
+
 func (ui *UI) layoutSettingsFilenameRuleModeTabs(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	if ui == nil || st == nil {
 		return layout.Dimensions{}
@@ -1637,11 +1738,11 @@ func (ui *UI) layoutSettingsFilenamePreview(th *material.Theme, gtx layout.Conte
 			label string
 			entry filesys.Entry
 		}{
-			label: filenameTargetLabel(rule.Target) + " " + suffix,
+			label: suffix,
 			entry: filesys.Entry{
 				Name:        "sample" + suffix,
 				DisplayName: "sample" + suffix,
-				Kind:        sampleKind(rule.Target),
+				Kind:        filesys.EntryFile,
 				PermOctal:   "0640",
 				ModTime:     now.Add(-30 * 24 * time.Hour),
 			},
@@ -1660,11 +1761,11 @@ func (ui *UI) layoutSettingsFilenamePreview(th *material.Theme, gtx layout.Conte
 			label string
 			entry filesys.Entry
 		}{
-			label: filenameTargetLabel(rule.Target) + " " + formatFilenameSizeRuleLabel(rule),
+			label: formatFilenameSizeRuleLabel(rule),
 			entry: filesys.Entry{
 				Name:        "size-" + strings.TrimPrefix(rule.Size, ".") + ".bin",
 				DisplayName: "size-" + strings.TrimPrefix(rule.Size, ".") + ".bin",
-				Kind:        sampleKind(rule.Target),
+				Kind:        filesys.EntryFile,
 				PermOctal:   "0640",
 				SizeBytes:   sampleSize,
 				ModTime:     now.Add(-30 * 24 * time.Hour),
@@ -2009,7 +2110,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	if currentPermExists {
 		permAction = "Update"
 	}
-	currentExt := filenameExtensionRuleKey(st.filenameExtEdit.Text(), st.filenameExtTarget)
+	currentExt := filenameExtensionRuleKey(st.filenameExtEdit.Text(), "")
 	_, currentExtExists := st.filenameExtensionRule(currentExt)
 	if !currentExtExists && st.filenameExtEditingKey != "" {
 		_, currentExtExists = st.filenameExtensionRule(st.filenameExtEditingKey)
@@ -2018,7 +2119,7 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	if currentExtExists {
 		extAction = "Update"
 	}
-	currentSize := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeMatch, st.filenameSizeTarget)
+	currentSize := filenameSizeRuleKey(st.filenameSizeEdit.Text(), st.filenameSizeUnit, st.filenameSizeMatch)
 	_, currentSizeExists := st.filenameSizeRule(currentSize)
 	if !currentSizeExists && st.filenameSizeEditingKey != "" {
 		_, currentSizeExists = st.filenameSizeRule(st.filenameSizeEditingKey)
@@ -2031,19 +2132,35 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	if st.filenameRuleMode != "permissions" {
 		st.filenamePermPickerOpen = false
 	}
+	fieldLabel := func(txt string) layout.Widget {
+		return func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, txt)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
+			lbl.Color = hintColor
+			lbl.MaxLines = 1
+			return lbl.Layout(gtx)
+		}
+	}
 
 	activeRuleEditor := func(gtx layout.Context) layout.Dimensions {
 		switch st.filenameRuleMode {
 		case "permissions":
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(fieldLabel("Permissions")),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutSettingsFilenamePermissionPickerField(th, gtx, st)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(fieldLabel("Match")),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutSettingsFilenamePermissionMatchTabs(th, gtx, st)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(fieldLabel("Applies To")),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutSettingsFilenameTargetTabs(th, gtx, st, &st.filenamePermTarget, &st.filenamePermTargetAnim, &st.filenamePermTargetClicks, settingsKeyboardFocusFilenamePermTarget)
 				}),
@@ -2074,6 +2191,8 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 			)
 		case "extensions":
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(fieldLabel("Suffix")),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedWidth(gtx, gtx.Dp(unit.Dp(124)), func(gtx layout.Context) layout.Dimensions {
 						ed := material.Editor(th, &st.filenameExtEdit, "go")
@@ -2087,10 +2206,6 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 						st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusFilenameExt, &st.filenameExtEdit)
 						return dims
 					})
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsFilenameTargetTabs(th, gtx, st, &st.filenameExtTarget, &st.filenameExtTargetAnim, &st.filenameExtTargetClicks, settingsKeyboardFocusFilenameExtTarget)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2119,27 +2234,35 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 			)
 		case "sizes":
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(fieldLabel("Size & Unit")),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, gtx.Dp(unit.Dp(104)), func(gtx layout.Context) layout.Dimensions {
-						ed := material.Editor(th, &st.filenameSizeEdit, "10m")
-						ed.Font.Typeface = ui.interfaceTypeface()
-						ed.TextSize = ui.scaleModalFontSize(10)
-						ed.Color = txtColor
-						ed.HintColor = hintColor
-						dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-size", &st.filenameSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
-							return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenameSizeEdit), true, ed.Layout)
-						})
-						st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusFilenameSize, &st.filenameSizeEdit)
-						return dims
-					})
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fixedWidth(gtx, gtx.Dp(unit.Dp(78)), func(gtx layout.Context) layout.Dimensions {
+								ed := material.Editor(th, &st.filenameSizeEdit, "10")
+								ed.Font.Typeface = ui.interfaceTypeface()
+								ed.TextSize = ui.scaleModalFontSize(10)
+								ed.Color = txtColor
+								ed.HintColor = hintColor
+								dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-filename-size", &st.filenameSizeEdit, true, func(gtx layout.Context) layout.Dimensions {
+									return layoutNeutralEditorBox(gtx, gtx.Focused(&st.filenameSizeEdit), true, ed.Layout)
+								})
+								st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusFilenameSize, &st.filenameSizeEdit)
+								return dims
+							})
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsFilenameSizeUnitPicker(th, gtx, st)
+						}),
+					)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(fieldLabel("Match")),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutSettingsFilenameSizeMatchTabs(th, gtx, st)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsFilenameTargetTabs(th, gtx, st, &st.filenameSizeTarget, &st.filenameSizeTargetAnim, &st.filenameSizeTargetClicks, settingsKeyboardFocusFilenameSizeTarget)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2152,10 +2275,6 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 							return ui.layoutSettingsFilenameIconPickerField(th, gtx, st, &st.filenameSizeIconClick, "filename-size-icon", st.filenameSizeIcon, settingsKeyboardFocusFilenameSizeIconPicker)
 						}),
 					)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsFilenameTargetTabs(th, gtx, st, &st.filenameAgeTarget, &st.filenameAgeTargetAnim, &st.filenameAgeTargetClicks, settingsKeyboardFocusFilenameAgeTarget)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2172,6 +2291,8 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 			)
 		default:
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(fieldLabel("Age & Unit")),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2193,6 +2314,12 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 							return ui.layoutSettingsFilenameAgeUnitPicker(th, gtx, st)
 						}),
 					)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+				layout.Rigid(fieldLabel("Applies To")),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsFilenameTargetTabs(th, gtx, st, &st.filenameAgeTarget, &st.filenameAgeTargetAnim, &st.filenameAgeTargetClicks, settingsKeyboardFocusFilenameAgeTarget)
 				}),
 				layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2265,9 +2392,9 @@ func (ui *UI) layoutSettingsFilenameColorsTab(th *material.Theme, gtx layout.Con
 	case "permissions":
 		activeRuleNote = "Exact matches the full mode. Other options check selected bits."
 	case "extensions":
-		activeRuleNote = "Matches lowercase suffixes."
+		activeRuleNote = "Matches file suffixes."
 	case "sizes":
-		activeRuleNote = "Use whole sizes like 4k or 10m."
+		activeRuleNote = "Matches regular files by size."
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,

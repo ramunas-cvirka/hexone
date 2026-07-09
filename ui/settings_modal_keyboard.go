@@ -85,15 +85,14 @@ const (
 	settingsKeyboardFocusFilenamePermApply
 	settingsKeyboardFocusFilenamePermRemove
 	settingsKeyboardFocusFilenameExt
-	settingsKeyboardFocusFilenameExtTarget
 	settingsKeyboardFocusFilenameExtTextPicker
 	settingsKeyboardFocusFilenameExtText
 	settingsKeyboardFocusFilenameExtIconPicker
 	settingsKeyboardFocusFilenameExtApply
 	settingsKeyboardFocusFilenameExtRemove
 	settingsKeyboardFocusFilenameSize
+	settingsKeyboardFocusFilenameSizeUnit
 	settingsKeyboardFocusFilenameSizeMatch
-	settingsKeyboardFocusFilenameSizeTarget
 	settingsKeyboardFocusFilenameSizeTextPicker
 	settingsKeyboardFocusFilenameSizeText
 	settingsKeyboardFocusFilenameSizeIconPicker
@@ -376,7 +375,6 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 			case "extensions":
 				order = append(order,
 					settingsKeyboardFocusFilenameExt,
-					settingsKeyboardFocusFilenameExtTarget,
 					settingsKeyboardFocusFilenameExtTextPicker,
 					settingsKeyboardFocusFilenameExtText,
 					settingsKeyboardFocusFilenameExtIconPicker,
@@ -386,8 +384,8 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 			case "sizes":
 				order = append(order,
 					settingsKeyboardFocusFilenameSize,
+					settingsKeyboardFocusFilenameSizeUnit,
 					settingsKeyboardFocusFilenameSizeMatch,
-					settingsKeyboardFocusFilenameSizeTarget,
 					settingsKeyboardFocusFilenameSizeTextPicker,
 					settingsKeyboardFocusFilenameSizeText,
 					settingsKeyboardFocusFilenameSizeIconPicker,
@@ -1571,6 +1569,25 @@ func (st *settingsModalState) stepFilenameSizeMatch(step int, now time.Time) boo
 	return true
 }
 
+func (st *settingsModalState) stepFilenameSizeUnit(step int, now time.Time) bool {
+	if st == nil || len(filenameSizeUnitOptions) == 0 {
+		return false
+	}
+	keys := make([]string, len(filenameSizeUnitOptions))
+	current := normalizeFilenameSizeUnit(st.filenameSizeUnit)
+	for i, opt := range filenameSizeUnitOptions {
+		keys[i] = opt.key
+	}
+	next := settingsChoiceStep(current, keys, step)
+	if next == "" || next == current {
+		return false
+	}
+	st.filenameSizeUnitAnim.anim.setPulse(next, now)
+	st.filenameSizeUnitAnim.setValue(&st.filenameSizeUnit, next, now)
+	st.errText = ""
+	return true
+}
+
 func (st *settingsModalState) stepFilenameTarget(current *string, anim *settingsChoiceAnim, step int, now time.Time) bool {
 	if st == nil || current == nil || anim == nil || len(filenameTargetOptions) == 0 {
 		return false
@@ -1627,12 +1644,10 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 		return st.stepFilenamePermMatch(step, now)
 	case settingsKeyboardFocusFilenamePermTarget:
 		return st.stepFilenameTarget(&st.filenamePermTarget, &st.filenamePermTargetAnim, step, now)
-	case settingsKeyboardFocusFilenameExtTarget:
-		return st.stepFilenameTarget(&st.filenameExtTarget, &st.filenameExtTargetAnim, step, now)
 	case settingsKeyboardFocusFilenameSizeMatch:
 		return st.stepFilenameSizeMatch(step, now)
-	case settingsKeyboardFocusFilenameSizeTarget:
-		return st.stepFilenameTarget(&st.filenameSizeTarget, &st.filenameSizeTargetAnim, step, now)
+	case settingsKeyboardFocusFilenameSizeUnit:
+		return st.stepFilenameSizeUnit(step, now)
 	case settingsKeyboardFocusGeneralCompletionSound:
 		return st.stepCompletionSound(step, now)
 	case settingsKeyboardFocusFooter:

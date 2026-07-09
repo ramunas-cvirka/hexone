@@ -188,9 +188,6 @@ type settingsModalState struct {
 	filenameExtEdit              widget.Editor
 	filenameExtTextEdit          widget.Editor
 	filenameExtIcon              string
-	filenameExtTarget            string
-	filenameExtTargetAnim        settingsChoiceAnim
-	filenameExtTargetClicks      [3]widget.Clickable
 	filenameExtIconClick         widget.Clickable
 	filenameExtTextPicker        widget.Clickable
 	filenameExtApplyClick        widget.Clickable
@@ -207,11 +204,11 @@ type settingsModalState struct {
 	filenameSizeMatch            string
 	filenameSizeMatchAnim        settingsChoiceAnim
 	filenameSizeMatchClicks      [2]widget.Clickable
+	filenameSizeUnit             string
+	filenameSizeUnitAnim         settingsChoiceAnim
+	filenameSizeUnitClicks       [5]widget.Clickable
 	filenameSizeTextEdit         widget.Editor
 	filenameSizeIcon             string
-	filenameSizeTarget           string
-	filenameSizeTargetAnim       settingsChoiceAnim
-	filenameSizeTargetClicks     [3]widget.Clickable
 	filenameSizeIconClick        widget.Clickable
 	filenameSizeTextPicker       widget.Clickable
 	filenameSizeApplyClick       widget.Clickable
@@ -6835,35 +6832,9 @@ func (ui *UI) layoutSettingsColorPickerCommit(th *material.Theme, gtx layout.Con
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			focused := st.popupKeyboardMatches(settingsPopupKeyboardColor, len(st.colorSwatchClicks), settingsPopupKeyboardActionRow)
-			return ui.layoutSettingsColorSetButton(th, gtx, &st.colorPickerSetClick, focused)
+			return ui.layoutSettingsFlatActionButton(th, gtx, &st.colorPickerSetClick, "Set", false, focused, false)
 		}),
 	)
-}
-
-func (ui *UI) layoutSettingsColorSetButton(th *material.Theme, gtx layout.Context, click *widget.Clickable, focused bool) layout.Dimensions {
-	dims := click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		bg := color.NRGBA{R: 47, G: 79, B: 132, A: 255}
-		border := color.NRGBA{R: 130, G: 166, B: 230, A: 110}
-		if click.Hovered() || focused {
-			bg = color.NRGBA{R: 58, G: 96, B: 158, A: 255}
-			border = color.NRGBA{R: 190, G: 214, B: 255, A: 210}
-		}
-		return fillFlatBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, "Set")
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleModalFontSize(9)
-				lbl.Font.Weight = font.Medium
-				lbl.Color = color.NRGBA{R: 248, G: 250, B: 255, A: 255}
-				return layoutVCenteredLabel(gtx, lbl)
-			})
-		})
-	})
-	if dims.Size.X > 0 && dims.Size.Y > 0 {
-		defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
-		pointer.CursorPointer.Add(gtx.Ops)
-	}
-	return dims
 }
 
 func (ui *UI) layoutSettingsFlatRemoveButton(gtx layout.Context, click *widget.Clickable, focused bool) layout.Dimensions {

@@ -79,10 +79,10 @@ func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 		case filesys.EntryDir, filesys.EntryParent, filesys.EntryBroken:
 			st.Weight = m.filePaneDirWeight()
 		}
-		if visual := m.filenameVisual(r); visual.hasColor {
-			st.Color = visual.color
-			st.PreserveColor = true
-		}
+	}
+	if visual := m.filenameVisual(r); visual.hasColor {
+		st.Color = visual.color
+		st.PreserveColor = true
 	}
 
 	showPerms := m.showPermissionColumn()
@@ -2651,38 +2651,38 @@ func (p *filePaneState) applySort(preservePath string) {
 		return
 	}
 	markedPaths := p.markedPaths()
-	p.model.rebuildFilenameVisuals(time.Now())
 
 	start := 0
 	if p.model.entries[0].Kind == filesys.EntryParent {
 		start = 1
 	}
-	if start >= len(p.model.entries) {
-		return
-	}
 
-	rows := p.model.entries[start:]
-	sort.SliceStable(rows, func(i, j int) bool {
-		a := rows[i]
-		b := rows[j]
+	if start < len(p.model.entries) {
+		rows := p.model.entries[start:]
+		sort.SliceStable(rows, func(i, j int) bool {
+			a := rows[i]
+			b := rows[j]
 
-		if p.dirsFirst {
-			aDir := a.Kind == filesys.EntryDir
-			bDir := b.Kind == filesys.EntryDir
-			if aDir != bDir {
-				return aDir
+			if p.dirsFirst {
+				aDir := a.Kind == filesys.EntryDir
+				bDir := b.Kind == filesys.EntryDir
+				if aDir != bDir {
+					return aDir
+				}
 			}
-		}
 
-		cmp := compareFileEntries(a, b, p.sortKey)
-		if cmp == 0 {
-			cmp = compareFileEntries(a, b, fileSortName)
-		}
-		if p.sortDesc {
-			cmp = -cmp
-		}
-		return cmp < 0
-	})
+			cmp := compareFileEntries(a, b, p.sortKey)
+			if cmp == 0 {
+				cmp = compareFileEntries(a, b, fileSortName)
+			}
+			if p.sortDesc {
+				cmp = -cmp
+			}
+			return cmp < 0
+		})
+	}
+	p.model.rebuildFilenameVisuals(time.Now())
+
 	if preservePath != "" && p.table != nil {
 		if idx := p.findEntryPathIndex(preservePath); idx >= 0 {
 			p.table.SetSelected(idx, p.model.Len(), true)

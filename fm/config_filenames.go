@@ -475,14 +475,12 @@ func NormalizeFilenameExtensionRules(raw []FilenameExtensionRule) []FilenameExte
 		if text == "" && icon == "" {
 			continue
 		}
-		target := NormalizeFilenameTarget(item.Target)
-		key := filenameRuleTargetKey(target) + ":" + ext
+		key := ext
 		if _, exists := byExt[key]; !exists {
 			order = append(order, key)
 		}
 		byExt[key] = FilenameExtensionRule{
 			Extension: ext,
-			Target:    target,
 			Text:      text,
 			Icon:      icon,
 		}
@@ -514,17 +512,15 @@ func NormalizeFilenameSizeRules(raw []FilenameSizeRule) []FilenameSizeRule {
 		if text == "" && icon == "" {
 			continue
 		}
-		target := NormalizeFilenameTarget(item.Target)
-		key := filenameRuleTargetKey(target) + ":" + match + ":" + size
+		key := match + ":" + size
 		if _, exists := byKey[key]; !exists {
 			order = append(order, key)
 		}
 		byKey[key] = FilenameSizeRule{
-			Size:   size,
-			Match:  match,
-			Target: target,
-			Text:   text,
-			Icon:   icon,
+			Size:  size,
+			Match: match,
+			Text:  text,
+			Icon:  icon,
 		}
 	}
 	if len(order) == 0 {

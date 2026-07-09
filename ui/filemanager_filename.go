@@ -297,7 +297,7 @@ func (t filePaneFilenameTheme) visualForEntry(entry filesys.Entry, now time.Time
 	if len(t.extensionRules) > 0 {
 		name := strings.ToLower(entry.Name)
 		for _, rule := range t.extensionRules {
-			if !filenameTargetMatchesEntry(rule.target, entry) {
+			if entry.Kind != filesys.EntryFile {
 				continue
 			}
 			if strings.HasSuffix(name, rule.suffix) {
@@ -307,7 +307,7 @@ func (t filePaneFilenameTheme) visualForEntry(entry filesys.Entry, now time.Time
 	}
 	if len(t.sizeRules) > 0 {
 		for _, rule := range t.sizeRules {
-			if !filenameTargetMatchesEntry(rule.rule.Target, entry) {
+			if entry.Kind != filesys.EntryFile {
 				continue
 			}
 			if fm.FilenameSizeMatches(entry.SizeBytes, rule.rule) {

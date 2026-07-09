@@ -2683,11 +2683,34 @@ func TestFilenameExtensionUIUsesBareSuffixDisplay(t *testing.T) {
 	if rule.Extension != ".go" {
 		t.Fatalf("rule.Extension=%q want %q", rule.Extension, ".go")
 	}
-	if rule.Target != fm.FilenameTargetFiles {
-		t.Fatalf("rule.Target=%q want %q", rule.Target, fm.FilenameTargetFiles)
+	if rule.Target != "" {
+		t.Fatalf("rule.Target=%q want empty file-only rule", rule.Target)
 	}
 	if got := formatFilenameExtensionRuleLabel(rule); got != "go" {
 		t.Fatalf("formatFilenameExtensionRuleLabel=%q want %q", got, "go")
+	}
+}
+
+func TestFilenameSizeUIUsesValueAndUnitFields(t *testing.T) {
+	st := &settingsModalState{}
+	st.loadFilenameSizeFields("10mb", fm.FilenameSizeMatchAtMost, "#445566", fm.FilenameIconArchive, "dirs")
+
+	if got := st.filenameSizeEdit.Text(); got != "10" {
+		t.Fatalf("filenameSizeEdit=%q want numeric value", got)
+	}
+	if got := st.filenameSizeUnit; got != "m" {
+		t.Fatalf("filenameSizeUnit=%q want m", got)
+	}
+
+	rule, err := parseFilenameSizeRuleFields("2", "k", fm.FilenameSizeMatchAtLeast, "#112233", fm.FilenameIconImage)
+	if err != nil {
+		t.Fatalf("parseFilenameSizeRuleFields error: %v", err)
+	}
+	if rule.Size != "2k" {
+		t.Fatalf("rule.Size=%q want 2k", rule.Size)
+	}
+	if rule.Target != "" {
+		t.Fatalf("rule.Target=%q want empty file-only rule", rule.Target)
 	}
 }
 
