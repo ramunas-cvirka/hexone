@@ -36,6 +36,10 @@ const (
 	// pdfDocFallbackPageWidthPt approximates US Letter width until the real
 	// page sizes arrive from the renderer.
 	pdfDocFallbackPageWidthPt = 612.0
+	// pdfDocLinkClickSlopPx is how far the pointer may travel between press
+	// and release for the gesture to still count as a link click rather
+	// than a selection or pan drag.
+	pdfDocLinkClickSlopPx = 4
 )
 
 // pdfDocPaperColor backs pages that have not been rasterized yet; pdfium
@@ -75,6 +79,7 @@ type pdfDocResult struct {
 	page   int
 	render *pdfDocPageRender
 	text   *viewerPDFPageText
+	links  *viewerPDFPageLinks
 	toc    *[]viewerPDFTOCEntry
 }
 
@@ -120,6 +125,7 @@ type pdfDocView struct {
 	hoverHTrack bool
 	hoverHThumb bool
 	hoverText   bool
+	hoverLink   bool
 
 	vDragging bool
 	vDragID   pointer.ID
@@ -140,15 +146,24 @@ type pdfDocView struct {
 	selEnd     pdfDocTextPos
 	selLastPos image.Point
 
+	// A press on a link annotation arms it; the link fires on release
+	// unless the pointer dragged past the click slop in between.
+	linkArmed    bool
+	linkID       pointer.ID
+	linkPressPos image.Point
+	linkDest     int
+
 	lastClickAt  time.Time
 	lastClickPos image.Point
 
 	pages         map[int]pdfDocPageRender
 	text          map[int]viewerPDFPageText
+	links         map[int][]viewerPDFPageLink
 	toc           []viewerPDFTOCEntry
 	tocLoaded     bool
 	tocPending    bool
 	textPending   map[int]time.Time
+	linkPending   map[int]time.Time
 	renderPending map[int]pdfDocInflight
 }
 
@@ -676,8 +691,18 @@ func (v *pdfDocView) storeText(text viewerPDFPageText) {
 	v.text[text.Page] = text
 }
 
-// prune drops cached renders and text far away from the visible range,
-// keeping text for pages inside the current selection so copy keeps
+func (v *pdfDocView) storeLinks(links viewerPDFPageLinks) {
+	if v == nil || links.Page < 0 {
+		return
+	}
+	if v.links == nil {
+		v.links = make(map[int][]viewerPDFPageLink, 8)
+	}
+	v.links[links.Page] = links.Links
+}
+
+// prune drops cached renders, text, and links far away from the visible
+// range, keeping text for pages inside the current selection so copy keeps
 // working.
 func (v *pdfDocView) prune(first, last int) {
 	if v == nil {
@@ -701,6 +726,11 @@ func (v *pdfDocView) prune(first, last int) {
 			continue
 		}
 		delete(v.text, page)
+	}
+	for page := range v.links {
+		if page < first-4 || page > last+4 {
+			delete(v.links, page)
+		}
 	}
 }
 
@@ -896,6 +926,68 @@ func (v *pdfDocView) autoScrollSelection() bool {
 		v.selEnd = sel
 	}
 	return true
+}
+
+// linkAt returns the link annotation under the given screen position.
+func (v *pdfDocView) linkAt(pos image.Point) (viewerPDFPageLink, bool) {
+	if v == nil || len(v.layoutTops) == 0 || v.layoutScale <= 0 {
+		return viewerPDFPageLink{}, false
+	}
+	origin := v.docOrigin()
+	docX := float64(pos.X - origin.X)
+	docY := float64(pos.Y - origin.Y)
+	page := v.pageAt(docY)
+	links := v.links[page]
+	if len(links) == 0 {
+		return viewerPDFPageLink{}, false
+	}
+	px, py, _, _ := v.pageDocRect(page)
+	ptX := (docX - px) / v.layoutScale
+	ptY := (docY - py) / v.layoutScale
+	for _, link := range links {
+		if ptX >= link.Left && ptX <= link.Right && ptY >= link.Top && ptY <= link.Bottom {
+			return link, true
+		}
+	}
+	return viewerPDFPageLink{}, false
+}
+
+// armLink records a primary press over a link; the link fires when the same
+// pointer releases within the click slop.
+func (v *pdfDocView) armLink(pos image.Point, id pointer.ID) bool {
+	link, ok := v.linkAt(pos)
+	if !ok {
+		return false
+	}
+	v.linkArmed = true
+	v.linkID = id
+	v.linkPressPos = pos
+	v.linkDest = link.DestPage
+	return true
+}
+
+// disarmLinkOnDrag cancels a pending link click once the pointer travels
+// past the slop, so a text-selection or pan drag never navigates.
+func (v *pdfDocView) disarmLinkOnDrag(pos image.Point) {
+	if v == nil || !v.linkArmed {
+		return
+	}
+	if absInt(pos.X-v.linkPressPos.X) > pdfDocLinkClickSlopPx || absInt(pos.Y-v.linkPressPos.Y) > pdfDocLinkClickSlopPx {
+		v.linkArmed = false
+	}
+}
+
+// releaseLink consumes the armed link on release and reports the page to
+// navigate to when the gesture stayed a click.
+func (v *pdfDocView) releaseLink(pos image.Point, id pointer.ID) (int, bool) {
+	if v == nil || !v.linkArmed || id != v.linkID {
+		return 0, false
+	}
+	v.linkArmed = false
+	if absInt(pos.X-v.linkPressPos.X) > pdfDocLinkClickSlopPx || absInt(pos.Y-v.linkPressPos.Y) > pdfDocLinkClickSlopPx {
+		return 0, false
+	}
+	return v.linkDest, true
 }
 
 // textPosAt maps a screen position to the nearest caret position. The
@@ -1154,32 +1246,38 @@ func (v *pdfDocView) updateHover(pos image.Point) bool {
 	}
 	oldVTrack, oldVThumb := v.hoverVTrack, v.hoverVThumb
 	oldHTrack, oldHThumb := v.hoverHTrack, v.hoverHThumb
-	oldText := v.hoverText
+	oldText, oldLink := v.hoverText, v.hoverLink
 	v.hoverVTrack = viewerPointInRect(pos, v.vTrackRect)
 	v.hoverVThumb = viewerPointInRect(pos, v.vThumbRect)
 	v.hoverHTrack = viewerPointInRect(pos, v.hTrackRect)
 	v.hoverHThumb = viewerPointInRect(pos, v.hThumbRect)
 	v.hoverText = false
+	v.hoverLink = false
 	if !v.hoverVTrack && !v.hoverHTrack && viewerPointInRect(pos, v.viewportRect) {
-		_, v.hoverText = v.textHitAt(pos)
+		_, v.hoverLink = v.linkAt(pos)
+		if !v.hoverLink {
+			_, v.hoverText = v.textHitAt(pos)
+		}
 	}
 	return oldVTrack != v.hoverVTrack ||
 		oldVThumb != v.hoverVThumb ||
 		oldHTrack != v.hoverHTrack ||
 		oldHThumb != v.hoverHThumb ||
-		oldText != v.hoverText
+		oldText != v.hoverText ||
+		oldLink != v.hoverLink
 }
 
 func (v *pdfDocView) clearHover() bool {
 	if v == nil {
 		return false
 	}
-	changed := v.hoverVTrack || v.hoverVThumb || v.hoverHTrack || v.hoverHThumb || v.hoverText
+	changed := v.hoverVTrack || v.hoverVThumb || v.hoverHTrack || v.hoverHThumb || v.hoverText || v.hoverLink
 	v.hoverVTrack = false
 	v.hoverVThumb = false
 	v.hoverHTrack = false
 	v.hoverHThumb = false
 	v.hoverText = false
+	v.hoverLink = false
 	return changed
 }
 
@@ -1347,8 +1445,35 @@ func (ui *UI) ensurePDFDocAssets(gtx layout.Context, st *fileViewerState) {
 		}(page)
 	}
 
+	for page := first; page <= last; page++ {
+		if _, ok := v.links[page]; ok {
+			continue
+		}
+		if at, ok := v.linkPending[page]; ok && gtx.Now.Sub(at) <= pdfDocInflightExpiry {
+			continue
+		}
+		if v.linkPending == nil {
+			v.linkPending = make(map[int]time.Time, 4)
+		}
+		v.linkPending[page] = gtx.Now
+		go func(page int) {
+			links, err := backend.PageLinks(viewerPDFRenderRequest{
+				Data:      data,
+				LocalPath: localPath,
+				Page:      page,
+			})
+			res := pdfDocResult{seq: seq, page: page}
+			if err != nil {
+				res.err = err.Error()
+			} else {
+				res.links = &links
+			}
+			sendPDFDocResult(ch, res)
+		}(page)
+	}
+
 	v.prune(first, last)
-	if len(v.renderPending) > 0 || len(v.textPending) > 0 || v.infoPending || v.tocPending {
+	if len(v.renderPending) > 0 || len(v.textPending) > 0 || len(v.linkPending) > 0 || v.infoPending || v.tocPending {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(pdfDocPendingPollDelay)})
 	}
 }
@@ -1377,6 +1502,10 @@ func (ui *UI) pumpPDFDocResults(gtx layout.Context, st *fileViewerState) {
 				delete(v.textPending, res.page)
 				v.storeText(*res.text)
 				gtx.Execute(op.InvalidateCmd{})
+			case res.links != nil:
+				delete(v.linkPending, res.page)
+				v.storeLinks(*res.links)
+				gtx.Execute(op.InvalidateCmd{})
 			case res.toc != nil:
 				v.toc = normalizeViewerPDFTOC(*res.toc)
 				v.tocLoaded = true
@@ -1388,12 +1517,33 @@ func (ui *UI) pumpPDFDocResults(gtx layout.Context, st *fileViewerState) {
 					v.infoPending = false
 					delete(v.renderPending, res.page)
 					delete(v.textPending, res.page)
+					delete(v.linkPending, res.page)
 				}
 			}
 		default:
 			return
 		}
 	}
+}
+
+// seedPDFDocPreviewRender installs the single-page preview bitmap as the
+// render for the page it depicts, so the first paint is not blank while the
+// real renders load. It must key off imagePreviewSeedPage: imagePreviewPage
+// tracks the current page while scrolling, and seeding by it would flash
+// this bitmap onto whatever unrendered page a fast scroll lands on.
+func seedPDFDocPreviewRender(st *fileViewerState) {
+	if st == nil || st.imagePreview == nil {
+		return
+	}
+	v := &st.pdfDoc
+	if _, ok := v.pages[st.imagePreviewSeedPage]; ok {
+		return
+	}
+	width := 0
+	if st.imagePreviewSize.X > 0 {
+		width = st.imagePreviewSize.X
+	}
+	v.storeRender(st.imagePreviewSeedPage, pdfDocPageRender{img: st.imagePreview, width: width})
 }
 
 // layoutPDFDocOutputView renders the continuous PDF document view.
@@ -1408,13 +1558,7 @@ func (ui *UI) layoutPDFDocOutputView(_ *material.Theme, gtx layout.Context, st *
 	if len(v.pageSizes) == 0 {
 		return layout.Dimensions{Size: size}
 	}
-	if _, ok := v.pages[st.imagePreviewPage]; !ok && st.imagePreview != nil {
-		width := 0
-		if st.imagePreviewSize.X > 0 {
-			width = st.imagePreviewSize.X
-		}
-		v.storeRender(st.imagePreviewPage, pdfDocPageRender{img: st.imagePreview, width: width})
-	}
+	seedPDFDocPreviewRender(st)
 
 	scrollbarPx := viewerScrollbarThickness(gtx, min(size.X, size.Y))
 	v.computeLayout(size, scrollbarPx)
@@ -1522,6 +1666,11 @@ func (ui *UI) handlePDFDocEvents(gtx layout.Context, st *fileViewerState) {
 					gtx.Execute(op.InvalidateCmd{})
 					break
 				}
+				// A press on a link arms it; it only navigates if the
+				// gesture stays a click (Shift keeps selection intent).
+				if !pe.Modifiers.Contain(key.ModShift) {
+					v.armLink(pos, pe.PointerID)
+				}
 				// Drag selects when the press lands on text and pans
 				// otherwise; Shift forces selection anchored to the
 				// nearest text.
@@ -1553,6 +1702,7 @@ func (ui *UI) handlePDFDocEvents(gtx layout.Context, st *fileViewerState) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case pointer.Drag:
+			v.disarmLinkOnDrag(pos)
 			changed := false
 			if v.panning && pe.PointerID == v.panID {
 				dx := float64(v.panLast.X - pe.Position.X)
@@ -1592,6 +1742,15 @@ func (ui *UI) handlePDFDocEvents(gtx layout.Context, st *fileViewerState) {
 				if !v.hasSelection() {
 					v.clearSelection()
 				}
+			}
+			if pe.Kind == pointer.Cancel {
+				v.linkArmed = false
+			} else if dest, ok := v.releaseLink(pos, pe.PointerID); ok && !v.hasSelection() {
+				if v.scrollToPage(dest) {
+					v.syncVisualScroll()
+				}
+				st.markUserBrowsing(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 			}
 			if v.vDragging && pe.PointerID == v.vDragID {
 				v.vDragging = false
@@ -1700,6 +1859,9 @@ func (ui *UI) applyPDFDocCursor(gtx layout.Context, st *fileViewerState) {
 		pointer.CursorPointer.Add(gtx.Ops)
 	case v.hoverHTrack || v.hoverHThumb:
 		defer clip.Rect(v.hTrackRect).Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
+	case v.hoverLink:
+		defer clip.Rect(v.viewportRect).Push(gtx.Ops).Pop()
 		pointer.CursorPointer.Add(gtx.Ops)
 	case v.hoverText:
 		defer clip.Rect(v.viewportRect).Push(gtx.Ops).Pop()

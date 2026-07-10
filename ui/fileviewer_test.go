@@ -198,6 +198,13 @@ func (f *fakeViewerPDFRenderer) PageText(req viewerPDFRenderRequest) (viewerPDFP
 	return text, nil
 }
 
+func (f *fakeViewerPDFRenderer) PageLinks(req viewerPDFRenderRequest) (viewerPDFPageLinks, error) {
+	if f.err != nil {
+		return viewerPDFPageLinks{}, f.err
+	}
+	return viewerPDFPageLinks{Page: req.Page}, nil
+}
+
 func (f *fakeViewerPDFRenderer) TOC(_ viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error) {
 	if f.err != nil {
 		return nil, f.err

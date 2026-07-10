@@ -198,6 +198,111 @@ func TestPDFDocViewTextSelectionAndCopy(t *testing.T) {
 	}
 }
 
+func TestPDFDocViewLinkClickNavigates(t *testing.T) {
+	v := testPDFDocView(3, 100, 200, image.Rect(0, 0, 100, 200))
+	v.storeLinks(viewerPDFPageLinks{Page: 0, Links: []viewerPDFPageLink{
+		{Left: 10, Top: 20, Right: 60, Bottom: 30, DestPage: 2},
+	}})
+
+	// Screen coords equal doc coords here (scale 1, no centering offsets).
+	if link, ok := v.linkAt(image.Pt(35, 25)); !ok || link.DestPage != 2 {
+		t.Fatalf("linkAt=(%+v,%v) want the page-2 link", link, ok)
+	}
+	if _, ok := v.linkAt(image.Pt(35, 60)); ok {
+		t.Fatal("expected no link hit outside the rect")
+	}
+	if !v.updateHover(image.Pt(35, 25)) || !v.hoverLink {
+		t.Fatal("expected hoverLink over the link rect")
+	}
+
+	// A clean click (press + release within the slop) navigates.
+	if !v.armLink(image.Pt(35, 25), 1) {
+		t.Fatal("expected press over the link to arm it")
+	}
+	dest, ok := v.releaseLink(image.Pt(36, 26), 1)
+	if !ok || dest != 2 {
+		t.Fatalf("releaseLink=(%d,%v) want page 2", dest, ok)
+	}
+	// Firing consumes the armed state.
+	if _, ok := v.releaseLink(image.Pt(36, 26), 1); ok {
+		t.Fatal("second release must not navigate again")
+	}
+
+	// Dragging past the slop turns the gesture into selection/pan.
+	far := image.Pt(35+pdfDocLinkClickSlopPx+2, 25)
+	if !v.armLink(image.Pt(35, 25), 1) {
+		t.Fatal("expected re-arm")
+	}
+	v.disarmLinkOnDrag(far)
+	if _, ok := v.releaseLink(far, 1); ok {
+		t.Fatal("a drag past the slop must not navigate")
+	}
+
+	// A release from another pointer neither fires nor disarms.
+	if !v.armLink(image.Pt(35, 25), 1) {
+		t.Fatal("expected re-arm")
+	}
+	if _, ok := v.releaseLink(image.Pt(35, 25), 2); ok {
+		t.Fatal("foreign pointer release must not navigate")
+	}
+	if dest, ok := v.releaseLink(image.Pt(35, 25), 1); !ok || dest != 2 {
+		t.Fatalf("original pointer release=(%d,%v) want page 2", dest, ok)
+	}
+
+	// A press away from any link does not arm.
+	if v.armLink(image.Pt(35, 60), 1) {
+		t.Fatal("press outside links must not arm")
+	}
+}
+
+func TestPDFDocViewPruneDropsFarLinks(t *testing.T) {
+	v := testPDFDocView(40, 100, 200, image.Rect(0, 0, 100, 200))
+	for page := 0; page < 6; page++ {
+		v.storeLinks(viewerPDFPageLinks{Page: page})
+	}
+	v.prune(30, 32)
+	if len(v.links) != 0 {
+		t.Fatalf("far page links should be pruned, still cached: %d", len(v.links))
+	}
+	v.storeLinks(viewerPDFPageLinks{Page: 31})
+	v.prune(30, 32)
+	if _, ok := v.links[31]; !ok {
+		t.Fatal("links inside the visible window must survive pruning")
+	}
+}
+
+// TestPDFDocSeedPreviewRenderOnlySeedsDepictedPage guards against the
+// fast-scroll cover flash: imagePreviewPage tracks the current page while
+// scrolling, so seeding the preview bitmap by it would paint the cover onto
+// whatever unrendered page the user scrolled to.
+func TestPDFDocSeedPreviewRenderOnlySeedsDepictedPage(t *testing.T) {
+	st := &fileViewerState{}
+	st.pdfDoc = *testPDFDocView(60, 100, 200, image.Rect(0, 0, 100, 200))
+	st.imagePreview = image.NewNRGBA(image.Rect(0, 0, 10, 20))
+	st.imagePreviewSize = image.Pt(10, 20)
+	st.imagePreviewSeedPage = 0
+	// Simulate a fast scroll: the current-page bookkeeping moved far ahead
+	// of the renderer.
+	st.imagePreviewPage = 50
+
+	seedPDFDocPreviewRender(st)
+
+	if _, ok := st.pdfDoc.pages[50]; ok {
+		t.Fatal("preview bitmap must not be seeded onto the scrolled-to page")
+	}
+	if entry, ok := st.pdfDoc.pages[0]; !ok || entry.img == nil {
+		t.Fatal("preview bitmap should seed the page it depicts")
+	}
+
+	// Once a real render exists for the depicted page, seeding is a no-op.
+	real := pdfDocPageRender{img: image.NewNRGBA(image.Rect(0, 0, 40, 80)), width: 40}
+	st.pdfDoc.storeRender(0, real)
+	seedPDFDocPreviewRender(st)
+	if got := st.pdfDoc.pages[0]; got.width != real.width {
+		t.Fatalf("seeding overwrote a real render: width=%d want %d", got.width, real.width)
+	}
+}
+
 func TestPDFDocViewPruneKeepsSelectionText(t *testing.T) {
 	v := testPDFDocView(40, 100, 200, image.Rect(0, 0, 100, 200))
 	for page := 0; page < 6; page++ {

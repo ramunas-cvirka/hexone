@@ -103,11 +103,28 @@ type viewerPDFPageText struct {
 	Chars []viewerPDFTextChar
 }
 
+// viewerPDFPageLink is one internal link annotation on a page. The rect is
+// in page points with a top-left origin (the same display space as
+// viewerPDFTextChar rects); DestPage is the 0-based page it navigates to.
+type viewerPDFPageLink struct {
+	Left     float64
+	Top      float64
+	Right    float64
+	Bottom   float64
+	DestPage int
+}
+
+type viewerPDFPageLinks struct {
+	Page  int
+	Links []viewerPDFPageLink
+}
+
 type viewerPDFRenderer interface {
 	Available() bool
 	RenderPage(req viewerPDFRenderRequest) (viewerPDFRenderResult, error)
 	DocInfo(req viewerPDFRenderRequest) (viewerPDFDocInfo, error)
 	PageText(req viewerPDFRenderRequest) (viewerPDFPageText, error)
+	PageLinks(req viewerPDFRenderRequest) (viewerPDFPageLinks, error)
 	TOC(req viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error)
 }
 
@@ -127,6 +144,10 @@ func (viewerNoopPDFRenderer) DocInfo(_ viewerPDFRenderRequest) (viewerPDFDocInfo
 
 func (viewerNoopPDFRenderer) PageText(_ viewerPDFRenderRequest) (viewerPDFPageText, error) {
 	return viewerPDFPageText{}, errors.New("pdf preview is unavailable")
+}
+
+func (viewerNoopPDFRenderer) PageLinks(_ viewerPDFRenderRequest) (viewerPDFPageLinks, error) {
+	return viewerPDFPageLinks{}, errors.New("pdf preview is unavailable")
 }
 
 func (viewerNoopPDFRenderer) TOC(_ viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error) {

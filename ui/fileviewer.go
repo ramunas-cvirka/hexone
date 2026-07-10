@@ -124,6 +124,10 @@ type fileViewerState struct {
 	imagePreviewFormat    string
 	imagePreviewSize      image.Point
 	imagePreviewPage      int
+	// imagePreviewSeedPage is the page imagePreview depicts. Unlike
+	// imagePreviewPage (which the PDF doc view reuses as current-page
+	// bookkeeping while scrolling) it only changes when imagePreview does.
+	imagePreviewSeedPage  int
 	imagePreviewPageCount int
 	detectedBinaryPreview bool
 	detectedLineEnding    string
@@ -1235,6 +1239,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		st.imagePreviewFormat = st.pendingImageFormat
 		st.imagePreviewSize = st.pendingImageSize
 		st.imagePreviewPage = st.pendingImagePage
+		st.imagePreviewSeedPage = st.pendingImagePage
 		st.imagePreviewPageCount = st.pendingImagePageCount
 		st.detectedBinaryPreview = st.pendingBinaryPreview
 		st.detectedLineEnding = st.pendingLineEnding
@@ -1376,6 +1381,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.imagePreviewFormat = res.imageFormat
 			st.imagePreviewSize = res.imageSize
 			st.imagePreviewPage = res.imagePage
+			st.imagePreviewSeedPage = res.imagePage
 			st.imagePreviewPageCount = res.imagePageCount
 			st.detectedBinaryPreview = res.binaryPreview
 			st.detectedLineEnding = res.lineEnding
