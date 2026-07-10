@@ -91,3 +91,7 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Prevented Custom Commands editor navigation and shortcut keys from leaking through to the underlying file pane.
 - Applied the same responsive 80%-of-window height policy to the F1 Help modal as Settings, with an integrated scrollbar and flattened content area.
 - Fixed File-mode text shifting horizontally when asynchronous syntax highlighting appears.
+- Simplified Multi-Rename counters by replacing the manual digit-width field with automatic zero-padding.
+- Improved image previews with responsive fit-width startup, native-size centering, drag panning, and clickable zoom presets; viewer mode tabs now carry the full filename, and outlined PDFs expose dense accordion TOC navigation with separate disclosure and bookmark links.
+- Kept supported oversized images and PDFs in File preview mode instead of incorrectly opening them in Hex mode because of the text-read size limit.
+- Made `Esc` close open viewer zoom and TOC popups before closing the viewer itself.

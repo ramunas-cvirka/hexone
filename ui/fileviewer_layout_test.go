@@ -280,6 +280,47 @@ func TestFileViewerModeTabsUseRegularConfiguredTabWidths(t *testing.T) {
 	}
 }
 
+func TestViewerModeTabTitleMovesFilenameToActiveMode(t *testing.T) {
+	st := &fileViewerState{name: "tik_tok.jpg", mode: "file"}
+	if got := viewerModeTabTitle(st, "file", "File"); got != "File - tik_tok.jpg" {
+		t.Fatalf("file tab=%q", got)
+	}
+	if got := viewerModeTabTitle(st, "hex", "Hex"); got != "Hex" {
+		t.Fatalf("inactive hex tab=%q", got)
+	}
+	st.mode = "hex"
+	if got := viewerModeTabTitle(st, "hex", "Hex"); got != "Hex - tik_tok.jpg" {
+		t.Fatalf("hex tab=%q", got)
+	}
+	st.mode = "command"
+	if got := viewerModeTabTitle(st, "command", "Cmd"); got != "Cmd - tik_tok.jpg" {
+		t.Fatalf("command tab=%q", got)
+	}
+	st.historyOpen = true
+	if got := viewerModeTabTitle(st, "command", "Cmd"); got != "Cmd" {
+		t.Fatalf("history-open command tab=%q", got)
+	}
+}
+
+func TestFileViewerActiveModeTabExpandsForFullFilename(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Tabs.WidthMode = "fixed"
+	cfg.Tabs.FixedWidthDp = 48
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	st := &fileViewerState{name: "a-fully-visible-image-name.jpg", mode: "file"}
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(900, 24)},
+	}
+	ui.layoutFileViewerModeTabs(th, gtx, st, 24)
+	wantMin := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "File - "+st.name)
+	if got := st.activeTabRect.Dx(); got < wantMin {
+		t.Fatalf("active tab width=%d want at least full title width %d", got, wantMin)
+	}
+}
+
 func TestFileViewerHistoryUsesInterfaceFontAndFullWidth(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.Interface.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
@@ -366,6 +407,137 @@ func TestViewerPDFPageLabelUsesScrolledDocumentPage(t *testing.T) {
 
 	if got := viewerPDFPageLabel(st); got != "Page 7/9" {
 		t.Fatalf("page label=%q want %q", got, "Page 7/9")
+	}
+}
+
+func TestViewerTOCAccordionStartsAtRootsAndKeepsOneBranchOpen(t *testing.T) {
+	st := &fileViewerState{}
+	st.pdfDoc.toc = normalizeViewerPDFTOC([]viewerPDFTOCEntry{
+		{Title: "Chapter A", Page: 0, Level: 0},
+		{Title: "Section A.1", Page: 1, Level: 1},
+		{Title: "Topic A.1.a", Page: 2, Level: 2},
+		{Title: "Section A.2", Page: 3, Level: 1},
+		{Title: "Chapter B", Page: 4, Level: 0},
+		{Title: "Section B.1", Page: 5, Level: 1},
+	})
+
+	assertVisible := func(want ...int) {
+		t.Helper()
+		got := viewerTOCVisibleIndices(st)
+		if len(got) != len(want) {
+			t.Fatalf("visible=%v want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("visible=%v want %v", got, want)
+			}
+		}
+	}
+
+	assertVisible(0, 4)
+	if !toggleViewerTOCEntry(st, st.pdfDoc.toc[0]) {
+		t.Fatal("root entry should expand")
+	}
+	assertVisible(0, 1, 3, 4)
+	if !toggleViewerTOCEntry(st, st.pdfDoc.toc[1]) {
+		t.Fatal("nested entry should expand")
+	}
+	assertVisible(0, 1, 2, 3, 4)
+
+	// Expanding another root closes the previous root and all of its nested
+	// expansion state while keeping both root rows visible.
+	if !toggleViewerTOCEntry(st, st.pdfDoc.toc[4]) {
+		t.Fatal("second root entry should expand")
+	}
+	assertVisible(0, 4, 5)
+	if viewerTOCEntryExpanded(st, st.pdfDoc.toc[0]) || viewerTOCEntryExpanded(st, st.pdfDoc.toc[1]) {
+		t.Fatal("opening a sibling branch should close the previous branch")
+	}
+	if !viewerTOCEntryExpanded(st, st.pdfDoc.toc[4]) {
+		t.Fatal("second root should be marked expanded")
+	}
+
+	if !toggleViewerTOCEntry(st, st.pdfDoc.toc[4]) {
+		t.Fatal("expanded root should collapse")
+	}
+	assertVisible(0, 4)
+}
+
+func TestNormalizeViewerTOCBuildsStableHierarchy(t *testing.T) {
+	toc := normalizeViewerPDFTOC([]viewerPDFTOCEntry{
+		{Title: "Root", Level: 0},
+		{Title: "Child", Level: 1},
+		{Title: "Grandchild", Level: 4},
+		{Title: "Other root", Level: 0},
+	})
+	if len(toc) != 4 {
+		t.Fatalf("TOC length=%d want 4", len(toc))
+	}
+	if toc[0].ID == "" || !toc[0].HasChildren {
+		t.Fatalf("root=%+v want stable ID and children", toc[0])
+	}
+	if toc[1].ParentID != toc[0].ID || !toc[1].HasChildren {
+		t.Fatalf("child=%+v want parent %q and children", toc[1], toc[0].ID)
+	}
+	if toc[2].Level != 2 || toc[2].ParentID != toc[1].ID {
+		t.Fatalf("grandchild=%+v want clamped level 2 and parent %q", toc[2], toc[1].ID)
+	}
+	if toc[3].Level != 0 || toc[3].ParentID != "" || toc[3].HasChildren {
+		t.Fatalf("other root=%+v", toc[3])
+	}
+}
+
+func TestViewerTOCDisclosureAndTitleHaveIndependentActions(t *testing.T) {
+	st := &fileViewerState{}
+	st.mode = "file"
+	st.tocMenuOpen = true
+	st.pdfDoc.viewportRect = image.Rect(0, 0, 300, 240)
+	st.pdfDoc.configure(viewerPDFDocInfo{
+		PageCount: 2,
+		PageSizes: []viewerPDFPageSize{{W: 612, H: 792}, {W: 612, H: 792}},
+	})
+	st.pdfDoc.toc = normalizeViewerPDFTOC([]viewerPDFTOCEntry{
+		{Title: "Chapter", Page: 0, Level: 0},
+		{Title: "Leaf", Page: 1, Level: 1},
+	})
+
+	root := st.pdfDoc.toc[0]
+	if !viewerTOCEntryNavigates(st, root) {
+		t.Fatal("a branch title with a valid destination should navigate")
+	}
+	if !viewerTOCEntryNavigates(st, st.pdfDoc.toc[1]) {
+		t.Fatal("a leaf with a valid destination should navigate")
+	}
+	if glyph := viewerTOCDisclosureGlyph(st, root); glyph != "→" {
+		t.Fatalf("collapsed disclosure=%q want right arrow", glyph)
+	}
+	if !st.pdfDoc.scrollToPage(1) {
+		t.Fatal("test document should scroll to page 2")
+	}
+	before := st.pdfDoc.scrollY
+
+	ensureViewerTOCClicks(st)
+	st.tocDisclosureClicks[0].Click()
+	ui := NewUI(fm.DefaultConfig())
+	gtx := layout.Context{Ops: new(op.Ops), Now: time.Now()}
+	ui.handleFileViewerTOCClicks(gtx, st)
+	if st.pdfDoc.scrollY != before {
+		t.Fatalf("disclosure changed scrollY=%f want %f", st.pdfDoc.scrollY, before)
+	}
+	if !st.tocMenuOpen || !viewerTOCEntryExpanded(st, root) {
+		t.Fatal("disclosure should expand the branch and keep the TOC open")
+	}
+	if glyph := viewerTOCDisclosureGlyph(st, root); glyph != "↓" {
+		t.Fatalf("expanded disclosure=%q want down arrow", glyph)
+	}
+
+	st.tocClicks[0].Click()
+	ui.handleFileViewerTOCClicks(gtx, st)
+	if got := st.pdfDoc.currentPage(); got != 0 {
+		t.Fatalf("root title navigated to page=%d want 0", got)
+	}
+	if st.tocMenuOpen {
+		t.Fatal("title navigation should close the TOC")
 	}
 }
 

@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/klippa-app/go-pdfium"
 	"github.com/klippa-app/go-pdfium/references"
 	"github.com/klippa-app/go-pdfium/requests"
+	"github.com/klippa-app/go-pdfium/responses"
 	"github.com/klippa-app/go-pdfium/webassembly"
 )
 
@@ -196,6 +198,46 @@ func (r *viewerPDFiumRenderer) PageText(req viewerPDFRenderRequest) (viewerPDFPa
 		return viewerPDFPageText{}, err
 	}
 	return text, nil
+}
+
+func (r *viewerPDFiumRenderer) TOC(req viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error) {
+	var toc []viewerPDFTOCEntry
+	err := r.withDocument(req, func(instance pdfium.Pdfium, doc references.FPDF_DOCUMENT, _ int) error {
+		bookmarks, err := instance.GetBookmarks(&requests.GetBookmarks{Document: doc})
+		if err != nil {
+			return err
+		}
+		const maxTOCEntries = 2048
+		var appendBookmarks func([]responses.GetBookmarksBookmark, int)
+		appendBookmarks = func(items []responses.GetBookmarksBookmark, level int) {
+			for _, item := range items {
+				if len(toc) >= maxTOCEntries {
+					return
+				}
+				page := -1
+				if item.DestInfo != nil {
+					page = item.DestInfo.PageIndex
+				} else if item.ActionInfo != nil && item.ActionInfo.DestInfo != nil {
+					page = item.ActionInfo.DestInfo.PageIndex
+				}
+				title := strings.TrimSpace(item.Title)
+				if title != "" {
+					toc = append(toc, viewerPDFTOCEntry{Title: title, Page: page, Level: level})
+					appendBookmarks(item.Children, level+1)
+				} else {
+					// Promote descendants of untitled outline nodes so every
+					// visible child still has a visible parent.
+					appendBookmarks(item.Children, level)
+				}
+			}
+		}
+		appendBookmarks(bookmarks.Bookmarks, 0)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return normalizeViewerPDFTOC(toc), nil
 }
 
 func (r *viewerPDFiumRenderer) poolInstance() (pdfium.Pool, error) {

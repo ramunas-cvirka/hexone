@@ -39,6 +39,54 @@ type viewerPDFDocInfo struct {
 	PageSizes []viewerPDFPageSize
 }
 
+type viewerPDFTOCEntry struct {
+	Title       string
+	Page        int
+	Level       int
+	ID          string
+	ParentID    string
+	HasChildren bool
+}
+
+// normalizeViewerPDFTOC turns a flat, pre-order outline into a stable tree
+// model. Renderers only need to provide titles, pages, and levels; identity,
+// parent links, and disclosure state are derived here for the TOC accordion.
+func normalizeViewerPDFTOC(entries []viewerPDFTOCEntry) []viewerPDFTOCEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	normalized := append([]viewerPDFTOCEntry(nil), entries...)
+	stack := make([]string, 0, 8)
+	for i := range normalized {
+		entry := &normalized[i]
+		if entry.Level < 0 {
+			entry.Level = 0
+		}
+		// A level cannot skip past its nearest available ancestor.
+		if entry.Level > len(stack) {
+			entry.Level = len(stack)
+		}
+		if entry.ID == "" {
+			entry.ID = "toc-" + strconv.Itoa(i)
+		}
+		entry.ParentID = ""
+		if entry.Level > 0 {
+			entry.ParentID = stack[entry.Level-1]
+		}
+		if entry.Level < len(stack) {
+			stack[entry.Level] = entry.ID
+			stack = stack[:entry.Level+1]
+		} else {
+			stack = append(stack, entry.ID)
+		}
+		entry.HasChildren = false
+	}
+	for i := 0; i+1 < len(normalized); i++ {
+		normalized[i].HasChildren = normalized[i+1].Level > normalized[i].Level
+	}
+	return normalized
+}
+
 // viewerPDFTextChar is one character of page text. The rect is in page
 // points with the origin at the top-left corner of the page (already
 // flipped from pdfium's bottom-left origin).
@@ -60,6 +108,7 @@ type viewerPDFRenderer interface {
 	RenderPage(req viewerPDFRenderRequest) (viewerPDFRenderResult, error)
 	DocInfo(req viewerPDFRenderRequest) (viewerPDFDocInfo, error)
 	PageText(req viewerPDFRenderRequest) (viewerPDFPageText, error)
+	TOC(req viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error)
 }
 
 type viewerNoopPDFRenderer struct{}
@@ -80,6 +129,10 @@ func (viewerNoopPDFRenderer) PageText(_ viewerPDFRenderRequest) (viewerPDFPageTe
 	return viewerPDFPageText{}, errors.New("pdf preview is unavailable")
 }
 
+func (viewerNoopPDFRenderer) TOC(_ viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error) {
+	return nil, errors.New("pdf preview is unavailable")
+}
+
 var viewerPDFPreviewBackend viewerPDFRenderer = viewerNoopPDFRenderer{}
 var viewerPDFPreviewUsesLocalPath bool
 
@@ -93,6 +146,10 @@ func viewerPathLooksPDF(path string) bool {
 
 func viewerCanPreviewPDFPath(path string) bool {
 	return viewerPathLooksPDF(path) && viewerPDFPreviewBackend.Available()
+}
+
+func viewerPathSupportsUnboundedPreview(path string) bool {
+	return viewerCanPreviewPDFPath(path) || viewerPathLooksImage(path)
 }
 
 func viewerLooksPreviewablePDF(path string, data []byte) bool {

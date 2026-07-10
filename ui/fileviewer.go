@@ -85,12 +85,18 @@ type fileViewerState struct {
 	modeFileClick        widget.Clickable
 	modeHexClick         widget.Clickable
 	modeCmdClick         widget.Clickable
+	zoomMenuClick        widget.Clickable
+	tocMenuClick         widget.Clickable
 	encodingMenuClick    widget.Clickable
 	encodingAutoClick    widget.Clickable
 	encodingUTF8Click    widget.Clickable
 	encodingUTF16LEClick widget.Clickable
 	encodingUTF16BEClick widget.Clickable
 	encodingCP437Click   widget.Clickable
+	zoomPresetClicks     [9]widget.Clickable
+	tocClicks            []widget.Clickable
+	tocDisclosureClicks  []widget.Clickable
+	tocExpanded          map[int]string
 	historyClick         widget.Clickable
 	commandClick         widget.Clickable
 	contentEditor        widget.Editor
@@ -102,6 +108,9 @@ type fileViewerState struct {
 	commandFocus         bool
 	fileEncoding         string
 	encodingMenuOpen     bool
+	zoomMenuOpen         bool
+	tocMenuOpen          bool
+	tocList              widget.List
 
 	content               string
 	status                string
@@ -193,6 +202,10 @@ type fileViewerState struct {
 	encodingBarRect  image.Rectangle
 	encodingMenuRect image.Rectangle
 	encodingMenuAt   time.Time
+	zoomMenuRect     image.Rectangle
+	zoomMenuAt       time.Time
+	tocMenuRect      image.Rectangle
+	tocMenuAt        time.Time
 }
 
 type fileViewerResult struct {
@@ -263,6 +276,12 @@ func (st *fileViewerState) closeEncodingMenu() {
 	st.encodingBarRect = image.Rectangle{}
 	st.encodingMenuRect = image.Rectangle{}
 	st.encodingMenuAt = time.Time{}
+	st.zoomMenuOpen = false
+	st.zoomMenuRect = image.Rectangle{}
+	st.zoomMenuAt = time.Time{}
+	st.tocMenuOpen = false
+	st.tocMenuRect = image.Rectangle{}
+	st.tocMenuAt = time.Time{}
 }
 
 func (st *fileViewerState) clearSyntaxState() {
@@ -506,6 +525,11 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			ui.openFileViewerFind(gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
 		case key.NameEscape:
+			if st.zoomMenuOpen || st.tocMenuOpen {
+				st.closeEncodingMenu()
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
 			if st.find.open {
 				if st.find.sourceMenuOpen {
 					st.find.closeSourceMenu()
@@ -2292,7 +2316,7 @@ func (ui *UI) viewerInitialModeAndCommand(path string, remote *paneSSHSession, f
 	if ui != nil {
 		cfg = ui.fmCfg
 	}
-	if viewerPathExceedsMaxLoadLimit(path, remote, viewerMaxLoadBytes(cfg)) {
+	if !viewerPathSupportsUnboundedPreview(path) && viewerPathExceedsMaxLoadLimit(path, remote, viewerMaxLoadBytes(cfg)) {
 		return "hex", cmd
 	}
 	return "file", cmd
@@ -2496,7 +2520,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 	if maxBytes < 1 {
 		maxBytes = viewerDefaultMaxLoadBytes
 	}
-	unlimitedPreview := viewerCanPreviewPDFPath(path) || viewerPathLooksImage(path)
+	unlimitedPreview := viewerPathSupportsUnboundedPreview(path)
 
 	var (
 		size    int64 = -1

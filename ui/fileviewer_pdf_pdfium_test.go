@@ -39,6 +39,33 @@ func testPDFWithText() []byte {
 	return b.Bytes()
 }
 
+func testPDFWithBookmarks() []byte {
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.4\n")
+	offsets := []int{0}
+	writeObject := func(n int, body string) {
+		offsets = append(offsets, b.Len())
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", n, body)
+	}
+	writeObject(1, "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R >>")
+	writeObject(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+	writeObject(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] >>")
+	writeObject(4, "<< >>")
+	writeObject(5, "<< /Type /Outlines /First 6 0 R /Last 7 0 R /Count 3 >>")
+	writeObject(6, "<< /Title (Introduction) /Parent 5 0 R /Next 7 0 R /First 8 0 R /Last 8 0 R /Count 1 /Dest [3 0 R /Fit] >>")
+	writeObject(7, "<< /Title (Details) /Parent 5 0 R /Prev 6 0 R /Dest [3 0 R /Fit] >>")
+	writeObject(8, "<< /Title (Getting Started) /Parent 6 0 R /Dest [3 0 R /Fit] >>")
+
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n", len(offsets))
+	b.WriteString("0000000000 65535 f \n")
+	for _, offset := range offsets[1:] {
+		fmt.Fprintf(&b, "%010d 00000 n \n", offset)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(offsets), xref)
+	return b.Bytes()
+}
+
 func TestPDFiumDocInfoReturnsPageSizes(t *testing.T) {
 	if !viewerPDFPreviewBackend.Available() {
 		t.Skip("pdfium backend unavailable")
@@ -85,5 +112,36 @@ func TestPDFiumPageTextFlipsToTopLeftOrigin(t *testing.T) {
 		if ch.Bottom > 55 {
 			t.Fatalf("char %d %q: Bottom=%f want <= 55 (upper half of the page)", i, ch.Rune, ch.Bottom)
 		}
+	}
+}
+
+func TestPDFiumTOCReportsNoEntriesForDocumentWithoutOutlines(t *testing.T) {
+	if !viewerPDFPreviewBackend.Available() {
+		t.Skip("pdfium backend unavailable")
+	}
+	toc, err := viewerPDFPreviewBackend.TOC(viewerPDFRenderRequest{Data: testPDFWithText()})
+	if err != nil {
+		t.Fatalf("TOC: %v", err)
+	}
+	if len(toc) != 0 {
+		t.Fatalf("TOC=%+v want no entries", toc)
+	}
+}
+
+func TestPDFiumTOCReturnsNavigableBookmarks(t *testing.T) {
+	if !viewerPDFPreviewBackend.Available() {
+		t.Skip("pdfium backend unavailable")
+	}
+	toc, err := viewerPDFPreviewBackend.TOC(viewerPDFRenderRequest{Data: testPDFWithBookmarks()})
+	if err != nil {
+		t.Fatalf("TOC: %v", err)
+	}
+	if len(toc) != 3 {
+		t.Fatalf("TOC=%+v want three entries", toc)
+	}
+	if toc[0].Title != "Introduction" || toc[0].Page != 0 || !toc[0].HasChildren ||
+		toc[1].Title != "Getting Started" || toc[1].Page != 0 || toc[1].Level != 1 || toc[1].ParentID != toc[0].ID ||
+		toc[2].Title != "Details" || toc[2].Page != 0 || toc[2].Level != 0 {
+		t.Fatalf("TOC=%+v", toc)
 	}
 }

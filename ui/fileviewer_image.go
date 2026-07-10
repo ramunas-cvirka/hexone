@@ -22,7 +22,7 @@ import (
 const (
 	fileViewerImageKeyStepPx   = 48
 	fileViewerImageWheelStepPx = 28
-	fileViewerImageMinZoom     = float32(0.25)
+	fileViewerImageMinZoom     = float32(0.01)
 	fileViewerImageMaxZoom     = float32(8)
 	fileViewerImageZoomFactor  = float32(1.25)
 )
@@ -38,6 +38,8 @@ type imagePreviewView struct {
 	hThumbRect   image.Rectangle
 
 	zoom        float32
+	zoomReady   bool
+	alignTop    bool
 	scrollX     int
 	scrollY     int
 	visualX     float32
@@ -60,11 +62,23 @@ type imagePreviewView struct {
 	hDragID   pointer.ID
 	hDragGrab int
 
+	panning bool
+	panID   pointer.ID
+	panLast f32.Point
+
 	// downscale cache: when zoom < 1 the image is pre-downsampled in
 	// software for better contrast than GPU bilinear filtering.
 	downscaleSource image.Image
 	downscaleZoom   float32
 	downscaled      image.Image
+	downscaleCh     chan imagePreviewDownscaleResult
+	downscaleBusy   bool
+}
+
+type imagePreviewDownscaleResult struct {
+	source image.Image
+	zoom   float32
+	img    image.Image
 }
 
 func (v *imagePreviewView) effectiveZoom() float32 {
@@ -85,6 +99,8 @@ func (v *imagePreviewView) reset() {
 	v.hTrackRect = image.Rectangle{}
 	v.hThumbRect = image.Rectangle{}
 	v.zoom = 1
+	v.zoomReady = false
+	v.alignTop = false
 	v.scrollX = 0
 	v.scrollY = 0
 	v.visualX = 0
@@ -103,9 +119,14 @@ func (v *imagePreviewView) reset() {
 	v.hDragging = false
 	v.hDragID = 0
 	v.hDragGrab = 0
+	v.panning = false
+	v.panID = 0
+	v.panLast = f32.Point{}
 	v.downscaleSource = nil
 	v.downscaleZoom = 0
 	v.downscaled = nil
+	v.downscaleCh = nil
+	v.downscaleBusy = false
 }
 
 func (v *imagePreviewView) contentSize(img image.Image) image.Point {
@@ -123,6 +144,58 @@ func (v *imagePreviewView) contentSize(img image.Image) image.Point {
 		h = 1
 	}
 	return image.Pt(w, h)
+}
+
+func clampImagePreviewZoom(zoom float32) float32 {
+	if zoom < fileViewerImageMinZoom {
+		return fileViewerImageMinZoom
+	}
+	if zoom > fileViewerImageMaxZoom {
+		return fileViewerImageMaxZoom
+	}
+	return zoom
+}
+
+func (v *imagePreviewView) initializeZoom(size image.Point, scrollbarPx int, img image.Image) {
+	if v == nil || v.zoomReady || img == nil || size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	bounds := img.Bounds()
+	if bounds.Dx() <= 0 || bounds.Dy() <= 0 {
+		return
+	}
+	v.zoom = 1
+	v.alignTop = bounds.Dx() > size.X || bounds.Dy() > size.Y
+	if bounds.Dx() > size.X {
+		availableW := size.X
+		zoom := float32(availableW) / float32(bounds.Dx())
+		if int(math.Ceil(float64(float32(bounds.Dy())*zoom))) > size.Y && scrollbarPx > 0 {
+			availableW -= scrollbarPx
+			if availableW < 1 {
+				availableW = 1
+			}
+			zoom = float32(availableW) / float32(bounds.Dx())
+		}
+		v.zoom = clampImagePreviewZoom(min(zoom, 1))
+	}
+	v.zoomReady = true
+	v.scrollX = 0
+	v.scrollY = 0
+	v.syncVisualScroll()
+}
+
+func (v *imagePreviewView) fitWidthZoom(img image.Image) float32 {
+	if v == nil || img == nil {
+		return 1
+	}
+	width := v.viewportRect.Dx()
+	if width <= 0 {
+		width = v.surfaceRect.Dx()
+	}
+	if width <= 0 || img.Bounds().Dx() <= 0 {
+		return 1
+	}
+	return clampImagePreviewZoom(float32(width) / float32(img.Bounds().Dx()))
 }
 
 func (v *imagePreviewView) maxScroll(img image.Image) (int, int) {
@@ -195,7 +268,7 @@ func (v *imagePreviewView) prepareVisualScroll(now time.Time, smooth bool, img i
 		v.visualAt = now
 		return false
 	}
-	if !smooth || v.vDragging || v.hDragging {
+	if !smooth || v.vDragging || v.hDragging || v.panning {
 		v.visualX = targetX
 		v.visualY = targetY
 		v.visualAt = now
@@ -330,28 +403,104 @@ func (v *imagePreviewView) scrollToEnd(img image.Image) bool {
 	return true
 }
 
-func (v *imagePreviewView) zoomBy(img image.Image, factor float32) bool {
-	if v == nil || img == nil || factor <= 0 {
+func (v *imagePreviewView) setZoom(img image.Image, newZoom float32) bool {
+	if v == nil || img == nil || newZoom <= 0 {
 		return false
 	}
 	oldZoom := v.effectiveZoom()
-	newZoom := oldZoom * factor
-	if newZoom < fileViewerImageMinZoom {
-		newZoom = fileViewerImageMinZoom
-	}
-	if newZoom > fileViewerImageMaxZoom {
-		newZoom = fileViewerImageMaxZoom
-	}
+	newZoom = clampImagePreviewZoom(newZoom)
 	if math.Abs(float64(newZoom-oldZoom)) < 0.0001 {
 		return false
 	}
 	anchorX := float32(v.scrollX) / oldZoom
 	anchorY := float32(v.scrollY) / oldZoom
 	v.zoom = newZoom
+	v.zoomReady = true
 	v.scrollX = int(math.Round(float64(anchorX * newZoom)))
 	v.scrollY = int(math.Round(float64(anchorY * newZoom)))
 	v.clampScroll(img)
 	return true
+}
+
+func (v *imagePreviewView) zoomBy(img image.Image, factor float32) bool {
+	if v == nil || factor <= 0 {
+		return false
+	}
+	return v.setZoom(img, v.effectiveZoom()*factor)
+}
+
+func (v *imagePreviewView) fitWidth(img image.Image) bool {
+	if v == nil || img == nil {
+		return false
+	}
+	changed := v.setZoom(img, v.fitWidthZoom(img))
+	v.alignTop = true
+	if v.scrollToOrigin() {
+		changed = true
+	}
+	v.syncVisualScroll()
+	return changed
+}
+
+func (v *imagePreviewView) contentOrigin(img image.Image) image.Point {
+	if v == nil {
+		return image.Point{}
+	}
+	displayX, displayY := v.displayScroll(img)
+	origin := image.Pt(v.viewportRect.Min.X-displayX, v.viewportRect.Min.Y-displayY)
+	content := v.contentSize(img)
+	if extra := v.viewportRect.Dx() - content.X; extra > 0 {
+		origin.X += extra / 2
+	}
+	if !v.alignTop {
+		if extra := v.viewportRect.Dy() - content.Y; extra > 0 {
+			origin.Y += extra / 2
+		}
+	}
+	return origin
+}
+
+func (v *imagePreviewView) pumpDownscale() bool {
+	if v == nil || v.downscaleCh == nil {
+		return false
+	}
+	select {
+	case result := <-v.downscaleCh:
+		v.downscaleBusy = false
+		if result.source != nil && result.img != nil && result.zoom == v.effectiveZoom() {
+			v.downscaleSource = result.source
+			v.downscaleZoom = result.zoom
+			v.downscaled = result.img
+			return true
+		}
+	default:
+	}
+	return false
+}
+
+func (v *imagePreviewView) requestDownscale(src image.Image, zoom float32) {
+	if v == nil || src == nil || zoom <= 0 || zoom >= 1 {
+		return
+	}
+	if v.downscaleSource == src && v.downscaleZoom == zoom && v.downscaled != nil {
+		return
+	}
+	if v.downscaleBusy {
+		return
+	}
+	if v.downscaleCh == nil {
+		v.downscaleCh = make(chan imagePreviewDownscaleResult, 1)
+	}
+	v.downscaleBusy = true
+	ch := v.downscaleCh
+	go func() {
+		b := src.Bounds()
+		w := max(1, int(math.Round(float64(float32(b.Dx())*zoom))))
+		h := max(1, int(math.Round(float64(float32(b.Dy())*zoom))))
+		dst := image.NewRGBA(image.Rect(0, 0, w, h))
+		xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Src, nil)
+		ch <- imagePreviewDownscaleResult{source: src, zoom: zoom, img: dst}
+	}()
 }
 
 func (v *imagePreviewView) scrollWheelYStep(img image.Image, delta float32) (bool, bool) {
@@ -613,6 +762,10 @@ func (ui *UI) layoutImageOutputView(_ *material.Theme, gtx layout.Context, st *f
 	ui.paintFileViewerImageBackdrop(gtx, size)
 	v := &st.imageView
 	scrollbarPx := viewerScrollbarThickness(gtx, min(size.X, size.Y))
+	v.initializeZoom(size, scrollbarPx, st.imagePreview)
+	if v.pumpDownscale() {
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	v.computeLayout(size, 0, scrollbarPx, scrollbarPx, st.imagePreview)
 	ui.handleImagePreviewEvents(gtx, st)
 	animating := v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg), st.imagePreview)
@@ -621,6 +774,9 @@ func (ui *UI) layoutImageOutputView(_ *material.Theme, gtx layout.Context, st *f
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(streamSmoothTick)})
 	}
 	ui.paintImagePreview(gtx, st)
+	if v.downscaleBusy {
+		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+	}
 	ui.paintImagePreviewScrollbars(gtx, st)
 	ui.applyImagePreviewCursor(gtx, st)
 	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
@@ -702,12 +858,27 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 				if v.setScrollFromHorizontalDrag(st.imagePreview, pos.X, v.hDragGrab) {
 					st.markUserBrowsing(gtx.Now)
 				}
+			case viewerPointInRect(pos, v.viewportRect):
+				v.panning = true
+				v.panID = pe.PointerID
+				v.panLast = pe.Position
+				gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
+				st.markUserBrowsing(gtx.Now)
 			}
 			if v.updateHover(pos) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case pointer.Drag:
 			changed := false
+			if v.panning && pe.PointerID == v.panID {
+				dx := int(math.Round(float64(v.panLast.X - pe.Position.X)))
+				dy := int(math.Round(float64(v.panLast.Y - pe.Position.Y)))
+				v.panLast = pe.Position
+				if v.scrollByPixels(st.imagePreview, dx, dy) {
+					v.syncVisualScroll()
+					changed = true
+				}
+			}
 			if v.vDragging && pe.PointerID == v.vDragID {
 				changed = v.setScrollFromVerticalDrag(st.imagePreview, pos.Y, v.vDragGrab) || changed
 			}
@@ -722,6 +893,9 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case pointer.Release:
+			if v.panning && pe.PointerID == v.panID {
+				v.panning = false
+			}
 			if v.vDragging && pe.PointerID == v.vDragID {
 				v.vDragging = false
 				v.vDragGrab = 0
@@ -734,6 +908,9 @@ func (ui *UI) handleImagePreviewEvents(gtx layout.Context, st *fileViewerState) 
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case pointer.Cancel:
+			if v.panning && pe.PointerID == v.panID {
+				v.panning = false
+			}
 			if v.vDragging && pe.PointerID == v.vDragID {
 				v.vDragging = false
 				v.vDragGrab = 0
@@ -766,30 +943,25 @@ func (ui *UI) paintImagePreview(gtx layout.Context, st *fileViewerState) {
 		return
 	}
 	defer clip.Rect(v.viewportRect).Push(gtx.Ops).Pop()
-	displayX, displayY := v.displayScroll(st.imagePreview)
-	offset := op.Offset(image.Pt(v.viewportRect.Min.X-displayX, v.viewportRect.Min.Y-displayY)).Push(gtx.Ops)
+	offset := op.Offset(v.contentOrigin(st.imagePreview)).Push(gtx.Ops)
 	defer offset.Pop()
 	zoom := v.effectiveZoom()
 	img := image.Image(st.imagePreview)
+	softwareScaled := false
 	if zoom < 1 {
 		// GPU bilinear filtering loses contrast when downscaling (it only
 		// samples 4 nearby pixels). Pre-downsample in software with
 		// CatmullRom, which uses a 4x4 kernel with negative lobes that
 		// preserve edge sharpness — important for PDF text.
 		src := img
-		if v.downscaleSource != src || v.downscaleZoom != zoom {
-			b := src.Bounds()
-			w := max(1, int(math.Round(float64(float32(b.Dx())*zoom))))
-			h := max(1, int(math.Round(float64(float32(b.Dy())*zoom))))
-			dst := image.NewRGBA(image.Rect(0, 0, w, h))
-			xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, b, xdraw.Src, nil)
-			v.downscaled = dst
-			v.downscaleSource = src
-			v.downscaleZoom = zoom
+		if v.downscaleSource == src && v.downscaleZoom == zoom && v.downscaled != nil {
+			img = v.downscaled
+			softwareScaled = true
+		} else {
+			v.requestDownscale(src, zoom)
 		}
-		img = v.downscaled
-		// Image is already at the correct size; no GPU scaling needed.
-	} else if zoom != 1 {
+	}
+	if !softwareScaled && zoom != 1 {
 		defer op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(zoom, zoom))).Push(gtx.Ops).Pop()
 	}
 	paint.NewImageOp(img).Add(gtx.Ops)
@@ -814,7 +986,7 @@ func (ui *UI) applyImagePreviewCursor(gtx layout.Context, st *fileViewerState) {
 		return
 	}
 	v := &st.imageView
-	if v.vDragging {
+	if v.panning || v.vDragging {
 		pointer.CursorGrabbing.Add(gtx.Ops)
 		return
 	}

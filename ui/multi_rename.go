@@ -64,10 +64,10 @@ type multiRenameState struct {
 	suffixEdit  widget.Editor
 	startEdit   widget.Editor
 	stepEdit    widget.Editor
-	digitsEdit  widget.Editor
 
 	caseSensitive    widget.Bool
 	sequence         widget.Bool
+	zeroPadded       widget.Bool
 	sequenceAtEnd    bool
 	caseMode         multiRenameCaseMode
 	scope            multiRenameScope
@@ -122,7 +122,7 @@ const (
 	multiRenameFocusCounter
 	multiRenameFocusCounterStart
 	multiRenameFocusCounterStep
-	multiRenameFocusCounterDigits
+	multiRenameFocusCounterZeroPadding
 	multiRenameFocusCounterPosition
 	multiRenameFocusActions
 )
@@ -152,7 +152,7 @@ func (st *multiRenameState) focusOrder() []multiRenameFocus {
 		order = append(order,
 			multiRenameFocusCounterStart,
 			multiRenameFocusCounterStep,
-			multiRenameFocusCounterDigits,
+			multiRenameFocusCounterZeroPadding,
 			multiRenameFocusCounterPosition,
 		)
 	}
@@ -176,8 +176,6 @@ func (st *multiRenameState) editorForFocus(target multiRenameFocus) *widget.Edit
 		return &st.startEdit
 	case multiRenameFocusCounterStep:
 		return &st.stepEdit
-	case multiRenameFocusCounterDigits:
-		return &st.digitsEdit
 	default:
 		return nil
 	}
@@ -188,7 +186,7 @@ func (st *multiRenameState) canFocus(target multiRenameFocus) bool {
 		return false
 	}
 	switch target {
-	case multiRenameFocusCounterStart, multiRenameFocusCounterStep, multiRenameFocusCounterDigits, multiRenameFocusCounterPosition:
+	case multiRenameFocusCounterStart, multiRenameFocusCounterStep, multiRenameFocusCounterZeroPadding, multiRenameFocusCounterPosition:
 		return st.sequence.Value
 	case multiRenameFocusFind, multiRenameFocusReplace, multiRenameFocusPrefix, multiRenameFocusSuffix,
 		multiRenameFocusScope, multiRenameFocusCase, multiRenameFocusCaseSensitive,
@@ -216,8 +214,8 @@ func (st *multiRenameState) syncFocus(gtx layout.Context) {
 		st.focus = multiRenameFocusCounterStart
 	case gtx.Focused(&st.stepEdit):
 		st.focus = multiRenameFocusCounterStep
-	case gtx.Focused(&st.digitsEdit):
-		st.focus = multiRenameFocusCounterDigits
+	case gtx.Focused(&st.zeroPadded):
+		st.focus = multiRenameFocusCounterZeroPadding
 	case gtx.Focused(&st.caseSensitive):
 		st.focus = multiRenameFocusCaseSensitive
 	case gtx.Focused(&st.sequence):
@@ -243,6 +241,8 @@ func (st *multiRenameState) setFocus(gtx layout.Context, target multiRenameFocus
 		gtx.Execute(key.FocusCmd{Tag: &st.caseSensitive})
 	case multiRenameFocusCounter:
 		gtx.Execute(key.FocusCmd{Tag: &st.sequence})
+	case multiRenameFocusCounterZeroPadding:
+		gtx.Execute(key.FocusCmd{Tag: &st.zeroPadded})
 	default:
 		gtx.Execute(key.FocusCmd{Tag: &st.keyFocus.tag})
 	}
@@ -331,13 +331,13 @@ func (ui *UI) startMultiRename(idx int, now time.Time) bool {
 		caseMode: multiRenameCaseKeep, focusWant: true,
 		focus: multiRenameFocusFind, actionFocus: multiRenameActionRename,
 	}
-	for _, ed := range []*widget.Editor{&st.searchEdit, &st.replaceEdit, &st.prefixEdit, &st.suffixEdit, &st.startEdit, &st.stepEdit, &st.digitsEdit} {
+	for _, ed := range []*widget.Editor{&st.searchEdit, &st.replaceEdit, &st.prefixEdit, &st.suffixEdit, &st.startEdit, &st.stepEdit} {
 		ed.SingleLine = true
 		ed.Submit = true
 	}
 	st.startEdit.SetText("1")
 	st.stepEdit.SetText("1")
-	st.digitsEdit.SetText("2")
+	st.zeroPadded.Value = true
 	st.previewList.Axis = layout.Vertical
 	ui.multiRename = st
 	ui.setActiveFilePane(idx)
@@ -458,6 +458,17 @@ func multiRenameApply(oldName string, kind filesys.EntryKind, search, replacemen
 	}
 }
 
+func multiRenameCounterWidth(zeroPadded bool, largestValue int) int {
+	if !zeroPadded {
+		return 0
+	}
+	width := len(strconv.Itoa(largestValue))
+	if width < 2 {
+		width = 2
+	}
+	return width
+}
+
 func multiRenameValidName(name string, remote bool) error {
 	if strings.TrimSpace(name) == "" {
 		return errors.New("a resulting name is empty")
@@ -506,9 +517,9 @@ func (st *multiRenameState) refreshPreview() {
 		return
 	}
 	scope := st.effectiveScope()
-	signature := fmt.Sprintf("%q\x00%q\x00%q\x00%q\x00%q\x00%q\x00%q\x00%t\x00%d\x00%t\x00%t\x00%d",
-		st.searchEdit.Text(), st.replaceEdit.Text(), st.prefixEdit.Text(), st.suffixEdit.Text(), st.startEdit.Text(), st.stepEdit.Text(), st.digitsEdit.Text(),
-		st.caseSensitive.Value, scope, st.sequence.Value, st.sequenceAtEnd, st.caseMode)
+	signature := fmt.Sprintf("%q\x00%q\x00%q\x00%q\x00%q\x00%q\x00%t\x00%d\x00%t\x00%t\x00%t\x00%d",
+		st.searchEdit.Text(), st.replaceEdit.Text(), st.prefixEdit.Text(), st.suffixEdit.Text(), st.startEdit.Text(), st.stepEdit.Text(),
+		st.caseSensitive.Value, scope, st.sequence.Value, st.sequenceAtEnd, st.zeroPadded.Value, st.caseMode)
 	if signature != st.lastInput {
 		st.operationErr = ""
 		st.lastInput = signature
@@ -516,7 +527,7 @@ func (st *multiRenameState) refreshPreview() {
 	st.lastErr = ""
 	start := 1
 	step := 1
-	digits := 2
+	counterWidth := 0
 	if st.sequence.Value {
 		var err error
 		start, err = strconv.Atoi(strings.TrimSpace(st.startEdit.Text()))
@@ -527,21 +538,21 @@ func (st *multiRenameState) refreshPreview() {
 		if st.lastErr == "" && (err != nil || step < 1) {
 			st.lastErr = "Counter step must be a positive number"
 		}
-		digits, err = strconv.Atoi(strings.TrimSpace(st.digitsEdit.Text()))
-		if st.lastErr == "" && (err != nil || digits < 1 || digits > 9) {
-			st.lastErr = "Counter digits must be between 1 and 9"
-		}
 		maxInt := int(^uint(0) >> 1)
 		increments := len(st.targets) - 1
 		if st.lastErr == "" && increments > 0 && step > (maxInt-start)/increments {
 			st.lastErr = "Counter range is too large"
+		}
+		if st.lastErr == "" {
+			largestValue := start + increments*step
+			counterWidth = multiRenameCounterWidth(st.zeroPadded.Value, largestValue)
 		}
 	}
 	for i := range st.targets {
 		st.targets[i].newName = multiRenameApply(
 			st.targets[i].oldName, st.targets[i].kind,
 			st.searchEdit.Text(), st.replaceEdit.Text(), st.prefixEdit.Text(), st.suffixEdit.Text(),
-			st.caseSensitive.Value, scope, st.sequence.Value, st.sequenceAtEnd, start+i*step, digits, st.caseMode,
+			st.caseSensitive.Value, scope, st.sequence.Value, st.sequenceAtEnd, start+i*step, counterWidth, st.caseMode,
 		)
 		if st.lastErr == "" {
 			if err := multiRenameValidName(st.targets[i].newName, st.endpoint.isRemote()); err != nil {
@@ -892,7 +903,7 @@ func (ui *UI) handleMultiRenamePreLayoutInput(gtx layout.Context) {
 		}
 	}
 	changed := false
-	for _, ed := range []*widget.Editor{&st.searchEdit, &st.replaceEdit, &st.prefixEdit, &st.suffixEdit, &st.startEdit, &st.stepEdit, &st.digitsEdit} {
+	for _, ed := range []*widget.Editor{&st.searchEdit, &st.replaceEdit, &st.prefixEdit, &st.suffixEdit, &st.startEdit, &st.stepEdit} {
 		for {
 			ev, ok := ed.Update(gtx)
 			if !ok {
@@ -1267,8 +1278,17 @@ func (ui *UI) layoutMultiRenameCounterControl(th *material.Theme, gtx layout.Con
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, gtx.Dp(unit.Dp(58)), func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutSSHField(th, gtx, "Digits", &st.digitsEdit, "2", st.sequence.Value && !st.running, st.focus == multiRenameFocusCounterDigits || gtx.Focused(&st.digitsEdit))
+			return fixedWidth(gtx, gtx.Dp(unit.Dp(106)), func(gtx layout.Context) layout.Dimensions {
+				if !st.sequence.Value {
+					gtx = gtx.Disabled()
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					layout.Rigid(ui.multiRenameGroupLabel(th, "Counter format")),
+					layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutThemeCheckbox(th, gtx, &st.zeroPadded, "Zero-padded", ui.scaleDialogFontSize(9))
+					}),
+				)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),

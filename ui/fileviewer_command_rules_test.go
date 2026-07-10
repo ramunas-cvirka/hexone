@@ -104,6 +104,33 @@ func TestViewerInitialModeAndCommandUsesHexForOversizedFile(t *testing.T) {
 	}
 }
 
+func TestViewerInitialModeKeepsOversizedPreviewableMediaInFile(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		filepath.Join(dir, "large.png"),
+		filepath.Join(dir, "large.pdf"),
+	}
+	for _, path := range paths {
+		if err := os.WriteFile(path, []byte("0123456789"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", filepath.Base(path), err)
+		}
+	}
+
+	previousBackend := viewerPDFPreviewBackend
+	viewerPDFPreviewBackend = &fakeViewerPDFRenderer{available: true}
+	t.Cleanup(func() { viewerPDFPreviewBackend = previousBackend })
+
+	cfg := fm.DefaultConfig()
+	cfg.Viewer.MaxReadMB = 0.000001
+	ui := &UI{fmCfg: cfg}
+	for _, path := range paths {
+		mode, _ := ui.viewerInitialModeAndCommand(path, nil, cfg.Viewer.Command)
+		if mode != "file" {
+			t.Errorf("%s mode=%q want file", filepath.Base(path), mode)
+		}
+	}
+}
+
 func TestViewerInitialModeAndCommandTargetOverrideBeatsOversizedFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "large.log")

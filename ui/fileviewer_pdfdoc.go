@@ -75,6 +75,7 @@ type pdfDocResult struct {
 	page   int
 	render *pdfDocPageRender
 	text   *viewerPDFPageText
+	toc    *[]viewerPDFTOCEntry
 }
 
 // pdfDocView is a continuous, vertically stacked view over all pages of a
@@ -144,6 +145,9 @@ type pdfDocView struct {
 
 	pages         map[int]pdfDocPageRender
 	text          map[int]viewerPDFPageText
+	toc           []viewerPDFTOCEntry
+	tocLoaded     bool
+	tocPending    bool
 	textPending   map[int]time.Time
 	renderPending map[int]pdfDocInflight
 }
@@ -446,8 +450,14 @@ func (v *pdfDocView) zoomBy(factor float32) bool {
 	if v == nil || factor <= 0 {
 		return false
 	}
+	return v.setZoom(v.effectiveZoom() * factor)
+}
+
+func (v *pdfDocView) setZoom(newZoom float32) bool {
+	if v == nil || newZoom <= 0 {
+		return false
+	}
 	oldZoom := v.effectiveZoom()
-	newZoom := oldZoom * factor
 	if newZoom < pdfDocMinZoom {
 		newZoom = pdfDocMinZoom
 	}
@@ -1226,11 +1236,15 @@ func (ui *UI) ensurePDFDocAssets(gtx layout.Context, st *fileViewerState) {
 	localPath, data := pdfDocRenderSource(st)
 	seq := st.seq
 	ch := st.pdfDocCh
+	// Keep one stable backend for every job scheduled by this pass. Besides
+	// avoiding repeated global lookups in the workers, this ensures background
+	// jobs cannot observe a backend replacement after this function returns.
+	backend := viewerPDFPreviewBackend
 
 	if !v.infoLoaded && !v.infoPending {
 		v.infoPending = true
 		go func() {
-			info, err := viewerPDFPreviewBackend.DocInfo(viewerPDFRenderRequest{
+			info, err := backend.DocInfo(viewerPDFRenderRequest{
 				Data:      data,
 				LocalPath: localPath,
 			})
@@ -1240,6 +1254,20 @@ func (ui *UI) ensurePDFDocAssets(gtx layout.Context, st *fileViewerState) {
 			} else {
 				res.info = &info
 			}
+			sendPDFDocResult(ch, res)
+		}()
+	}
+	if v.infoLoaded && !v.tocLoaded && !v.tocPending {
+		v.tocPending = true
+		go func() {
+			toc, err := backend.TOC(viewerPDFRenderRequest{
+				Data:      data,
+				LocalPath: localPath,
+			})
+			if err != nil {
+				toc = nil
+			}
+			res := pdfDocResult{seq: seq, toc: &toc}
 			sendPDFDocResult(ch, res)
 		}()
 	}
@@ -1276,7 +1304,7 @@ func (ui *UI) ensurePDFDocAssets(gtx layout.Context, st *fileViewerState) {
 		v.renderPending[page] = pdfDocInflight{width: target, startedAt: gtx.Now}
 		inflight++
 		go func(page, width int) {
-			rendered, err := viewerPDFPreviewBackend.RenderPage(viewerPDFRenderRequest{
+			rendered, err := backend.RenderPage(viewerPDFRenderRequest{
 				Data:      data,
 				LocalPath: localPath,
 				Page:      page,
@@ -1304,7 +1332,7 @@ func (ui *UI) ensurePDFDocAssets(gtx layout.Context, st *fileViewerState) {
 		}
 		v.textPending[page] = gtx.Now
 		go func(page int) {
-			text, err := viewerPDFPreviewBackend.PageText(viewerPDFRenderRequest{
+			text, err := backend.PageText(viewerPDFRenderRequest{
 				Data:      data,
 				LocalPath: localPath,
 				Page:      page,
@@ -1320,7 +1348,7 @@ func (ui *UI) ensurePDFDocAssets(gtx layout.Context, st *fileViewerState) {
 	}
 
 	v.prune(first, last)
-	if len(v.renderPending) > 0 || len(v.textPending) > 0 || v.infoPending {
+	if len(v.renderPending) > 0 || len(v.textPending) > 0 || v.infoPending || v.tocPending {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(pdfDocPendingPollDelay)})
 	}
 }
@@ -1348,6 +1376,12 @@ func (ui *UI) pumpPDFDocResults(gtx layout.Context, st *fileViewerState) {
 			case res.text != nil:
 				delete(v.textPending, res.page)
 				v.storeText(*res.text)
+				gtx.Execute(op.InvalidateCmd{})
+			case res.toc != nil:
+				v.toc = normalizeViewerPDFTOC(*res.toc)
+				v.tocLoaded = true
+				v.tocPending = false
+				st.tocExpanded = nil
 				gtx.Execute(op.InvalidateCmd{})
 			default:
 				if res.err != "" {

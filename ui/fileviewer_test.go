@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode"
@@ -144,11 +145,13 @@ func TestStartFileViewerNamedPipeShowsPaneNotice(t *testing.T) {
 }
 
 type fakeViewerPDFRenderer struct {
+	mu        sync.Mutex
 	available bool
 	requests  []viewerPDFRenderRequest
 	result    viewerPDFRenderResult
 	docInfo   viewerPDFDocInfo
 	pageText  viewerPDFPageText
+	toc       []viewerPDFTOCEntry
 	err       error
 }
 
@@ -157,8 +160,16 @@ func (f *fakeViewerPDFRenderer) Available() bool {
 }
 
 func (f *fakeViewerPDFRenderer) RenderPage(req viewerPDFRenderRequest) (viewerPDFRenderResult, error) {
+	f.mu.Lock()
 	f.requests = append(f.requests, req)
+	f.mu.Unlock()
 	return f.result, f.err
+}
+
+func (f *fakeViewerPDFRenderer) renderRequests() []viewerPDFRenderRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]viewerPDFRenderRequest(nil), f.requests...)
 }
 
 func (f *fakeViewerPDFRenderer) DocInfo(_ viewerPDFRenderRequest) (viewerPDFDocInfo, error) {
@@ -185,6 +196,13 @@ func (f *fakeViewerPDFRenderer) PageText(req viewerPDFRenderRequest) (viewerPDFP
 	text := f.pageText
 	text.Page = req.Page
 	return text, nil
+}
+
+func (f *fakeViewerPDFRenderer) TOC(_ viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]viewerPDFTOCEntry(nil), f.toc...), nil
 }
 
 func testViewerPreviewImage() image.Image {
@@ -504,14 +522,15 @@ func TestReadViewerFileAutoUsesPDFPreviewWhenRendererAvailable(t *testing.T) {
 	if info.imagePage != 0 || info.imagePageCount != 4 {
 		t.Fatalf("page metadata=(%d,%d) want (0,4)", info.imagePage, info.imagePageCount)
 	}
-	if len(fake.requests) != 1 {
-		t.Fatalf("render requests=%d want 1", len(fake.requests))
+	requests := fake.renderRequests()
+	if len(requests) != 1 {
+		t.Fatalf("render requests=%d want 1", len(requests))
 	}
-	if fake.requests[0].Page != 0 {
-		t.Fatalf("rendered page=%d want 0", fake.requests[0].Page)
+	if requests[0].Page != 0 {
+		t.Fatalf("rendered page=%d want 0", requests[0].Page)
 	}
-	if fake.requests[0].Width != viewerPDFPreviewTargetWidthPx {
-		t.Fatalf("render width=%d want %d", fake.requests[0].Width, viewerPDFPreviewTargetWidthPx)
+	if requests[0].Width != viewerPDFPreviewTargetWidthPx {
+		t.Fatalf("render width=%d want %d", requests[0].Width, viewerPDFPreviewTargetWidthPx)
 	}
 }
 
@@ -550,14 +569,15 @@ func TestReadViewerFileLocalPDFBypassesSizeLimitUsingPath(t *testing.T) {
 	if !info.imagePreview {
 		t.Fatal("expected PDF preview info")
 	}
-	if len(fake.requests) != 1 {
-		t.Fatalf("render requests=%d want 1", len(fake.requests))
+	requests := fake.renderRequests()
+	if len(requests) != 1 {
+		t.Fatalf("render requests=%d want 1", len(requests))
 	}
-	if fake.requests[0].LocalPath != "" {
-		t.Fatalf("expected empty LocalPath, got %q", fake.requests[0].LocalPath)
+	if requests[0].LocalPath != "" {
+		t.Fatalf("expected empty LocalPath, got %q", requests[0].LocalPath)
 	}
-	if len(fake.requests[0].Data) <= 1<<20 {
-		t.Fatalf("expected full pdf bytes beyond size limit, got %d", len(fake.requests[0].Data))
+	if len(requests[0].Data) <= 1<<20 {
+		t.Fatalf("expected full pdf bytes beyond size limit, got %d", len(requests[0].Data))
 	}
 }
 
@@ -780,7 +800,7 @@ func TestEnsurePDFDocAssetsRendersVisiblePages(t *testing.T) {
 		}
 	}
 	found := false
-	for _, req := range fake.requests {
+	for _, req := range fake.renderRequests() {
 		if req.Page == 0 {
 			found = true
 			if req.Width != st.pdfDoc.renderWidthFor(0) {
@@ -790,6 +810,56 @@ func TestEnsurePDFDocAssetsRendersVisiblePages(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected a render request for page 0")
+	}
+}
+
+func TestEnsurePDFDocAssetsLoadsTOCWithoutBlockingPageWork(t *testing.T) {
+	prev := viewerPDFPreviewBackend
+	fake := &fakeViewerPDFRenderer{
+		available: true,
+		result: viewerPDFRenderResult{
+			Image:     image.NewNRGBA(image.Rect(0, 0, 90, 140)),
+			PageCount: 2,
+		},
+		toc: []viewerPDFTOCEntry{
+			{Title: "Introduction", Page: 0},
+			{Title: "Details", Page: 1, Level: 1},
+		},
+	}
+	viewerPDFPreviewBackend = fake
+	t.Cleanup(func() { viewerPDFPreviewBackend = prev })
+
+	st := &fileViewerState{
+		detectedImagePreview:  true,
+		imagePreviewFormat:    "pdf",
+		imagePreviewData:      []byte("%PDF-1.7"),
+		imagePreviewPageCount: 2,
+		pdfDocCh:              make(chan pdfDocResult, 16),
+		seq:                   11,
+	}
+	st.pdfDoc.viewportRect = image.Rect(0, 0, 160, 120)
+	st.pdfDoc.configure(viewerPDFDocInfo{
+		PageCount: 2,
+		PageSizes: []viewerPDFPageSize{{W: 612, H: 792}, {W: 612, H: 792}},
+	})
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	ui.ensurePDFDocAssets(layout.Context{Ops: new(op.Ops), Now: time.Now()}, st)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case res := <-st.pdfDocCh:
+			if res.toc == nil {
+				continue
+			}
+			if got := *res.toc; len(got) != 2 || got[1].Title != "Details" || got[1].Page != 1 {
+				t.Fatalf("TOC=%+v", got)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for asynchronous PDF TOC")
+		}
 	}
 }
 

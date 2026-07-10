@@ -40,6 +40,148 @@ const (
 	fileViewerTooltipEdgeInsetDp        = 4
 )
 
+type viewerZoomPreset struct {
+	label string
+	zoom  float32
+	fit   bool
+}
+
+var viewerZoomPresets = [...]viewerZoomPreset{
+	{label: "Fit width", fit: true},
+	{label: "25%", zoom: 0.25},
+	{label: "50%", zoom: 0.5},
+	{label: "75%", zoom: 0.75},
+	{label: "100%", zoom: 1},
+	{label: "125%", zoom: 1.25},
+	{label: "150%", zoom: 1.5},
+	{label: "200%", zoom: 2},
+	{label: "400%", zoom: 4},
+}
+
+func viewerZoomPresetActive(st *fileViewerState, preset viewerZoomPreset) bool {
+	if st == nil || !st.detectedImagePreview {
+		return false
+	}
+	current := st.imageView.effectiveZoom()
+	target := preset.zoom
+	if viewerPDFPreviewActive(st) {
+		current = st.pdfDoc.effectiveZoom()
+		if preset.fit {
+			target = 1
+		}
+	} else if preset.fit {
+		target = st.imageView.fitWidthZoom(st.imagePreview)
+	}
+	return float32Abs(current-target) < 0.0001
+}
+
+func applyViewerZoomPreset(st *fileViewerState, preset viewerZoomPreset) bool {
+	if st == nil || !st.detectedImagePreview {
+		return false
+	}
+	if viewerPDFPreviewActive(st) {
+		if preset.fit {
+			return st.pdfDoc.resetZoom()
+		}
+		return st.pdfDoc.setZoom(preset.zoom)
+	}
+	if preset.fit {
+		return st.imageView.fitWidth(st.imagePreview)
+	}
+	return st.imageView.setZoom(st.imagePreview, preset.zoom)
+}
+
+func ensureViewerTOCClicks(st *fileViewerState) {
+	if st == nil || (len(st.tocClicks) == len(st.pdfDoc.toc) && len(st.tocDisclosureClicks) == len(st.pdfDoc.toc)) {
+		return
+	}
+	st.tocClicks = make([]widget.Clickable, len(st.pdfDoc.toc))
+	st.tocDisclosureClicks = make([]widget.Clickable, len(st.pdfDoc.toc))
+}
+
+func viewerTOCEntryExpanded(st *fileViewerState, entry viewerPDFTOCEntry) bool {
+	return st != nil && entry.HasChildren && st.tocExpanded[entry.Level] == entry.ID
+}
+
+func viewerTOCVisibleIndices(st *fileViewerState) []int {
+	if st == nil || len(st.pdfDoc.toc) == 0 {
+		return nil
+	}
+	visible := make([]int, 0, len(st.pdfDoc.toc))
+	visibleByID := make(map[string]bool, len(st.pdfDoc.toc))
+	for i, entry := range st.pdfDoc.toc {
+		entryVisible := entry.Level == 0
+		if entry.Level > 0 {
+			entryVisible = visibleByID[entry.ParentID] && st.tocExpanded[entry.Level-1] == entry.ParentID
+		}
+		visibleByID[entry.ID] = entryVisible
+		if entryVisible {
+			visible = append(visible, i)
+		}
+	}
+	return visible
+}
+
+func toggleViewerTOCEntry(st *fileViewerState, entry viewerPDFTOCEntry) bool {
+	if st == nil || !entry.HasChildren {
+		return false
+	}
+	if st.tocExpanded == nil {
+		st.tocExpanded = make(map[int]string)
+	}
+	if st.tocExpanded[entry.Level] == entry.ID {
+		for level := range st.tocExpanded {
+			if level >= entry.Level {
+				delete(st.tocExpanded, level)
+			}
+		}
+		return true
+	}
+	st.tocExpanded[entry.Level] = entry.ID
+	for level := range st.tocExpanded {
+		if level > entry.Level {
+			delete(st.tocExpanded, level)
+		}
+	}
+	return true
+}
+
+func viewerTOCEntryNavigates(st *fileViewerState, entry viewerPDFTOCEntry) bool {
+	return st != nil && entry.Page >= 0 && entry.Page < st.pdfDoc.pageCount()
+}
+
+func viewerTOCDisclosureGlyph(st *fileViewerState, entry viewerPDFTOCEntry) string {
+	if !entry.HasChildren {
+		return ""
+	}
+	if viewerTOCEntryExpanded(st, entry) {
+		return "↓"
+	}
+	return "→"
+}
+
+func (ui *UI) handleFileViewerTOCClicks(gtx layout.Context, st *fileViewerState) {
+	if st == nil {
+		return
+	}
+	ensureViewerTOCClicks(st)
+	for i := range st.pdfDoc.toc {
+		entry := st.pdfDoc.toc[i]
+		if st.tocDisclosureClicks[i].Clicked(gtx) && toggleViewerTOCEntry(st, entry) {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		if !st.tocClicks[i].Clicked(gtx) || !viewerTOCEntryNavigates(st, entry) {
+			continue
+		}
+		if st.pdfDoc.scrollToPage(entry.Page) {
+			st.pdfDoc.syncVisualScroll()
+			st.markUserBrowsing(gtx.Now)
+		}
+		st.closeEncodingMenu()
+		gtx.Execute(op.InvalidateCmd{})
+	}
+}
+
 func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	st := ui.fileViewer
 	if st == nil {
@@ -82,6 +224,38 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		st.tabAnim.setPulse("command", gtx.Now)
 		ui.setFileViewerMode("command", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
+	}
+	if st.mode == "file" && st.detectedImagePreview {
+		if st.zoomMenuClick.Clicked(gtx) {
+			wasOpen := st.zoomMenuOpen
+			st.closeEncodingMenu()
+			if !wasOpen {
+				st.zoomMenuOpen = true
+				st.zoomMenuAt = gtx.Now
+			}
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		for i := range viewerZoomPresets {
+			if st.zoomPresetClicks[i].Clicked(gtx) {
+				if applyViewerZoomPreset(st, viewerZoomPresets[i]) {
+					st.markUserBrowsing(gtx.Now)
+				}
+				st.closeEncodingMenu()
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+		ensureViewerTOCClicks(st)
+		if st.tocMenuClick.Clicked(gtx) && len(st.pdfDoc.toc) > 0 {
+			wasOpen := st.tocMenuOpen
+			st.closeEncodingMenu()
+			if !wasOpen {
+				st.tocMenuOpen = true
+				st.tocMenuAt = gtx.Now
+				st.tocList.Axis = layout.Vertical
+			}
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		ui.handleFileViewerTOCClicks(gtx, st)
 	}
 	if st.mode == "file" && !st.detectedImagePreview {
 		if st.encodingMenuClick.Clicked(gtx) {
@@ -322,8 +496,15 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
-			if st.encodingMenuOpen &&
-				!viewerPointInRect(pos, st.encodingMenuRect) &&
+			popupOpen := st.encodingMenuOpen || st.zoomMenuOpen || st.tocMenuOpen
+			popupRect := st.encodingMenuRect
+			if st.zoomMenuOpen {
+				popupRect = st.zoomMenuRect
+			} else if st.tocMenuOpen {
+				popupRect = st.tocMenuRect
+			}
+			if popupOpen &&
+				!viewerPointInRect(pos, popupRect) &&
 				!viewerPointInRect(pos, st.encodingBarRect) {
 				st.closeEncodingMenu()
 				gtx.Execute(op.InvalidateCmd{})
@@ -664,43 +845,70 @@ func (ui *UI) layoutFileViewerOverlay(th *material.Theme, gtx layout.Context, st
 	barCall.Add(gtx.Ops)
 	offset.Pop()
 
-	if st.encodingMenuOpen && st.mode == "file" {
-		alpha, slideY, animating := popupOpenProgress(gtx.Now, st.encodingMenuAt)
+	st.encodingMenuRect = image.Rectangle{}
+	st.zoomMenuRect = image.Rectangle{}
+	st.tocMenuRect = image.Rectangle{}
+	var menuWidget func(layout.Context, float32) layout.Dimensions
+	var menuAt time.Time
+	var menuRect *image.Rectangle
+	switch {
+	case st.zoomMenuOpen && st.mode == "file" && st.detectedImagePreview:
+		menuWidget = func(gtx layout.Context, alpha float32) layout.Dimensions {
+			return ui.layoutFileViewerZoomMenu(th, gtx, st, alpha)
+		}
+		menuAt = st.zoomMenuAt
+		menuRect = &st.zoomMenuRect
+	case st.tocMenuOpen && st.mode == "file" && viewerPDFPreviewActive(st) && len(st.pdfDoc.toc) > 0:
+		menuWidget = func(gtx layout.Context, alpha float32) layout.Dimensions {
+			return ui.layoutFileViewerTOCMenu(th, gtx, st, alpha)
+		}
+		menuAt = st.tocMenuAt
+		menuRect = &st.tocMenuRect
+	case st.encodingMenuOpen && st.mode == "file" && !st.detectedImagePreview:
+		menuWidget = func(gtx layout.Context, alpha float32) layout.Dimensions {
+			return ui.layoutFileViewerEncodingMenu(th, gtx, st, alpha)
+		}
+		menuAt = st.encodingMenuAt
+		menuRect = &st.encodingMenuRect
+	}
+	if menuWidget != nil {
+		alpha, slideY, animating := popupOpenProgress(gtx.Now, menuAt)
 		if animating {
 			gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
 		}
 		menu := op.Record(gtx.Ops)
-		menuDims := ui.layoutFileViewerEncodingMenu(th, gtx, st, alpha)
+		menuDims := menuWidget(gtx, alpha)
 		menuCall := menu.Stop()
 		menuPos := image.Pt(barPos.X+barDims.Size.X-menuDims.Size.X, barPos.Y-gtx.Dp(unit.Dp(6))-menuDims.Size.Y+slideY)
 		menuPos = clampFilePaneMenuPoint(menuPos, menuDims.Size, gtx.Constraints.Max)
-		st.encodingMenuRect = image.Rectangle{Min: menuPos, Max: menuPos.Add(menuDims.Size)}
+		*menuRect = image.Rectangle{Min: menuPos, Max: menuPos.Add(menuDims.Size)}
 		offset = op.Offset(menuPos).Push(gtx.Ops)
 		menuCall.Add(gtx.Ops)
 		offset.Pop()
-	} else {
-		st.encodingMenuRect = image.Rectangle{}
 	}
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
 func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
 	theme := ui.fileViewerTheme()
-	title := ui.fileViewerHeaderTitle(st)
 	statusText, statusColor := ui.fileViewerOverlayStatusText(st)
 	detailLabel := ""
 	pageLabel := ""
+	tocLabel := ""
 	encodingLabel := ""
 	if st.mode == "file" {
 		if st.detectedImagePreview {
 			detailLabel = viewerImageZoomLabel(st)
 			pageLabel = viewerPDFPageLabel(st)
+			if viewerPDFPreviewActive(st) && len(st.pdfDoc.toc) > 0 {
+				tocLabel = "TOC"
+			}
 		} else if !st.detectedBinaryPreview {
 			detailLabel = viewerLineEndingLabel(st.detectedLineEnding)
+			encodingLabel = viewerEncodingStatusLabel(st)
 		}
-		encodingLabel = viewerEncodingStatusLabel(st)
 	}
-	if title == "" && statusText == "" && detailLabel == "" && pageLabel == "" && encodingLabel == "" {
+	if statusText == "" && detailLabel == "" && pageLabel == "" && tocLabel == "" && encodingLabel == "" {
 		return layout.Dimensions{}
 	}
 	return fillFlatBox(
@@ -726,16 +934,6 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 						)
 					}
 				}
-				if title != "" {
-					addSeparator()
-					maxTitleW := gtx.Dp(unit.Dp(220))
-					if alt := gtx.Constraints.Max.X / 3; alt > 0 && alt < maxTitleW {
-						maxTitleW = alt
-					}
-					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileViewerOverlayText(th, gtx, title, theme.TooltipText, maxTitleW)
-					}))
-				}
 				if statusText != "" {
 					addSeparator()
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -745,13 +943,19 @@ func (ui *UI) layoutFileViewerOverlayBar(th *material.Theme, gtx layout.Context,
 				if detailLabel != "" {
 					addGap(unit.Dp(3))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileViewerOverlayChip(th, gtx, detailLabel, theme.CommandStaticText, false, nil)
+						return ui.layoutFileViewerOverlayChip(th, gtx, detailLabel, theme.CommandText, st.zoomMenuOpen, &st.zoomMenuClick)
 					}))
 				}
 				if pageLabel != "" {
 					addGap(unit.Dp(3))
 					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutFileViewerOverlayChip(th, gtx, pageLabel, theme.CommandStaticText, false, nil)
+					}))
+				}
+				if tocLabel != "" {
+					addGap(unit.Dp(3))
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerOverlayChip(th, gtx, tocLabel, theme.CommandText, st.tocMenuOpen, &st.tocMenuClick)
 					}))
 				}
 				if encodingLabel != "" {
@@ -845,6 +1049,181 @@ func (ui *UI) layoutFileViewerOverlayDivider(gtx layout.Context) layout.Dimensio
 	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		paint.FillShape(gtx.Ops, fill, clip.Rect(image.Rect(0, 0, w, h)).Op())
 		return layout.Dimensions{Size: image.Pt(w, h)}
+	})
+}
+
+func (ui *UI) layoutFileViewerZoomMenu(th *material.Theme, gtx layout.Context, st *fileViewerState, alpha float32) layout.Dimensions {
+	theme := ui.filePanePopupTheme()
+	width := gtx.Dp(unit.Dp(132))
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedClipBox(
+			gtx,
+			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+			scaleColorAlpha(theme.Bg, alpha),
+			scaleColorAlpha(theme.Border, alpha),
+			func(gtx layout.Context) layout.Dimensions {
+				children := make([]layout.FlexChild, 0, len(viewerZoomPresets)*2)
+				for i, preset := range viewerZoomPresets {
+					if i > 0 {
+						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 1)}
+						}))
+					}
+					i, preset := i, preset
+					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						click := &st.zoomPresetClicks[i]
+						hoverFill := float32(0)
+						if click.Hovered() {
+							hoverFill = 1
+						}
+						item := fileContextMenuItem{ID: fmt.Sprintf("viewer-zoom-%d", i), Label: preset.label}
+						dims, _, _ := ui.layoutFilePaneContextMenuItem(th, gtx, theme, click, item, viewerZoomPresetActive(st, preset), hoverFill, alpha, ui.fileContextMenuRowHeight(gtx, item))
+						return dims
+					}))
+				}
+				return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+				})
+			},
+		)
+	})
+}
+
+func (ui *UI) layoutFileViewerTOCRow(th *material.Theme, gtx layout.Context, st *fileViewerState, index, rowH int, theme filePanePopupTheme, alpha float32) layout.Dimensions {
+	entry := st.pdfDoc.toc[index]
+	navigable := viewerTOCEntryNavigates(st, entry)
+	active := navigable && entry.Page == st.pdfDoc.currentPage()
+	titleClick := &st.tocClicks[index]
+	disclosureClick := &st.tocDisclosureClicks[index]
+	titleHovered := navigable && titleClick.Hovered()
+	disclosureHovered := entry.HasChildren && disclosureClick.Hovered()
+
+	rowBG := color.NRGBA{}
+	if active {
+		rowBG = scaleColorAlpha(theme.ActiveBg, alpha)
+	}
+	titleBG := color.NRGBA{}
+	if titleHovered && !active {
+		titleBG = scaleColorAlpha(theme.HoverBg, alpha)
+	}
+	titleFG := scaleColorAlpha(theme.Text, alpha)
+	if !navigable {
+		titleFG = scaleColorAlpha(theme.DisabledText, alpha)
+	} else if active {
+		titleFG = scaleColorAlpha(theme.ActiveText, alpha)
+	} else if titleHovered {
+		titleFG = scaleColorAlpha(theme.HoverText, alpha)
+	}
+
+	level := min(entry.Level, 6)
+	indentW := gtx.Dp(unit.Dp(level * 12))
+	disclosureW := gtx.Dp(unit.Dp(22))
+	return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+		return fillBgExact(gtx, rowBG, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Dimensions{Size: image.Pt(indentW, rowH)}
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if !entry.HasChildren {
+						return layout.Dimensions{Size: image.Pt(disclosureW, rowH)}
+					}
+					return fixedWidth(gtx, disclosureW, func(gtx layout.Context) layout.Dimensions {
+						return disclosureClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							pointer.CursorPointer.Add(gtx.Ops)
+							bg := color.NRGBA{}
+							fg := scaleColorAlpha(theme.Muted, alpha)
+							if disclosureHovered {
+								hoverBG := theme.HoverBg
+								if active {
+									hoverBG = mixNRGBA(theme.ActiveBg, theme.HoverBg, 0.64)
+								}
+								bg = scaleColorAlpha(hoverBG, alpha)
+								fg = scaleColorAlpha(bestContrastColor(hoverBG, theme.HoverText, theme.ActiveText, theme.Text), alpha)
+							}
+							return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(th, viewerTOCDisclosureGlyph(st, entry))
+									lbl.Font.Typeface = ui.mainTypeface()
+									lbl.Font.Weight = font.Bold
+									lbl.TextSize = ui.functionBarTextSize()
+									lbl.Color = fg
+									return layout.Center.Layout(gtx, lbl.Layout)
+								})
+							})
+						})
+					})
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					titleGtx := gtx
+					if !navigable {
+						titleGtx = titleGtx.Disabled()
+					}
+					return titleClick.Layout(titleGtx, func(gtx layout.Context) layout.Dimensions {
+						if navigable {
+							pointer.CursorPointer.Add(gtx.Ops)
+						}
+						return fixedWidth(gtx, gtx.Constraints.Max.X, func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
+								return fillBgExact(gtx, titleBG, func(gtx layout.Context) layout.Dimensions {
+									return layout.Inset{Left: unit.Dp(3), Right: unit.Dp(4), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										lbl := material.Body2(th, entry.Title)
+										lbl.Font.Typeface = ui.mainTypeface()
+										lbl.Font.Weight = font.Medium
+										lbl.TextSize = ui.functionBarTextSize()
+										lbl.Color = titleFG
+										lbl.MaxLines = 1
+										lbl.Truncator = "…"
+										return layoutVCenteredLabel(gtx, lbl)
+									})
+								})
+							})
+						})
+					})
+				}),
+			)
+		})
+	})
+}
+
+func (ui *UI) layoutFileViewerTOCMenu(th *material.Theme, gtx layout.Context, st *fileViewerState, alpha float32) layout.Dimensions {
+	ensureViewerTOCClicks(st)
+	visible := viewerTOCVisibleIndices(st)
+	if len(visible) == 0 {
+		return layout.Dimensions{}
+	}
+	theme := ui.filePanePopupTheme()
+	width := gtx.Dp(unit.Dp(292))
+	if width > gtx.Constraints.Max.X {
+		width = gtx.Constraints.Max.X
+	}
+	rowH := ui.fileContextMenuRowHeight(gtx, fileContextMenuItem{Label: "Entry"})
+	height := rowH * len(visible)
+	if maxH := gtx.Dp(unit.Dp(320)); height > maxH {
+		height = maxH
+	}
+	if height > gtx.Constraints.Max.Y {
+		height = gtx.Constraints.Max.Y
+	}
+	if height < 1 {
+		height = 1
+	}
+	st.tocList.Axis = layout.Vertical
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+			return fillRoundedClipBox(
+				gtx,
+				gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+				scaleColorAlpha(theme.Bg, alpha),
+				scaleColorAlpha(theme.Border, alpha),
+				func(gtx layout.Context) layout.Dimensions {
+					return material.List(th, &st.tocList).Layout(gtx, len(visible), func(gtx layout.Context, row int) layout.Dimensions {
+						i := visible[row]
+						return ui.layoutFileViewerTOCRow(th, gtx, st, i, rowH, theme, alpha)
+					})
+				},
+			)
+		})
 	})
 }
 
@@ -1417,18 +1796,38 @@ func (ui *UI) layoutFileViewerHeaderSegment(th *material.Theme, gtx layout.Conte
 	})
 }
 
+func viewerModeTabTitle(st *fileViewerState, mode, label string) string {
+	if st == nil || st.historyOpen || normalizeViewerMode(st.mode) != mode {
+		return label
+	}
+	name := strings.TrimSpace(st.name)
+	if name == "" {
+		return label
+	}
+	return label + " - " + name
+}
+
 func (ui *UI) layoutFileViewerModeTabs(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
 	if st == nil {
 		return layout.Dimensions{}
 	}
 	historyActive := st.historyOpen
 	items := []appTabItem{
-		{title: "File", active: !historyActive && st.mode == "file"},
-		{title: "Hex", active: !historyActive && st.mode == "hex"},
-		{title: "Cmd", active: !historyActive && st.mode == "command"},
+		{title: viewerModeTabTitle(st, "file", "File"), active: !historyActive && st.mode == "file"},
+		{title: viewerModeTabTitle(st, "hex", "Hex"), active: !historyActive && st.mode == "hex"},
+		{title: viewerModeTabTitle(st, "command", "Cmd"), active: !historyActive && st.mode == "command"},
 	}
 	clicks := []*widget.Clickable{&st.modeFileClick, &st.modeHexClick, &st.modeCmdClick}
 	widths := ui.tabStripWidths(th, gtx, ui.fmCfg, items)
+	for i := range items {
+		if !items[i].active {
+			continue
+		}
+		fullTitleW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), items[i].title) + gtx.Dp(unit.Dp(18))
+		if widths[i] < fullTitleW {
+			widths[i] = fullTitleW
+		}
+	}
 	separatorW := tabStripSeparatorWidth(gtx)
 	historyW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "..") + gtx.Dp(unit.Dp(14))
 	if minW := tabStripControlWidth(gtx); historyW < minW {

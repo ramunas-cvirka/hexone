@@ -27,13 +27,13 @@ func newMultiRenameKeyboardTestLayout() (*UI, *multiRenameState, *input.Router, 
 		targets: []multiRenameTarget{{oldName: "one.txt", newName: "one.txt", kind: filesys.EntryFile}},
 		focus:   multiRenameFocusFind, actionFocus: multiRenameActionRename, focusWant: true,
 	}
-	for _, ed := range []*widget.Editor{&st.searchEdit, &st.replaceEdit, &st.prefixEdit, &st.suffixEdit, &st.startEdit, &st.stepEdit, &st.digitsEdit} {
+	for _, ed := range []*widget.Editor{&st.searchEdit, &st.replaceEdit, &st.prefixEdit, &st.suffixEdit, &st.startEdit, &st.stepEdit} {
 		ed.SingleLine = true
 		ed.Submit = true
 	}
 	st.startEdit.SetText("1")
 	st.stepEdit.SetText("1")
-	st.digitsEdit.SetText("2")
+	st.zeroPadded.Value = true
 	ui.multiRename = st
 	th := material.NewTheme()
 	router := new(input.Router)
@@ -99,7 +99,7 @@ func TestMultiRenameTabOrderIncludesEnabledCounterFields(t *testing.T) {
 	want := []multiRenameFocus{
 		multiRenameFocusCounterStart,
 		multiRenameFocusCounterStep,
-		multiRenameFocusCounterDigits,
+		multiRenameFocusCounterZeroPadding,
 		multiRenameFocusCounterPosition,
 		multiRenameFocusActions,
 	}
@@ -205,6 +205,56 @@ func TestMultiRenameCounterCanFollowNameBeforePreservedExtension(t *testing.T) {
 	}
 }
 
+func TestMultiRenameCounterWidthUsesAutomaticZeroPadding(t *testing.T) {
+	tests := []struct {
+		name         string
+		zeroPadded   bool
+		largestValue int
+		want         int
+	}{
+		{name: "disabled", zeroPadded: false, largestValue: 100, want: 0},
+		{name: "single digit", zeroPadded: true, largestValue: 9, want: 2},
+		{name: "two digits", zeroPadded: true, largestValue: 42, want: 2},
+		{name: "expands past two digits", zeroPadded: true, largestValue: 100, want: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := multiRenameCounterWidth(tt.zeroPadded, tt.largestValue); got != tt.want {
+				t.Fatalf("counter width=%d want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMultiRenamePreviewZeroPaddingExpandsForLargestCounter(t *testing.T) {
+	st := &multiRenameState{
+		targets: []multiRenameTarget{
+			{oldName: "a.txt", kind: filesys.EntryFile},
+			{oldName: "b.txt", kind: filesys.EntryFile},
+			{oldName: "c.txt", kind: filesys.EntryFile},
+		},
+	}
+	st.sequence.Value = true
+	st.zeroPadded.Value = true
+	st.startEdit.SetText("98")
+	st.stepEdit.SetText("1")
+	st.refreshPreview()
+
+	for i, want := range []string{"098a.txt", "099b.txt", "100c.txt"} {
+		if got := st.targets[i].newName; got != want {
+			t.Fatalf("padded target %d=%q want %q", i, got, want)
+		}
+	}
+
+	st.zeroPadded.Value = false
+	st.refreshPreview()
+	for i, want := range []string{"98a.txt", "99b.txt", "100c.txt"} {
+		if got := st.targets[i].newName; got != want {
+			t.Fatalf("plain target %d=%q want %q", i, got, want)
+		}
+	}
+}
+
 func TestMultiRenameCanApplyActionsOnlyToExtension(t *testing.T) {
 	got := multiRenameApply(
 		"report.TXT", filesys.EntryFile,
@@ -293,12 +343,11 @@ func TestMultiRenameBodyStaysCompactAtDialogWidth(t *testing.T) {
 			{oldName: "two.txt", newName: "two.txt", kind: filesys.EntryFile},
 		},
 	}
-	for _, ed := range []*widget.Editor{&st.searchEdit, &st.replaceEdit, &st.prefixEdit, &st.suffixEdit, &st.startEdit, &st.stepEdit, &st.digitsEdit} {
+	for _, ed := range []*widget.Editor{&st.searchEdit, &st.replaceEdit, &st.prefixEdit, &st.suffixEdit, &st.startEdit, &st.stepEdit} {
 		ed.SingleLine = true
 	}
 	st.startEdit.SetText("1")
 	st.stepEdit.SetText("1")
-	st.digitsEdit.SetText("2")
 	var router input.Router
 	for _, width := range []int{740, 320} {
 		gtx := layout.Context{

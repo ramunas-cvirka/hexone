@@ -95,7 +95,7 @@ Multi-Rename applies a set of filename transformations to the selected items in 
 - Prefix and suffix text can be applied independently.
 - Case conversion can keep, uppercase, or lowercase the selected part.
 - `Name`, `Extension`, and `Both` control which part of each filename is transformed; directory names are handled safely.
-- An optional counter supports start, step, digit width, and placement at the beginning or end.
+- An optional counter supports start, step, placement at the beginning or end, and automatic zero-padding that expands to fit the largest generated number.
 - Invalid names and destination collisions are detected before the operation starts. `Rename` is enabled only when at least one valid filename will change.
 - Local and SFTP panes are supported. Files inside an archive cannot be renamed with this tool.
 
@@ -177,6 +177,8 @@ The internal viewer has three explicit modes, plus automatic image-style preview
 - `file` for normal text content plus image/PDF preview when supported
 - `hex` for raw bytes
 - `command` for shell output based on the selected file
+
+The active mode tab includes the complete filename, for example `File - photo.jpg`; switching modes moves the filename to `Hex` or `Cmd`.
 
 New viewer opens default to `file`; exact target commands and filename command rules open in `command`, while files over the configured read limit open in `hex` when no target or rule command applies.
 
@@ -262,10 +264,13 @@ Remote panes support `command` mode too, so the same log-following patterns work
 
 ### Image Preview
 
+- oversized images initially fit the viewport width and stay aligned to the top; smaller images remain at native size and are centered
+- drag the image directly to pan it, or use the scrollbars
 - arrow keys pan the image
 - `PageUp` and `PageDown` move by a larger vertical chunk
 - `Home` goes to the origin and `End` goes to the far edge
 - `Ctrl++` / `Ctrl+-` or `Cmd++` / `Cmd+-` zoom in and out
+- click the zoom percentage for fit-width and common zoom presets
 
 ### PDF Preview
 
@@ -276,6 +281,9 @@ Remote panes support `command` mode too, so the same log-following patterns work
 - holding a selection drag past the top or bottom edge auto-scrolls the document; double-click selects the word under the cursor
 - `Shift`+drag forces text selection; `Ctrl+C` / `Cmd+C` or the right-click `Copy` menu copies the selection
 - `Ctrl++` / `Ctrl+-` or `Cmd++` / `Cmd+-` zoom in and out around the viewport center; `100%` means fit-to-width
+- click the zoom percentage for fit-width and common zoom presets
+- PDFs with an outline show a compact `TOC` control; use a row's arrow to expand one branch at a time without moving the current page, or click any bookmark title—including a parent—to navigate
+- `Esc` closes an open zoom or TOC popup before closing the viewer
 - `[` moves to the previous page and `]` moves to the next page
 
 ## Customization
