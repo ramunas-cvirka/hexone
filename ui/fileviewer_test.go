@@ -6,6 +6,7 @@ package ui
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"image/gif"
@@ -21,11 +22,87 @@ import (
 	"unicode"
 	"unicode/utf16"
 
+	"gioui.org/io/input"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/unit"
+	"gioui.org/widget/material"
 	"hexone/filesys"
 	"hexone/fm"
 )
+
+func TestCloseFileViewerRestoresLastItemScrollPosition(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "zz-last.txt")
+
+	entries := make([]filesys.Entry, 40)
+	for i := range entries {
+		name := fmt.Sprintf("row-%02d.txt", i)
+		path := filepath.Join(dir, name)
+		if i == len(entries)-1 {
+			name = filepath.Base(target)
+			path = target
+		}
+		if err := os.WriteFile(path, []byte(name+"\n"), 0o600); err != nil {
+			t.Fatalf("write test file %q: %v", path, err)
+		}
+		entries[i] = filesys.Entry{
+			Name:        name,
+			DisplayName: name,
+			Path:        path,
+			Kind:        filesys.EntryFile,
+		}
+	}
+
+	pane := newFilePaneState(dir, cfg)
+	ui.filePanes = []*filePaneState{pane}
+	ui.filePaneTabs = []filePaneTabSet{{tabs: []*filePaneState{pane}}}
+	ui.activeFilePane = 0
+	ui.installFilePaneHandlers(0, pane)
+	pane.applyListing(filesys.Listing{Dir: dir, Entries: entries}, target, "", len(entries)-1)
+
+	th := material.NewTheme()
+	router := new(input.Router)
+	gtx := layout.Context{
+		Source:      router.Source(),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(960, 480)),
+		Now:         time.Now(),
+	}
+	frame := func() {
+		gtx.Ops = new(op.Ops)
+		ui.Layout(th, gtx)
+		router.Frame(gtx.Ops)
+		gtx.Now = gtx.Now.Add(time.Millisecond)
+	}
+
+	frame()
+	frame()
+	lastRow := len(entries) - 1
+	if _, ok := pane.table.RowRect(lastRow, len(entries)); !ok {
+		t.Fatalf("last selected item should be visible before opening the viewer; selected=%d position=%+v", pane.table.Selected, pane.table.List.Position)
+	}
+	want := sanitizePaneListPosition(pane.table.List.Position)
+
+	ui.startFileViewer(0, gtx.Now)
+	if ui.fileViewer == nil {
+		t.Fatal("viewer did not open")
+	}
+	frame()
+	frame()
+	ui.closeFileViewer()
+	frame()
+
+	if _, ok := pane.table.RowRect(lastRow, len(entries)); !ok {
+		t.Fatalf("last selected item is no longer visible after closing the viewer; position=%+v", pane.table.List.Position)
+	}
+	got := sanitizePaneListPosition(pane.table.List.Position)
+	if got.First != want.First || got.Offset != want.Offset {
+		t.Fatalf("pane scroll position after viewer close=%+v want %+v", got, want)
+	}
+}
 
 func TestStartFileViewerBrokenSymlinkShowsPaneNotice(t *testing.T) {
 	cfg := fm.DefaultConfig()

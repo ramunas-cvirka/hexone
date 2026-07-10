@@ -71,6 +71,13 @@ type fileViewerEventTag struct {
 	_ byte
 }
 
+type fileViewerPaneScrollSnapshot struct {
+	pane       *filePaneState
+	dir        string
+	position   layout.Position
+	anchorPath string
+}
+
 type fileViewerState struct {
 	pane    int
 	path    string
@@ -78,6 +85,8 @@ type fileViewerState struct {
 	mode    string
 	tabPrev string
 	remote  *paneSSHSession
+
+	paneScrollSnapshots []fileViewerPaneScrollSnapshot
 
 	backdropClick        widget.Clickable
 	closeClick           widget.Clickable
@@ -716,15 +725,16 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	}
 
 	st := &fileViewerState{
-		pane:         idx,
-		path:         entry.Path,
-		name:         entry.DisplayName,
-		remote:       remote,
-		status:       "loading...",
-		fileEncoding: fm.ViewerFileEncodingAuto,
-		wrapEnabled:  false,
-		resultCh:     make(chan fileViewerResult, 4),
-		pdfDocCh:     make(chan pdfDocResult, 16),
+		pane:                idx,
+		path:                entry.Path,
+		name:                entry.DisplayName,
+		remote:              remote,
+		paneScrollSnapshots: ui.captureFileViewerPaneScrollSnapshots(),
+		status:              "loading...",
+		fileEncoding:        fm.ViewerFileEncodingAuto,
+		wrapEnabled:         false,
+		resultCh:            make(chan fileViewerResult, 4),
+		pdfDocCh:            make(chan pdfDocResult, 16),
 	}
 	st.mode = "file"
 	st.command = "cat {path}"
@@ -889,11 +899,41 @@ func (ui *UI) closeFileViewer() {
 			st.remote.close()
 			st.remote = nil
 		}
+		ui.restoreFileViewerPaneScrollSnapshots(st.paneScrollSnapshots)
 	}
 	ui.clearFileViewHotkeyHold()
 	ui.clearFileViewerScrollHold()
 	ui.fileViewer = nil
 	ui.functionBarViewerShown = false
+}
+
+func (ui *UI) captureFileViewerPaneScrollSnapshots() []fileViewerPaneScrollSnapshot {
+	if ui == nil || len(ui.filePanes) == 0 {
+		return nil
+	}
+	snapshots := make([]fileViewerPaneScrollSnapshot, 0, len(ui.filePanes))
+	for _, pane := range ui.filePanes {
+		if pane == nil || pane.table == nil {
+			continue
+		}
+		snapshots = append(snapshots, fileViewerPaneScrollSnapshot{
+			pane:       pane,
+			dir:        pane.dir,
+			position:   sanitizePaneListPosition(pane.table.List.Position),
+			anchorPath: pane.visibleAnchorPath(),
+		})
+	}
+	return snapshots
+}
+
+func (ui *UI) restoreFileViewerPaneScrollSnapshots(snapshots []fileViewerPaneScrollSnapshot) {
+	for _, snapshot := range snapshots {
+		pane := snapshot.pane
+		if pane == nil || pane.table == nil || pane.model == nil || pane.dir != snapshot.dir {
+			continue
+		}
+		pane.table.List.Position = restorePaneListPosition(pane.model.entries, snapshot.position, snapshot.anchorPath)
+	}
 }
 
 func (ui *UI) clearFileViewHotkeyHold() {
