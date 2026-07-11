@@ -47,7 +47,7 @@ date_formats:
 	if got, want := SizeMinWidthDp(cfg), defaultApproxCharPx*5+8+8; got != want {
 		t.Fatalf("SizeMinWidthDp=%d, want %d", got, want)
 	}
-	if got, want := PermMinWidthDp(cfg), defaultApproxCharPx*9+12+8; got != want {
+	if got, want := PermMinWidthDp(cfg), columnWidthDp(defaultOctalWidthChars, false); got != want {
 		t.Fatalf("PermMinWidthDp=%d, want %d", got, want)
 	}
 	if got, want := DateMinWidthDp(cfg), defaultApproxCharPx*5+16+8; got != want {
@@ -98,6 +98,30 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	}
 	if !strings.Contains(out, "interface:\n") || !strings.Contains(out, "font_size_sp: 14") {
 		t.Fatalf("serialized config missing interface font settings:\n%s", out)
+	}
+}
+
+func TestDateWidthFitsPreferredFormat(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.DateFormats = []string{"2006-01-02 15:04:05", "01-02"}
+	got := DateWidthDp(cfg)
+	want := columnWidthDp(float32(len(cfg.DateFormats[0]))+0.5, false)
+	if got != want {
+		t.Fatalf("DateWidthDp=%d want %d for preferred format", got, want)
+	}
+}
+
+func TestMetadataWidthsFitPreferredTextWithoutExcessSlack(t *testing.T) {
+	cfg := DefaultConfig()
+	if got, want := PermWidthDp(cfg), columnWidthDp(defaultPermWidthChars, false); got != want {
+		t.Fatalf("symbolic permission width=%d want %d", got, want)
+	}
+	cfg.Columns.PermissionFormat = "octal"
+	if got, want := PermWidthDp(cfg), columnWidthDp(defaultOctalWidthChars, false); got != want {
+		t.Fatalf("octal permission width=%d want %d", got, want)
+	}
+	if got, want := SizeWidthDp(cfg), columnWidthDp(defaultSizeWidthChars, false); got != want {
+		t.Fatalf("size width=%d want %d", got, want)
 	}
 }
 

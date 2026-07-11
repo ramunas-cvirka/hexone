@@ -465,6 +465,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 		return scaleFilePaneDp(cfg, v)
 	}
 	fullPad := unit.Dp(fm.ColumnPadDp())
+	fullGap := scaleDp(fm.FullColumnGapDp())
 	dropPriority := filePaneFullDropPriority(cfg)
 	cols := []table.Column{
 		{
@@ -483,6 +484,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 			Flex:         false,
 			Align:        table.AlignStart,
 			PadX:         fullPad,
+			GapBefore:    fullGap,
 			DropPriority: dropPriority["permissions"],
 		})
 	}
@@ -493,6 +495,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 			Flex:         false,
 			Align:        table.AlignEnd,
 			PadX:         fullPad,
+			GapBefore:    fullGap,
 			DropPriority: dropPriority["size"],
 		},
 		table.Column{
@@ -501,6 +504,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 			Flex:         false,
 			Align:        table.AlignStart,
 			PadX:         fullPad,
+			GapBefore:    fullGap,
 			DropPriority: dropPriority["date"],
 		},
 	)

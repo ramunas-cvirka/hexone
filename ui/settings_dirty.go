@@ -66,7 +66,7 @@ func (st *settingsModalState) dirty() bool {
 
 func (st *settingsModalState) saveLabel() string {
 	if st != nil && st.dirty() {
-		return "Save changes"
+		return "Save (*)"
 	}
 	return "Save"
 }

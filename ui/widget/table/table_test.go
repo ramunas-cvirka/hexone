@@ -157,6 +157,22 @@ func TestFullModeScrollbarReservesColumnWidth(t *testing.T) {
 	}
 }
 
+func TestFullModeColumnGapsKeepFixedColumnsAtRight(t *testing.T) {
+	tbl := New([]Column{
+		{Width: unit.Dp(100), MinWidth: unit.Dp(20), Flex: true},
+		{Width: unit.Dp(50), MinWidth: unit.Dp(50), GapBefore: unit.Dp(12)},
+		{Width: unit.Dp(60), MinWidth: unit.Dp(60), GapBefore: unit.Dp(12)},
+	})
+	gtx := testTableLayoutContext(image.Pt(300, 100))
+	widths := tbl.computeColumnWidths(gtx, 300)
+	want := []int{166, 62, 72}
+	for i := range want {
+		if widths[i] != want[i] {
+			t.Fatalf("column widths=%v want %v", widths, want)
+		}
+	}
+}
+
 func TestFullModeHidesPartialRowBelowMinimum(t *testing.T) {
 	th := material.NewTheme()
 	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})

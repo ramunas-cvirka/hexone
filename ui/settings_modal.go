@@ -2648,7 +2648,6 @@ func (st *settingsModalState) hasFocusedEditor(gtx layout.Context) bool {
 		return false
 	}
 	return gtx.Focused(&st.colorValueEdit) ||
-		gtx.Focused(&st.paneDateFormatEdit) ||
 		gtx.Focused(&st.colorTextValueEdit) ||
 		gtx.Focused(&st.viewCommandEdit) ||
 		gtx.Focused(&st.viewShellEdit) ||

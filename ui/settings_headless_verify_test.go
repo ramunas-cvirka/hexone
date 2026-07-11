@@ -35,12 +35,6 @@ func TestHeadlessSettingsConfig(t *testing.T) {
 	}
 
 	const width, height = 800, 600
-	win, err := headless.NewWindow(width, height)
-	if err != nil {
-		t.Fatalf("headless window: %v", err)
-	}
-	defer win.Release()
-
 	th := material.NewTheme()
 	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
 	ui := NewUI(fm.DefaultConfig())
@@ -53,14 +47,20 @@ func TestHeadlessSettingsConfig(t *testing.T) {
 	router := new(input.Router)
 	render := func(label string) *image.RGBA {
 		t.Helper()
+		win, err := headless.NewWindow(width, height)
+		if err != nil {
+			t.Fatalf("headless window for %s: %v", label, err)
+		}
+		defer win.Release()
 		var img *image.RGBA
+		base := time.Now()
 		for i := 0; i < 4; i++ {
 			var ops op.Ops
 			gtx := layout.Context{
 				Ops:         &ops,
 				Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
 				Constraints: layout.Exact(image.Pt(width, height)),
-				Now:         time.Now(),
+				Now:         base.Add(time.Duration(i) * 100 * time.Millisecond),
 				Source:      router.Source(),
 			}
 			ui.Layout(th, gtx)
@@ -101,5 +101,10 @@ func TestHeadlessSettingsConfig(t *testing.T) {
 		ui.settingsModal.paneFullChars++ // verify the dirty Save label.
 		router = new(input.Router)
 		writePNG("file-panes-"+mode, render("file-panes-"+mode))
+		if mode == "full" {
+			ui.settingsModal.focus = settingsKeyboardFocusFilePaneMode
+			router = new(input.Router)
+			writePNG("file-panes-full-focused", render("file-panes-full-focused"))
+		}
 	}
 }

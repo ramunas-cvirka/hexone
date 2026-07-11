@@ -66,7 +66,9 @@ func TestSettingsFilePaneModeDraftLoadsAndSavesColumnConfig(t *testing.T) {
 	st.paneBriefChars = 21
 	st.paneShowPermissionsBool.Value = true
 	st.panePermissionFormat = "symbolic"
-	st.paneDateFormatEdit.SetText("2006-01-02 15:04")
+	st.paneDatePreset = "iso"
+	st.paneTimePreset = "minutes"
+	st.applyPaneDatePresets()
 	if err := ui.saveSettingsModal(time.Now()); err != nil {
 		t.Fatalf("saveSettingsModal: %v", err)
 	}
@@ -83,18 +85,36 @@ func TestSettingsFilePaneModeDraftLoadsAndSavesColumnConfig(t *testing.T) {
 
 func TestSettingsPaneDateBuilderUsesGoLayouts(t *testing.T) {
 	if got, want := settingsPaneCombinedDateLayout("iso", "seconds"), "2006-01-02 15:04:05"; got != want {
-		t.Fatalf("combined Go layout=%q want %q", got, want)
+		t.Fatalf("combined date layout=%q want %q", got, want)
 	}
 	dateKey, timeKey := settingsDetectPaneDatePresets("02 Jan 2006 3:04 PM")
 	if dateKey != "day_first" || timeKey != "twelve" {
 		t.Fatalf("detected presets=(%q,%q) want day_first,twelve", dateKey, timeKey)
 	}
-	st := &settingsModalState{paneDateFallbackFormats: []string{"Jan 02", "01-02"}}
+	st := &settingsModalState{paneDatePreset: "custom", paneDateFallbackFormats: []string{"Jan 02", "01-02"}}
 	st.paneDateFormatEdit.SetText("2006-01-02 15:04")
 	got := st.paneDateFormats()
 	want := []string{"2006-01-02 15:04", "Jan 02", "01-02"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("paneDateFormats()=%v want %v", got, want)
+	}
+	generated := settingsGeneratedPaneDateFormats("iso", "seconds")
+	wantGenerated := []string{"2006-01-02 15:04:05", "2006-01-02 15:04", "01-02 15:04:05", "2006-01-02", "01-02"}
+	if !reflect.DeepEqual(generated, wantGenerated) {
+		t.Fatalf("generated date formats=%v want %v", generated, wantGenerated)
+	}
+}
+
+func TestSettingsBriefPreviewUsesDistinctEntries(t *testing.T) {
+	if len(settingsBriefPanePreviewRows) < 20 {
+		t.Fatalf("brief preview entries=%d want at least 20", len(settingsBriefPanePreviewRows))
+	}
+	seen := make(map[string]bool, len(settingsBriefPanePreviewRows))
+	for i, row := range settingsBriefPanePreviewRows {
+		if seen[row.name] {
+			t.Fatalf("brief preview entry %d repeats filename %q", i, row.name)
+		}
+		seen[row.name] = true
 	}
 }
 
@@ -109,8 +129,8 @@ func TestSettingsSaveLabelIndicatesDirtyDraft(t *testing.T) {
 		t.Fatalf("fresh draft dirty=%v label=%q", st.dirty(), st.saveLabel())
 	}
 	st.paneFullChars++
-	if !st.dirty() || st.saveLabel() != "Save changes" {
-		t.Fatalf("changed draft dirty=%v label=%q", st.dirty(), st.saveLabel())
+	if !st.dirty() || st.saveLabel() != "Save (*)" {
+		t.Fatalf("changed draft dirty=%v save=%q", st.dirty(), st.saveLabel())
 	}
 	st.paneFullChars--
 	if st.dirty() || st.saveLabel() != "Save" {
@@ -328,7 +348,6 @@ func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
 		settingsKeyboardFocusFilePanePermissionFormat,
 		settingsKeyboardFocusFilePaneDateStyle,
 		settingsKeyboardFocusFilePaneTimeStyle,
-		settingsKeyboardFocusFilePaneDateFormat,
 		settingsKeyboardFocusFooter,
 	}
 	if !reflect.DeepEqual(got, want) {

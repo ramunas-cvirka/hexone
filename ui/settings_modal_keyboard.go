@@ -33,7 +33,6 @@ const (
 	settingsKeyboardFocusFilePanePermissionFormat
 	settingsKeyboardFocusFilePaneDateStyle
 	settingsKeyboardFocusFilePaneTimeStyle
-	settingsKeyboardFocusFilePaneDateFormat
 	settingsKeyboardFocusTerminalShell
 	settingsKeyboardFocusTerminalAcceleratedKeys
 	settingsKeyboardFocusFontsInterfaceFont
@@ -170,7 +169,6 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 	case settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
 		settingsKeyboardFocusFilePaneShowPermissions,
-		settingsKeyboardFocusFilePaneDateFormat,
 		settingsKeyboardFocusTerminalShell,
 		settingsKeyboardFocusTerminalAcceleratedKeys,
 		settingsKeyboardFocusViewerRemoteSearch,
@@ -219,8 +217,6 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 		st.focus = settingsKeyboardFocusGeneralDimInactive
 	case gtx.Focused(&st.generalFavoritesNewTabBool):
 		st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
-	case gtx.Focused(&st.paneDateFormatEdit):
-		st.focus = settingsKeyboardFocusFilePaneDateFormat
 	case gtx.Focused(&st.terminalAcceleratedKeysBool):
 		st.focus = settingsKeyboardFocusTerminalAcceleratedKeys
 	case gtx.Focused(&st.viewShellEdit):
@@ -326,7 +322,6 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 				settingsKeyboardFocusFilePanePermissionFormat,
 				settingsKeyboardFocusFilePaneDateStyle,
 				settingsKeyboardFocusFilePaneTimeStyle,
-				settingsKeyboardFocusFilePaneDateFormat,
 			)
 		}
 	case "terminal":

@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"hexone/filesys"
 	"hexone/fm"
 	uitheme "hexone/ui/theme"
+	"hexone/ui/widget/table"
 
 	"gioui.org/font"
 	"gioui.org/io/pointer"
@@ -204,6 +206,9 @@ func (st *settingsModalState) paneDateFormats() []string {
 	if st == nil {
 		return []string{"Jan 02 2006"}
 	}
+	if st.paneDatePreset != "custom" {
+		return settingsGeneratedPaneDateFormats(st.paneDatePreset, st.paneTimePreset)
+	}
 	primary := strings.TrimSpace(st.paneDateFormatEdit.Text())
 	if primary == "" {
 		primary = "Jan 02 2006"
@@ -217,6 +222,41 @@ func (st *settingsModalState) paneDateFormats() []string {
 		}
 		seen[candidate] = true
 		out = append(out, candidate)
+	}
+	return out
+}
+
+func settingsGeneratedPaneDateFormats(dateKey, timeKey string) []string {
+	fullDate := settingsPaneDateLayout(dateKey)
+	mediumDate := "Jan 02"
+	compactDate := "01-02"
+	switch dateKey {
+	case "iso":
+		mediumDate, compactDate = "01-02", "01-02"
+	case "day_first":
+		mediumDate, compactDate = "02 Jan", "02-01"
+	case "slash":
+		mediumDate, compactDate = "01/02", "01/02"
+	}
+	timeLayout := settingsPaneTimeLayout(timeKey)
+	candidates := make([]string, 0, 7)
+	if timeLayout != "" {
+		candidates = append(candidates, fullDate+" "+timeLayout)
+		if timeKey == "seconds" {
+			candidates = append(candidates, fullDate+" 15:04")
+		}
+		candidates = append(candidates, mediumDate+" "+timeLayout)
+	}
+	candidates = append(candidates, fullDate, mediumDate, compactDate)
+	out := make([]string, 0, len(candidates))
+	seen := make(map[string]bool, len(candidates))
+	for _, format := range candidates {
+		format = strings.TrimSpace(format)
+		if format == "" || seen[format] {
+			continue
+		}
+		seen[format] = true
+		out = append(out, format)
 	}
 	return out
 }
@@ -299,8 +339,8 @@ func (ui *UI) layoutSettingsFilePaneEditor(th *material.Theme, gtx layout.Contex
 		label string
 		click *widget.Clickable
 	}{
-		{key: "full", label: "Full", click: &st.paneSettingsFullClick},
-		{key: "brief", label: "Brief", click: &st.paneSettingsBriefClick},
+		{key: "full", label: "Full mode", click: &st.paneSettingsFullClick},
+		{key: "brief", label: "Brief mode", click: &st.paneSettingsBriefClick},
 		{key: "other", label: "Other", click: &st.paneSettingsOtherClick},
 	}
 	for _, item := range modeClicks {
@@ -326,8 +366,12 @@ func (ui *UI) layoutSettingsFilePaneEditor(th *material.Theme, gtx layout.Contex
 		active, a := st.paneSettingsModeAnim.fill(gtx.Now, mode, item.key)
 		hover, h := st.paneSettingsModeAnim.anim.hoverFill(gtx.Now, item.key)
 		pulse, p := st.paneSettingsModeAnim.anim.pulseFill(gtx.Now, item.key)
+		focus := float32(0)
+		if st.focus == settingsKeyboardFocusFilePaneMode && item.key == mode {
+			focus = 1
+		}
 		animating = animating || a || h || p
-		tabs = append(tabs, slidingTabSpec{Label: item.label, Click: item.click, ActiveFill: active, HoverFill: hover, PulseFill: pulse})
+		tabs = append(tabs, slidingTabSpec{Label: item.label, Click: item.click, ActiveFill: active, HoverFill: hover, PulseFill: pulse, FocusFill: focus})
 	}
 	if animating {
 		gtx.Execute(op.InvalidateCmd{})
@@ -411,8 +455,9 @@ func (ui *UI) layoutSettingsPaneCharsStepper(th *material.Theme, gtx layout.Cont
 }
 
 func (ui *UI) layoutSettingsPaneWidthRow(th *material.Theme, gtx layout.Context, st *settingsModalState, label string, stepper *settingsNumberStepperState, value float32, focus settingsKeyboardFocus) layout.Dimensions {
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Flexed(1, ui.settingsPaneControlLabel(th, label)),
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(ui.settingsPaneControlLabel(th, label)),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(78)), func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutSettingsPaneCharsStepper(th, gtx, st, stepper, value, focus)
@@ -465,7 +510,7 @@ func (ui *UI) layoutSettingsPaneFullTab(th *material.Theme, gtx layout.Context, 
 func (ui *UI) layoutSettingsPaneBriefTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsPaneWidthRow(th, gtx, st, "Column width", &st.paneBriefCharsStepper, st.paneBriefChars, settingsKeyboardFocusFilePaneBriefChars)
+			return ui.layoutSettingsPaneWidthRow(th, gtx, st, "Filename column width", &st.paneBriefCharsStepper, st.paneBriefChars, settingsKeyboardFocusFilePaneBriefChars)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -558,18 +603,15 @@ func (ui *UI) layoutSettingsPaneDateBuilder(th *material.Theme, gtx layout.Conte
 			st.applyPaneDatePresets()
 		}
 	}
-	for {
-		ev, ok := st.paneDateFormatEdit.Update(gtx)
-		if !ok {
-			break
+	formats := st.paneDateFormats()
+	previews := make([]string, 0, max(0, len(formats)-1))
+	for _, format := range formats[1:] {
+		preview := settingsPanePreviewTime.Format(format)
+		if preview == "" || (len(previews) > 0 && previews[len(previews)-1] == preview) {
+			continue
 		}
-		if _, ok := ev.(widget.ChangeEvent); ok {
-			st.paneDatePreset, st.paneTimePreset = settingsDetectPaneDatePresets(st.paneDateFormatEdit.Text())
-			st.errText = ""
-		}
+		previews = append(previews, preview)
 	}
-	format := strings.TrimSpace(st.paneDateFormatEdit.Text())
-	preview := settingsPanePreviewTime.Format(format)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(settingsViewerRowLabel(ui, th, "Date & time format", true)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
@@ -582,51 +624,89 @@ func (ui *UI) layoutSettingsPaneDateBuilder(th *material.Theme, gtx layout.Conte
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, gtx.Dp(unit.Dp(74)), ui.settingsPaneControlLabel(th, "Go layout"))
-				}),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return fixedHeight(gtx, gtx.Dp(unit.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-						ed := material.Editor(th, &st.paneDateFormatEdit, "Jan 02 2006")
-						ed.Font.Typeface = ui.interfaceTypeface()
-						ed.TextSize = ui.scaleModalFontSize(9)
-						ed.Color = txtColor
-						ed.HintColor = hintColor
-						dims := ui.layoutEditorWithContextMenu(th, gtx, "settings-pane-date-format", &st.paneDateFormatEdit, true, func(gtx layout.Context) layout.Dimensions {
-							return layoutNeutralEditorBox(gtx, gtx.Focused(&st.paneDateFormatEdit), true, ed.Layout)
-						})
-						st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusFilePaneDateFormat, &st.paneDateFormatEdit)
-						return dims
-					})
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Caption(th, preview)
-					lbl.Font.Typeface = ui.interfaceTypeface()
-					lbl.Font.Weight = font.Medium
-					lbl.TextSize = ui.scaleModalFontSize(9)
-					lbl.Color = color.NRGBA{R: 176, G: 190, B: 215, A: 255}
-					lbl.MaxLines = 1
-					return lbl.Layout(gtx)
-				}),
-			)
+			lbl := material.Caption(th, "Responsive fallbacks: "+strings.Join(previews, "  →  "))
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(8)
+			lbl.Color = color.NRGBA{R: 176, G: 190, B: 215, A: 255}
+			lbl.MaxLines = 1
+			lbl.Truncator = "…"
+			return lbl.Layout(gtx)
 		}),
 	)
 }
 
 type settingsPanePreviewRow struct {
 	name string
-	dir  bool
+	kind filesys.EntryKind
 	size string
 }
 
 var settingsPanePreviewRows = []settingsPanePreviewRow{
-	{name: "..", dir: true},
-	{name: "Projects", dir: true},
-	{name: "release-notes.txt", size: "12.4 KB"},
-	{name: "photos.rar", size: "824 MB"},
-	{name: "hexone.exe", size: "38.2 MB"},
+	{name: "..", kind: filesys.EntryParent},
+	{name: "Projects", kind: filesys.EntryDir},
+	{name: "release-notes.txt", kind: filesys.EntryFile, size: "12.4 KB"},
+	{name: "photos.rar", kind: filesys.EntryFile, size: "824 MB"},
+	{name: "hexone.exe", kind: filesys.EntryFile, size: "38.2 MB"},
+}
+
+var settingsBriefPanePreviewRows = []settingsPanePreviewRow{
+	{name: "..", kind: filesys.EntryParent},
+	{name: "Projects", kind: filesys.EntryDir},
+	{name: "release-notes.txt", kind: filesys.EntryFile},
+	{name: "photos.rar", kind: filesys.EntryFile},
+	{name: "hexone.exe", kind: filesys.EntryFile},
+	{name: "Documents", kind: filesys.EntryDir},
+	{name: "archive-part1.rar", kind: filesys.EntryFile},
+	{name: "holiday.png", kind: filesys.EntryFile},
+	{name: "music.flac", kind: filesys.EntryFile},
+	{name: "todo.md", kind: filesys.EntryFile},
+	{name: "Downloads", kind: filesys.EntryDir},
+	{name: "backup-2026.zip", kind: filesys.EntryFile},
+	{name: "invoice.pdf", kind: filesys.EntryFile},
+	{name: "server.log", kind: filesys.EntryFile},
+	{name: "installer.msi", kind: filesys.EntryFile},
+	{name: "Source", kind: filesys.EntryDir},
+	{name: "main.go", kind: filesys.EntryFile},
+	{name: "README.md", kind: filesys.EntryFile},
+	{name: "sample.mp4", kind: filesys.EntryFile},
+	{name: "data.csv", kind: filesys.EntryFile},
+}
+
+func (ui *UI) settingsPanePreviewIcon(row settingsPanePreviewRow) table.LeadingIcon {
+	entry := filesys.Entry{Name: row.name, DisplayName: row.name, Kind: row.kind}
+	model := &filePaneModel{
+		entries:       []filesys.Entry{entry},
+		cfg:           ui.fmCfg,
+		filenameTheme: newFilePaneFilenameTheme(ui.fmCfg),
+	}
+	model.rebuildFilenameVisuals(settingsPanePreviewTime)
+	icon, _ := model.LeadingIcon(0, 0)
+	return icon
+}
+
+func (ui *UI) layoutSettingsPanePreviewNameCell(th *material.Theme, gtx layout.Context, st *settingsModalState, row settingsPanePreviewRow, width int, fg color.NRGBA) layout.Dimensions {
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(fm.ColumnPadDp()), Right: unit.Dp(fm.ColumnPadDp())}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			icon := ui.settingsPanePreviewIcon(row)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return table.LayoutLeadingIcon(gtx, icon)
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Label(th, scaleConfigFontSize(ui.fmCfg, 13), row.name)
+					lbl.Font.Typeface = font.Typeface(st.paneFontFamily)
+					lbl.Font.Weight = font.Normal
+					if row.kind == filesys.EntryDir || row.kind == filesys.EntryParent {
+						lbl.Font.Weight = font.Bold
+					}
+					lbl.Color = fg
+					lbl.MaxLines = 1
+					lbl.Truncator = "…"
+					return layoutVCenteredLabel(gtx, lbl)
+				}),
+			)
+		})
+	})
 }
 
 func (ui *UI) settingsPaneDraftPalette(st *settingsModalState) filePanePalette {
@@ -690,18 +770,25 @@ func (ui *UI) layoutSettingsFullPanePreview(th *material.Theme, gtx layout.Conte
 }
 
 func (ui *UI) layoutSettingsFullPaneRows(th *material.Theme, gtx layout.Context, st *settingsModalState, palette filePanePalette) layout.Dimensions {
-	permW, sizeW := gtx.Dp(unit.Dp(82)), gtx.Dp(unit.Dp(64))
+	draft := *ui.fmCfg
+	draft.Columns.NameChars = settingsNormalizePaneChars(st.paneFullChars, 20)
+	draft.Columns.PermissionFormat = settingsNormalizePermissionFormat(st.panePermissionFormat)
+	draft.DateFormats = st.paneDateFormats()
+	nameW := gtx.Dp(scaleFilePaneDp(&draft, fm.NameWidthDp(&draft)))
+	permW := gtx.Dp(scaleFilePaneDp(&draft, fm.PermWidthDp(&draft)))
+	sizeW := gtx.Dp(scaleFilePaneDp(&draft, fm.SizeWidthDp(&draft)))
+	dateW := gtx.Dp(scaleFilePaneDp(&draft, fm.DateWidthDp(&draft)))
+	gapDp := scaleFilePaneDp(&draft, fm.FullColumnGapDp())
+	gapW := gtx.Dp(gapDp)
+	gapCount := 3
 	if !st.paneShowPermissionsBool.Value {
 		permW = 0
+		gapCount = 2
 	}
-	dateW := gtx.Dp(unit.Dp(116))
-	nameW := gtx.Dp(unit.Dp(st.paneFullChars*6 + 18))
-	maxName := gtx.Constraints.Max.X - permW - sizeW - dateW
-	if nameW > maxName {
-		nameW = maxName
-	}
-	if nameW < gtx.Dp(unit.Dp(72)) {
-		nameW = gtx.Dp(unit.Dp(72))
+	nameW = gtx.Constraints.Max.X - permW - sizeW - dateW - gapCount*gapW
+	minNameW := gtx.Dp(scaleFilePaneDp(&draft, fm.NameMinWidthDp(&draft)))
+	if nameW < minNameW {
+		nameW = minNameW
 	}
 	format := strings.TrimSpace(st.paneDateFormatEdit.Text())
 	perm := "rwxr-xr-x"
@@ -710,8 +797,8 @@ func (ui *UI) layoutSettingsFullPaneRows(th *material.Theme, gtx layout.Context,
 	}
 	cell := func(gtx layout.Context, txt string, width int, weight font.Weight, align text.Alignment, fg color.NRGBA) layout.Dimensions {
 		return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Label(th, scaleConfigFontSize(ui.fmCfg, 10), txt)
+			return layout.Inset{Left: unit.Dp(fm.ColumnPadDp()), Right: unit.Dp(fm.ColumnPadDp())}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Label(th, scaleConfigFontSize(ui.fmCfg, 13), txt)
 				lbl.Font.Typeface = font.Typeface(st.paneFontFamily)
 				lbl.Font.Weight = weight
 				lbl.Color = fg
@@ -733,17 +820,20 @@ func (ui *UI) layoutSettingsFullPaneRows(th *material.Theme, gtx layout.Context,
 				lbl.TextSize = ui.scaleModalFontSize(8)
 				lbl.Color = headerColor
 				lbl.Alignment = align
-				return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, lbl.Layout)
+				return layout.Inset{Left: unit.Dp(fm.ColumnPadDp()), Right: unit.Dp(fm.ColumnPadDp())}.Layout(gtx, lbl.Layout)
 			})
 		}
+	}
+	gap := func() layout.FlexChild {
+		return layout.Rigid(layout.Spacer{Width: gapDp}.Layout)
 	}
 	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, gtx.Dp(unit.Dp(15)), func(gtx layout.Context) layout.Dimensions {
 			cols := []layout.FlexChild{layout.Rigid(headerCell("Name", nameW, text.Start))}
 			if permW > 0 {
-				cols = append(cols, layout.Rigid(headerCell("Permissions", permW, text.Start)))
+				cols = append(cols, gap(), layout.Rigid(headerCell("Permissions", permW, text.Start)))
 			}
-			cols = append(cols, layout.Rigid(headerCell("Size", sizeW, text.End)), layout.Flexed(1, headerCell("Modified", dateW, text.Start)))
+			cols = append(cols, gap(), layout.Rigid(headerCell("Size", sizeW, text.End)), gap(), layout.Rigid(headerCell("Modified", dateW, text.Start)))
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, cols...)
 		})
 	}))
@@ -759,24 +849,20 @@ func (ui *UI) layoutSettingsFullPaneRows(th *material.Theme, gtx layout.Context,
 			}
 			return fixedHeight(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
 				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-					name := "•  " + row.name
-					weight := font.Normal
-					if row.dir {
-						name = "▸  " + row.name
-						weight = font.Bold
-					}
 					cols := []layout.FlexChild{layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return cell(gtx, name, nameW, weight, text.Start, fg)
+						return ui.layoutSettingsPanePreviewNameCell(th, gtx, st, row, nameW, fg)
 					})}
 					if permW > 0 {
-						cols = append(cols, layout.Rigid(func(gtx layout.Context) layout.Dimensions { return cell(gtx, perm, permW, font.Normal, text.Start, fg) }))
+						cols = append(cols, gap(), layout.Rigid(func(gtx layout.Context) layout.Dimensions { return cell(gtx, perm, permW, font.Normal, text.Start, fg) }))
 					}
 					cols = append(cols,
+						gap(),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return cell(gtx, row.size, sizeW, font.Normal, text.End, fg)
 						}),
-						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							return cell(gtx, settingsPanePreviewTime.Format(format), max(dateW, gtx.Constraints.Max.X), font.Normal, text.Start, fg)
+						gap(),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return cell(gtx, settingsPanePreviewTime.Format(format), dateW, font.Normal, text.Start, fg)
 						}),
 					)
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, cols...)
@@ -808,28 +894,20 @@ func (ui *UI) layoutSettingsBriefPanePreview(th *material.Theme, gtx layout.Cont
 							return fixedWidth(gtx, colW, func(gtx layout.Context) layout.Dimensions {
 								rows := make([]layout.FlexChild, 0, 5)
 								for row := 0; row < 5; row++ {
-									idx := (col*5 + row) % len(settingsPanePreviewRows)
-									entry := settingsPanePreviewRows[idx]
+									idx := col*5 + row
+									entry := settingsBriefPanePreviewRows[idx]
 									rows = append(rows, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 										bg := palette.PaneBg
-										if col == 1 && idx == 2 {
+										if idx == 7 {
 											bg = palette.SelectedBg
 										}
 										return fixedHeight(gtx, gtx.Dp(unit.Dp(18)), func(gtx layout.Context) layout.Dimensions {
 											return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-												name := "•  " + entry.name
-												weight := font.Normal
-												if entry.dir {
-													name = "▸  " + entry.name
-													weight = font.Bold
+												fg := palette.PaneFg
+												if idx == 7 {
+													fg = settingsEffectivePaneRowTextColor(palette, palette.SelectedFg)
 												}
-												lbl := material.Label(th, scaleConfigFontSize(ui.fmCfg, 10), name)
-												lbl.Font.Typeface = font.Typeface(st.paneFontFamily)
-												lbl.Font.Weight = weight
-												lbl.Color = palette.PaneFg
-												lbl.MaxLines = 1
-												lbl.Truncator = "…"
-												return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, lbl.Layout)
+												return ui.layoutSettingsPanePreviewNameCell(th, gtx, st, entry, max(1, gtx.Constraints.Max.X), fg)
 											})
 										})
 									}))

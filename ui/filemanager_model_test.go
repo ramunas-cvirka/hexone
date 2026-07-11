@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/unit"
 )
 
 func TestFilePaneFormatDateUsesMeasuredWidth(t *testing.T) {
@@ -38,6 +39,45 @@ func TestFilePaneFormatDateUsesMeasuredWidth(t *testing.T) {
 
 	if got := model.formatDate(entry, 100); got != shortText {
 		t.Fatalf("formatDate should choose the shorter exact-fit format, got %q want %q", got, shortText)
+	}
+}
+
+func TestFilePanePreferredDateFormatFitsConfiguredColumn(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.DateFormats = []string{"2006-01-02 15:04:05", "01-02"}
+	ts := time.Date(2026, time.July, 11, 16, 47, 9, 0, time.UTC)
+	entry := filesys.Entry{ModTime: ts}
+	model := &filePaneModel{cfg: cfg}
+	contentWidth := fm.DateWidthDp(cfg) - 2*fm.ColumnPadDp()
+	if got, want := model.formatDate(entry, contentWidth), ts.Format(cfg.DateFormats[0]); got != want {
+		t.Fatalf("preferred date format=%q want %q at configured width %d", got, want, contentWidth)
+	}
+}
+
+func TestFilePaneFullModeAnchorsMetadataAtRightWithExplicitGaps(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	pane := newFilePaneState(".", cfg)
+	if len(pane.table.Columns) < 3 {
+		t.Fatalf("full-mode columns=%d want at least 3", len(pane.table.Columns))
+	}
+	if !pane.table.Columns[0].Flex {
+		t.Fatal("filename column must absorb spare width so metadata stays anchored at the right")
+	}
+	last := pane.table.Columns[len(pane.table.Columns)-1]
+	if last.Flex {
+		t.Fatal("trailing date column must remain fixed at the right edge")
+	}
+	for i, col := range pane.table.Columns {
+		if got, want := col.PadX, unit.Dp(fm.ColumnPadDp()); got != want {
+			t.Fatalf("column %d horizontal padding=%v want %v", i, got, want)
+		}
+		wantGap := unit.Dp(0)
+		if i > 0 {
+			wantGap = scaleFilePaneDp(cfg, fm.FullColumnGapDp())
+		}
+		if col.GapBefore != wantGap {
+			t.Fatalf("column %d leading gap=%v want %v", i, col.GapBefore, wantGap)
+		}
 	}
 }
 

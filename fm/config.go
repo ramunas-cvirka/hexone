@@ -24,6 +24,7 @@ const (
 	defaultNameKeepStartChars = 6
 	defaultNameCompactMarker  = ".."
 	defaultColumnPadDp        = 4
+	defaultFullColumnGapDp    = 12
 	// Brief mode already has left/right cell padding; keep the explicit
 	// inter-column gap at zero so the visible separation stays near 1ch.
 	defaultBriefGapDp         = 0
@@ -31,8 +32,9 @@ const (
 	defaultNameChars          = 20.0
 	defaultBriefChars         = 16.0
 	defaultNameMinWidthDp     = 52
-	defaultPermWidthChars     = 10.5
-	defaultSizeWidthChars     = 10.5
+	defaultPermWidthChars     = 9.5
+	defaultOctalWidthChars    = 4.5
+	defaultSizeWidthChars     = 7.5
 	defaultDateWidthChars     = 15.0
 	defaultNameTextReserveDp  = defaultApproxCharPx/2 + 2
 	configBackupSuffix        = ".bak"
@@ -1747,6 +1749,10 @@ func ColumnPadDp() int {
 	return defaultColumnPadDp
 }
 
+func FullColumnGapDp() int {
+	return defaultFullColumnGapDp
+}
+
 func BriefGapDp() int {
 	return defaultBriefGapDp
 }
@@ -1767,7 +1773,11 @@ func NameMinWidthDp(cfg *Config) int {
 }
 
 func PermWidthDp(cfg *Config) int {
-	return columnWidthDp(defaultPermWidthChars, false)
+	chars := float32(defaultPermWidthChars)
+	if cfg != nil && cfg.Columns.PermissionFormat == "octal" {
+		chars = defaultOctalWidthChars
+	}
+	return columnWidthDp(chars, false)
 }
 
 func SizeWidthDp(cfg *Config) int {
@@ -1775,7 +1785,16 @@ func SizeWidthDp(cfg *Config) int {
 }
 
 func DateWidthDp(cfg *Config) int {
-	return columnWidthDp(defaultDateWidthChars, false)
+	chars := float32(defaultDateWidthChars)
+	if cfg != nil && len(cfg.DateFormats) > 0 {
+		// formatDate keeps a small safety reserve when exact glyph metrics are
+		// unavailable. Include the same half-character here so the preferred
+		// (first) layout is not skipped at the column's configured width.
+		if preferred := float32(utf8.RuneCountInString(cfg.DateFormats[0])) + 0.5; preferred > chars {
+			chars = preferred
+		}
+	}
+	return columnWidthDp(chars, false)
 }
 
 func BriefWidthDp(cfg *Config) int {
@@ -1791,12 +1810,9 @@ func SizeMinWidthDp(cfg *Config) int {
 }
 
 func PermMinWidthDp(cfg *Config) int {
-	permChars := 4
-	if cfg != nil && cfg.Columns.PermissionFormat == "symbolic" {
-		permChars = 9
-	}
-	padReserve := columnPadReserveDp()
-	return defaultApproxCharPx*permChars + 12 + padReserve
+	// Permissions can fall back from symbolic to the four-digit octal form
+	// as the pane narrows, so the minimum only needs to fit that fallback.
+	return columnWidthDp(defaultOctalWidthChars, false)
 }
 
 func DateMinWidthDp(cfg *Config) int {
