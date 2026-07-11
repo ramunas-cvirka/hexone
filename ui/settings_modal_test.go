@@ -32,16 +32,89 @@ func TestSettingsTabIndexOrder(t *testing.T) {
 	}{
 		{key: "general", want: 0},
 		{key: "fonts", want: 1},
-		{key: "terminal", want: 2},
-		{key: "viewer", want: 3},
-		{key: "associations", want: 4},
-		{key: "colors", want: 5},
+		{key: "colors", want: 2},
+		{key: "terminal", want: 3},
+		{key: "viewer", want: 4},
+		{key: "associations", want: 5},
 		{key: "config", want: 6},
 	}
 	for _, tc := range cases {
 		if got := settingsTabIndex(tc.key); got != tc.want {
 			t.Fatalf("settingsTabIndex(%q)=%d want %d", tc.key, got, tc.want)
 		}
+	}
+}
+
+func TestSettingsFilePaneModeDraftLoadsAndSavesColumnConfig(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Columns.NameChars = 24
+	cfg.Columns.BriefChars = 18
+	cfg.Columns.ShowPermissions = false
+	cfg.Columns.PermissionFormat = "octal"
+	cfg.Columns.FullDropPriority = []string{"permissions", "date", "size", "name"}
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	if st.paneFullChars != 24 || st.paneBriefChars != 18 || st.paneShowPermissionsBool.Value || st.panePermissionFormat != "octal" {
+		t.Fatalf("column draft not loaded: full=%v brief=%v permissions=%v format=%q", st.paneFullChars, st.paneBriefChars, st.paneShowPermissionsBool.Value, st.panePermissionFormat)
+	}
+	st.paneFullChars = 27
+	st.paneBriefChars = 21
+	st.paneShowPermissionsBool.Value = true
+	st.panePermissionFormat = "symbolic"
+	st.paneDateFormatEdit.SetText("2006-01-02 15:04")
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("saveSettingsModal: %v", err)
+	}
+	if ui.fmCfg.Columns.NameChars != 27 || ui.fmCfg.Columns.BriefChars != 21 || !ui.fmCfg.Columns.ShowPermissions || ui.fmCfg.Columns.PermissionFormat != "symbolic" {
+		t.Fatalf("column config not saved: %#v", ui.fmCfg.Columns)
+	}
+	if got := ui.fmCfg.Columns.FullDropPriority[0]; got != "permissions" {
+		t.Fatalf("hidden drop priority should be preserved, got first=%q", got)
+	}
+	if got := ui.fmCfg.DateFormats[0]; got != "2006-01-02 15:04" {
+		t.Fatalf("primary date format=%q want ISO date and time", got)
+	}
+}
+
+func TestSettingsPaneDateBuilderUsesGoLayouts(t *testing.T) {
+	if got, want := settingsPaneCombinedDateLayout("iso", "seconds"), "2006-01-02 15:04:05"; got != want {
+		t.Fatalf("combined Go layout=%q want %q", got, want)
+	}
+	dateKey, timeKey := settingsDetectPaneDatePresets("02 Jan 2006 3:04 PM")
+	if dateKey != "day_first" || timeKey != "twelve" {
+		t.Fatalf("detected presets=(%q,%q) want day_first,twelve", dateKey, timeKey)
+	}
+	st := &settingsModalState{paneDateFallbackFormats: []string{"Jan 02", "01-02"}}
+	st.paneDateFormatEdit.SetText("2006-01-02 15:04")
+	got := st.paneDateFormats()
+	want := []string{"2006-01-02 15:04", "Jan 02", "01-02"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paneDateFormats()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsSaveLabelIndicatesDirtyDraft(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	if st.dirty() || st.saveLabel() != "Save" {
+		t.Fatalf("fresh draft dirty=%v label=%q", st.dirty(), st.saveLabel())
+	}
+	st.paneFullChars++
+	if !st.dirty() || st.saveLabel() != "Save changes" {
+		t.Fatalf("changed draft dirty=%v label=%q", st.dirty(), st.saveLabel())
+	}
+	st.paneFullChars--
+	if st.dirty() || st.saveLabel() != "Save" {
+		t.Fatalf("reverted draft dirty=%v label=%q", st.dirty(), st.saveLabel())
 	}
 }
 
@@ -150,10 +223,11 @@ func TestSettingsShiftTabWraps(t *testing.T) {
 	}{
 		{key: "general", step: -1, want: "config"},
 		{key: "config", step: 1, want: "general"},
-		{key: "fonts", step: 1, want: "terminal"},
+		{key: "fonts", step: 1, want: "colors"},
+		{key: "colors", step: 1, want: "terminal"},
 		{key: "terminal", step: 1, want: "viewer"},
 		{key: "viewer", step: 1, want: "associations"},
-		{key: "colors", step: -1, want: "associations"},
+		{key: "colors", step: -1, want: "fonts"},
 	}
 	for _, tc := range cases {
 		if got := settingsShiftTab(tc.key, tc.step); got != tc.want {
@@ -243,23 +317,38 @@ func TestSettingsKeyboardFocusOrderTracksVisibleControls(t *testing.T) {
 }
 
 func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
-	st := &settingsModalState{activeTab: "general"}
+	st := &settingsModalState{activeTab: "general", paneSettingsMode: "full"}
 
 	got := st.focusOrder()
 	want := []settingsKeyboardFocus{
 		settingsKeyboardFocusNav,
-		settingsKeyboardFocusGeneralDimInactive,
-		settingsKeyboardFocusGeneralFavoritesNewTab,
-		settingsKeyboardFocusGeneralCompletionSound,
-		settingsKeyboardFocusFilePaneFileWeight,
-		settingsKeyboardFocusFilePaneDirWeight,
-		settingsKeyboardFocusFilePanePermissionsWeight,
-		settingsKeyboardFocusFilePaneSizeWeight,
-		settingsKeyboardFocusFilePaneDateWeight,
+		settingsKeyboardFocusFilePaneMode,
+		settingsKeyboardFocusFilePaneFullChars,
+		settingsKeyboardFocusFilePaneShowPermissions,
+		settingsKeyboardFocusFilePanePermissionFormat,
+		settingsKeyboardFocusFilePaneDateStyle,
+		settingsKeyboardFocusFilePaneTimeStyle,
+		settingsKeyboardFocusFilePaneDateFormat,
 		settingsKeyboardFocusFooter,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("focusOrder()=%v want %v", got, want)
+	}
+}
+
+func TestSettingsKeyboardFocusOrderTracksFilePaneInnerTab(t *testing.T) {
+	brief := (&settingsModalState{activeTab: "general", paneSettingsMode: "brief"}).focusOrder()
+	if !reflect.DeepEqual(brief, []settingsKeyboardFocus{
+		settingsKeyboardFocusNav,
+		settingsKeyboardFocusFilePaneMode,
+		settingsKeyboardFocusFilePaneBriefChars,
+		settingsKeyboardFocusFooter,
+	}) {
+		t.Fatalf("brief focus order=%v", brief)
+	}
+	other := (&settingsModalState{activeTab: "general", paneSettingsMode: "other"}).focusOrder()
+	if len(other) < 5 || other[2] != settingsKeyboardFocusGeneralDimInactive || other[len(other)-1] != settingsKeyboardFocusFooter {
+		t.Fatalf("other focus order=%v", other)
 	}
 }
 
@@ -597,6 +686,7 @@ func TestSettingsModalKeyboardSpaceTogglesFocusedCheckbox(t *testing.T) {
 		t.Fatal("settings modal did not open")
 	}
 	st.activeTab = "general"
+	st.paneSettingsMode = "other"
 	st.focus = settingsKeyboardFocusGeneralDimInactive
 	st.keyFocus.wantFocus = true
 	st.generalDimInactiveBool.Value = false
@@ -630,6 +720,7 @@ func TestSettingsModalKeyboardSpaceTogglesFavoritesNewTab(t *testing.T) {
 		t.Fatal("settings modal did not open")
 	}
 	st.activeTab = "general"
+	st.paneSettingsMode = "other"
 	st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
 	st.keyFocus.wantFocus = true
 	st.generalFavoritesNewTabBool.Value = true
@@ -1374,16 +1465,16 @@ func TestSettingsTabPositionSlidesToAssociations(t *testing.T) {
 	if !anim {
 		t.Fatal("tabPosition should still animate mid-transition")
 	}
-	if mid <= 0 || mid >= 4 {
-		t.Fatalf("mid position=%v want between 0 and 4", mid)
+	if mid <= 0 || mid >= 5 {
+		t.Fatalf("mid position=%v want between 0 and 5", mid)
 	}
 
 	end, anim := st.tabPosition(now.Add(toolbarAnimDur))
 	if anim {
 		t.Fatal("tabPosition should stop animating at the end of the transition")
 	}
-	if end != 4 {
-		t.Fatalf("end position=%v want 4", end)
+	if end != 5 {
+		t.Fatalf("end position=%v want 5", end)
 	}
 	if st.navPrevTab != "" {
 		t.Fatalf("navPrevTab should clear after transition, got %q", st.navPrevTab)

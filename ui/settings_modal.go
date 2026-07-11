@@ -242,6 +242,27 @@ type settingsModalState struct {
 	panePermissionsWeight        string
 	paneSizeWeight               string
 	paneDateWeight               string
+	paneSettingsMode             string
+	paneSettingsModeAnim         settingsChoiceAnim
+	paneSettingsFullClick        widget.Clickable
+	paneSettingsBriefClick       widget.Clickable
+	paneSettingsOtherClick       widget.Clickable
+	paneFullChars                float32
+	paneBriefChars               float32
+	paneFullCharsStepper         settingsNumberStepperState
+	paneBriefCharsStepper        settingsNumberStepperState
+	paneShowPermissionsBool      widget.Bool
+	panePermissionFormat         string
+	panePermissionFormatAnim     settingsChoiceAnim
+	panePermissionFormatClicks   [3]widget.Clickable
+	paneDatePreset               string
+	paneTimePreset               string
+	paneDatePresetAnim           settingsChoiceAnim
+	paneTimePresetAnim           settingsChoiceAnim
+	paneDatePresetClicks         [4]widget.Clickable
+	paneTimePresetClicks         [4]widget.Clickable
+	paneDateFormatEdit           widget.Editor
+	paneDateFallbackFormats      []string
 	interfaceFontSizeStepper     settingsNumberStepperState
 	paneFontSizeStepper          settingsNumberStepperState
 	tabsFontSizeStepper          settingsNumberStepperState
@@ -275,6 +296,7 @@ type settingsModalState struct {
 	generalCompletionSoundClicks [3]widget.Clickable
 	viewSmoothScrollingBool      widget.Bool
 	viewHideFunctionBarBool      widget.Bool
+	generalTabList               widget.List
 	viewerTabList                widget.List
 	colorsTabList                widget.List
 	viewTargetKeyEdit            widget.Editor
@@ -334,6 +356,8 @@ type settingsModalState struct {
 	targetInfoText string
 	ruleInfoText   string
 	assocInfoText  string
+	baselineDraft  string
+	baselineConfig string
 }
 
 type settingsNumberStepperState struct {
@@ -401,10 +425,10 @@ var settingsViewerColorOptions = []settingsColorOption{
 var settingsTabOrder = []string{
 	"general",
 	"fonts",
+	"colors",
 	"terminal",
 	"viewer",
 	"associations",
-	"colors",
 	"config",
 }
 
@@ -558,6 +582,9 @@ func (ui *UI) openSettingsModal() {
 		st.viewShellEdit.Submit = false
 		st.viewRemoteSearchCommandEdit.SingleLine = true
 		st.viewRemoteSearchCommandEdit.Submit = false
+		st.paneDateFormatEdit.SingleLine = true
+		st.paneDateFormatEdit.Submit = false
+		st.generalTabList.Axis = layout.Vertical
 		st.viewerTabList.Axis = layout.Vertical
 		st.colorsTabList.Axis = layout.Vertical
 		st.viewTargetKeyEdit.SingleLine = true
@@ -662,6 +689,14 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.panePermissionsWeight = fm.NormalizeFontWeight(cfg.General.PermissionsWeight, fm.FontWeightRegular)
 	st.paneSizeWeight = fm.NormalizeFontWeight(cfg.General.SizeWeight, fm.FontWeightRegular)
 	st.paneDateWeight = fm.NormalizeFontWeight(cfg.General.DateWeight, fm.FontWeightRegular)
+	st.paneSettingsMode = normalizeSettingsPaneMode(st.paneSettingsMode)
+	st.paneSettingsModeAnim = settingsChoiceAnim{}
+	st.paneFullChars = settingsNormalizePaneChars(cfg.Columns.NameChars, 20)
+	st.paneBriefChars = settingsNormalizePaneChars(cfg.Columns.BriefChars, 16)
+	st.paneShowPermissionsBool.Value = cfg.Columns.ShowPermissions
+	st.panePermissionFormat = settingsNormalizePermissionFormat(cfg.Columns.PermissionFormat)
+	st.panePermissionFormatAnim = settingsChoiceAnim{}
+	st.loadPaneDateFormat(cfg.DateFormats)
 	st.terminalAcceleratedKeysBool.Value = cfg.Terminal.AcceleratedKeys
 	st.interfaceFontPickerAnim = settingsChoiceAnim{}
 	st.paneFontPickerAnim = settingsChoiceAnim{}
@@ -679,6 +714,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.generalCompletionSoundAnim = settingsChoiceAnim{}
 	st.viewSmoothScrollingBool.Value = cfg.Viewer.SmoothScrolling
 	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
+	st.generalTabList.Position.First = 0
+	st.generalTabList.Position.Offset = 0
 	st.viewerTabList.Position.First = 0
 	st.viewerTabList.Position.Offset = 0
 	st.colorsTabList.Position.First = 0
@@ -708,6 +745,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.targetInfoText = ""
 	st.ruleInfoText = ""
 	st.assocInfoText = ""
+	st.baselineConfig = st.configEdit.Text()
+	st.baselineDraft = st.draftSignature()
 }
 
 func settingsColorOptionsForScope(scope string) []settingsColorOption {
@@ -2609,6 +2648,7 @@ func (st *settingsModalState) hasFocusedEditor(gtx layout.Context) bool {
 		return false
 	}
 	return gtx.Focused(&st.colorValueEdit) ||
+		gtx.Focused(&st.paneDateFormatEdit) ||
 		gtx.Focused(&st.colorTextValueEdit) ||
 		gtx.Focused(&st.viewCommandEdit) ||
 		gtx.Focused(&st.viewShellEdit) ||
@@ -3037,7 +3077,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if err := ui.ensureFMConfigLoaded(); err != nil {
 		return err
 	}
-	if st.activeTab == "config" {
+	if st.activeTab == "config" && st.configEdit.Text() != st.baselineConfig {
 		next := fm.DefaultConfig()
 		raw := strings.TrimSpace(st.configEdit.Text())
 		if raw == "" {
@@ -3260,6 +3300,11 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.General.PermissionsWeight = fm.NormalizeFontWeight(st.panePermissionsWeight, fm.FontWeightRegular)
 	ui.fmCfg.General.SizeWeight = fm.NormalizeFontWeight(st.paneSizeWeight, fm.FontWeightRegular)
 	ui.fmCfg.General.DateWeight = fm.NormalizeFontWeight(st.paneDateWeight, fm.FontWeightRegular)
+	ui.fmCfg.Columns.NameChars = settingsNormalizePaneChars(st.paneFullChars, 20)
+	ui.fmCfg.Columns.BriefChars = settingsNormalizePaneChars(st.paneBriefChars, 16)
+	ui.fmCfg.Columns.ShowPermissions = st.paneShowPermissionsBool.Value
+	ui.fmCfg.Columns.PermissionFormat = settingsNormalizePermissionFormat(st.panePermissionFormat)
+	ui.fmCfg.DateFormats = st.paneDateFormats()
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
 	ui.fmCfg.General.OpenFavoritesInNewTab = st.generalFavoritesNewTabBool.Value
 	ui.fmCfg.General.CompletionSound = fm.NormalizeCompletionSound(st.generalCompletionSound)
@@ -4001,6 +4046,12 @@ func (ui *UI) layoutSettingsNavTabs(th *material.Theme, gtx layout.Context, st *
 					return layoutSettingsNavSeparator(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabColorsClick, "Colors", fillColors, hoverColors, pulseColors, focusColors, stripH)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layoutSettingsNavSeparator(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabTerminalClick, "Terminal", fillTerminal, hoverTerminal, pulseTerminal, focusTerminal, stripH)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -4014,12 +4065,6 @@ func (ui *UI) layoutSettingsNavTabs(th *material.Theme, gtx layout.Context, st *
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabAssocClick, "Associations", fillAssoc, hoverAssoc, pulseAssoc, focusAssoc, stripH)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutSettingsNavSeparator(gtx)
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsNavSliderSegment(th, gtx, &st.tabColorsClick, "Colors", fillColors, hoverColors, pulseColors, focusColors, stripH)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layoutSettingsNavSeparator(gtx)
@@ -4054,65 +4099,16 @@ func (ui *UI) layoutSettingsTabContent(th *material.Theme, gtx layout.Context, s
 }
 
 func (ui *UI) layoutSettingsGeneralTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
-	rowLabel := func(txt string) layout.Widget {
-		return settingsViewerRowLabel(ui, th, txt, true)
-	}
-	for i, opt := range settingsCompletionSoundOptions() {
-		if st.generalCompletionSoundClicks[i].Clicked(gtx) {
-			st.setKeyboardFocus(settingsKeyboardFocusGeneralCompletionSound)
-			st.generalCompletionSoundAnim.setValue(&st.generalCompletionSound, opt.Key, gtx.Now)
-			st.generalCompletionSoundAnim.anim.setPulse(opt.Key, gtx.Now)
-			st.errText = ""
-		}
-	}
+	list := settingsScrollableListStyle(th, &st.generalTabList)
+	return list.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		return layout.Inset{Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsGeneralTabContent(th, gtx, st)
+		})
+	})
+}
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			before := st.generalDimInactiveBool.Value
-			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalDimInactiveBool, "Gray out inactive pane", ui.scaleModalFontSize(10))
-			if st.generalDimInactiveBool.Value != before {
-				st.focus = settingsKeyboardFocusGeneralDimInactive
-			}
-			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralDimInactive, &st.generalDimInactiveBool)
-			return dims
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			before := st.generalFavoritesNewTabBool.Value
-			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalFavoritesNewTabBool, "Open ☆ favorites in a new tab", ui.scaleModalFontSize(10))
-			if st.generalFavoritesNewTabBool.Value != before {
-				st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
-			}
-			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralFavoritesNewTab, &st.generalFavoritesNewTabBool)
-			return dims
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsCompletionSoundRow(th, gtx, st)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
-		layout.Rigid(rowLabel("Font weights")),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsPaneWeightRow(th, gtx, st, "Files", st.paneFileWeightClicks[:], &st.paneFileWeight, &st.paneFileWeightAnim, settingsKeyboardFocusFilePaneFileWeight, fm.FontWeightRegular)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsPaneWeightRow(th, gtx, st, "Dirs", st.paneDirWeightClicks[:], &st.paneDirWeight, &st.paneDirWeightAnim, settingsKeyboardFocusFilePaneDirWeight, fm.FontWeightBold)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsPaneWeightRow(th, gtx, st, "Permissions", st.panePermissionsWeightClicks[:], &st.panePermissionsWeight, &st.panePermissionsWeightAnim, settingsKeyboardFocusFilePanePermissionsWeight, fm.FontWeightRegular)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsPaneWeightRow(th, gtx, st, "Size", st.paneSizeWeightClicks[:], &st.paneSizeWeight, &st.paneSizeWeightAnim, settingsKeyboardFocusFilePaneSizeWeight, fm.FontWeightRegular)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsPaneWeightRow(th, gtx, st, "Date", st.paneDateWeightClicks[:], &st.paneDateWeight, &st.paneDateWeightAnim, settingsKeyboardFocusFilePaneDateWeight, fm.FontWeightRegular)
-		}),
-	)
+func (ui *UI) layoutSettingsGeneralTabContent(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
+	return ui.layoutSettingsFilePaneEditor(th, gtx, st)
 }
 
 func settingsPaneWeightOptions() []terminalShellOption {
@@ -7626,6 +7622,7 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 	pulseSave, pulseAnimSave := st.footerPulseFill(gtx.Now, "save")
 	cancelVisual := st.footerActionVisualState(settingsFooterActionCancel)
 	saveVisual := st.footerActionVisualState(settingsFooterActionSave)
+	saveLabel := st.saveLabel()
 	if hoverAnimCancel || hoverAnimSave || pulseAnimCancel || pulseAnimSave {
 		gtx.Execute(op.InvalidateCmd{})
 	}
@@ -7659,7 +7656,7 @@ func (ui *UI) layoutSettingsModalFooter(th *material.Theme, gtx layout.Context, 
 					pulseCancel,
 					false,
 					&st.saveClick,
-					"Save",
+					saveLabel,
 					hoverSave,
 					pulseSave,
 					false,

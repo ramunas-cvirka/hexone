@@ -21,11 +21,19 @@ const (
 	settingsKeyboardFocusGeneralDimInactive
 	settingsKeyboardFocusGeneralFavoritesNewTab
 	settingsKeyboardFocusGeneralCompletionSound
+	settingsKeyboardFocusFilePaneMode
 	settingsKeyboardFocusFilePaneFileWeight
 	settingsKeyboardFocusFilePaneDirWeight
 	settingsKeyboardFocusFilePanePermissionsWeight
 	settingsKeyboardFocusFilePaneSizeWeight
 	settingsKeyboardFocusFilePaneDateWeight
+	settingsKeyboardFocusFilePaneFullChars
+	settingsKeyboardFocusFilePaneBriefChars
+	settingsKeyboardFocusFilePaneShowPermissions
+	settingsKeyboardFocusFilePanePermissionFormat
+	settingsKeyboardFocusFilePaneDateStyle
+	settingsKeyboardFocusFilePaneTimeStyle
+	settingsKeyboardFocusFilePaneDateFormat
 	settingsKeyboardFocusTerminalShell
 	settingsKeyboardFocusTerminalAcceleratedKeys
 	settingsKeyboardFocusFontsInterfaceFont
@@ -161,6 +169,8 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 	switch target {
 	case settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
+		settingsKeyboardFocusFilePaneShowPermissions,
+		settingsKeyboardFocusFilePaneDateFormat,
 		settingsKeyboardFocusTerminalShell,
 		settingsKeyboardFocusTerminalAcceleratedKeys,
 		settingsKeyboardFocusViewerRemoteSearch,
@@ -209,6 +219,8 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 		st.focus = settingsKeyboardFocusGeneralDimInactive
 	case gtx.Focused(&st.generalFavoritesNewTabBool):
 		st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
+	case gtx.Focused(&st.paneDateFormatEdit):
+		st.focus = settingsKeyboardFocusFilePaneDateFormat
 	case gtx.Focused(&st.terminalAcceleratedKeysBool):
 		st.focus = settingsKeyboardFocusTerminalAcceleratedKeys
 	case gtx.Focused(&st.viewShellEdit):
@@ -292,16 +304,31 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 	order := []settingsKeyboardFocus{settingsKeyboardFocusNav}
 	switch st.activeTab {
 	case "general":
-		order = append(order, settingsKeyboardFocusGeneralDimInactive)
-		order = append(order, settingsKeyboardFocusGeneralFavoritesNewTab)
-		order = append(order, settingsKeyboardFocusGeneralCompletionSound)
-		order = append(order,
-			settingsKeyboardFocusFilePaneFileWeight,
-			settingsKeyboardFocusFilePaneDirWeight,
-			settingsKeyboardFocusFilePanePermissionsWeight,
-			settingsKeyboardFocusFilePaneSizeWeight,
-			settingsKeyboardFocusFilePaneDateWeight,
-		)
+		order = append(order, settingsKeyboardFocusFilePaneMode)
+		switch normalizeSettingsPaneMode(st.paneSettingsMode) {
+		case "brief":
+			order = append(order, settingsKeyboardFocusFilePaneBriefChars)
+		case "other":
+			order = append(order,
+				settingsKeyboardFocusGeneralDimInactive,
+				settingsKeyboardFocusGeneralFavoritesNewTab,
+				settingsKeyboardFocusGeneralCompletionSound,
+				settingsKeyboardFocusFilePaneFileWeight,
+				settingsKeyboardFocusFilePaneDirWeight,
+				settingsKeyboardFocusFilePanePermissionsWeight,
+				settingsKeyboardFocusFilePaneSizeWeight,
+				settingsKeyboardFocusFilePaneDateWeight,
+			)
+		default:
+			order = append(order,
+				settingsKeyboardFocusFilePaneFullChars,
+				settingsKeyboardFocusFilePaneShowPermissions,
+				settingsKeyboardFocusFilePanePermissionFormat,
+				settingsKeyboardFocusFilePaneDateStyle,
+				settingsKeyboardFocusFilePaneTimeStyle,
+				settingsKeyboardFocusFilePaneDateFormat,
+			)
+		}
 	case "terminal":
 		order = append(order,
 			settingsKeyboardFocusTerminalShell,
@@ -513,6 +540,9 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 		return true
 	case settingsKeyboardFocusGeneralFavoritesNewTab:
 		st.generalFavoritesNewTabBool.Value = !st.generalFavoritesNewTabBool.Value
+		return true
+	case settingsKeyboardFocusFilePaneShowPermissions:
+		st.paneShowPermissionsBool.Value = !st.paneShowPermissionsBool.Value
 		return true
 	case settingsKeyboardFocusViewerSmoothScrolling:
 		st.viewSmoothScrollingBool.Value = !st.viewSmoothScrollingBool.Value
@@ -1476,7 +1506,10 @@ func (st *settingsModalState) stepFocusedNumber(step int) bool {
 	if st == nil {
 		return false
 	}
-	return st.stepFontSize(st.focus, step)
+	if st.stepFontSize(st.focus, step) {
+		return true
+	}
+	return st.stepPaneChars(st.focus, step)
 }
 
 func (st *settingsModalState) stepColorScope(step int, now time.Time) bool {
@@ -1632,6 +1665,14 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 		return st.stepPaneWeight(&st.paneSizeWeight, &st.paneSizeWeightAnim, fm.FontWeightRegular, step, now)
 	case settingsKeyboardFocusFilePaneDateWeight:
 		return st.stepPaneWeight(&st.paneDateWeight, &st.paneDateWeightAnim, fm.FontWeightRegular, step, now)
+	case settingsKeyboardFocusFilePanePermissionFormat:
+		return st.stepPanePermissionFormat(step, now)
+	case settingsKeyboardFocusFilePaneMode:
+		return st.stepPaneSettingsMode(step, now)
+	case settingsKeyboardFocusFilePaneDateStyle:
+		return st.stepPaneDatePreset(step, now)
+	case settingsKeyboardFocusFilePaneTimeStyle:
+		return st.stepPaneTimePreset(step, now)
 	case settingsKeyboardFocusColorsScope:
 		return st.stepColorScope(step, now)
 	case settingsKeyboardFocusFilenameRuleMode:

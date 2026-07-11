@@ -44,6 +44,14 @@ func TestViewerBuildSyntaxDocumentSkipsPlaintextFallback(t *testing.T) {
 	}
 }
 
+func TestViewerBuildSyntaxDocumentNeverGuessesLanguageForTxt(t *testing.T) {
+	content := "package main\n\nfunc main() { println(\"looks like Go\") }\n"
+	doc := viewerBuildSyntaxDocument(context.Background(), "/tmp/pasted-snippet.txt", content)
+	if doc.ready() {
+		t.Fatal("an explicit .txt file should remain plain text even when its content resembles source code")
+	}
+}
+
 func TestViewerBuildSyntaxDocumentForStructuredLogs(t *testing.T) {
 	doc := viewerBuildSyntaxDocument(context.Background(), "/tmp/app.log", viewerStructuredLogSample)
 	if !doc.ready() {

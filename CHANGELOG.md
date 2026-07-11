@@ -66,6 +66,12 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## v0.9.0
 
+- Made Enter launch ordinary files with their system association while continuing to traverse directories and archives.
+- Sped up multipart RAR indexing and reused archive indexes while browsing nested folders and opening members.
+- Kept explicit plain-text files such as `.txt` free from content-guessed syntax highlighting.
+- Added SSH Setup to the F9 Tools menu and moved Colors directly after Fonts in Settings.
+- Added separate Full, Brief, and Other file-pane settings with large live previews, plus a date/time builder that exposes the generated Go layout.
+- Added an explicit "Save changes" state whenever the Settings draft differs from the saved configuration.
 - Reworked the Settings color picker with an RGB honeycomb, tonal slider, live color indicator, and explicit Set action.
 - Replaced rounded Settings remove icons with flat close controls and red hover feedback matching Favorites.
 - Flattened the Settings Browse, Add, Update, and Remove actions for a lighter visual hierarchy.

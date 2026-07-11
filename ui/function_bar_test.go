@@ -46,8 +46,8 @@ func TestFunctionBarToolsExposeCompactShortcutHint(t *testing.T) {
 	ui := &UI{}
 
 	items := ui.functionBarToolSpecs()
-	if len(items) != 4 {
-		t.Fatalf("tool count=%d want 4", len(items))
+	if len(items) != 5 {
+		t.Fatalf("tool count=%d want 5", len(items))
 	}
 	if items[0].key == "files" {
 		t.Fatal("redundant file-manager entry should not be present")
@@ -55,11 +55,22 @@ func TestFunctionBarToolsExposeCompactShortcutHint(t *testing.T) {
 	if items[0].key != "multi-rename" || items[0].shortcut != "Ctrl+M" {
 		t.Fatalf("first tool=%#v want multi-rename with Ctrl+M", items[0])
 	}
-	if items[3].key != "settings" {
-		t.Fatalf("last tool=%q want settings", items[3].key)
+	if items[1].key != "ssh" || items[1].shortcut != "Ctrl+F" {
+		t.Fatalf("second tool=%#v want SSH Setup with Ctrl+F", items[1])
 	}
-	if got := items[3].shortcut; got != "Ctrl+S" {
+	if items[4].key != "settings" {
+		t.Fatalf("last tool=%q want settings", items[4].key)
+	}
+	if got := items[4].shortcut; got != "Ctrl+S" {
 		t.Fatalf("settings shortcut=%q want %q", got, "Ctrl+S")
+	}
+}
+
+func TestFunctionBarSSHSetupToolOpensSSHModal(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.activateFunctionBarTool("ssh", time.Now())
+	if ui.sshModal == nil {
+		t.Fatal("SSH Setup tool should open the SSH modal")
 	}
 }
 
@@ -273,8 +284,8 @@ func TestFunctionBarToolsOpenSeedsKeyboardSelectionFromActiveTool(t *testing.T) 
 	if !ui.functionBarToolsOpen {
 		t.Fatal("tools popup should be open")
 	}
-	if got := ui.functionBarToolsSelected; got != 2 {
-		t.Fatalf("selected tool=%d want 2 for protocol analyzer", got)
+	if got := ui.functionBarToolsSelected; got != 3 {
+		t.Fatalf("selected tool=%d want 3 for protocol analyzer", got)
 	}
 }
 
@@ -291,8 +302,8 @@ func TestFunctionBarToolKeyboardSelectionWrapsAndActivates(t *testing.T) {
 	if !ui.moveFunctionBarToolSelection(-1) {
 		t.Fatal("up should wrap selection to the last tool")
 	}
-	if got := ui.functionBarToolsSelected; got != 3 {
-		t.Fatalf("selected tool=%d want 3", got)
+	if got := ui.functionBarToolsSelected; got != 4 {
+		t.Fatalf("selected tool=%d want 4", got)
 	}
 	if !ui.activateSelectedFunctionBarTool(now) {
 		t.Fatal("enter should activate the selected tool")

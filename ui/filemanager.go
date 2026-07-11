@@ -3411,9 +3411,8 @@ func (ui *UI) queueFilePaneSystemOpen(idx, row int) {
 		return
 	}
 	ui.pendingFileOpen = &fileOpenRequest{
-		pane:           idx,
-		row:            row,
-		systemOpenOnly: true,
+		pane: idx,
+		row:  row,
 	}
 }
 
@@ -3423,11 +3422,10 @@ func (ui *UI) flushPendingFileOpen() bool {
 		return false
 	}
 	ui.pendingFileOpen = nil
-	if req.systemOpenOnly {
-		return ui.activateFilePaneDoubleClick(req.pane, req.row)
-	}
-	_ = ui.activateFilePaneRow(req.pane, req.row)
-	return true
+	// Keyboard activation and double-click intentionally share the same
+	// behavior: enter directories and archives, preview archive members, and
+	// launch ordinary local files through the platform association.
+	return ui.activateFilePaneDoubleClick(req.pane, req.row)
 }
 
 func (ui *UI) activateFilePaneDoubleClick(idx, row int) bool {
