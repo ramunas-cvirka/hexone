@@ -302,7 +302,8 @@ Use `Settings -> Fonts` to choose the family and size independently for interfac
 
 On Linux, the writable config files live under `~/.config/hexone/`.
 On macOS, they live under `~/Library/Application Support/hexone/`.
-On Windows, they currently live in the current working directory as `hexone.yaml` and related files.
+On Windows portable builds, they live beside `hexone.exe`.
+On Windows MSIX builds, they live in the package's `LocalState` folder under `%LOCALAPPDATA%\Packages\`.
 
 Useful things to adjust:
 
@@ -365,7 +366,8 @@ The Protocol Analyzer decodes pasted hex using `protocols.yaml`.
 
 On Linux, Hexone first checks `~/.config/hexone/protocols.yaml`. If that file is missing, it uses the embedded default and writes a reference sample to `~/.config/hexone/protocols.sample.yaml`.
 On macOS, it first checks `~/Library/Application Support/hexone/protocols.yaml` and writes the reference sample to `~/Library/Application Support/hexone/protocols.sample.yaml`.
-On Windows, it currently uses `protocols.yaml` in the current working directory and writes `protocols.sample.yaml` there too.
+On Windows portable builds, it uses `protocols.yaml` beside `hexone.exe`.
+On Windows MSIX builds, it first checks the package's writable `LocalState` folder, then uses the packaged default and writes `protocols.sample.yaml` to `LocalState`.
 
 Input tips:
 

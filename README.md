@@ -91,7 +91,8 @@ Hexone keeps its settings in:
 
 - **Linux** — `~/.config/hexone/`
 - **macOS** — `~/Library/Application Support/hexone/`
-- **Windows** — same folder as the executable
+- **Windows portable** — same folder as the executable
+- **Windows MSIX** — the package's `LocalState` folder under `%LOCALAPPDATA%\Packages\`
 
 The main config file is `hexone.yaml`. It is created with defaults on first run.
 

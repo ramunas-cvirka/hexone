@@ -16,9 +16,9 @@ path.
 
 - macOS `.app` and `.dmg` creation stay on `make package-macos`; GoReleaser
   uploads the DMG as an extra release file.
-- Windows Store MSIX creation uses nFPM directly via
-  `packaging/windows/build_msix.sh`; GoReleaser uploads the MSIX as an extra
-  release file.
+- Windows Store MSIX creation uses nFPM for staging and the Windows SDK's
+  `MakeAppx.exe` for the final validated package; GoReleaser uploads the MSIX as
+  an extra release file.
 - GoReleaser Pro-only features such as DMG/app bundles and split/merge are not
   used.
 
@@ -32,8 +32,10 @@ To publish for real:
 
 1. Run the workflow from a `v*` tag.
 2. Set `publish=true`.
-3. Set repository variables `HEXONE_MSIX_PUBLISHER` and
-   `HEXONE_MSIX_PUBLISHER_DISPLAY_NAME` to the values from Partner Center.
+3. The Store identity defaults in the `Makefile` match the Hexone product in
+   Partner Center. If the product identity changes, override
+   `HEXONE_MSIX_IDENTITY_NAME` and `HEXONE_MSIX_PUBLISHER` with repository
+   variables, and update the publisher display name in `nfpm-msix.yaml`.
 4. Add `HOMEBREW_TAP_TOKEN` if publishing to `ramunas-cvirka/homebrew-hexone`.
 5. Disable or retarget the old `release.yml` tag trigger once this workflow is
    the primary release path.

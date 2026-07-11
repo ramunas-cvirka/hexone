@@ -44,3 +44,30 @@ After regenerating the `.syso`, rebuild the app:
 ```powershell
 make build
 ```
+
+## Build the Store MSIX
+
+From the repository root, build the Windows PDFium binary, generate the MSIX
+assets, and package them with the Store identity in one command:
+
+```powershell
+make package-windows-msix
+```
+
+This downloads and runs the pinned nFPM version through `go run`, then rebuilds
+and validates the archive with the Windows SDK's `MakeAppx.exe`. It writes two
+packages locally:
+
+- `dist/hexone_windows_amd64.msix` is unsigned and intended for Partner Center.
+- `dist/hexone_windows_amd64_dev.msix` is signed with a reusable local
+  development certificate and intended only for local installation.
+
+The first local build requests one UAC confirmation to trust the public
+development certificate in `LocalMachine\TrustedPeople`. The private key stays
+in the current user's Windows certificate store and is never written to the
+repository or package output. Later builds reuse the same certificate and sign
+the development package without another prompt. GitHub Actions builds with
+`MSIX_DEV_SIGN=false`, producing only the unsigned Store artifact.
+
+Install the local package by double-clicking `hexone_windows_amd64_dev.msix` or
+with `Add-AppxPackage`. Do not use the `_dev.msix` package for Store submission.

@@ -2449,6 +2449,35 @@ func TestSettingsConfigEditorUsesFullWidth(t *testing.T) {
 	}
 }
 
+func TestSettingsConfigPathPacksIntoTwoLinesAndKeepsFullText(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &settingsModalState{}
+	path := `C:\Users\ramuc\AppData\Local\Packages\RamnasCvirka.hexone_wgc727vgx32zp\LocalState\hexone.yaml`
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(478, 80),
+		},
+	}
+
+	lbl := ui.settingsConfigPathLabel(th, st, path)
+	dims := lbl.Layout(gtx)
+	if dims.Size.Y > gtx.Sp(lbl.TextSize)*2+4 {
+		t.Fatalf("config path height=%d exceeds two compact lines", dims.Size.Y)
+	}
+	if st.configPathSelect.Truncated() {
+		t.Fatal("representative MSIX config path should fit without truncation")
+	}
+	if got := st.configPathSelect.Text(); got != path {
+		t.Fatalf("selectable path=%q want full path %q", got, path)
+	}
+}
+
 func TestSettingsColorsPreviewHostHeightUsesSharedValue(t *testing.T) {
 	var r input.Router
 	gtx := layout.Context{

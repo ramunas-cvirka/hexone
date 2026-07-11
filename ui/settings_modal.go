@@ -7752,12 +7752,7 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 						color.NRGBA{R: 128, G: 152, B: 196, A: 74},
 						func(gtx layout.Context) layout.Dimensions {
 							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								lbl := material.Body2(th, cfgPath)
-								lbl.Font.Typeface = ui.interfaceTypeface()
-								lbl.TextSize = ui.scaleModalFontSize(8)
-								lbl.Color = color.NRGBA{R: 194, G: 212, B: 255, A: 255}
-								lbl.SelectionColor = color.NRGBA{R: 80, G: 120, B: 220, A: 88}
-								lbl.State = &st.configPathSelect
+								lbl := ui.settingsConfigPathLabel(th, st, cfgPath)
 								dims := lbl.Layout(gtx)
 								st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusConfigPath, &st.configPathSelect)
 								return dims
@@ -7780,6 +7775,22 @@ func (ui *UI) layoutSettingsConfigTab(th *material.Theme, gtx layout.Context, st
 			return dims
 		}),
 	)
+}
+
+func (ui *UI) settingsConfigPathLabel(th *material.Theme, st *settingsModalState, cfgPath string) material.LabelStyle {
+	lbl := material.Body2(th, cfgPath)
+	lbl.Font.Typeface = ui.interfaceTypeface()
+	lbl.TextSize = ui.scaleModalFontSize(8)
+	lbl.Color = color.NRGBA{R: 194, G: 212, B: 255, A: 255}
+	lbl.SelectionColor = color.NRGBA{R: 80, G: 120, B: 220, A: 88}
+	lbl.State = &st.configPathSelect
+	// File paths have many valid Unicode line-break opportunities (notably after
+	// a drive prefix), which can leave "C:" stranded on its own line. Pack the
+	// path by grapheme instead, while retaining the original full selectable text.
+	lbl.WrapPolicy = text.WrapGraphemes
+	lbl.MaxLines = 2
+	lbl.Truncator = "…"
+	return lbl
 }
 
 func formatConfigFloat(v float32) string {

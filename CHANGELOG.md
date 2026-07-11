@@ -95,3 +95,8 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Improved image previews with responsive fit-width startup, native-size centering, drag panning, and clickable zoom presets; viewer mode tabs now carry the full filename, and outlined PDFs expose dense accordion TOC navigation with separate disclosure and bookmark links.
 - Kept supported oversized images and PDFs in File preview mode instead of incorrectly opening them in Hex mode because of the text-read size limit.
 - Made `Esc` close open viewer zoom and TOC popups before closing the viewer itself.
+- Kept Windows portable configuration beside `hexone.exe` while moving MSIX configuration and session data to the package's writable `LocalState` folder.
+- Added `make package-windows-msix` to build the Windows PDFium binary, generate Store assets, and create the MSIX package in one command.
+- Repacked and validated Windows MSIX output with the Windows SDK to prevent invalid nFPM block maps from reaching App Installer or the Store.
+- Enlarged the visible MSIX icon artwork and added scale-qualified Store, app-list, and tile assets for sharper Windows rendering.
+- Made local MSIX builds create a separately signed development package with a reusable trusted certificate while keeping the Partner Center artifact unsigned.

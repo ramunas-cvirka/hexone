@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
-name: hexone
+name: ${HEXONE_MSIX_IDENTITY_NAME}
 arch: amd64
 platform: windows
 version: ${HEXONE_SEMVER}
@@ -19,12 +19,8 @@ contents:
     dst: LICENSE
   - src: ./NOTICE
     dst: NOTICE
-  - src: ./dist/msix-assets/logo.png
-    dst: Assets/logo.png
-  - src: ./dist/msix-assets/Square150x150Logo.png
-    dst: Assets/Square150x150Logo.png
-  - src: ./dist/msix-assets/Square44x44Logo.png
-    dst: Assets/Square44x44Logo.png
+  - src: ./dist/msix-assets/*.png
+    dst: Assets/
 
 msix:
   arch: x64
@@ -33,8 +29,8 @@ msix:
     resource_id: ""
   properties:
     display_name: Hexone
-    publisher_display_name: Ramunas Cvirka
-    logo: Assets/logo.png
+    publisher_display_name: Ramūnas Cvirka
+    logo: Assets/StoreLogo.png
   applications:
     - id: Hexone
       executable: app/hexone.exe

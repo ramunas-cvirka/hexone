@@ -26,9 +26,10 @@ const (
 	iconVisibleAlphaThreshold   = 24
 	iconVisibleMarginPct        = 0
 	linuxDesktopIconOverscanPct = 8
-	windowsICOTinyOverscanPct   = 0
-	windowsICOSmallOverscanPct  = 0
-	windowsICOMediumOverscanPct = 0
+	windowsICOTinyOverscanPct   = 12
+	windowsICOSmallOverscanPct  = 8
+	windowsICOMediumOverscanPct = 5
+	windowsPackageOverscanPct   = 6
 	macBundleTinyOverscanPct    = 10
 	macBundleSmallOverscanPct   = 6
 	macBundleBackdropRadiusPct  = 23
@@ -131,6 +132,14 @@ func defaultAppIconPNG(size int) ([]byte, error) {
 	data := append([]byte(nil), buf.Bytes()...)
 	iconPNGCache.Store(size, data)
 	return data, nil
+}
+
+func windowsPackageAppIconPNG(size int) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, renderOverscannedAppIcon(size, windowsPackageOverscanPct)); err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), buf.Bytes()...), nil
 }
 
 func desktopAppIconPNG(size int) ([]byte, error) {
@@ -267,6 +276,20 @@ func WriteICO(path string) error {
 
 func WritePNG(path string, size int) error {
 	data, err := defaultAppIconPNG(size)
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return fmt.Errorf("empty icon path")
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// WriteWindowsPackagePNG writes transparent MSIX artwork with a small amount
+// of overscan. Windows adds its own visual padding around package assets, so a
+// tightly filled canvas produces a better-sized installer and taskbar icon.
+func WriteWindowsPackagePNG(path string, size int) error {
+	data, err := windowsPackageAppIconPNG(size)
 	if err != nil {
 		return err
 	}

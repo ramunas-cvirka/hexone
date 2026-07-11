@@ -121,6 +121,19 @@ func TestRenderWindowsICOAppIconGeometry(t *testing.T) {
 	}
 }
 
+func TestWindowsPackageAppIconIsTransparentAndFillsCanvas(t *testing.T) {
+	size := 50
+	img := renderOverscannedAppIcon(size, windowsPackageOverscanPct)
+	if alpha := img.RGBAAt(0, 0).A; alpha != 0 {
+		t.Fatalf("windows package icon corner alpha=%d want 0", alpha)
+	}
+	base := visibleAlphaBounds(renderDefaultAppIcon(size), 8)
+	filled := visibleAlphaBounds(img, 8)
+	if filled.Dx() <= base.Dx() && filled.Dy() <= base.Dy() {
+		t.Fatalf("windows package icon should visibly grow: base=%v filled=%v", base, filled)
+	}
+}
+
 func TestPaintRoundedRectKeepsCornersTransparent(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
 	paintRoundedRect(img, img.Bounds(), 14, color.NRGBA{R: 22, G: 26, B: 36, A: 255})
