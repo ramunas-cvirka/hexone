@@ -10,15 +10,48 @@ import (
 	"gioui.org/unit"
 )
 
-func ApplyWindowOptions(window *app.Window, session *fm.SessionState) {
+const cleanStartupScreenFraction = 0.6
+
+// ApplyWindowOptions restores a saved window or, when no saved size exists,
+// sizes the window relative to the primary display. The return value reports
+// whether the caller should center the native window once it becomes available.
+func ApplyWindowOptions(window *app.Window, session *fm.SessionState) bool {
 	if window == nil || session == nil {
-		return
+		return false
 	}
 	preparePlatformWindowRestore(session)
-	opts := windowOptionsForSession(session)
+	var screenWidth, screenHeight unit.Dp
+	haveScreen := false
+	if !sessionHasWindowSize(session) {
+		screenWidth, screenHeight, haveScreen = platformStartupScreenSize()
+	}
+	opts, center := startupWindowOptions(session, screenWidth, screenHeight, haveScreen)
 	if len(opts) > 0 {
 		window.Option(opts...)
 	}
+	return center
+}
+
+func startupWindowOptions(session *fm.SessionState, screenWidth, screenHeight unit.Dp, haveScreen bool) ([]app.Option, bool) {
+	if session == nil {
+		return nil, false
+	}
+	opts := windowOptionsForSession(session)
+	if sessionHasWindowSize(session) || !haveScreen || screenWidth <= 0 || screenHeight <= 0 {
+		return opts, false
+	}
+	width, height := cleanStartupWindowSize(screenWidth, screenHeight)
+	opts = append([]app.Option{app.Size(width, height)}, opts...)
+	center := sessionModeToWindowMode(session.Window.Mode) == app.Windowed
+	return opts, center
+}
+
+func sessionHasWindowSize(session *fm.SessionState) bool {
+	return session != nil && session.Window.Width > 0 && session.Window.Height > 0
+}
+
+func cleanStartupWindowSize(screenWidth, screenHeight unit.Dp) (unit.Dp, unit.Dp) {
+	return screenWidth * cleanStartupScreenFraction, screenHeight * cleanStartupScreenFraction
 }
 
 func windowOptionsForSession(session *fm.SessionState) []app.Option {

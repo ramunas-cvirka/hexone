@@ -90,10 +90,48 @@ func (st *settingsModalState) stepPaneChars(focus settingsKeyboardFocus, step in
 
 func settingsPanePermissionOptions() []terminalShellOption {
 	return []terminalShellOption{
+		{Key: "off", Label: "Off"},
 		{Key: "auto", Label: "Auto"},
 		{Key: "symbolic", Label: "rwx"},
 		{Key: "octal", Label: "0755"},
 	}
+}
+
+func settingsPanePermissionChoice(show bool, format string) string {
+	if !show {
+		return "off"
+	}
+	return settingsNormalizePermissionFormat(format)
+}
+
+func (st *settingsModalState) panePermissionChoice() string {
+	if st == nil {
+		return "off"
+	}
+	return settingsPanePermissionChoice(st.paneShowPermissions, st.panePermissionFormat)
+}
+
+func (st *settingsModalState) setPanePermissionChoice(next string, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	switch next {
+	case "off", "auto", "symbolic", "octal":
+	default:
+		next = "auto"
+	}
+	current := st.panePermissionChoice()
+	if current == next {
+		return false
+	}
+	animatedChoice := current
+	st.panePermissionFormatAnim.setValue(&animatedChoice, next, now)
+	st.panePermissionFormatAnim.anim.setPulse(next, now)
+	st.paneShowPermissions = next != "off"
+	if next != "off" {
+		st.panePermissionFormat = next
+	}
+	return true
 }
 
 func (st *settingsModalState) stepPanePermissionFormat(step int, now time.Time) bool {
@@ -105,14 +143,12 @@ func (st *settingsModalState) stepPanePermissionFormat(step int, now time.Time) 
 	for i, option := range options {
 		keys[i] = option.Key
 	}
-	current := settingsNormalizePermissionFormat(st.panePermissionFormat)
+	current := st.panePermissionChoice()
 	next := settingsChoiceStep(current, keys, step)
 	if next == "" || next == current {
 		return false
 	}
-	st.panePermissionFormatAnim.setValue(&st.panePermissionFormat, next, now)
-	st.panePermissionFormatAnim.anim.setPulse(next, now)
-	return true
+	return st.setPanePermissionChoice(next, now)
 }
 
 func settingsPaneDateOptions() []terminalShellOption {
@@ -396,15 +432,7 @@ func (ui *UI) layoutSettingsFilePaneEditor(th *material.Theme, gtx layout.Contex
 }
 
 func (ui *UI) settingsPaneControlLabel(th *material.Theme, txt string) layout.Widget {
-	return func(gtx layout.Context) layout.Dimensions {
-		lbl := material.Body2(th, txt)
-		lbl.Font.Typeface = ui.interfaceTypeface()
-		lbl.Font.Weight = font.Medium
-		lbl.TextSize = ui.scaleModalFontSize(9)
-		lbl.Color = txtColor
-		lbl.MaxLines = 1
-		return layoutVCenteredLabel(gtx, lbl)
-	}
+	return settingsViewerRowLabel(ui, th, txt, true)
 }
 
 func (ui *UI) layoutSettingsPaneCharsStepper(th *material.Theme, gtx layout.Context, st *settingsModalState, stepper *settingsNumberStepperState, value float32, focus settingsKeyboardFocus) layout.Dimensions {
@@ -471,34 +499,20 @@ func (ui *UI) layoutSettingsPaneFullTab(th *material.Theme, gtx layout.Context, 
 	for i, option := range permissionOptions {
 		for st.panePermissionFormatClicks[i].Clicked(gtx) {
 			st.setKeyboardFocus(settingsKeyboardFocusFilePanePermissionFormat)
-			st.panePermissionFormatAnim.setValue(&st.panePermissionFormat, option.Key, gtx.Now)
-			st.panePermissionFormatAnim.anim.setPulse(option.Key, gtx.Now)
+			st.setPanePermissionChoice(option.Key, gtx.Now)
 		}
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsPaneWidthRow(th, gtx, st, "Filename column width", &st.paneFullCharsStepper, st.paneFullChars, settingsKeyboardFocusFilePaneFullChars)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(ui.settingsPaneControlLabel(th, "Permissions column")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			before := st.paneShowPermissionsBool.Value
-			dims := ui.layoutThemeCheckbox(th, gtx, &st.paneShowPermissionsBool, "Show permissions column", ui.scaleModalFontSize(9))
-			if before != st.paneShowPermissionsBool.Value {
-				st.focus = settingsKeyboardFocusFilePaneShowPermissions
-			}
-			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusFilePaneShowPermissions, &st.paneShowPermissionsBool)
-			return dims
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, gtx.Dp(unit.Dp(132)), ui.settingsPaneControlLabel(th, "Permission format"))
-				}),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsShellPicker(th, gtx, permissionOptions, st.panePermissionFormatClicks[:], settingsNormalizePermissionFormat(st.panePermissionFormat), &st.panePermissionFormatAnim, st.focus == settingsKeyboardFocusFilePanePermissionFormat)
-				}),
-			)
+			return fixedWidth(gtx, gtx.Dp(unit.Dp(256)), func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutSettingsShellPicker(th, gtx, permissionOptions, st.panePermissionFormatClicks[:], st.panePermissionChoice(), &st.panePermissionFormatAnim, st.focus == settingsKeyboardFocusFilePanePermissionFormat)
+			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return ui.layoutSettingsPaneDateBuilder(th, gtx, st) }),
@@ -603,15 +617,6 @@ func (ui *UI) layoutSettingsPaneDateBuilder(th *material.Theme, gtx layout.Conte
 			st.applyPaneDatePresets()
 		}
 	}
-	formats := st.paneDateFormats()
-	previews := make([]string, 0, max(0, len(formats)-1))
-	for _, format := range formats[1:] {
-		preview := settingsPanePreviewTime.Format(format)
-		if preview == "" || (len(previews) > 0 && previews[len(previews)-1] == preview) {
-			continue
-		}
-		previews = append(previews, preview)
-	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(settingsViewerRowLabel(ui, th, "Date & time format", true)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
@@ -621,16 +626,6 @@ func (ui *UI) layoutSettingsPaneDateBuilder(th *material.Theme, gtx layout.Conte
 		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsShellPicker(th, gtx, timeOptions, st.paneTimePresetClicks[:], st.paneTimePreset, &st.paneTimePresetAnim, st.focus == settingsKeyboardFocusFilePaneTimeStyle)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Responsive fallbacks: "+strings.Join(previews, "  →  "))
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleModalFontSize(8)
-			lbl.Color = color.NRGBA{R: 176, G: 190, B: 215, A: 255}
-			lbl.MaxLines = 1
-			lbl.Truncator = "…"
-			return lbl.Layout(gtx)
 		}),
 	)
 }
@@ -781,7 +776,7 @@ func (ui *UI) layoutSettingsFullPaneRows(th *material.Theme, gtx layout.Context,
 	gapDp := scaleFilePaneDp(&draft, fm.FullColumnGapDp())
 	gapW := gtx.Dp(gapDp)
 	gapCount := 3
-	if !st.paneShowPermissionsBool.Value {
+	if !st.paneShowPermissions {
 		permW = 0
 		gapCount = 2
 	}
@@ -810,33 +805,10 @@ func (ui *UI) layoutSettingsFullPaneRows(th *material.Theme, gtx layout.Context,
 		})
 	}
 	previewRows := settingsPanePreviewRows[:4]
-	children := make([]layout.FlexChild, 0, len(previewRows)+1)
-	headerColor := settingsColorPreviewStateColor(palette.PaneBg)
-	headerCell := func(txt string, width int, align text.Alignment) layout.Widget {
-		return func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(th, txt)
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleModalFontSize(8)
-				lbl.Color = headerColor
-				lbl.Alignment = align
-				return layout.Inset{Left: unit.Dp(fm.ColumnPadDp()), Right: unit.Dp(fm.ColumnPadDp())}.Layout(gtx, lbl.Layout)
-			})
-		}
-	}
+	children := make([]layout.FlexChild, 0, len(previewRows))
 	gap := func() layout.FlexChild {
 		return layout.Rigid(layout.Spacer{Width: gapDp}.Layout)
 	}
-	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		return fixedHeight(gtx, gtx.Dp(unit.Dp(15)), func(gtx layout.Context) layout.Dimensions {
-			cols := []layout.FlexChild{layout.Rigid(headerCell("Name", nameW, text.Start))}
-			if permW > 0 {
-				cols = append(cols, gap(), layout.Rigid(headerCell("Permissions", permW, text.Start)))
-			}
-			cols = append(cols, gap(), layout.Rigid(headerCell("Size", sizeW, text.End)), gap(), layout.Rigid(headerCell("Modified", dateW, text.Start)))
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, cols...)
-		})
-	}))
 	for i, row := range previewRows {
 		i, row := i, row
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {

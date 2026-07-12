@@ -66,6 +66,8 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## v0.9.0
 
+- Switched desktop and MSIX icons to the new tightly cropped Hexone artwork, and streamlined File panes settings with consistent labels, an integrated permissions Off option, and a preview matching the real headerless pane.
+- Clean desktop launches now open at 60% of the primary display and centered, while saved window geometry continues to be restored on later launches.
 - Made Enter launch ordinary files with their system association while continuing to traverse directories and archives.
 - Sped up multipart RAR indexing and reused archive indexes while browsing nested folders and opening members.
 - Kept explicit plain-text files such as `.txt` free from content-guessed syntax highlighting.

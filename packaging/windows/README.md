@@ -54,9 +54,11 @@ assets, and package them with the Store identity in one command:
 make package-windows-msix
 ```
 
-This downloads and runs the pinned nFPM version through `go run`, then rebuilds
-and validates the archive with the Windows SDK's `MakeAppx.exe`. It writes two
-packages locally:
+The build stages the package directly, generates `resources.pri` with the
+Windows SDK's `MakePri.exe`, and then packs and validates the archive with
+`MakeAppx.exe`. The PRI step is required for Windows to resolve the scale,
+target-size, and light/dark unplated icon variants. It writes two packages
+locally:
 
 - `dist/hexone_windows_amd64.msix` is unsigned and intended for Partner Center.
 - `dist/hexone_windows_amd64_dev.msix` is signed with a reusable local
@@ -68,6 +70,11 @@ in the current user's Windows certificate store and is never written to the
 repository or package output. Later builds reuse the same certificate and sign
 the development package without another prompt. GitHub Actions builds with
 `MSIX_DEV_SIGN=false`, producing only the unsigned Store artifact.
+
+`MakePri.exe` is installed by the Windows SDK's **UWP Managed Apps** component.
+The packaging command stops with an actionable error if that component is not
+installed; silently packaging qualified filenames without `resources.pri`
+would leave Windows unable to select the intended shell icons.
 
 Install the local package by double-clicking `hexone_windows_amd64_dev.msix` or
 with `Add-AppxPackage`. Do not use the `_dev.msix` package for Store submission.

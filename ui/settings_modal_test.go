@@ -59,12 +59,12 @@ func TestSettingsFilePaneModeDraftLoadsAndSavesColumnConfig(t *testing.T) {
 	if st == nil {
 		t.Fatal("settings modal did not open")
 	}
-	if st.paneFullChars != 24 || st.paneBriefChars != 18 || st.paneShowPermissionsBool.Value || st.panePermissionFormat != "octal" {
-		t.Fatalf("column draft not loaded: full=%v brief=%v permissions=%v format=%q", st.paneFullChars, st.paneBriefChars, st.paneShowPermissionsBool.Value, st.panePermissionFormat)
+	if st.paneFullChars != 24 || st.paneBriefChars != 18 || st.paneShowPermissions || st.panePermissionFormat != "octal" {
+		t.Fatalf("column draft not loaded: full=%v brief=%v permissions=%v format=%q", st.paneFullChars, st.paneBriefChars, st.paneShowPermissions, st.panePermissionFormat)
 	}
 	st.paneFullChars = 27
 	st.paneBriefChars = 21
-	st.paneShowPermissionsBool.Value = true
+	st.paneShowPermissions = true
 	st.panePermissionFormat = "symbolic"
 	st.paneDatePreset = "iso"
 	st.paneTimePreset = "minutes"
@@ -80,6 +80,27 @@ func TestSettingsFilePaneModeDraftLoadsAndSavesColumnConfig(t *testing.T) {
 	}
 	if got := ui.fmCfg.DateFormats[0]; got != "2006-01-02 15:04" {
 		t.Fatalf("primary date format=%q want ISO date and time", got)
+	}
+}
+
+func TestSettingsPanePermissionChoiceCombinesVisibilityAndFormat(t *testing.T) {
+	options := settingsPanePermissionOptions()
+	if len(options) != 4 || options[0].Key != "off" || options[0].Label != "Off" {
+		t.Fatalf("permission options=%#v, want Off followed by the three formats", options)
+	}
+
+	st := &settingsModalState{paneShowPermissions: true, panePermissionFormat: "octal"}
+	if got, want := st.panePermissionChoice(), "octal"; got != want {
+		t.Fatalf("initial permission choice=%q want %q", got, want)
+	}
+	if !st.setPanePermissionChoice("off", time.Now()) || st.paneShowPermissions {
+		t.Fatal("Off should hide the permissions column")
+	}
+	if got, want := st.panePermissionFormat, "octal"; got != want {
+		t.Fatalf("Off should preserve the last format, got %q want %q", got, want)
+	}
+	if !st.setPanePermissionChoice("symbolic", time.Now()) || !st.paneShowPermissions || st.panePermissionFormat != "symbolic" {
+		t.Fatal("rwx should show the permissions column in symbolic format")
 	}
 }
 
@@ -344,7 +365,6 @@ func TestSettingsKeyboardFocusOrderIncludesEditorsAndCheckboxes(t *testing.T) {
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusFilePaneMode,
 		settingsKeyboardFocusFilePaneFullChars,
-		settingsKeyboardFocusFilePaneShowPermissions,
 		settingsKeyboardFocusFilePanePermissionFormat,
 		settingsKeyboardFocusFilePaneDateStyle,
 		settingsKeyboardFocusFilePaneTimeStyle,

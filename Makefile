@@ -71,9 +71,7 @@ WINDOWS_BIN := $(WINDOWS_STAGE)/$(APP).exe
 WINDOWS_ZIP := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_portable.zip
 WINDOWS_MSIX := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH).msix
 WINDOWS_MSIX_DEV := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_dev.msix
-WINDOWS_MSIX_NFPM := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_nfpm.msix
 WINDOWS_MSIX_ASSETS := $(DIST_DIR)/msix-assets
-NFPM_VERSION ?= v2.47.0
 MSIX_DEV_SIGN ?= true
 WINDOWS_POWERSHELL ?= $(SystemRoot)/System32/WindowsPowerShell/v1.0/powershell.exe
 HEXONE_MSIX_IDENTITY_NAME ?= RamnasCvirka.hexone
@@ -432,9 +430,7 @@ package-windows-msix: build-windows-pdfium
 	@go run ./tools/msixassets "$(WINDOWS_MSIX_ASSETS)"
 	@if exist "$(subst /,\,$(WINDOWS_MSIX))" del /q "$(subst /,\,$(WINDOWS_MSIX))"
 	@if exist "$(subst /,\,$(WINDOWS_MSIX_DEV))" del /q "$(subst /,\,$(WINDOWS_MSIX_DEV))"
-	@if exist "$(subst /,\,$(WINDOWS_MSIX_NFPM))" del /q "$(subst /,\,$(WINDOWS_MSIX_NFPM))"
-	@set "HEXONE_SEMVER=$(APP_SEMVER)"&& set "HEXONE_MSIX_IDENTITY_NAME=$(HEXONE_MSIX_IDENTITY_NAME)"&& set "HEXONE_MSIX_PUBLISHER=$(HEXONE_MSIX_PUBLISHER)"&& go run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION) package -f packaging/windows/nfpm-msix.yaml -p msix -t "$(WINDOWS_MSIX_NFPM)"
-	@powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/repack_msix.ps1 -InputPackage "$(WINDOWS_MSIX_NFPM)" -OutputPackage "$(WINDOWS_MSIX)"
+	@powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build_msix.ps1 -AppDirectory "$(WINDOWS_STAGE)" -AssetsDirectory "$(WINDOWS_MSIX_ASSETS)" -OutputPackage "$(WINDOWS_MSIX)" -IdentityName "$(HEXONE_MSIX_IDENTITY_NAME)" -Publisher "$(HEXONE_MSIX_PUBLISHER)" -Version "$(APP_FILE_VERSION)"
 	@if /I "$(MSIX_DEV_SIGN)"=="true" "$(WINDOWS_POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -File packaging/windows/sign_msix_dev.ps1 -InputPackage "$(WINDOWS_MSIX)" -OutputPackage "$(WINDOWS_MSIX_DEV)" -Publisher "$(HEXONE_MSIX_PUBLISHER)"
 else
 package-windows: build-windows-pdfium

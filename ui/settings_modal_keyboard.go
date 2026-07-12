@@ -29,7 +29,6 @@ const (
 	settingsKeyboardFocusFilePaneDateWeight
 	settingsKeyboardFocusFilePaneFullChars
 	settingsKeyboardFocusFilePaneBriefChars
-	settingsKeyboardFocusFilePaneShowPermissions
 	settingsKeyboardFocusFilePanePermissionFormat
 	settingsKeyboardFocusFilePaneDateStyle
 	settingsKeyboardFocusFilePaneTimeStyle
@@ -168,7 +167,6 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 	switch target {
 	case settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
-		settingsKeyboardFocusFilePaneShowPermissions,
 		settingsKeyboardFocusTerminalShell,
 		settingsKeyboardFocusTerminalAcceleratedKeys,
 		settingsKeyboardFocusViewerRemoteSearch,
@@ -318,7 +316,6 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		default:
 			order = append(order,
 				settingsKeyboardFocusFilePaneFullChars,
-				settingsKeyboardFocusFilePaneShowPermissions,
 				settingsKeyboardFocusFilePanePermissionFormat,
 				settingsKeyboardFocusFilePaneDateStyle,
 				settingsKeyboardFocusFilePaneTimeStyle,
@@ -535,9 +532,6 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 		return true
 	case settingsKeyboardFocusGeneralFavoritesNewTab:
 		st.generalFavoritesNewTabBool.Value = !st.generalFavoritesNewTabBool.Value
-		return true
-	case settingsKeyboardFocusFilePaneShowPermissions:
-		st.paneShowPermissionsBool.Value = !st.paneShowPermissionsBool.Value
 		return true
 	case settingsKeyboardFocusViewerSmoothScrolling:
 		st.viewSmoothScrollingBool.Value = !st.viewSmoothScrollingBool.Value

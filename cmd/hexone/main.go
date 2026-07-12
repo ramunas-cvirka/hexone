@@ -107,7 +107,7 @@ func run(window *app.Window) error {
 	}
 	session := fm.LoadSession(sessionPath)
 	window.Option(app.Title(appicon.AppTitle))
-	windowstate.ApplyWindowOptions(window, session)
+	centerOnStartup := windowstate.ApplyWindowOptions(window, session)
 	th := material.NewTheme()
 	collection := buildFontCollection()
 
@@ -141,6 +141,10 @@ func run(window *app.Window) error {
 		case app.ViewEvent:
 			windowTracker.ObserveView(typ)
 			iconSetter.HandleViewEvent(typ)
+			if centerOnStartup && typ.Valid() {
+				window.Perform(system.ActionCenter)
+				centerOnStartup = false
+			}
 			if !nativeInsertMonitorInstalled {
 				installNativeInsertMonitor(window.Run)
 				nativeInsertMonitorInstalled = true

@@ -45,6 +45,9 @@ var embeddedNoticeText string
 //go:embed protocols.yaml
 var embeddedProtocolsYAML []byte
 
+//go:embed assets/new_icon_art.png
+var embeddedAppIconPNG []byte
+
 //go:embed assets/FiraCodeNerdFontMono-Regular.ttf
 var embeddedFiraCodeNerdFontMonoRegular []byte
 
@@ -110,6 +113,11 @@ func LicenseText() string {
 
 func NoticeText() string {
 	return embeddedNoticeText
+}
+
+// AppIconPNG returns the canonical artwork used by every platform icon path.
+func AppIconPNG() []byte {
+	return embeddedAppIconPNG
 }
 
 func BundledFontFamilies() []BundledFontFamily {

@@ -8,39 +8,48 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
-var assetSpecs = []struct {
+type assetSpec struct {
 	name string
 	size int
-}{
-	{name: "StoreLogo.png", size: 50},
-	{name: "StoreLogo.scale-125.png", size: 63},
-	{name: "StoreLogo.scale-150.png", size: 75},
-	{name: "StoreLogo.scale-200.png", size: 100},
-	{name: "StoreLogo.scale-400.png", size: 200},
-	{name: "Square44x44Logo.png", size: 44},
-	{name: "Square44x44Logo.scale-125.png", size: 55},
-	{name: "Square44x44Logo.scale-150.png", size: 66},
-	{name: "Square44x44Logo.scale-200.png", size: 88},
-	{name: "Square44x44Logo.scale-400.png", size: 176},
-	{name: "Square44x44Logo.targetsize-16.png", size: 16},
-	{name: "Square44x44Logo.targetsize-24.png", size: 24},
-	{name: "Square44x44Logo.targetsize-32.png", size: 32},
-	{name: "Square44x44Logo.targetsize-44.png", size: 44},
-	{name: "Square44x44Logo.targetsize-48.png", size: 48},
-	{name: "Square44x44Logo.targetsize-256.png", size: 256},
-	{name: "Square44x44Logo.targetsize-16_altform-unplated.png", size: 16},
-	{name: "Square44x44Logo.targetsize-24_altform-unplated.png", size: 24},
-	{name: "Square44x44Logo.targetsize-32_altform-unplated.png", size: 32},
-	{name: "Square44x44Logo.targetsize-44_altform-unplated.png", size: 44},
-	{name: "Square44x44Logo.targetsize-48_altform-unplated.png", size: 48},
-	{name: "Square44x44Logo.targetsize-256_altform-unplated.png", size: 256},
-	{name: "Square150x150Logo.png", size: 150},
-	{name: "Square150x150Logo.scale-125.png", size: 188},
-	{name: "Square150x150Logo.scale-150.png", size: 225},
-	{name: "Square150x150Logo.scale-200.png", size: 300},
-	{name: "Square150x150Logo.scale-400.png", size: 600},
+}
+
+var assetSpecs = msixAssetSpecs()
+
+func msixAssetSpecs() []assetSpec {
+	assets := []assetSpec{
+		{name: "StoreLogo.png", size: 50},
+		{name: "StoreLogo.scale-125.png", size: 63},
+		{name: "StoreLogo.scale-150.png", size: 75},
+		{name: "StoreLogo.scale-200.png", size: 100},
+		{name: "StoreLogo.scale-400.png", size: 200},
+		{name: "Square44x44Logo.png", size: 44},
+		{name: "Square44x44Logo.scale-125.png", size: 55},
+		{name: "Square44x44Logo.scale-150.png", size: 66},
+		{name: "Square44x44Logo.scale-200.png", size: 88},
+		{name: "Square44x44Logo.scale-400.png", size: 176},
+		{name: "Square150x150Logo.png", size: 150},
+		{name: "Square150x150Logo.scale-125.png", size: 188},
+		{name: "Square150x150Logo.scale-150.png", size: 225},
+		{name: "Square150x150Logo.scale-200.png", size: 300},
+		{name: "Square150x150Logo.scale-400.png", size: 600},
+	}
+
+	// Square44x44Logo is the resource referenced by the manifest. Target-size
+	// variants supply the shell app icon; alternate forms prevent Windows from
+	// shrinking the artwork onto an automatic contrast plate.
+	targetSizes := []int{16, 20, 24, 30, 32, 36, 40, 44, 48, 60, 64, 72, 80, 96, 256}
+	for _, size := range targetSizes {
+		for _, suffix := range []string{"", "_altform-unplated", "_altform-lightunplated"} {
+			assets = append(assets, assetSpec{
+				name: "Square44x44Logo.targetsize-" + strconv.Itoa(size) + suffix + ".png",
+				size: size,
+			})
+		}
+	}
+	return assets
 }
 
 func main() {

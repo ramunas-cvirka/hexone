@@ -251,10 +251,10 @@ type settingsModalState struct {
 	paneBriefChars               float32
 	paneFullCharsStepper         settingsNumberStepperState
 	paneBriefCharsStepper        settingsNumberStepperState
-	paneShowPermissionsBool      widget.Bool
+	paneShowPermissions          bool
 	panePermissionFormat         string
 	panePermissionFormatAnim     settingsChoiceAnim
-	panePermissionFormatClicks   [3]widget.Clickable
+	panePermissionFormatClicks   [4]widget.Clickable
 	paneDatePreset               string
 	paneTimePreset               string
 	paneDatePresetAnim           settingsChoiceAnim
@@ -693,7 +693,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.paneSettingsModeAnim = settingsChoiceAnim{}
 	st.paneFullChars = settingsNormalizePaneChars(cfg.Columns.NameChars, 20)
 	st.paneBriefChars = settingsNormalizePaneChars(cfg.Columns.BriefChars, 16)
-	st.paneShowPermissionsBool.Value = cfg.Columns.ShowPermissions
+	st.paneShowPermissions = cfg.Columns.ShowPermissions
 	st.panePermissionFormat = settingsNormalizePermissionFormat(cfg.Columns.PermissionFormat)
 	st.panePermissionFormatAnim = settingsChoiceAnim{}
 	st.loadPaneDateFormat(cfg.DateFormats)
@@ -3301,7 +3301,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.General.DateWeight = fm.NormalizeFontWeight(st.paneDateWeight, fm.FontWeightRegular)
 	ui.fmCfg.Columns.NameChars = settingsNormalizePaneChars(st.paneFullChars, 20)
 	ui.fmCfg.Columns.BriefChars = settingsNormalizePaneChars(st.paneBriefChars, 16)
-	ui.fmCfg.Columns.ShowPermissions = st.paneShowPermissionsBool.Value
+	ui.fmCfg.Columns.ShowPermissions = st.paneShowPermissions
 	ui.fmCfg.Columns.PermissionFormat = settingsNormalizePermissionFormat(st.panePermissionFormat)
 	ui.fmCfg.DateFormats = st.paneDateFormats()
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
