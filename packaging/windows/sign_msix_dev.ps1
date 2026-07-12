@@ -10,6 +10,34 @@ param(
 $ErrorActionPreference = "Stop"
 $friendlyName = "Hexone MSIX development"
 
+if (-not (Get-PSProvider Certificate -ErrorAction SilentlyContinue)) {
+    $moduleError = $null
+    try {
+        # The Certificate provider is registered by this module. Windows
+        # PowerShell does not always load it automatically when run with
+        # -NoProfile, as this script is from the Makefile.
+        Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
+    } catch {
+        # Some Windows PowerShell 5.1 builds report duplicate built-in type
+        # data before the manifest finishes registering the provider.
+        $moduleError = $_
+    }
+    if (-not (Get-PSProvider Certificate -ErrorAction SilentlyContinue)) {
+        try {
+            $securityAssembly = Get-ChildItem (Join-Path $env:SystemRoot "Microsoft.NET\assembly\GAC_MSIL\Microsoft.PowerShell.Security\*\Microsoft.PowerShell.Security.dll") -ErrorAction Stop |
+                Select-Object -First 1 -ExpandProperty FullName
+            Import-Module $securityAssembly -ErrorAction Stop
+        } catch {
+            if (-not $moduleError) {
+                $moduleError = $_
+            }
+        }
+    }
+    if (-not (Get-PSProvider Certificate -ErrorAction SilentlyContinue)) {
+        throw "The Windows PowerShell certificate provider could not be loaded (PowerShell $($PSVersionTable.PSVersion), PSHOME $PSHOME): $($moduleError.Exception.Message)"
+    }
+}
+
 if (-not (Get-PSDrive -Name Cert -ErrorAction SilentlyContinue)) {
     try {
         $certificateProvider = Get-PSProvider Certificate -ErrorAction Stop
