@@ -674,7 +674,11 @@ func viewerScrollStreamFindMatch(st *fileViewerState, match viewerFindMatch, now
 	if visible < 1 {
 		visible = 1
 	}
-	v.topLine = viewerKeepStreamLineVisible(v.topLine, visible, line)
+	row := line
+	if v.wrapEnabled {
+		row = v.rowForLineCol(line, runeIndexAtByte(v.lines[line], local))
+	}
+	v.topLine = viewerKeepStreamLineVisible(v.topLine, visible, row)
 	v.clampTop()
 	v.syncVisualTop()
 	if !v.wrapEnabled && line >= 0 && line < len(v.lines) {

@@ -17,8 +17,8 @@ func TestDefaultAppIconSourceDecodes(t *testing.T) {
 	if img.Bounds().Dx() <= 0 || img.Bounds().Dy() <= 0 {
 		t.Fatalf("decoded source bounds = %v", img.Bounds())
 	}
-	if got, want := img.Bounds().Size(), image.Pt(1024, 1024); got != want {
-		t.Fatalf("decoded source size = %v, want %v from assets/new_icon_art.png", got, want)
+	if got, want := img.Bounds().Size(), image.Pt(512, 512); got != want {
+		t.Fatalf("decoded source size = %v, want %v from assets/h1_icon_art.png", got, want)
 	}
 }
 

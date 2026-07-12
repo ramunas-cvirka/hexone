@@ -184,7 +184,6 @@ func cloneFMConfigForRuntimeSave(cfg *fm.Config) *fm.Config {
 	out.Associations = cloneAssociationPrograms(cfg.Associations)
 	out.CustomCommands = cloneCustomCommands(cfg.CustomCommands)
 	out.Viewer.Associations = cloneViewerAssociations(cfg.Viewer.Associations)
-	out.Viewer.AssociatedExtensions = cloneStringSlice(cfg.Viewer.AssociatedExtensions)
 	out.Viewer.CommandRules = cloneViewerCommandRules(cfg.Viewer.CommandRules)
 	out.Viewer.CommandByTarget = cloneStringMap(cfg.Viewer.CommandByTarget)
 	out.Viewer.CommandHistory = cloneStringSlice(cfg.Viewer.CommandHistory)

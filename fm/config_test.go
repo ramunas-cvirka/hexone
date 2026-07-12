@@ -290,7 +290,6 @@ tabs:
   max_width_dp: 90
   typeface: Iosevka Nerd Font Mono
   font_size_sp: 11
-  alternating_colors: true
   color: aa3366
   alt_color: nope
   active_color: '#112233'
@@ -320,9 +319,6 @@ tabs:
 	if got, want := cfg.Tabs.FontSizeSp, float32(11); got != want {
 		t.Fatalf("Tabs.FontSizeSp=%v want %v", got, want)
 	}
-	if !cfg.Tabs.AlternatingColors {
-		t.Fatal("Tabs.AlternatingColors should preserve true")
-	}
 	if got, want := cfg.Tabs.Color, "#AA3366"; got != want {
 		t.Fatalf("Tabs.Color=%q want %q", got, want)
 	}
@@ -346,6 +342,30 @@ func TestDefaultConfigSerializesTabs(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("serialized config missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestConfigDropsStaleFieldsOnSave(t *testing.T) {
+	raw := `
+tabs:
+  alternating_colors: true
+viewer:
+  mode: file
+  associated_extensions:
+    - txt
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	out := string(mustMarshalConfig(t, cfg))
+	for _, stale := range []string{"alternating_colors:", "associated_extensions:", "mode: file"} {
+		if strings.Contains(out, stale) {
+			t.Fatalf("serialized config retained stale field %q:\n%s", stale, out)
 		}
 	}
 }
@@ -524,10 +544,6 @@ func TestNormalizeViewerAssociations(t *testing.T) {
 	}
 
 	cfg.normalize()
-
-	if strings.Contains(string(mustMarshalConfig(t, cfg)), "associated_extensions:") {
-		t.Fatal("deprecated associated_extensions should not be serialized")
-	}
 
 	if len(cfg.Viewer.Associations) != 0 {
 		t.Fatalf("viewer.associations should be cleared after normalize, got %#v", cfg.Viewer.Associations)

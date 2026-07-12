@@ -94,10 +94,18 @@ type streamOutputView struct {
 	selectDirty      bool
 
 	wrapEnabled bool
+	wrapCols    int
+	wrapRows    []streamWrapRow
 
 	lastPrimaryPressAt  time.Time
 	lastPrimaryPressPos image.Point
 	lastPrimaryPressed  bool
+}
+
+type streamWrapRow struct {
+	line int
+	from int
+	to   int
 }
 
 type streamSelectionState struct {
@@ -178,7 +186,7 @@ func (v *streamOutputView) SetContentAfterTrim(raw, removedPrefix string, follow
 }
 
 func (v *streamOutputView) maxTopLine() int {
-	maxTop := len(v.lines) - v.visibleLines
+	maxTop := v.totalRows() - v.visibleLines
 	if maxTop < 0 {
 		maxTop = 0
 	}
@@ -210,7 +218,7 @@ func (v *streamOutputView) selectionAutoScrollActive() bool {
 }
 
 func (v *streamOutputView) updateDisplayState() {
-	total := len(v.lines)
+	total := v.totalRows()
 	if total <= 0 {
 		v.displayTop = 0
 		v.displayY = 0
@@ -392,6 +400,7 @@ func (v *streamOutputView) Append(chunk string) {
 		}
 	}
 	v.totalBytes += len(parts[0])
+	v.wrapRows = nil
 	for _, p := range parts[1:] {
 		v.totalBytes++
 		lineStart := v.totalBytes
@@ -409,14 +418,14 @@ func (v *streamOutputView) Append(chunk string) {
 }
 
 func (v *streamOutputView) nearBottom() bool {
-	if len(v.lines) == 0 {
+	if v.totalRows() == 0 {
 		return true
 	}
 	vis := v.visibleLines
 	if vis <= 0 {
 		return true
 	}
-	maxTop := len(v.lines) - vis
+	maxTop := v.totalRows() - vis
 	if maxTop < 0 {
 		maxTop = 0
 	}
@@ -424,7 +433,7 @@ func (v *streamOutputView) nearBottom() bool {
 }
 
 func (v *streamOutputView) scrollToBottom() {
-	maxTop := len(v.lines) - v.visibleLines
+	maxTop := v.totalRows() - v.visibleLines
 	if maxTop < 0 {
 		maxTop = 0
 	}
@@ -541,6 +550,99 @@ func (v *streamOutputView) rebuildLineOffsets() {
 	}
 	v.totalBytes = offset
 	v.maxCols = maxCols
+	v.wrapRows = nil
+}
+
+func (v *streamOutputView) totalRows() int {
+	if v == nil {
+		return 0
+	}
+	if v.wrapEnabled && len(v.wrapRows) == 0 && v.wrapCols > 0 {
+		v.prepareWrapRows(v.wrapCols)
+	}
+	if v.wrapEnabled && len(v.wrapRows) > 0 {
+		return len(v.wrapRows)
+	}
+	return len(v.lines)
+}
+
+func (v *streamOutputView) prepareWrapRows(cols int) {
+	if v == nil {
+		return
+	}
+	if !v.wrapEnabled {
+		v.wrapRows = nil
+		v.wrapCols = 0
+		return
+	}
+	if cols < 1 {
+		cols = 1
+	}
+	if v.wrapCols == cols && len(v.wrapRows) > 0 {
+		return
+	}
+	rows := make([]streamWrapRow, 0, len(v.lines))
+	for lineIndex, line := range v.lines {
+		runes := []rune(line)
+		if len(runes) == 0 {
+			rows = append(rows, streamWrapRow{line: lineIndex})
+			continue
+		}
+		for from := 0; from < len(runes); {
+			to := from + cols
+			if to >= len(runes) {
+				rows = append(rows, streamWrapRow{line: lineIndex, from: from, to: len(runes)})
+				break
+			}
+			next := to
+			for i := to; i > from; i-- {
+				if runes[i-1] == ' ' || runes[i-1] == '\t' {
+					to = i - 1
+					next = i
+					break
+				}
+			}
+			if to <= from {
+				to = from + cols
+				next = to
+			}
+			rows = append(rows, streamWrapRow{line: lineIndex, from: from, to: to})
+			for next < len(runes) && (runes[next] == ' ' || runes[next] == '\t') {
+				next++
+			}
+			from = next
+		}
+	}
+	if len(rows) == 0 {
+		rows = append(rows, streamWrapRow{})
+	}
+	v.wrapRows = rows
+	v.wrapCols = cols
+	v.clampTop()
+}
+
+func (v *streamOutputView) rowAt(row int) streamWrapRow {
+	if v != nil && v.wrapEnabled && row >= 0 && row < len(v.wrapRows) {
+		return v.wrapRows[row]
+	}
+	return streamWrapRow{line: row, from: 0, to: v.lineCols(row)}
+}
+
+func (v *streamOutputView) rowForLineCol(line, col int) int {
+	if v == nil || !v.wrapEnabled || len(v.wrapRows) == 0 {
+		return line
+	}
+	for i, row := range v.wrapRows {
+		if row.line == line && col >= row.from && col <= row.to {
+			return i
+		}
+	}
+	for i, row := range v.wrapRows {
+		if row.line == line {
+			return i
+		}
+	}
+	return 0
 }
 
 func (v *streamOutputView) clampOffset(offset int) int {
@@ -906,10 +1008,11 @@ func (v *streamOutputView) renderedLineCount() int {
 	if v.displayCount > 0 {
 		return v.displayCount
 	}
-	if len(v.lines) == 0 {
+	total := v.totalRows()
+	if total == 0 {
 		return 0
 	}
-	n := len(v.lines) - v.topLine
+	n := total - v.topLine
 	if n < 0 {
 		n = 0
 	}
@@ -958,7 +1061,8 @@ func (v *streamOutputView) pointOverSelectableText(pos image.Point) bool {
 	if !ok {
 		return false
 	}
-	line := v.displayTop + row
+	visualRow := v.rowAt(v.displayTop + row)
+	line := visualRow.line
 	if line < 0 || line >= len(v.lines) {
 		return false
 	}
@@ -967,7 +1071,9 @@ func (v *streamOutputView) pointOverSelectableText(pos image.Point) bool {
 		return false
 	}
 	maxCol := v.lineCols(line)
-	if !v.wrapEnabled {
+	if v.wrapEnabled {
+		maxCol = visualRow.to - visualRow.from
+	} else {
 		maxCol -= v.hCol
 	}
 	if maxCol <= 0 {
@@ -982,7 +1088,8 @@ func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
 	}
 	rendered := v.renderedLineCount()
 	if rendered > 0 {
-		firstLine := v.displayTop
+		firstRow := v.rowAt(v.displayTop)
+		firstLine := firstRow.line
 		if firstLine < 0 {
 			firstLine = 0
 		}
@@ -995,7 +1102,8 @@ func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
 			return v.clampOffset(v.lineByteStart(firstLine))
 		}
 		if pos.Y >= renderedBottom {
-			lastLine := v.displayTop + rendered - 1
+			lastRow := v.rowAt(v.displayTop + rendered - 1)
+			lastLine := lastRow.line
 			if lastLine < 0 {
 				lastLine = 0
 			}
@@ -1013,7 +1121,8 @@ func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
 			row = 0
 		}
 	}
-	line := v.displayTop + row
+	visualRow := v.rowAt(v.displayTop + row)
+	line := visualRow.line
 	if line < 0 {
 		line = 0
 	}
@@ -1025,7 +1134,9 @@ func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
 	if x > 0 {
 		col = v.colFromX(x)
 	}
-	if !v.wrapEnabled {
+	if v.wrapEnabled {
+		col += visualRow.from
+	} else {
 		col += v.hCol
 	}
 	maxCol := v.lineCols(line)
@@ -1465,7 +1576,7 @@ func (v *streamOutputView) computeScrollbar(size image.Point, viewportH, scrollb
 	if size.X <= 0 || viewportH <= 0 || scrollbarW <= 0 {
 		return
 	}
-	total := len(v.lines)
+	total := v.totalRows()
 	if total <= 0 {
 		total = 1
 	}
@@ -1509,7 +1620,7 @@ func (v *streamOutputView) estimatedTopFromY(y int) int {
 }
 
 func (v *streamOutputView) estimatedTopFromDragY(y, grabY int) int {
-	total := len(v.lines)
+	total := v.totalRows()
 	if total <= 0 {
 		return 0
 	}
@@ -1680,6 +1791,7 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 		scrollbarW = 0
 	}
 	v.textPad = gtx.Dp(unit.Dp(2))
+	v.prepareWrapRows(v.visibleCols(textW))
 	if reflowFileViewerBinaryPreview(st, v.visibleCols(textW)) {
 		ui.refreshFileViewerFind(gtx.Now, true)
 	}
@@ -1990,64 +2102,89 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 		start = 0
 	}
 	end := start + v.renderedLineCount()
-	if end > len(v.lines) {
-		end = len(v.lines)
+	if end > v.totalRows() {
+		end = v.totalRows()
 	}
 	y := v.displayY
 	for i := start; i < end; i++ {
-		line := v.lines[i]
+		visualRow := v.rowAt(i)
+		lineIndex := visualRow.line
+		if lineIndex < 0 || lineIndex >= len(v.lines) {
+			continue
+		}
+		line := v.lines[lineIndex]
 		lineGTX := gtx
 		lineGTX.Constraints = layout.Constraints{
 			Min: image.Pt(0, lineHeight),
 			Max: image.Pt(1<<20, lineHeight),
 		}
 		lineDraw, textX := v.linePaintSpec(line)
+		rowHCol := v.hCol
+		if v.wrapEnabled {
+			fromByte := byteIndexAtRune(line, visualRow.from)
+			toByte := byteIndexAtRune(line, visualRow.to)
+			lineDraw = line[fromByte:toByte]
+			textX = v.textPad
+			rowHCol = visualRow.from
+		}
 		// Selection, find, and syntax-span positions already include textPad.
 		// Keep the shared line transform vertical-only so asynchronously applying
 		// syntax highlighting cannot add the inset a second time.
 		offset := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
-		if from, to, ok := fileViewerFindColsForLine(st, i); ok {
-			x0 := v.textPad + v.colOffsetPx(from-v.hCol)
-			x1 := v.textPad + v.colOffsetPx(to-v.hCol)
-			if x1 <= x0 {
-				x1 = x0 + v.minCellWidthPx()
-			}
-			if x0 < textW {
-				if x0 < 0 {
-					x0 = 0
+		if from, to, ok := fileViewerFindColsForLine(st, lineIndex); ok {
+			from = max(from, visualRow.from)
+			to = min(to, visualRow.to)
+			if to > from {
+				x0 := v.textPad + v.colOffsetPx(from-rowHCol)
+				x1 := v.textPad + v.colOffsetPx(to-rowHCol)
+				if x1 <= x0 {
+					x1 = x0 + v.minCellWidthPx()
 				}
-				if x1 > textW {
-					x1 = textW
-				}
-				if x1 > x0 {
-					if findRect := viewerLineContentRect(ui, th, gtx, lineFace, lineSize, lineHeight, x0, x1); !findRect.Empty() {
-						paint.FillShape(gtx.Ops, findFill, clip.Rect(findRect).Op())
+				if x0 < textW {
+					if x0 < 0 {
+						x0 = 0
+					}
+					if x1 > textW {
+						x1 = textW
+					}
+					if x1 > x0 {
+						if findRect := viewerLineContentRect(ui, th, gtx, lineFace, lineSize, lineHeight, x0, x1); !findRect.Empty() {
+							paint.FillShape(gtx.Ops, findFill, clip.Rect(findRect).Op())
+						}
 					}
 				}
 			}
 		}
-		if from, to, ok := v.selectionColsForLine(i); ok {
-			x0 := v.textPad + v.colOffsetPx(from-v.hCol)
-			x1 := v.textPad + v.colOffsetPx(to-v.hCol)
-			if x1 <= x0 {
-				x1 = x0 + v.minCellWidthPx()
-			}
-			if x0 < textW {
-				if x0 < 0 {
-					x0 = 0
+		if from, to, ok := v.selectionColsForLine(lineIndex); ok {
+			from = max(from, visualRow.from)
+			to = min(to, visualRow.to)
+			if to > from {
+				x0 := v.textPad + v.colOffsetPx(from-rowHCol)
+				x1 := v.textPad + v.colOffsetPx(to-rowHCol)
+				if x1 <= x0 {
+					x1 = x0 + v.minCellWidthPx()
 				}
-				if x1 > textW {
-					x1 = textW
-				}
-				if x1 > x0 {
-					if selRect := viewerLineSelectionRect(lineHeight, x0, x1); !selRect.Empty() {
-						paint.FillShape(gtx.Ops, theme.Selection, clip.Rect(selRect).Op())
+				if x0 < textW {
+					if x0 < 0 {
+						x0 = 0
+					}
+					if x1 > textW {
+						x1 = textW
+					}
+					if x1 > x0 {
+						if selRect := viewerLineSelectionRect(lineHeight, x0, x1); !selRect.Empty() {
+							paint.FillShape(gtx.Ops, theme.Selection, clip.Rect(selRect).Op())
+						}
 					}
 				}
 			}
 		}
-		if spans, ok := v.syntaxLine(i); ok && len(spans) > 0 {
-			ui.drawStreamOutputSyntaxLine(th, lineGTX, v, line, lineDraw, spans, v.hCol, textW, lineFace, lineSize, theme)
+		if spans, ok := v.syntaxLine(lineIndex); ok && len(spans) > 0 {
+			rowTextW := textW
+			if v.wrapEnabled {
+				rowTextW = v.textPad + v.colOffsetPx(visualRow.to-visualRow.from)
+			}
+			ui.drawStreamOutputSyntaxLine(th, lineGTX, v, line, lineDraw, spans, rowHCol, rowTextW, lineFace, lineSize, theme)
 		} else {
 			textOffset := op.Offset(image.Pt(textX, 0)).Push(gtx.Ops)
 			ui.drawStreamOutputPlainLine(th, lineGTX, lineDraw, lineFace, lineSize, theme.Text)
@@ -2165,7 +2302,7 @@ func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st
 		return
 	}
 	theme := ui.fileViewerTheme()
-	total := len(v.lines)
+	total := v.totalRows()
 	if total < 1 {
 		total = 1
 	}
@@ -2181,7 +2318,11 @@ func (ui *UI) drawStreamOutputTooltip(th *material.Theme, gtx layout.Context, st
 	if maxTop > 0 {
 		percent = float64(v.dragTopLine) * 100 / float64(maxTop)
 	}
-	msg := fmt.Sprintf("~ line %d/%d (%.1f%%)", line, total, percent)
+	unitName := "line"
+	if v.wrapEnabled {
+		unitName = "row"
+	}
+	msg := fmt.Sprintf("~ %s %d/%d (%.1f%%)", unitName, line, total, percent)
 	gap := gtx.Dp(unit.Dp(streamTooltipGapDp))
 	if gap < 1 {
 		gap = 1

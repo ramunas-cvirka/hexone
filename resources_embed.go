@@ -45,7 +45,7 @@ var embeddedNoticeText string
 //go:embed protocols.yaml
 var embeddedProtocolsYAML []byte
 
-//go:embed assets/new_icon_art.png
+//go:embed assets/h1_icon_art.png
 var embeddedAppIconPNG []byte
 
 //go:embed assets/FiraCodeNerdFontMono-Regular.ttf

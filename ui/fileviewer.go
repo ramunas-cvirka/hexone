@@ -121,18 +121,18 @@ type fileViewerState struct {
 	tocMenuOpen          bool
 	tocList              widget.List
 
-	content               string
-	status                string
-	err                   string
-	command               string
-	detectedEncoding      string
-	detectedEncodingBOM   bool
-	detectedImagePreview  bool
-	imagePreview          image.Image
-	imagePreviewData      []byte
-	imagePreviewFormat    string
-	imagePreviewSize      image.Point
-	imagePreviewPage      int
+	content              string
+	status               string
+	err                  string
+	command              string
+	detectedEncoding     string
+	detectedEncodingBOM  bool
+	detectedImagePreview bool
+	imagePreview         image.Image
+	imagePreviewData     []byte
+	imagePreviewFormat   string
+	imagePreviewSize     image.Point
+	imagePreviewPage     int
 	// imagePreviewSeedPage is the page imagePreview depicts. Unlike
 	// imagePreviewPage (which the PDF doc view reuses as current-page
 	// bookkeeping while scrolling) it only changes when imagePreview does.
@@ -732,7 +732,7 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 		paneScrollSnapshots: ui.captureFileViewerPaneScrollSnapshots(),
 		status:              "loading...",
 		fileEncoding:        fm.ViewerFileEncodingAuto,
-		wrapEnabled:         false,
+		wrapEnabled:         viewerWordWrap(ui.fmCfg),
 		resultCh:            make(chan fileViewerResult, 4),
 		pdfDocCh:            make(chan pdfDocResult, 16),
 	}
@@ -2521,10 +2521,23 @@ func (ui *UI) toggleViewerWordWrap() {
 		return
 	}
 	st.wrapEnabled = !st.wrapEnabled
+	st.stream.hCol = 0
+	st.stream.hDragCol = 0
+	st.stream.topLine = 0
+	st.stream.dragTopLine = 0
+	st.stream.wrapRows = nil
+	st.stream.resetVisualTop()
 	if ui.fmCfg != nil {
 		ui.fmCfg.Viewer.WordWrap = st.wrapEnabled
 		_ = ui.saveFMConfigWithOptions("viewer-word-wrap", false)
 	}
+}
+
+func viewerWordWrapMenuLabel(enabled bool) string {
+	if enabled {
+		return "Word Wrap: On"
+	}
+	return "Word Wrap: Off"
 }
 
 func (ui *UI) setFileViewerEncoding(encoding string, now time.Time) {

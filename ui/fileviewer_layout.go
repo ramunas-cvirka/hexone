@@ -702,6 +702,10 @@ func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context
 		_ = ui.copyFileViewerText(gtx, true)
 		st.closeContextMenu()
 	}
+	if st.wrapToggle.Clicked(gtx) {
+		ui.toggleViewerWordWrap()
+		st.closeContextMenu()
+	}
 	for {
 		ev, ok := gtx.Event(pointer.Filter{
 			Target: &st.menuPointerTag,
@@ -756,14 +760,30 @@ func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context
 
 func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Context, st *fileViewerState, alpha float32) layout.Dimensions {
 	theme := ui.filePanePopupTheme()
-	item := fileContextMenuItem{ID: "viewer-copy", Label: "Copy"}
+	items := []struct {
+		click  *widget.Clickable
+		item   fileContextMenuItem
+		active bool
+	}{
+		{
+			click: &st.copyToggle,
+			item:  fileContextMenuItem{ID: "viewer-copy", Label: "Copy"},
+		},
+		{
+			click:  &st.wrapToggle,
+			item:   fileContextMenuItem{ID: "viewer-word-wrap", Label: viewerWordWrapMenuLabel(st.wrapEnabled)},
+			active: st.wrapEnabled,
+		},
+	}
 	width := gtx.Dp(unit.Dp(96))
-	lbl := material.Body2(th, item.Label)
-	lbl.Font.Typeface = ui.mainTypeface()
-	lbl.TextSize = ui.functionBarTextSize()
-	lbl.Font.Weight = font.Medium
-	if measured := measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(28)); measured > width {
-		width = measured
+	for _, row := range items {
+		lbl := material.Body2(th, row.item.Label)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.TextSize = ui.functionBarTextSize()
+		lbl.Font.Weight = font.Medium
+		if measured := measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(28)); measured > width {
+			width = measured
+		}
 	}
 	if width > gtx.Constraints.Max.X {
 		width = gtx.Constraints.Max.X
@@ -780,20 +800,30 @@ func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Con
 			func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					hoverID := ""
-					if st.copyToggle.Hovered() {
-						hoverID = item.ID
+					for _, row := range items {
+						if row.click.Hovered() {
+							hoverID = row.item.ID
+							break
+						}
 					}
 					if hoverID != st.menuHoverID {
 						st.menuHoverID = hoverID
 						st.menuHoverAnim.setHover(hoverID, gtx.Now)
 						gtx.Execute(op.InvalidateCmd{})
 					}
-					hoverFill, hoverAnim := st.menuHoverAnim.hoverFill(gtx.Now, item.ID)
-					if hoverAnim {
-						gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+					children := make([]layout.FlexChild, 0, len(items))
+					for _, row := range items {
+						row := row
+						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							hoverFill, hoverAnim := st.menuHoverAnim.hoverFill(gtx.Now, row.item.ID)
+							if hoverAnim {
+								gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
+							}
+							dims, _, _ := ui.layoutFilePaneContextMenuItem(th, gtx, theme, row.click, row.item, row.active, hoverFill, alpha, ui.fileContextMenuRowHeight(gtx, row.item))
+							return dims
+						}))
 					}
-					dims, _, _ := ui.layoutFilePaneContextMenuItem(th, gtx, theme, &st.copyToggle, item, false, hoverFill, alpha, ui.fileContextMenuRowHeight(gtx, item))
-					return dims
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 				})
 			},
 		)

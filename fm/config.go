@@ -166,7 +166,6 @@ type TabsConfig struct {
 	MaxWidthDp        int     `yaml:"max_width_dp"`
 	Typeface          string  `yaml:"typeface"`
 	FontSizeSp        float32 `yaml:"font_size_sp"`
-	AlternatingColors bool    `yaml:"alternating_colors"`
 	Color             string  `yaml:"color,omitempty"`
 	AltColor          string  `yaml:"alt_color,omitempty"`
 	ActiveColor       string  `yaml:"active_color,omitempty"`
@@ -529,7 +528,6 @@ type ViewerConfig struct {
 	RemoteSearchMode        string              `yaml:"remote_search_mode"`
 	RemoteSearchCommand     string              `yaml:"remote_search_command"`
 	Associations            []ViewerAssociation `yaml:"associations,omitempty"`
-	AssociatedExtensions    []string            `yaml:"associated_extensions,omitempty"`
 	CommandRules            []ViewerCommandRule `yaml:"command_rules,omitempty"`
 	CommandByTarget         map[string]string   `yaml:"command_by_target"`
 	CommandHistory          []string            `yaml:"command_history"`
@@ -1077,7 +1075,6 @@ func (c *Config) normalize() {
 		c.Associations = GroupViewerAssociations(legacyAssociations)
 	}
 	c.Viewer.Associations = nil
-	c.Viewer.AssociatedExtensions = nil
 	c.Viewer.CommandRules = NormalizeViewerCommandRules(c.Viewer.CommandRules)
 	if len(c.Viewer.CommandByTarget) > 0 {
 		normalized := make(map[string]string, len(c.Viewer.CommandByTarget))

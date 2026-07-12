@@ -317,6 +317,16 @@ func (st *fileMoveState) sourceSummary() string {
 	return fmt.Sprintf("%d items selected", count)
 }
 
+func (st *fileMoveState) sourceLocation() string {
+	if st == nil {
+		return ""
+	}
+	if st.multiSource() {
+		return st.sourceSummary()
+	}
+	return st.endpoint.dirName(st.srcPath)
+}
+
 func (st *fileMoveState) sourcePreviewLines() []string {
 	if st == nil || len(st.sources) == 0 {
 		return nil
@@ -873,19 +883,19 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
-	sourceHdr := material.Caption(th, "Source")
+	sourceHdr := material.Caption(th, "From")
 	sourceHdr.Font.Typeface = ui.interfaceTypeface()
 	sourceHdr.TextSize = ui.scaleDialogFontSize(9)
 	sourceHdr.Color = hintColor
 
-	sourcePath := material.Body2(th, st.srcPath)
+	sourcePath := material.Body2(th, st.sourceLocation())
 	sourcePath.Font.Typeface = ui.interfaceTypeface()
 	sourcePath.TextSize = ui.scaleDialogFontSize(10)
 	sourcePath.Color = txtColor
 	sourcePath.MaxLines = 1
 	sourcePath.Truncator = "…"
 
-	dstHdr := material.Caption(th, "Destination")
+	dstHdr := material.Caption(th, "To")
 	dstHdr.Font.Typeface = ui.interfaceTypeface()
 	dstHdr.TextSize = ui.scaleDialogFontSize(9)
 	dstHdr.Color = hintColor
@@ -940,9 +950,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.multiSource() {
-				sourcePath.Text = st.sourceSummary()
-			}
+			sourcePath.Text = st.sourceLocation()
 			return sourcePath.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -952,12 +960,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 			return ui.layoutFileOpPreviewList(th, gtx, st.sourcePreviewLines())
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.multiSource() {
-				dstHdr.Text = "Destination Directory"
-			}
-			return dstHdr.Layout(gtx)
-		}),
+		layout.Rigid(dstHdr.Layout),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.running {

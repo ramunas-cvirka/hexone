@@ -549,6 +549,37 @@ func (st *fileCopyState) sourceSummary() string {
 	return fmt.Sprintf("%d items selected", count)
 }
 
+func (st *fileCopyState) sourceLocation() string {
+	if st == nil {
+		return ""
+	}
+	if st.multiSource() {
+		return st.sourceSummary()
+	}
+	if st.op == fileCopyOpExtract {
+		if len(st.sources) > 0 {
+			return fileOpPreviewLabel(st.sources[0].Name, st.sources[0].Path)
+		}
+		return st.srcEndpoint.baseName(st.srcPath)
+	}
+	return st.srcEndpoint.dirName(st.srcPath)
+}
+
+func (st *fileCopyState) progressCurrentLabel() string {
+	if st == nil {
+		return ""
+	}
+	current := copyProgressCurrent(st.progress)
+	if current == "" || st.multiSource() {
+		return current
+	}
+	sourceName := st.srcEndpoint.baseName(st.srcPath)
+	if strings.EqualFold(strings.TrimSpace(current), strings.TrimSpace(sourceName)) {
+		return ""
+	}
+	return current
+}
+
 func (st *fileCopyState) title() string {
 	if st != nil && st.op == fileCopyOpExtract {
 		return "Extract"
@@ -1193,26 +1224,26 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
-	srcHdr := material.Caption(th, "Source")
+	srcHdr := material.Caption(th, "From")
 	srcHdr.Font.Typeface = ui.interfaceTypeface()
 	srcHdr.TextSize = ui.scaleDialogFontSize(9)
 	srcHdr.Color = hintColor
 
-	srcText := material.Body2(th, st.srcPath)
+	srcText := material.Body2(th, st.sourceLocation())
 	srcText.Font.Typeface = ui.interfaceTypeface()
 	srcText.TextSize = ui.scaleDialogFontSize(10)
 	srcText.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
 	srcText.MaxLines = 1
 	srcText.Truncator = "…"
 
-	dstHdr := material.Caption(th, "Destination")
+	dstHdr := material.Caption(th, "To")
 	dstHdr.Font.Typeface = ui.interfaceTypeface()
 	dstHdr.TextSize = ui.scaleDialogFontSize(9)
 	dstHdr.Color = hintColor
 
 	progress := st.progress
 	status := copyProgressText(progress, st.speedBytes)
-	current := copyProgressCurrent(progress)
+	current := st.progressCurrentLabel()
 	progressFrac := copyProgressFraction(progress)
 	overwriteLabel := ""
 	if !st.running && st.dstInfo.Exists && !st.multiSource() {
@@ -1248,9 +1279,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.op == fileCopyOpExtract || st.multiSource() {
-				srcText.Text = st.sourceSummary()
-			}
+			srcText.Text = st.sourceLocation()
 			return srcText.Layout(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1263,8 +1292,6 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.op == fileCopyOpExtract {
 				dstHdr.Text = "Extract To"
-			} else if st.multiSource() {
-				dstHdr.Text = "Destination Directory"
 			}
 			return dstHdr.Layout(gtx)
 		}),

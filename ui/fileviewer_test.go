@@ -31,6 +31,62 @@ import (
 	"hexone/fm"
 )
 
+func TestViewerWordWrapMenuLabel(t *testing.T) {
+	if got, want := viewerWordWrapMenuLabel(true), "Word Wrap: On"; got != want {
+		t.Fatalf("enabled label=%q want %q", got, want)
+	}
+	if got, want := viewerWordWrapMenuLabel(false), "Word Wrap: Off"; got != want {
+		t.Fatalf("disabled label=%q want %q", got, want)
+	}
+}
+
+func TestStartFileViewerUsesConfiguredWordWrap(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "wrapped.txt")
+	if err := os.WriteFile(target, []byte("a long line\n"), 0o600); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+
+	cfg := fm.DefaultConfig()
+	cfg.Viewer.WordWrap = true
+	ui := NewUI(cfg)
+	pane := newFilePaneState(root, cfg)
+	ui.filePanes = []*filePaneState{pane}
+	ui.filePaneTabs = []filePaneTabSet{{tabs: []*filePaneState{pane}}}
+	pane.applyListing(filesys.Listing{
+		Dir: root,
+		Entries: []filesys.Entry{{
+			Name:        "wrapped.txt",
+			DisplayName: "wrapped.txt",
+			Path:        target,
+			Kind:        filesys.EntryFile,
+		}},
+	}, target, "", 0)
+
+	ui.startFileViewer(0, time.Now())
+	defer ui.closeFileViewer()
+	if ui.fileViewer == nil {
+		t.Fatal("viewer did not open")
+	}
+	if !ui.fileViewer.wrapEnabled {
+		t.Fatal("plain viewer did not inherit viewer.word_wrap")
+	}
+}
+
+func TestStartCustomCommandViewerUsesConfiguredWordWrap(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Viewer.WordWrap = true
+	ui := NewUI(cfg)
+
+	if !ui.startCustomCommandViewer(fm.CustomCommand{Name: "Wrapped", Command: "echo wrapped"}, time.Now()) {
+		t.Fatal("custom command viewer did not open")
+	}
+	defer ui.closeFileViewer()
+	if ui.fileViewer == nil || !ui.fileViewer.wrapEnabled {
+		t.Fatal("Cmd viewer did not inherit viewer.word_wrap")
+	}
+}
+
 func TestCloseFileViewerRestoresLastItemScrollPosition(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	ui := NewUI(cfg)

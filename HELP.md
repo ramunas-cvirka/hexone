@@ -38,7 +38,7 @@ Each file pane has its own independent compact tab strip above the current-dir l
 - `Ctrl+Tab` selects the next tab; `Ctrl+Shift+Tab` selects the previous tab.
 - You can also hold `Ctrl+Tab` and press `Left` or `Right` before releasing `Tab` to choose the direction explicitly.
 
-Tab titles use the current directory and trim to fit. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, `tabs.active_color`, and `tabs.alternating_colors`.
+Tab titles use the current directory and trim to fit. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, and `tabs.active_color`.
 
 ## Current Dir Line
 
@@ -313,6 +313,7 @@ Useful things to adjust:
 - shell selection for viewer commands and the terminal drawer
 - remote search utility command for SSH hex find
 - viewer smooth scrolling
+- viewer word wrapping for File and Cmd text
 - file encoding defaults
 - auto-refresh interval for non-streaming command mode
 - pane, tab, viewer, and terminal font family and size
@@ -326,6 +327,7 @@ viewer:
   shell: auto
   command: cat {path}
   smooth_scrolling: true
+  word_wrap: false
   command_by_target:
     local:/Users/me/logs/app.log: tail -n 200 -f {path}
   command_rules:
@@ -357,6 +359,7 @@ Notes:
 - `command_rules` switch the viewer into command mode automatically when a filename matches
 - `command_by_target` overrides the chosen command and opens that target in command mode by default
 - `remote_search_command` is used by SSH hex Find; set it to `off` to disable the remote utility path
+- `word_wrap` controls File and Cmd text and can also be toggled from their right-click menu
 - `command_auto_refresh` matters most for non-streaming command mode
 - Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling and viewer auto-hide
 

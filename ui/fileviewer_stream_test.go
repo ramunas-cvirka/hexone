@@ -54,6 +54,47 @@ func TestStreamLinePaintSpecLeavesWrappedLinesAtPad(t *testing.T) {
 	}
 }
 
+func TestStreamWordWrapBuildsVisualRowsAtWordBoundaries(t *testing.T) {
+	v := &streamOutputView{wrapEnabled: true}
+	v.SetContent("alpha beta gamma\nshort")
+	v.prepareWrapRows(6)
+
+	if got, want := v.totalRows(), 4; got != want {
+		t.Fatalf("wrapped row count=%d want %d", got, want)
+	}
+	want := []streamWrapRow{
+		{line: 0, from: 0, to: 5},
+		{line: 0, from: 6, to: 10},
+		{line: 0, from: 11, to: 16},
+		{line: 1, from: 0, to: 5},
+	}
+	for i, expected := range want {
+		if got := v.rowAt(i); got != expected {
+			t.Fatalf("row %d=%+v want %+v", i, got, expected)
+		}
+	}
+}
+
+func TestStreamWrappedPointMapsToOriginalTextOffset(t *testing.T) {
+	v := &streamOutputView{
+		wrapEnabled:  true,
+		visibleLines: 3,
+		lineH:        16,
+		textRect:     imageRect(0, 0, 100, 48),
+		textPad:      2,
+		charAdvance:  8,
+		charW:        8,
+	}
+	v.SetContent("alpha beta gamma")
+	v.prepareWrapRows(6)
+	v.updateDisplayState()
+
+	pos := image.Pt(v.textPad+v.colOffsetPx(2), 16+8)
+	if got, want := v.textOffsetFromPoint(pos), 8; got != want {
+		t.Fatalf("wrapped point offset=%d want %d", got, want)
+	}
+}
+
 func TestTextOffsetFromPointRespectsFractionalHorizontalAdvance(t *testing.T) {
 	v := &streamOutputView{
 		lines:        []string{"abcdefghij"},

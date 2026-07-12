@@ -66,7 +66,7 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## v0.9.0
 
-- Switched desktop and MSIX icons to the new tightly cropped Hexone artwork, and streamlined File panes settings with consistent labels, an integrated permissions Off option, and a preview matching the real headerless pane.
+- Switched desktop, portable, and MSIX icons on every platform to the transparent H1 Hexone artwork, and streamlined File panes settings with consistent labels, an integrated permissions Off option, and a preview matching the real headerless pane.
 - Clean desktop launches now open at 60% of the primary display and centered, while saved window geometry continues to be restored on later launches.
 - Made Enter launch ordinary files with their system association while continuing to traverse directories and archives.
 - Sped up multipart RAR indexing and reused archive indexes while browsing nested folders and opening members.
@@ -103,6 +103,8 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Improved image previews with responsive fit-width startup, native-size centering, drag panning, and clickable zoom presets; viewer mode tabs now carry the full filename, and outlined PDFs expose dense accordion TOC navigation with separate disclosure and bookmark links.
 - Kept supported oversized images and PDFs in File preview mode instead of incorrectly opening them in Hex mode because of the text-read size limit.
 - Made `Esc` close open viewer zoom and TOC popups before closing the viewer itself.
+- Added a persisted Word Wrap toggle to the File and Cmd viewer context menu.
+- Simplified Copy and Move startup dialogs to avoid repeating the selected filename across paths and progress text.
 - Kept Windows portable configuration beside `hexone.exe` while moving MSIX configuration and session data to the package's writable `LocalState` folder.
 - Added `make package-windows-msix` to build the Windows PDFium binary, generate Store assets, and create the MSIX package in one command.
 - Repacked and validated Windows MSIX output with the Windows SDK to prevent invalid nFPM block maps from reaching App Installer or the Store.

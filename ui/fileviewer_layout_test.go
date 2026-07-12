@@ -38,6 +38,33 @@ func TestEventTagsAreNonZeroSized(t *testing.T) {
 	}
 }
 
+func TestFileViewerContextMenuWordWrapToggle(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	if err := fm.SaveConfig(ui.configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	st := &fileViewerState{menuOpen: true}
+	ui.fileViewer = st
+	st.wrapToggle.Click()
+
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(640, 480)),
+		Now:         time.Now(),
+	}
+	ui.layoutFileViewerContextMenu(material.NewTheme(), gtx, st)
+
+	if !st.wrapEnabled || !cfg.Viewer.WordWrap {
+		t.Fatalf("context toggle state: viewer=%v config=%v", st.wrapEnabled, cfg.Viewer.WordWrap)
+	}
+	if st.menuOpen {
+		t.Fatal("context menu should close after toggling word wrap")
+	}
+}
+
 func TestFileViewerRootPressCancelsCommandEditWithoutPopup(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	st := &fileViewerState{
