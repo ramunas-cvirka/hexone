@@ -38,7 +38,7 @@ Each file pane has its own independent compact tab strip above the current-dir l
 - `Ctrl+Tab` selects the next tab; `Ctrl+Shift+Tab` selects the previous tab.
 - You can also hold `Ctrl+Tab` and press `Left` or `Right` before releasing `Tab` to choose the direction explicitly.
 
-Tab titles use the current directory and trim to fit. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, `tabs.active_color`, and `tabs.alternating_colors`.
+Tab titles use the current directory and trim to fit. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, and `tabs.active_color`.
 
 ## Current Dir Line
 
@@ -95,7 +95,7 @@ Multi-Rename applies a set of filename transformations to the selected items in 
 - Prefix and suffix text can be applied independently.
 - Case conversion can keep, uppercase, or lowercase the selected part.
 - `Name`, `Extension`, and `Both` control which part of each filename is transformed; directory names are handled safely.
-- An optional counter supports start, step, digit width, and placement at the beginning or end.
+- An optional counter supports start, step, placement at the beginning or end, and automatic zero-padding that expands to fit the largest generated number.
 - Invalid names and destination collisions are detected before the operation starts. `Rename` is enabled only when at least one valid filename will change.
 - Local and SFTP panes are supported. Files inside an archive cannot be renamed with this tool.
 
@@ -166,6 +166,8 @@ To manage SSH sessions:
 - add a host, port, user, and authentication method
 - save the session, then connect the active pane
 
+Saved passwords and private-key passphrases are stored in Windows Credential Manager, macOS Keychain, or the Linux Secret Service. They are not written to `hexone.yaml`; existing plaintext values are moved automatically the next time Hexone starts. If no secure credential service is available, the credentials can still be entered for a one-time connection but cannot be saved.
+
 Inside the internal viewer, the same shortcut opens Find instead of `SSH Sessions`.
 
 Once connected, a remote pane supports normal browsing plus viewer-based inspection, command-driven log viewing, and remote-assisted hex searching.
@@ -177,6 +179,8 @@ The internal viewer has three explicit modes, plus automatic image-style preview
 - `file` for normal text content plus image/PDF preview when supported
 - `hex` for raw bytes
 - `command` for shell output based on the selected file
+
+The active mode tab includes the complete filename, for example `File - photo.jpg`; switching modes moves the filename to `Hex` or `Cmd`.
 
 New viewer opens default to `file`; exact target commands and filename command rules open in `command`, while files over the configured read limit open in `hex` when no target or rule command applies.
 
@@ -262,17 +266,26 @@ Remote panes support `command` mode too, so the same log-following patterns work
 
 ### Image Preview
 
+- oversized images initially fit the viewport width and stay aligned to the top; smaller images remain at native size and are centered
+- drag the image directly to pan it, or use the scrollbars
 - arrow keys pan the image
 - `PageUp` and `PageDown` move by a larger vertical chunk
 - `Home` goes to the origin and `End` goes to the far edge
 - `Ctrl++` / `Ctrl+-` or `Cmd++` / `Cmd+-` zoom in and out
+- click the zoom percentage for fit-width and common zoom presets
 
 ### PDF Preview
 
-- rendered PDF pages use the same pan and zoom controls as image preview
-- `Up` / `Down` and `PageUp` / `PageDown` scroll inside the current page first, then move to the previous or next page at the edge
-- the vertical scrollbar represents the whole PDF and can be dragged to jump between pages quickly
-- mouse-wheel scrolling crosses page boundaries at the top and bottom, just like the keyboard controls
+- PDFs open as one continuous document: pages are stacked vertically and fitted to the window width
+- scrolling is smooth and seamless across page boundaries with the mouse wheel, `Up` / `Down`, and `PageUp` / `PageDown`
+- the vertical scrollbar represents the combined height of all pages, not the page count
+- dragging over text selects it (the cursor becomes a text beam); dragging anywhere else pans the page
+- holding a selection drag past the top or bottom edge auto-scrolls the document; double-click selects the word under the cursor
+- `Shift`+drag forces text selection; `Ctrl+C` / `Cmd+C` or the right-click `Copy` menu copies the selection
+- `Ctrl++` / `Ctrl+-` or `Cmd++` / `Cmd+-` zoom in and out around the viewport center; `100%` means fit-to-width
+- click the zoom percentage for fit-width and common zoom presets
+- PDFs with an outline show a compact `TOC` control; use a row's arrow to expand one branch at a time without moving the current page, or click any bookmark title—including a parent—to navigate
+- `Esc` closes an open zoom or TOC popup before closing the viewer
 - `[` moves to the previous page and `]` moves to the next page
 
 ## Customization
@@ -291,7 +304,8 @@ Use `Settings -> Fonts` to choose the family and size independently for interfac
 
 On Linux, the writable config files live under `~/.config/hexone/`.
 On macOS, they live under `~/Library/Application Support/hexone/`.
-On Windows, they currently live in the current working directory as `hexone.yaml` and related files.
+On Windows portable builds, they live beside `hexone.exe`.
+On Windows MSIX builds, they live in the package's `LocalState` folder under `%LOCALAPPDATA%\Packages\`.
 
 Useful things to adjust:
 
@@ -301,6 +315,7 @@ Useful things to adjust:
 - shell selection for viewer commands and the terminal drawer
 - remote search utility command for SSH hex find
 - viewer smooth scrolling
+- viewer word wrapping for File and Cmd text
 - file encoding defaults
 - auto-refresh interval for non-streaming command mode
 - pane, tab, viewer, and terminal font family and size
@@ -314,6 +329,7 @@ viewer:
   shell: auto
   command: cat {path}
   smooth_scrolling: true
+  word_wrap: false
   command_by_target:
     local:/Users/me/logs/app.log: tail -n 200 -f {path}
   command_rules:
@@ -345,6 +361,7 @@ Notes:
 - `command_rules` switch the viewer into command mode automatically when a filename matches
 - `command_by_target` overrides the chosen command and opens that target in command mode by default
 - `remote_search_command` is used by SSH hex Find; set it to `off` to disable the remote utility path
+- `word_wrap` controls File and Cmd text and can also be toggled from their right-click menu
 - `command_auto_refresh` matters most for non-streaming command mode
 - Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling and viewer auto-hide
 
@@ -354,7 +371,8 @@ The Protocol Analyzer decodes pasted hex using `protocols.yaml`.
 
 On Linux, Hexone first checks `~/.config/hexone/protocols.yaml`. If that file is missing, it uses the embedded default and writes a reference sample to `~/.config/hexone/protocols.sample.yaml`.
 On macOS, it first checks `~/Library/Application Support/hexone/protocols.yaml` and writes the reference sample to `~/Library/Application Support/hexone/protocols.sample.yaml`.
-On Windows, it currently uses `protocols.yaml` in the current working directory and writes `protocols.sample.yaml` there too.
+On Windows portable builds, it uses `protocols.yaml` beside `hexone.exe`.
+On Windows MSIX builds, it first checks the package's writable `LocalState` folder, then uses the packaged default and writes `protocols.sample.yaml` to `LocalState`.
 
 Input tips:
 

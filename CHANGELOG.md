@@ -4,8 +4,6 @@ All notable changes to this project will be documented in this file.
 
 Release notes extraction in CI expects release headings that begin with `## v...`.
 
-## Unreleased
-
 ## v0.1.0 - 2026-03-10
 
 - Initial public release.
@@ -65,3 +63,17 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Improved terminal key repeat, drag selection, and smooth scrolling behavior.
 - Terminal now uses all available bottom space.
 - Fixed SSH favorites opened in new tabs using the previous local pane path.
+
+## v1.0.0 - 2026-07-13
+
+- Rebuilt F5 Copy so directory contents are discovered and transferred concurrently instead of scanning the complete directory tree before copying begins. The new progress view reports discovered and copied files, the current item, transferred bytes, and transfer speed for local and SFTP operations.
+- Rebuilt the PDF viewer as one continuously scrolling document with text selection and copying, clickable links, drag panning, zoom controls, page navigation, and an expandable table of contents for PDF outlines.
+- Added whole-document PDF search and redesigned Find in File, Hex, and Cmd views to show matching snippets in a result list and jump directly to any selected match.
+- Added fit-to-width startup, native-size centering, drag panning, keyboard navigation, and selectable zoom levels to image previews.
+- Added dedicated settings for Full, Brief, and Other file-pane layouts, including live previews, per-column font weights, optional permission columns, responsive date/time formats, and filename color rules that can target files, directories, or both.
+- Added separate text colors for the offset, byte, and ASCII sections of the hex viewer, a separate hex-selection color, and visual dividers between the three sections.
+- Reworked Settings, Help, SSH Sessions, Custom Commands, Multi-Rename, and file-operation dialogs around the same flat, sectioned layout, and replaced the Settings color editor with an RGB honeycomb and tonal slider.
+- Added a saved Word Wrap option for File and Cmd text views.
+- Saved SSH passwords and private-key passphrases in Windows Credential Manager, macOS Keychain, or the Linux Secret Service instead of `hexone.yaml`.
+- Changed Enter to open regular files with their system-associated application while continuing to open directories and archives inside Hexone.
+- Added a Microsoft Store MSIX distribution. Store installations keep configuration and session data in the package's `LocalState` folder, while Windows portable builds continue to keep configuration beside `hexone.exe`.

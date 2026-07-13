@@ -234,226 +234,99 @@ func TestPumpFileViewerScrollRepeatSupportsPageDown(t *testing.T) {
 	}
 }
 
-func TestPerformFileViewerKeyScrollPDFDownArrowScrollsBeforePaging(t *testing.T) {
-	ui := NewUI(fm.DefaultConfig())
-	now := time.Date(2026, time.April, 11, 15, 0, 0, 0, time.UTC)
+func testPDFDocViewerState(pages int) *fileViewerState {
 	st := &fileViewerState{
 		mode:                  "file",
 		detectedImagePreview:  true,
 		imagePreview:          image.NewNRGBA(image.Rect(0, 0, 400, 600)),
 		imagePreviewFormat:    "pdf",
 		imagePreviewPage:      0,
-		imagePreviewPageCount: 3,
+		imagePreviewPageCount: pages,
+		pdfDocCh:              make(chan pdfDocResult, 16),
 	}
-	st.imageView.zoom = 1
-	st.imageView.viewportRect = image.Rect(0, 0, 160, 120)
+	sizes := make([]viewerPDFPageSize, pages)
+	for i := range sizes {
+		sizes[i] = viewerPDFPageSize{W: 612, H: 792}
+	}
+	st.pdfDoc.viewportRect = image.Rect(0, 0, 160, 120)
+	st.pdfDoc.configure(viewerPDFDocInfo{PageCount: pages, PageSizes: sizes})
+	return st
+}
+
+func TestPerformFileViewerKeyScrollPDFDownArrowScrollsCombinedDocument(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	now := time.Date(2026, time.April, 11, 15, 0, 0, 0, time.UTC)
+	st := testPDFDocViewerState(3)
 	ui.fileViewer = st
 
 	if !ui.performFileViewerKeyScroll(now, key.NameDownArrow) {
-		t.Fatal("Down should scroll within the current PDF page before paging")
+		t.Fatal("Down should scroll the PDF document")
 	}
-	if st.imageView.scrollY <= 0 {
-		t.Fatalf("scrollY=%d want > 0", st.imageView.scrollY)
-	}
-	if st.status == "rendering page 2/3" {
-		t.Fatal("Down should not start a new page render while the page can still scroll")
+	if st.pdfDoc.scrollY <= 0 {
+		t.Fatalf("scrollY=%f want > 0", st.pdfDoc.scrollY)
 	}
 }
 
-func TestPerformFileViewerKeyScrollPDFDownArrowPagesAtBottom(t *testing.T) {
-	prev := viewerPDFPreviewBackend
-	fake := &fakeViewerPDFRenderer{
-		available: true,
-		result: viewerPDFRenderResult{
-			Image:     image.NewNRGBA(image.Rect(0, 0, 120, 180)),
-			Page:      1,
-			PageCount: 3,
-			Size:      image.Pt(120, 180),
-		},
-	}
-	viewerPDFPreviewBackend = fake
-	t.Cleanup(func() {
-		viewerPDFPreviewBackend = prev
-	})
-
+func TestPerformFileViewerKeyScrollPDFCrossesPageBoundary(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	now := time.Date(2026, time.April, 11, 15, 0, 0, 0, time.UTC)
-	st := &fileViewerState{
-		mode:                  "file",
-		detectedImagePreview:  true,
-		imagePreview:          image.NewNRGBA(image.Rect(0, 0, 400, 600)),
-		imagePreviewData:      []byte("%PDF-1.7"),
-		imagePreviewFormat:    "pdf",
-		imagePreviewPage:      0,
-		imagePreviewPageCount: 3,
-		previewRenderCh:       make(chan fileViewerPreviewRenderResult, 1),
-		seq:                   5,
-	}
-	st.imageView.zoom = 1
-	st.imageView.viewportRect = image.Rect(0, 0, 160, 120)
-	_, maxY := st.imageView.maxScroll(st.imagePreview)
-	st.imageView.scrollY = maxY
+	st := testPDFDocViewerState(3)
 	ui.fileViewer = st
 
-	if !ui.performFileViewerKeyScroll(now, key.NameDownArrow) {
-		t.Fatal("Down should move to the next PDF page at the bottom edge")
-	}
-	if got := st.status; got != "rendering page 2/3" {
-		t.Fatalf("status=%q want %q", got, "rendering page 2/3")
-	}
-	select {
-	case res := <-st.previewRenderCh:
-		if res.page != 1 {
-			t.Fatalf("rendered page=%d want 1", res.page)
+	// Scroll down until the current page changes; combined scrolling must
+	// cross the page boundary without any page-flip render.
+	for i := 0; i < 100 && st.pdfDoc.currentPage() == 0; i++ {
+		if !ui.performFileViewerKeyScroll(now, key.NamePageDown) {
+			break
 		}
-		if res.scrollToEnd {
-			t.Fatal("Down edge paging should open the next page at the top")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for pdf page render result")
 	}
-	if len(fake.requests) != 1 {
-		t.Fatalf("render requests=%d want 1", len(fake.requests))
-	}
-	if got := fake.requests[0].Page; got != 1 {
-		t.Fatalf("requested page=%d want 1", got)
+	if got := st.pdfDoc.currentPage(); got == 0 {
+		t.Fatal("PageDown should eventually reach the next page in the combined document")
 	}
 }
 
-func TestPerformFileViewerKeyScrollPDFUpArrowPagesAtTopToPreviousPageEnd(t *testing.T) {
-	prev := viewerPDFPreviewBackend
-	fake := &fakeViewerPDFRenderer{
-		available: true,
-		result: viewerPDFRenderResult{
-			Image:     image.NewNRGBA(image.Rect(0, 0, 120, 180)),
-			Page:      0,
-			PageCount: 3,
-			Size:      image.Pt(120, 180),
-		},
-	}
-	viewerPDFPreviewBackend = fake
-	t.Cleanup(func() {
-		viewerPDFPreviewBackend = prev
-	})
-
+func TestPerformFileViewerKeyScrollPDFEndJumpsToDocumentEnd(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	now := time.Date(2026, time.April, 11, 15, 0, 0, 0, time.UTC)
-	st := &fileViewerState{
-		mode:                  "file",
-		detectedImagePreview:  true,
-		imagePreview:          image.NewNRGBA(image.Rect(0, 0, 400, 600)),
-		imagePreviewData:      []byte("%PDF-1.7"),
-		imagePreviewFormat:    "pdf",
-		imagePreviewPage:      1,
-		imagePreviewPageCount: 3,
-		previewRenderCh:       make(chan fileViewerPreviewRenderResult, 1),
-		seq:                   8,
-	}
-	st.imageView.zoom = 1
-	st.imageView.viewportRect = image.Rect(0, 0, 160, 120)
+	st := testPDFDocViewerState(3)
 	ui.fileViewer = st
 
-	if !ui.performFileViewerKeyScroll(now, key.NameUpArrow) {
-		t.Fatal("Up should move to the previous PDF page at the top edge")
+	if !ui.performFileViewerKeyScroll(now, key.NameEnd) {
+		t.Fatal("End should scroll to the end of the document")
 	}
-	if got := st.status; got != "rendering page 1/3" {
-		t.Fatalf("status=%q want %q", got, "rendering page 1/3")
+	_, maxY := st.pdfDoc.maxScroll()
+	if got := st.pdfDoc.scrollY; got != maxY {
+		t.Fatalf("scrollY=%f want %f (combined document end)", got, maxY)
 	}
-	select {
-	case res := <-st.previewRenderCh:
-		if res.page != 0 {
-			t.Fatalf("rendered page=%d want 0", res.page)
-		}
-		if !res.scrollToEnd {
-			t.Fatal("Up edge paging should open the previous page at the bottom")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for pdf page render result")
+	if got := st.pdfDoc.currentPage(); got != 2 {
+		t.Fatalf("currentPage=%d want 2", got)
 	}
-	if len(fake.requests) != 1 {
-		t.Fatalf("render requests=%d want 1", len(fake.requests))
+	if !ui.performFileViewerKeyScroll(now, key.NameHome) {
+		t.Fatal("Home should scroll back to the start")
 	}
-	if got := fake.requests[0].Page; got != 0 {
-		t.Fatalf("requested page=%d want 0", got)
+	if got := st.pdfDoc.scrollY; got != 0 {
+		t.Fatalf("scrollY=%f want 0", got)
 	}
 }
 
-func TestScrollFileViewerPDFWheelPagesAtBottom(t *testing.T) {
-	prev := viewerPDFPreviewBackend
-	fake := &fakeViewerPDFRenderer{
-		available: true,
-		result: viewerPDFRenderResult{
-			Image:     image.NewNRGBA(image.Rect(0, 0, 120, 180)),
-			Page:      1,
-			PageCount: 3,
-			Size:      image.Pt(120, 180),
-		},
-	}
-	viewerPDFPreviewBackend = fake
-	t.Cleanup(func() {
-		viewerPDFPreviewBackend = prev
-	})
+func TestPDFDocWheelScrollsAcrossPages(t *testing.T) {
+	st := testPDFDocViewerState(2)
+	v := &st.pdfDoc
 
-	ui := NewUI(fm.DefaultConfig())
-	now := time.Date(2026, time.April, 11, 15, 0, 0, 0, time.UTC)
-	st := &fileViewerState{
-		mode:                  "file",
-		detectedImagePreview:  true,
-		imagePreview:          image.NewNRGBA(image.Rect(0, 0, 400, 600)),
-		imagePreviewData:      []byte("%PDF-1.7"),
-		imagePreviewFormat:    "pdf",
-		imagePreviewPage:      0,
-		imagePreviewPageCount: 3,
-		previewRenderCh:       make(chan fileViewerPreviewRenderResult, 1),
-		seq:                   9,
+	if !v.scrollWheelY(3) {
+		t.Fatal("wheel should scroll the document")
 	}
-	st.imageView.zoom = 1
-	st.imageView.viewportRect = image.Rect(0, 0, 160, 120)
-	_, maxY := st.imageView.maxScroll(st.imagePreview)
-	st.imageView.scrollY = maxY
-	ui.fileViewer = st
-
-	if !ui.scrollFileViewerPDFWheel(now, st, fileViewerImageWheelDeltaStep) {
-		t.Fatal("wheel down should move to the next PDF page at the bottom edge")
+	if v.scrollY <= 0 {
+		t.Fatalf("scrollY=%f want > 0", v.scrollY)
 	}
-	if got := st.status; got != "rendering page 2/3" {
-		t.Fatalf("status=%q want %q", got, "rendering page 2/3")
+	before := v.scrollY
+	for i := 0; i < 10000 && v.scrollWheelY(3); i++ {
 	}
-	select {
-	case res := <-st.previewRenderCh:
-		if res.page != 1 {
-			t.Fatalf("rendered page=%d want 1", res.page)
-		}
-		if res.scrollToEnd {
-			t.Fatal("wheel down edge paging should open the next page at the top")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for pdf wheel render result")
+	_, maxY := v.maxScroll()
+	if v.scrollY != maxY {
+		t.Fatalf("scrollY=%f want %f after exhausting wheel scroll", v.scrollY, maxY)
 	}
-}
-
-func TestScrollFileViewerPDFWheelUsesKeyStepDistance(t *testing.T) {
-	ui := NewUI(fm.DefaultConfig())
-	now := time.Date(2026, time.April, 11, 15, 0, 0, 0, time.UTC)
-	st := &fileViewerState{
-		mode:                  "file",
-		detectedImagePreview:  true,
-		imagePreview:          image.NewNRGBA(image.Rect(0, 0, 400, 600)),
-		imagePreviewFormat:    "pdf",
-		imagePreviewPage:      0,
-		imagePreviewPageCount: 3,
-	}
-	st.imageView.zoom = 1
-	st.imageView.viewportRect = image.Rect(0, 0, 160, 120)
-	ui.fileViewer = st
-
-	if !ui.scrollFileViewerPDFWheel(now, st, fileViewerImageWheelDeltaStep) {
-		t.Fatal("wheel step should scroll within the current PDF page")
-	}
-	if got := st.imageView.scrollY; got != fileViewerImageKeyStepPx {
-		t.Fatalf("scrollY=%d want %d", got, fileViewerImageKeyStepPx)
-	}
-	if got := st.status; got == "rendering page 2/3" {
-		t.Fatal("wheel step should not page while the current page can still scroll")
+	if v.scrollY <= before {
+		t.Fatal("wheel scrolling should have crossed into the second page")
 	}
 }

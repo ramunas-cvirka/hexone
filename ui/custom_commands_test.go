@@ -4,16 +4,48 @@
 package ui
 
 import (
+	"hexone/filesys"
+	"image"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"gioui.org/io/input"
 	"gioui.org/io/key"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"hexone/fm"
 )
+
+func TestCustomCommandEditorFieldsAlignWithSlotList(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openCustomCommandEditor(-1)
+	st := ui.customCommandEditor
+	if st == nil {
+		t.Fatal("custom command editor should open")
+	}
+	st.ensureCommandClicks(10)
+	th := material.NewTheme()
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(520, 600),
+		},
+	}
+
+	list := ui.layoutCustomCommandEditorList(th, gtx, st)
+	gtx.Ops.Reset()
+	fields := ui.layoutCustomCommandEditorFields(th, gtx, st)
+	if fields.Size.Y != list.Size.Y {
+		t.Fatalf("custom command columns differ in height: fields=%d list=%d", fields.Size.Y, list.Size.Y)
+	}
+}
 
 func TestSaveCurrentCustomCommandKeepsEditorOpen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
@@ -275,5 +307,40 @@ func TestCustomCommandEditorPreLayoutConsumesArrowKeys(t *testing.T) {
 	}
 	if _, ok := gtx.Event(key.Filter{Name: key.NameDownArrow, Optional: anyMods}); ok {
 		t.Fatal("custom command editor should consume arrow keys before file panes see them")
+	}
+}
+
+func TestCustomCommandEditorBlocksUnderlyingFilePaneKeys(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: ".",
+		Entries: []filesys.Entry{
+			{Name: "alpha.txt", Path: "alpha.txt"},
+			{Name: "beta.txt", Path: "beta.txt"},
+		},
+	}, "", "", 0)
+	ui.openCustomCommandEditor(-1)
+	if ui.customCommandEditor == nil {
+		t.Fatal("custom command editor should open")
+	}
+
+	gtx, router := testKeyContext()
+	for _, filter := range ui.fileKeys.Filters() {
+		router.Event(filter)
+	}
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	ui.handleFileManagerKeys(gtx)
+	if got := pane.table.Selected; got != 0 {
+		t.Fatalf("file pane selection moved behind custom command editor: row=%d", got)
+	}
+	if ui.HandlePlatformInsertKey(time.Now()) {
+		t.Fatal("Insert should not reach the file pane while custom commands is open")
+	}
+	if ui.handleFileManagerSelectAll(time.Now()) {
+		t.Fatal("Select All should not reach the file pane while custom commands is open")
+	}
+	if pane.hasMarkedRows() {
+		t.Fatal("file pane rows were marked behind custom command editor")
 	}
 }

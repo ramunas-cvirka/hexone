@@ -356,7 +356,7 @@ func (ui *UI) functionBarToolsFill() float32 {
 	if ui.functionBarToolsOpen {
 		return 1
 	}
-	if ui.settingsModal != nil || ui.Tabs.Value == "tab1" || ui.Tabs.Value == "tab2" {
+	if ui.settingsModal != nil || ui.sshModal != nil || ui.Tabs.Value == "tab1" || ui.Tabs.Value == "tab2" {
 		return 0.7
 	}
 	return 0
@@ -1078,6 +1078,8 @@ func (ui *UI) functionBarToolSpecs() []functionBarToolSpec {
 		active = "files"
 	case ui.settingsModal != nil:
 		active = "settings"
+	case ui.sshModal != nil:
+		active = "ssh"
 	case ui.Tabs.Value == "tab1":
 		active = "hex"
 	case ui.Tabs.Value == "tab2":
@@ -1085,6 +1087,7 @@ func (ui *UI) functionBarToolSpecs() []functionBarToolSpec {
 	}
 	return []functionBarToolSpec{
 		{key: "multi-rename", label: "Multi-Rename", shortcut: "Ctrl+M"},
+		{key: "ssh", label: "SSH Setup", shortcut: "Ctrl+F", active: active == "ssh"},
 		{key: "hex", label: "Hex to ASCII", active: active == "hex"},
 		{key: "protocol", label: "Protocol Analyzer", active: active == "protocol"},
 		{key: "settings", label: "Settings", shortcut: "Ctrl+S", active: active == "settings"},
@@ -1183,6 +1186,8 @@ func (ui *UI) activateFunctionBarTool(key string, now time.Time) {
 	switch key {
 	case "multi-rename":
 		ui.startMultiRename(ui.activeFilePane, now)
+	case "ssh":
+		ui.openSSHModal()
 	case "files":
 		ui.setActiveTab("tab0", now)
 	case "hex":

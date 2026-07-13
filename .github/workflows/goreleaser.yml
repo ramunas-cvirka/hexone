@@ -73,7 +73,7 @@ jobs:
           path: dist/hexone_macos_arm64.dmg
 
   package-windows-msix:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     needs: test
 
     steps:
@@ -87,24 +87,26 @@ jobs:
         with:
           go-version: '1.26'
 
-      - name: Install Windows cross-build dependencies
+      - name: Install Windows build dependencies
+        shell: pwsh
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            binutils-mingw-w64-x86-64 \
-            gcc-mingw-w64-x86-64 \
-            zip
-
-      - name: Install nFPM
-        run: |
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
-          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+          choco install make mingw --no-progress -y
+          $windres = @(
+            'C:\ProgramData\chocolatey\lib\mingw',
+            'C:\ProgramData\mingw64'
+          ) | Where-Object { Test-Path $_ } |
+            ForEach-Object { Get-ChildItem $_ -Filter windres.exe -Recurse -ErrorAction SilentlyContinue } |
+            Select-Object -First 1
+          if (-not $windres) {
+            throw "windres.exe was not installed"
+          }
+          $windres.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build Windows Store MSIX package
         env:
-          HEXONE_MSIX_PUBLISHER: ${{ vars.HEXONE_MSIX_PUBLISHER || 'CN=Ramunas Cvirka' }}
-          HEXONE_MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.HEXONE_MSIX_PUBLISHER_DISPLAY_NAME || 'Ramunas Cvirka' }}
-        run: packaging/windows/build_msix.sh dist/hexone_windows_amd64.msix
+          HEXONE_MSIX_IDENTITY_NAME: ${{ vars.HEXONE_MSIX_IDENTITY_NAME || 'RamnasCvirka.hexone' }}
+          HEXONE_MSIX_PUBLISHER: ${{ vars.HEXONE_MSIX_PUBLISHER || 'CN=F267E84A-8585-42BC-92A8-D98FDFEA2938' }}
+        run: make package-windows-msix MSIX_DEV_SIGN=false
 
       - name: Upload Windows MSIX for GoReleaser
         uses: actions/upload-artifact@v4

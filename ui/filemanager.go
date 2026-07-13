@@ -68,23 +68,21 @@ func (m *filePaneModel) Entry(row int) *filesys.Entry {
 
 func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 	entry := m.entries[r]
-	st := table.CellStyle{Color: m.paneTextColor(), Weight: font.Medium}
+	st := table.CellStyle{Color: m.paneTextColor(), Weight: m.filePaneFileWeight()}
 
 	switch entry.Kind {
-	case filesys.EntryDir, filesys.EntryParent:
-		st.Color = color.NRGBA{R: 170, G: 200, B: 255, A: 255}
 	case filesys.EntryBroken:
 		st.Color = color.NRGBA{R: 255, G: 120, B: 120, A: 255}
 	}
 	if c == 0 {
 		switch entry.Kind {
 		case filesys.EntryDir, filesys.EntryParent, filesys.EntryBroken:
-			st.Weight = font.Bold
+			st.Weight = m.filePaneDirWeight()
 		}
-		if visual := m.filenameVisual(r); visual.hasColor {
-			st.Color = visual.color
-			st.PreserveColor = true
-		}
+	}
+	if visual := m.filenameVisual(r); visual.hasColor {
+		st.Color = visual.color
+		st.PreserveColor = true
 	}
 
 	showPerms := m.showPermissionColumn()
@@ -93,15 +91,20 @@ func (m *filePaneModel) Cell(r, c int) (string, table.CellStyle) {
 		return m.filePaneEntryNameCell(entry, st, 0)
 	case 1:
 		if showPerms {
+			st.Weight = m.filePanePermissionsWeight()
 			return m.defaultPermissionText(entry), st
 		}
+		st.Weight = m.filePaneSizeWeight()
 		return entry.SizeText, st
 	case 2:
 		if showPerms {
+			st.Weight = m.filePaneSizeWeight()
 			return entry.SizeText, st
 		}
+		st.Weight = m.filePaneDateWeight()
 		return entry.DateText, st
 	default:
+		st.Weight = m.filePaneDateWeight()
 		return entry.DateText, st
 	}
 }
@@ -140,6 +143,52 @@ func (m *filePaneModel) paneTextColor() color.NRGBA {
 		return m.baseTextColor
 	}
 	return txtColor
+}
+
+func filePaneFontWeight(raw string, fallback font.Weight) font.Weight {
+	switch fm.NormalizeFontWeight(raw, fm.FontWeightRegular) {
+	case fm.FontWeightRegular:
+		return font.Normal
+	case fm.FontWeightBold:
+		return font.Bold
+	default:
+		return fallback
+	}
+}
+
+func (m *filePaneModel) filePaneFileWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Normal
+	}
+	return filePaneFontWeight(m.cfg.General.FileWeight, font.Normal)
+}
+
+func (m *filePaneModel) filePaneDirWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Bold
+	}
+	return filePaneFontWeight(m.cfg.General.DirWeight, font.Bold)
+}
+
+func (m *filePaneModel) filePanePermissionsWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Normal
+	}
+	return filePaneFontWeight(m.cfg.General.PermissionsWeight, font.Normal)
+}
+
+func (m *filePaneModel) filePaneSizeWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Normal
+	}
+	return filePaneFontWeight(m.cfg.General.SizeWeight, font.Normal)
+}
+
+func (m *filePaneModel) filePaneDateWeight() font.Weight {
+	if m == nil || m.cfg == nil {
+		return font.Normal
+	}
+	return filePaneFontWeight(m.cfg.General.DateWeight, font.Normal)
 }
 
 func (m *filePaneModel) permissionFormat() string {
@@ -198,9 +247,17 @@ func (m *filePaneModel) LeadingIcon(r, c int) (table.LeadingIcon, bool) {
 			Color: color.NRGBA{R: 214, G: 186, B: 96, A: 255},
 		}, true
 	case filesys.EntryDir:
+		baseColor := color.NRGBA{R: 205, G: 176, B: 88, A: 255}
+		if visual := m.filenameVisual(r); visual.iconKey != "" {
+			return table.LeadingIcon{
+				Kind:   table.IconFolder,
+				Color:  baseColor,
+				Widget: filenameRuleIcon(visual.iconKey),
+			}, true
+		}
 		return table.LeadingIcon{
 			Kind:  table.IconFolder,
-			Color: color.NRGBA{R: 205, G: 176, B: 88, A: 255},
+			Color: baseColor,
 		}, true
 	case filesys.EntryBroken:
 		return table.LeadingIcon{
@@ -312,6 +369,11 @@ type filePaneState struct {
 	favoriteRevealHideAt  time.Time
 	favoritePointerPos    image.Point
 	favoritePointerPosSet bool
+	favoriteOrderOpen     bool
+	favoriteOrderIndex    int
+	favoriteOrderPos      image.Point
+	favoriteOrderRect     image.Rectangle
+	favoriteOrderClicks   [2]widget.Clickable
 	headerHeight          int
 	ctxPointerTag         uiEventTag
 	ctxMenuClicks         map[string]*widget.Clickable
@@ -375,6 +437,7 @@ type filePaneLoadResult struct {
 	fallbackRow   int
 	restorePos    layout.Position
 	restoreScroll bool
+	ensureVisible bool
 	restoreAnchor string
 	noticeText    string
 	noticeDur     time.Duration
@@ -387,6 +450,7 @@ type filePaneApplyOptions struct {
 	fallbackRow         int
 	restorePos          layout.Position
 	restoreScroll       bool
+	ensureVisible       bool
 	restoreAnchor       string
 	preserveMarks       bool
 	preserveNotice      bool
@@ -401,6 +465,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 		return scaleFilePaneDp(cfg, v)
 	}
 	fullPad := unit.Dp(fm.ColumnPadDp())
+	fullGap := scaleDp(fm.FullColumnGapDp())
 	dropPriority := filePaneFullDropPriority(cfg)
 	cols := []table.Column{
 		{
@@ -419,6 +484,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 			Flex:         false,
 			Align:        table.AlignStart,
 			PadX:         fullPad,
+			GapBefore:    fullGap,
 			DropPriority: dropPriority["permissions"],
 		})
 	}
@@ -429,6 +495,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 			Flex:         false,
 			Align:        table.AlignEnd,
 			PadX:         fullPad,
+			GapBefore:    fullGap,
 			DropPriority: dropPriority["size"],
 		},
 		table.Column{
@@ -437,6 +504,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 			Flex:         false,
 			Align:        table.AlignStart,
 			PadX:         fullPad,
+			GapBefore:    fullGap,
 			DropPriority: dropPriority["date"],
 		},
 	)
@@ -469,13 +537,13 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	palette := filePanePaletteFromConfig(cfg)
 	pane.table.Bg = palette.PaneBg
 	pane.table.HoverBg = palette.HoverBg
-	pane.table.HoverFg = &palette.HoverFg
+	pane.table.HoverFg = filePaneRowTextOverride(palette.HoverFg)
 	pane.table.MarkedBg = palette.MarkedBg
-	pane.table.MarkedFg = &palette.MarkedFg
+	pane.table.MarkedFg = filePaneRowTextOverride(palette.MarkedFg)
 	pane.table.SelectedBg = palette.SelectedBg
 	pane.table.MarkedSelBg = palette.MarkedSelBg
-	pane.table.MarkedSelFg = &palette.MarkedSelFg
-	pane.table.SelectedFg = &palette.SelectedFg
+	pane.table.MarkedSelFg = filePaneRowTextOverride(palette.MarkedSelFg)
+	pane.table.SelectedFg = filePaneRowTextOverride(palette.SelectedFg)
 	pane.table.ScrollbarWidth = scaleDp(10)
 	pane.table.ScrollbarMinThumb = scaleDp(22)
 	pane.table.ScrollbarTrack = palette.ScrollTrack
@@ -491,6 +559,13 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 		pane.localDirBeforeRemote = pane.dir
 	}
 	return pane
+}
+
+func filePaneRowTextOverride(c color.NRGBA) *color.NRGBA {
+	if c.A == 0 {
+		return nil
+	}
+	return &c
 }
 
 func filePaneFullDropPriority(cfg *fm.Config) map[string]int {
@@ -588,12 +663,17 @@ func (p *filePaneState) applyListing(listing filesys.Listing, primaryPath, secon
 }
 
 func (p *filePaneState) applyListingWithRestore(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor string) {
+	p.applyListingWithRestoreAndVisibility(listing, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, false, restoreAnchor)
+}
+
+func (p *filePaneState) applyListingWithRestoreAndVisibility(listing filesys.Listing, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll, ensureVisible bool, restoreAnchor string) {
 	p.applyListingWithOptions(listing, filePaneApplyOptions{
 		primaryPath:   primaryPath,
 		secondaryPath: secondaryPath,
 		fallbackRow:   fallbackRow,
 		restorePos:    restorePos,
 		restoreScroll: restoreScroll,
+		ensureVisible: ensureVisible,
 		restoreAnchor: restoreAnchor,
 	})
 }
@@ -662,7 +742,7 @@ func (p *filePaneState) applyListingWithOptions(listing filesys.Listing, opts fi
 	} else {
 		p.table.List.Position = layout.Position{}
 	}
-	p.applySelection(opts.primaryPath, opts.secondaryPath, opts.fallbackRow, !opts.restoreScroll)
+	p.applySelection(opts.primaryPath, opts.secondaryPath, opts.fallbackRow, opts.ensureVisible || !opts.restoreScroll)
 	if opts.preserveMarks {
 		p.restoreMarkedPaths(markedPaths)
 	}
@@ -953,6 +1033,7 @@ func (p *filePaneState) closeFavoriteMenu() {
 	p.favoriteRevealHideAt = time.Time{}
 	p.favoritePointerPos = image.Point{}
 	p.favoritePointerPosSet = false
+	p.closeFavoriteOrderMenu()
 }
 
 func (p *filePaneState) openFavoriteMenu(now time.Time) {
@@ -970,6 +1051,31 @@ func (p *filePaneState) openFavoriteMenu(now time.Time) {
 	p.favoriteRevealHideAt = time.Time{}
 	p.favoritePointerPos = image.Point{}
 	p.favoritePointerPosSet = false
+	p.closeFavoriteOrderMenu()
+}
+
+func (p *filePaneState) closeFavoriteOrderMenu() {
+	if p == nil {
+		return
+	}
+	p.favoriteOrderOpen = false
+	p.favoriteOrderIndex = -1
+	p.favoriteOrderPos = image.Point{}
+	p.favoriteOrderRect = image.Rectangle{}
+	p.favoriteOrderClicks = [2]widget.Clickable{}
+}
+
+func (p *filePaneState) openFavoriteOrderMenu(index int, pos image.Point) {
+	if p == nil || index < 0 {
+		return
+	}
+	p.favoriteOrderOpen = true
+	p.favoriteOrderIndex = index
+	p.favoriteOrderPos = pos
+	p.favoriteOrderRect = image.Rectangle{}
+	p.favoriteOrderClicks = [2]widget.Clickable{}
+	p.favoriteRevealKey = ""
+	p.favoriteRevealHideAt = time.Time{}
 }
 
 func (p *filePaneState) closeSortMenu() {
@@ -1684,12 +1790,14 @@ func (p *filePaneState) contextMenuEntry() *filesys.Entry {
 }
 
 type fileFavoriteItem struct {
-	label      string
-	targetDir  string
-	addCurrent bool
-	active     bool
-	disabled   bool
-	removable  bool
+	label       string
+	targetDir   string
+	remoteKey   string
+	configIndex int
+	addCurrent  bool
+	active      bool
+	disabled    bool
+	removable   bool
 }
 
 func normalizeFavoriteLocation(raw string) string {
@@ -1784,6 +1892,14 @@ func displayRemoteFavoriteLocation(loc remoteFavoriteLocation) string {
 		base += ":" + strconv.Itoa(loc.Port)
 	}
 	return base + normalizeRemoteFavoriteDir(loc.Dir)
+}
+
+func remoteFavoriteHostIdentity(loc remoteFavoriteLocation) string {
+	return sshSetupIdentity(fm.SSHSetup{
+		User: loc.User,
+		Host: loc.Host,
+		Port: loc.Port,
+	})
 }
 
 func remoteFavoriteFromPane(pane *filePaneState) (string, bool) {
@@ -1883,7 +1999,7 @@ func (ui *UI) paneFavoriteItems(pane *filePaneState) []fileFavoriteItem {
 	if pane != nil {
 		current = normalizeFavoriteLocation(pane.dir)
 	}
-	for _, raw := range ui.fmCfg.FavoriteLocations {
+	for configIndex, raw := range ui.fmCfg.FavoriteLocations {
 		loc := normalizeFavoriteLocation(raw)
 		if loc == "" {
 			continue
@@ -1891,18 +2007,21 @@ func (ui *UI) paneFavoriteItems(pane *filePaneState) []fileFavoriteItem {
 		hasFavorites = true
 		if remoteLoc, ok := parseRemoteFavoriteLocation(loc); ok {
 			items = append(items, fileFavoriteItem{
-				label:     displayRemoteFavoriteLocation(remoteLoc),
-				targetDir: loc,
-				active:    paneMatchesRemoteFavorite(pane, remoteLoc),
-				removable: true,
+				label:       displayRemoteFavoriteLocation(remoteLoc),
+				targetDir:   loc,
+				remoteKey:   remoteFavoriteHostIdentity(remoteLoc),
+				configIndex: configIndex,
+				active:      paneMatchesRemoteFavorite(pane, remoteLoc),
+				removable:   true,
 			})
 			continue
 		}
 		items = append(items, fileFavoriteItem{
-			label:     loc,
-			targetDir: loc,
-			active:    !pane.remoteConnected() && current != "" && favoriteLocationEqual(loc, current),
-			removable: true,
+			label:       loc,
+			targetDir:   loc,
+			configIndex: configIndex,
+			active:      !pane.remoteConnected() && current != "" && favoriteLocationEqual(loc, current),
+			removable:   true,
 		})
 	}
 	if !hasFavorites {
@@ -1995,6 +2114,29 @@ func (ui *UI) removeFavoriteLocation(raw string) (bool, error) {
 	ui.fmCfg.FavoriteLocations = next
 	if err := ui.saveFMConfigWithOptions("favorites-remove", false); err != nil {
 		ui.fmCfg.FavoriteLocations = prev
+		return false, err
+	}
+	return true, nil
+}
+
+func (ui *UI) moveFavoriteLocation(index, step int) (bool, error) {
+	if ui == nil {
+		return false, nil
+	}
+	if err := ui.ensureFMConfigLoaded(); err != nil {
+		return false, err
+	}
+	if ui.fmCfg == nil || step == 0 || index < 0 || index >= len(ui.fmCfg.FavoriteLocations) {
+		return false, nil
+	}
+	nextIndex := index + step
+	if nextIndex < 0 || nextIndex >= len(ui.fmCfg.FavoriteLocations) {
+		return false, nil
+	}
+	previous := append([]string(nil), ui.fmCfg.FavoriteLocations...)
+	ui.fmCfg.FavoriteLocations[index], ui.fmCfg.FavoriteLocations[nextIndex] = ui.fmCfg.FavoriteLocations[nextIndex], ui.fmCfg.FavoriteLocations[index]
+	if err := ui.saveFMConfigWithOptions("favorites-reorder", false); err != nil {
+		ui.fmCfg.FavoriteLocations = previous
 		return false, err
 	}
 	return true, nil
@@ -2149,7 +2291,11 @@ func (m *filePaneModel) approxChars(widthPx, reservePx int) int {
 	if widthPx <= reservePx {
 		return 0
 	}
-	return (widthPx - reservePx) / m.approxCharPx()
+	charWidth := float32(filePaneApproxCharPx) * filePaneFontScale(m.cfg)
+	if charWidth <= 0 {
+		charWidth = filePaneApproxCharPx
+	}
+	return int(float32(widthPx-reservePx) / charWidth)
 }
 
 func (m *filePaneModel) nameOrEmpty(text string, widthPx int) string {
@@ -2513,38 +2659,38 @@ func (p *filePaneState) applySort(preservePath string) {
 		return
 	}
 	markedPaths := p.markedPaths()
-	p.model.rebuildFilenameVisuals(time.Now())
 
 	start := 0
 	if p.model.entries[0].Kind == filesys.EntryParent {
 		start = 1
 	}
-	if start >= len(p.model.entries) {
-		return
-	}
 
-	rows := p.model.entries[start:]
-	sort.SliceStable(rows, func(i, j int) bool {
-		a := rows[i]
-		b := rows[j]
+	if start < len(p.model.entries) {
+		rows := p.model.entries[start:]
+		sort.SliceStable(rows, func(i, j int) bool {
+			a := rows[i]
+			b := rows[j]
 
-		if p.dirsFirst {
-			aDir := a.Kind == filesys.EntryDir
-			bDir := b.Kind == filesys.EntryDir
-			if aDir != bDir {
-				return aDir
+			if p.dirsFirst {
+				aDir := a.Kind == filesys.EntryDir
+				bDir := b.Kind == filesys.EntryDir
+				if aDir != bDir {
+					return aDir
+				}
 			}
-		}
 
-		cmp := compareFileEntries(a, b, p.sortKey)
-		if cmp == 0 {
-			cmp = compareFileEntries(a, b, fileSortName)
-		}
-		if p.sortDesc {
-			cmp = -cmp
-		}
-		return cmp < 0
-	})
+			cmp := compareFileEntries(a, b, p.sortKey)
+			if cmp == 0 {
+				cmp = compareFileEntries(a, b, fileSortName)
+			}
+			if p.sortDesc {
+				cmp = -cmp
+			}
+			return cmp < 0
+		})
+	}
+	p.model.rebuildFilenameVisuals(time.Now())
+
 	if preservePath != "" && p.table != nil {
 		if idx := p.findEntryPathIndex(preservePath); idx >= 0 {
 			p.table.SetSelected(idx, p.model.Len(), true)
@@ -2839,12 +2985,17 @@ func startLocalPaneLoad(pane *filePaneState, dir, primaryPath, secondaryPath str
 }
 
 func startLocalPaneLoadWithRestore(pane *filePaneState, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
+	return startLocalPaneLoadWithRestoreAndVisibility(pane, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, false, restoreAnchor, noticeText, noticeDur)
+}
+
+func startLocalPaneLoadWithRestoreAndVisibility(pane *filePaneState, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll, ensureVisible bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
 	return startLocalPaneLoadRequest(pane, dir, filePaneLoadResult{
 		primaryPath:   primaryPath,
 		secondaryPath: secondaryPath,
 		fallbackRow:   fallbackRow,
 		restorePos:    restorePos,
 		restoreScroll: restoreScroll,
+		ensureVisible: ensureVisible,
 		restoreAnchor: restoreAnchor,
 		noticeText:    noticeText,
 		noticeDur:     noticeDur,
@@ -2908,6 +3059,10 @@ func (ui *UI) requestPaneLoadWithSelection(idx int, dir, primaryPath, secondaryP
 }
 
 func (ui *UI) requestPaneLoadWithSelectionAndScroll(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
+	return ui.requestPaneLoadWithSelectionScrollAndVisibility(idx, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, false, restoreAnchor, noticeText, noticeDur)
+}
+
+func (ui *UI) requestPaneLoadWithSelectionScrollAndVisibility(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll, ensureVisible bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return false
 	}
@@ -2935,13 +3090,13 @@ func (ui *UI) requestPaneLoadWithSelectionAndScroll(idx int, dir, primaryPath, s
 		if restoreScroll {
 			pane.table.List.Position = restorePaneListPosition(pane.model.entries, restorePos, restoreAnchor)
 		}
-		pane.applySelection(primaryPath, secondaryPath, fallbackRow, !restoreScroll)
+		pane.applySelection(primaryPath, secondaryPath, fallbackRow, ensureVisible || !restoreScroll)
 		if noticeText != "" {
 			pane.setNoticeFor(noticeText, time.Now(), noticeDur)
 		}
 		return true
 	}
-	return startLocalPaneLoadWithRestore(pane, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, restoreAnchor, noticeText, noticeDur)
+	return startLocalPaneLoadWithRestoreAndVisibility(pane, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, ensureVisible, restoreAnchor, noticeText, noticeDur)
 }
 
 func (ui *UI) loadPaneDir(idx int, dir string) bool {
@@ -2982,7 +3137,7 @@ func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {
 				if res.background {
 					pane.applyListingRefresh(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreAnchor)
 				} else {
-					pane.applyListingWithRestore(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreScroll, res.restoreAnchor)
+					pane.applyListingWithRestoreAndVisibility(res.listing, res.primaryPath, res.secondaryPath, res.fallbackRow, res.restorePos, res.restoreScroll, res.ensureVisible, res.restoreAnchor)
 				}
 				if res.noticeText != "" {
 					pane.setNoticeFor(res.noticeText, gtx.Now, res.noticeDur)
@@ -3264,9 +3419,8 @@ func (ui *UI) queueFilePaneSystemOpen(idx, row int) {
 		return
 	}
 	ui.pendingFileOpen = &fileOpenRequest{
-		pane:           idx,
-		row:            row,
-		systemOpenOnly: true,
+		pane: idx,
+		row:  row,
 	}
 }
 
@@ -3276,11 +3430,10 @@ func (ui *UI) flushPendingFileOpen() bool {
 		return false
 	}
 	ui.pendingFileOpen = nil
-	if req.systemOpenOnly {
-		return ui.activateFilePaneDoubleClick(req.pane, req.row)
-	}
-	_ = ui.activateFilePaneRow(req.pane, req.row)
-	return true
+	// Keyboard activation and double-click intentionally share the same
+	// behavior: enter directories and archives, preview archive members, and
+	// launch ordinary local files through the platform association.
+	return ui.activateFilePaneDoubleClick(req.pane, req.row)
 }
 
 func (ui *UI) activateFilePaneDoubleClick(idx, row int) bool {

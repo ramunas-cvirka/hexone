@@ -9,6 +9,7 @@ import (
 	"image"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -55,6 +56,54 @@ func TestFilePaneTabsAddActivateAndClose(t *testing.T) {
 	}
 	if ui.closeFilePaneTab(0, 0) {
 		t.Fatal("closing the last tab should be ignored")
+	}
+}
+
+func TestDisconnectCurrentRemoteTabClosesItWhenAnotherTabExists(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	local := newFilePaneState(t.TempDir(), cfg)
+	remote := newFilePaneState("/srv/app", cfg)
+	remote.remote = &paneSSHSession{identity: "root@srv.test:22"}
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{remote},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{local, remote}, active: 1}},
+	}
+
+	if !ui.disconnectCurrentFilePaneTab(0, time.Now()) {
+		t.Fatal("disconnect should close the current remote tab")
+	}
+	if got, want := len(ui.filePaneTabs[0].tabs), 1; got != want {
+		t.Fatalf("tab count=%d want %d", got, want)
+	}
+	if ui.filePanes[0] != local {
+		t.Fatal("remaining local tab should become active")
+	}
+}
+
+func TestDisconnectLastRemoteTabKeepsItAndReturnsLocal(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	localDir := t.TempDir()
+	pane := newFilePaneState("/srv/app", cfg)
+	pane.localDirBeforeRemote = localDir
+	pane.remote = &paneSSHSession{identity: "root@srv.test:22"}
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{pane},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{pane}, active: 0}},
+	}
+
+	if !ui.disconnectCurrentFilePaneTab(0, time.Now()) {
+		t.Fatal("disconnect should convert the last remote tab to local")
+	}
+	if got, want := len(ui.filePaneTabs[0].tabs), 1; got != want {
+		t.Fatalf("tab count=%d want %d", got, want)
+	}
+	if pane.remoteConnected() {
+		t.Fatal("last tab should no longer be remote")
+	}
+	if got, want := pane.loadingDir, filepath.Clean(localDir); got != want {
+		t.Fatalf("local loading dir=%q want %q", got, want)
 	}
 }
 
@@ -361,6 +410,25 @@ func TestTabStripUsesConfiguredFont(t *testing.T) {
 	}
 }
 
+func TestFlatCloseButtonUsesCompactTabStyleGeometry(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	var click widget.Clickable
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(100, 100),
+		},
+	}
+
+	dims := ui.layoutFlatCloseButton(gtx, &click, false)
+	if want := image.Pt(20, 18); dims.Size != want {
+		t.Fatalf("flat close size=%v want %v", dims.Size, want)
+	}
+}
+
 func TestTerminalTabTitleUsesOSC7WorkingDirectory(t *testing.T) {
 	st := newTerminalSession(nil)
 	st.startDir = `C:\Users\me`
@@ -375,8 +443,68 @@ func TestTerminalTabTitleUsesRemoteOSC7WorkingDirectory(t *testing.T) {
 	st := newTerminalSession(nil)
 	st.writeOutput([]byte("\x1b]7;file://srv.test/var/log/app\x07"))
 
-	if got, want := terminalTabTitle(st), "srv.test:app"; got != want {
+	if got, want := terminalTabTitle(st), "app"; got != want {
 		t.Fatalf("terminal tab title=%q want %q", got, want)
+	}
+}
+
+func TestTerminalTabItemUsesConfiguredSSHNameAndHostIdentity(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.writeOutput([]byte("\x1b]7;file://root@srv.test/var/log/app\x07"))
+	cfg := fm.DefaultConfig()
+	cfg.SSH.Setups = []fm.SSHSetup{{Name: "production", User: "root", Host: "srv.test", Port: 22}}
+
+	item := terminalTabItem(st, cfg)
+	if got, want := item.title, "app"; got != want {
+		t.Fatalf("terminal tab title=%q want %q", got, want)
+	}
+	if got, want := item.remoteKey, "root@srv.test:22"; got != want {
+		t.Fatalf("terminal remote key=%q want %q", got, want)
+	}
+	if got, want := item.remoteTip, "production · root@srv.test:22"; got != want {
+		t.Fatalf("terminal remote tooltip=%q want %q", got, want)
+	}
+}
+
+func TestFilePaneRemoteTabPutsDirectoryBeforeHost(t *testing.T) {
+	pane := newFilePaneState("/var/log/app", fm.DefaultConfig())
+	pane.remote = &paneSSHSession{setup: fm.SSHSetup{Name: "production", User: "root", Host: "srv.test", Port: 22}}
+
+	item := filePaneTabItem(pane)
+	if got, want := item.title, "app"; got != want {
+		t.Fatalf("file pane tab title=%q want %q", got, want)
+	}
+	if got, want := item.remoteKey, "root@srv.test:22"; got != want {
+		t.Fatalf("file pane remote key=%q want %q", got, want)
+	}
+	pane.dir = "/"
+	if got, want := filePaneTabTitle(pane), "/"; got != want {
+		t.Fatalf("remote root tab title=%q want %q", got, want)
+	}
+}
+
+func TestRemoteHostAccentIsStablePerHost(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	first := ui.remoteHostAccent("root@one.test:22")
+	if got := ui.remoteHostAccent("ROOT@ONE.TEST:22"); got != first {
+		t.Fatalf("case-normalized host accent=%v want %v", got, first)
+	}
+	if second := ui.remoteHostAccent("root@two.test:22"); second == first {
+		t.Fatalf("different test hosts unexpectedly share accent %v", first)
+	}
+}
+
+func TestRemoteFavoriteCarriesSameHostIdentityIndicator(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.FavoriteLocations = []string{"ssh://root@srv.test:22/var/log/app"}
+	ui := &UI{fmCfg: cfg}
+
+	items := ui.paneFavoriteItems(nil)
+	if len(items) < 1 {
+		t.Fatal("expected remote favorite item")
+	}
+	if got, want := items[0].remoteKey, "root@srv.test:22"; got != want {
+		t.Fatalf("favorite remote key=%q want %q", got, want)
 	}
 }
 

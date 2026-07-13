@@ -230,6 +230,12 @@ func viewerSyntaxLexer(path, content string) chroma.Lexer {
 	if matchName == "" {
 		matchName = "view"
 	}
+	// An explicit plain-text extension is a stronger signal than Chroma's
+	// content analyser. Without this guard, code-like prose or logs saved as
+	// .txt can be guessed as an unrelated language and colored unpredictably.
+	if viewerPathIsExplicitPlainText(matchName) {
+		return nil
+	}
 	lexer := lexers.Match(matchName)
 	if viewerSyntaxIsFallbackLexer(lexer) {
 		lexer = nil
@@ -250,6 +256,15 @@ func viewerSyntaxLexer(path, content string) chroma.Lexer {
 		}
 	}
 	return lexer
+}
+
+func viewerPathIsExplicitPlainText(path string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".txt", ".text":
+		return true
+	default:
+		return false
+	}
 }
 
 func viewerSyntaxIsFallbackLexer(lexer chroma.Lexer) bool {

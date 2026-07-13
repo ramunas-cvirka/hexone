@@ -40,6 +40,43 @@ func TestComputeHexBytesPerLineGrowsWithWidth(t *testing.T) {
 	}
 }
 
+func TestHexSectionSeparatorsStayInsideEqualColumnGaps(t *testing.T) {
+	v := &hexViewerState{
+		offsetRect: image.Rect(6, 0, 70, 120),
+		hexRect:    image.Rect(91, 0, 211, 120),
+		textRect:   image.Rect(232, 0, 296, 120),
+	}
+	rects := hexSectionSeparatorRects(v)
+
+	if got, want := v.hexRect.Min.X-v.offsetRect.Max.X, v.textRect.Min.X-v.hexRect.Max.X; got != want {
+		t.Fatalf("column gaps differ: %d and %d", got, want)
+	}
+	if rects[0].Min.X <= v.offsetRect.Max.X || rects[0].Max.X >= v.hexRect.Min.X {
+		t.Fatalf("first separator %v overlaps a content hit-box", rects[0])
+	}
+	if rects[1].Min.X <= v.hexRect.Max.X || rects[1].Max.X >= v.textRect.Min.X {
+		t.Fatalf("second separator %v overlaps a content hit-box", rects[1])
+	}
+	for i, bounds := range [][2]int{{v.offsetRect.Max.X, v.hexRect.Min.X}, {v.hexRect.Max.X, v.textRect.Min.X}} {
+		leftPad := rects[i].Min.X - bounds[0]
+		rightPad := bounds[1] - rects[i].Max.X
+		if leftPad != rightPad {
+			t.Fatalf("separator %d padding differs: left=%d right=%d", i, leftPad, rightPad)
+		}
+	}
+}
+
+func TestHexSectionColumnGapProvidesOneCharacterPerSide(t *testing.T) {
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	gap := hexSectionColumnGap(gtx, 9)
+	if gap%2 != 1 {
+		t.Fatalf("column gap=%d want odd width for equal separator padding", gap)
+	}
+	if pad := (gap - 1) / 2; pad < 9 {
+		t.Fatalf("column side padding=%d want at least one 9px character", pad)
+	}
+}
+
 func TestFormatHexLineAndTextLine(t *testing.T) {
 	data := []byte{0x41, 0x00, 0x7A}
 	if got, want := formatHexLine(data, 4, 0), "41 00 7A   "; got != want {
@@ -114,6 +151,30 @@ func TestHexViewerComputeScrollbarUsesDragTopWhileDragging(t *testing.T) {
 	}
 }
 
+func TestHexDisplayStartFallsBackUntilJumpTargetIsBuffered(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     16 * 1000,
+		bytesPerLine: 16,
+		bufferStart:  0,
+		buffer:       make([]byte, 4096),
+		lastPaintTop: 2,
+		lastPaintSet: true,
+	}
+
+	start, fallback := v.displayStartWithFallback(700, 710)
+	if !fallback || start != 2 {
+		t.Fatalf("unbuffered jump display=(%d,%v) want last painted top 2", start, fallback)
+	}
+
+	start, fallback = v.displayStartWithFallback(4, 14)
+	if fallback || start != 4 {
+		t.Fatalf("buffered display=(%d,%v) want target top 4", start, fallback)
+	}
+	if !v.lastPaintSet || v.lastPaintTop != 4 {
+		t.Fatalf("last painted state=(%d,%v) want 4,true", v.lastPaintTop, v.lastPaintSet)
+	}
+}
+
 func TestHexScrollTooltipMeasurementExpandsPastOldFixedWidth(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
@@ -180,7 +241,7 @@ func TestHexPrepareVisualScrollSnapsLargeJump(t *testing.T) {
 	}
 }
 
-func TestHexPrepareVisualScrollAnimatesDuringSelectionAutoScroll(t *testing.T) {
+func TestHexPrepareVisualScrollSnapsDuringSelectionAutoScroll(t *testing.T) {
 	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
 	v := &hexViewerState{
 		fileSize:         4096,
@@ -190,18 +251,20 @@ func TestHexPrepareVisualScrollAnimatesDuringSelectionAutoScroll(t *testing.T) {
 		topLine:          0,
 		selecting:        true,
 		autoScrollActive: true,
+		autoScrollDir:    1,
+		autoScrollStep:   4,
 	}
 	v.syncVisualTop()
 	v.topLine = 7
 
-	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); !animating {
-		t.Fatal("prepareVisualScroll should keep smoothing active during hex selection autoscroll")
+	if animating := v.prepareVisualScroll(now.Add(streamSmoothTick), true); animating {
+		t.Fatal("hex selection autoscroll should bypass smooth scrolling")
 	}
-	if v.visualTop <= 0 || v.visualTop >= 7 {
-		t.Fatalf("visualTop=%v want between 0 and 7", v.visualTop)
+	if v.visualTop != 7 {
+		t.Fatalf("visualTop=%v want snapped target 7", v.visualTop)
 	}
-	if lag := float64(v.topLine) - v.visualTop; lag > streamSmoothAutoMaxLag+0.01 {
-		t.Fatalf("autoscroll visual lag=%v want <= %v", lag, streamSmoothAutoMaxLag)
+	if v.displayTop != 7 || v.displayY != 0 {
+		t.Fatalf("display state=%d/%d want snapped 7/0", v.displayTop, v.displayY)
 	}
 }
 
@@ -331,7 +394,7 @@ func TestHexViewerRunAutoScrollScrollsAndExtendsSelection(t *testing.T) {
 	}
 }
 
-func TestHexRunAutoScrollDoesNotSnapVisualTop(t *testing.T) {
+func TestHexRunAutoScrollSnapsVisualTopBeforeRender(t *testing.T) {
 	now := time.Date(2026, time.March, 8, 12, 0, 0, 0, time.UTC)
 	v := &hexViewerState{
 		fileSize:         16000,
@@ -361,5 +424,11 @@ func TestHexRunAutoScrollDoesNotSnapVisualTop(t *testing.T) {
 	}
 	if v.visualTop != 1 {
 		t.Fatalf("visualTop=%v want preserved previous display position 1", v.visualTop)
+	}
+	if animating := v.prepareVisualScroll(now, true); animating {
+		t.Fatal("hex selection autoscroll should not schedule a smooth animation")
+	}
+	if v.visualTop != 5 {
+		t.Fatalf("visualTop=%v want snapped logical top 5", v.visualTop)
 	}
 }

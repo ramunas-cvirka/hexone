@@ -27,7 +27,7 @@ func TestBundledNerdFontFamilies(t *testing.T) {
 		if !IsBundledFontFamily(name) {
 			t.Fatalf("%q should be a bundled font family", name)
 		}
-		for _, path := range []string{families[i].RegularPath, families[i].MediumPath, families[i].BoldPath} {
+		for _, path := range []string{families[i].RegularPath, families[i].BoldPath} {
 			data, ok := BundledFont(path)
 			if !ok {
 				t.Fatalf("%q should resolve to embedded bytes", path)

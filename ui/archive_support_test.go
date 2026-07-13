@@ -103,6 +103,37 @@ func TestDoubleClickArchiveFileNavigatesIntoArchive(t *testing.T) {
 	}
 }
 
+func TestEnterActivationLaunchesOrdinaryLocalFile(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(filePath, []byte("hello"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	oldOpen := openFileWithSystemAssociationFunc
+	defer func() { openFileWithSystemAssociationFunc = oldOpen }()
+	opened := ""
+	openFileWithSystemAssociationFunc = func(path string) error {
+		opened = path
+		return nil
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	pane.dir = root
+	pane.model = &filePaneModel{entries: []filesys.Entry{{
+		Path: filePath, DisplayName: "notes.txt", Kind: filesys.EntryFile,
+	}}, cfg: ui.fmCfg}
+	pane.table.Selected = 0
+	ui.queueFilePaneOpen(0, 0)
+	if !ui.flushPendingFileOpen() {
+		t.Fatal("Enter activation should be handled")
+	}
+	if opened != filePath {
+		t.Fatalf("opened path=%q want %q", opened, filePath)
+	}
+}
+
 func TestRunCopyBetweenEndpointsCopiesArchiveMember(t *testing.T) {
 	root := t.TempDir()
 	archivePath := filepath.Join(root, "bundle.zip")

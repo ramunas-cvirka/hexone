@@ -52,15 +52,15 @@ func filePanePaletteFromConfig(cfg *fm.Config) filePanePalette {
 		bg = parseConfigColorHexFallback(cfg.Colors.FilePaneBackground, fm.DefaultFilePaneBackgroundHex)
 		fg = parseConfigColorHexFallback(cfg.Colors.FilePaneText, fm.DefaultFilePaneTextHex)
 		hover = parseConfigColorHexFallback(cfg.Colors.Hover, fm.DefaultFilePaneHoverHex)
-		hoverFg = parseConfigColorHexFallback(cfg.Colors.HoverText, fm.DefaultFilePaneHoverTextHex)
+		hoverFg = parseConfigColorHexTransparentFallback(cfg.Colors.HoverText, fm.DefaultFilePaneHoverTextHex)
 		popupHover = parseConfigColorHexFallback(cfg.Colors.PopupHover, fm.DefaultPopupHoverHex)
 		popupHoverFg = parseConfigColorHexFallback(cfg.Colors.PopupHoverText, fm.DefaultPopupHoverTextHex)
 		selected = parseConfigColorHexFallback(cfg.Colors.Selection, fm.DefaultFilePaneSelectionHex)
-		selectedFg = parseConfigColorHexFallback(cfg.Colors.SelectionText, fm.DefaultFilePaneSelectionTextHex)
+		selectedFg = parseConfigColorHexTransparentFallback(cfg.Colors.SelectionText, fm.DefaultFilePaneSelectionTextHex)
 		marked = parseConfigColorHexFallback(cfg.Colors.SelectedFiles, fm.DefaultFilePaneSelectedFilesHex)
-		markedFg = parseConfigColorHexFallback(cfg.Colors.SelectedFilesText, fm.DefaultFilePaneSelectedTextHex)
+		markedFg = parseConfigColorHexTransparentFallback(cfg.Colors.SelectedFilesText, fm.DefaultFilePaneSelectedTextHex)
 		markedSel = parseConfigColorHexFallback(cfg.Colors.FocusedSelected, fm.DefaultFilePaneFocusedSelectedHex)
-		markedSelFg = parseConfigColorHexFallback(cfg.Colors.FocusedSelectedText, fm.DefaultFilePaneFocusedSelectedTextHex)
+		markedSelFg = parseConfigColorHexTransparentFallback(cfg.Colors.FocusedSelectedText, fm.DefaultFilePaneFocusedSelectedTextHex)
 		currentDirBg = parseConfigColorHexFallback(cfg.Colors.CurrentDirBg, fm.DefaultCurrentDirBackgroundHex)
 		currentDirFg = parseConfigColorHexFallback(cfg.Colors.CurrentDirText, fm.DefaultCurrentDirTextHex)
 		scrollThumbOverride = cfg.Colors.ScrollbarThumb
@@ -93,6 +93,22 @@ func filePanePaletteFromConfig(cfg *fm.Config) filePanePalette {
 func parseConfigColorHexFallback(raw, fallback string) color.NRGBA {
 	if c, ok := fm.ParseHexColor(raw); ok {
 		return c
+	}
+	if c, ok := fm.ParseHexColor(fallback); ok {
+		return c
+	}
+	return color.NRGBA{R: 18, G: 22, B: 30, A: 255}
+}
+
+func parseConfigColorHexTransparentFallback(raw, fallback string) color.NRGBA {
+	if fm.IsTransparentColor(raw) {
+		return color.NRGBA{}
+	}
+	if c, ok := fm.ParseHexColor(raw); ok {
+		return c
+	}
+	if fm.IsTransparentColor(fallback) {
+		return color.NRGBA{}
 	}
 	if c, ok := fm.ParseHexColor(fallback); ok {
 		return c

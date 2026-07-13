@@ -24,6 +24,7 @@ const (
 	defaultNameKeepStartChars = 6
 	defaultNameCompactMarker  = ".."
 	defaultColumnPadDp        = 4
+	defaultFullColumnGapDp    = 12
 	// Brief mode already has left/right cell padding; keep the explicit
 	// inter-column gap at zero so the visible separation stays near 1ch.
 	defaultBriefGapDp         = 0
@@ -31,17 +32,20 @@ const (
 	defaultNameChars          = 20.0
 	defaultBriefChars         = 16.0
 	defaultNameMinWidthDp     = 52
-	defaultPermWidthChars     = 10.5
-	defaultSizeWidthChars     = 10.5
+	defaultPermWidthChars     = 9.5
+	defaultOctalWidthChars    = 4.5
+	defaultSizeWidthChars     = 7.5
 	defaultDateWidthChars     = 15.0
 	defaultNameTextReserveDp  = defaultApproxCharPx/2 + 2
 	configBackupSuffix        = ".bak"
 	defaultTerminalHeightRows = 24
 	minTerminalHeightRows     = 4
-	maxTerminalHeightRows     = 80
-	defaultTabMinWidthDp      = 72
-	defaultTabFixedWidthDp    = 118
-	defaultTabMaxWidthDp      = 168
+	// This is only a malformed-config safety limit. The interactive terminal
+	// ceiling is derived from 75% of the available pane height.
+	maxTerminalHeightRows  = 512
+	defaultTabMinWidthDp   = 72
+	defaultTabFixedWidthDp = 118
+	defaultTabMaxWidthDp   = 168
 )
 
 const (
@@ -54,6 +58,9 @@ const (
 	CompletionSoundNever      = "never"
 	CompletionSoundAlways     = "always"
 	CompletionSoundBackground = "background"
+
+	FontWeightRegular = "regular"
+	FontWeightBold    = "bold"
 )
 
 type NameCompact struct {
@@ -155,16 +162,15 @@ type TerminalConfig struct {
 }
 
 type TabsConfig struct {
-	WidthMode         string  `yaml:"width_mode"`
-	MinWidthDp        int     `yaml:"min_width_dp"`
-	FixedWidthDp      int     `yaml:"fixed_width_dp"`
-	MaxWidthDp        int     `yaml:"max_width_dp"`
-	Typeface          string  `yaml:"typeface"`
-	FontSizeSp        float32 `yaml:"font_size_sp"`
-	AlternatingColors bool    `yaml:"alternating_colors"`
-	Color             string  `yaml:"color,omitempty"`
-	AltColor          string  `yaml:"alt_color,omitempty"`
-	ActiveColor       string  `yaml:"active_color,omitempty"`
+	WidthMode    string  `yaml:"width_mode"`
+	MinWidthDp   int     `yaml:"min_width_dp"`
+	FixedWidthDp int     `yaml:"fixed_width_dp"`
+	MaxWidthDp   int     `yaml:"max_width_dp"`
+	Typeface     string  `yaml:"typeface"`
+	FontSizeSp   float32 `yaml:"font_size_sp"`
+	Color        string  `yaml:"color,omitempty"`
+	AltColor     string  `yaml:"alt_color,omitempty"`
+	ActiveColor  string  `yaml:"active_color,omitempty"`
 }
 
 type InterfaceConfig struct {
@@ -378,6 +384,11 @@ func NormalizeTabWidthDp(v, fallback int) int {
 type GeneralConfig struct {
 	Typeface              string  `yaml:"typeface"`
 	FontSizeSp            float32 `yaml:"font_size_sp"`
+	FileWeight            string  `yaml:"file_weight"`
+	DirWeight             string  `yaml:"dir_weight"`
+	PermissionsWeight     string  `yaml:"permissions_weight"`
+	SizeWeight            string  `yaml:"size_weight"`
+	DateWeight            string  `yaml:"date_weight"`
 	DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 	OpenFavoritesInNewTab bool    `yaml:"open_favorites_in_new_tab"`
 	CompletionSound       string  `yaml:"completion_sound"`
@@ -387,6 +398,11 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	var raw struct {
 		Typeface              string  `yaml:"typeface"`
 		FontSizeSp            float32 `yaml:"font_size_sp"`
+		FileWeight            string  `yaml:"file_weight"`
+		DirWeight             string  `yaml:"dir_weight"`
+		PermissionsWeight     string  `yaml:"permissions_weight"`
+		SizeWeight            string  `yaml:"size_weight"`
+		DateWeight            string  `yaml:"date_weight"`
 		DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 		OpenFavoritesInNewTab *bool   `yaml:"open_favorites_in_new_tab"`
 		CompletionSound       string  `yaml:"completion_sound"`
@@ -396,6 +412,11 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	}
 	g.Typeface = raw.Typeface
 	g.FontSizeSp = raw.FontSizeSp
+	g.FileWeight = NormalizeFontWeight(raw.FileWeight, FontWeightRegular)
+	g.DirWeight = NormalizeFontWeight(raw.DirWeight, FontWeightBold)
+	g.PermissionsWeight = NormalizeFontWeight(raw.PermissionsWeight, FontWeightRegular)
+	g.SizeWeight = NormalizeFontWeight(raw.SizeWeight, FontWeightRegular)
+	g.DateWeight = NormalizeFontWeight(raw.DateWeight, FontWeightRegular)
 	g.DimInactivePanes = raw.DimInactivePanes
 	g.OpenFavoritesInNewTab = true
 	if raw.OpenFavoritesInNewTab != nil {
@@ -403,6 +424,30 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	}
 	g.CompletionSound = NormalizeCompletionSound(raw.CompletionSound)
 	return nil
+}
+
+func NormalizeFontWeight(raw, fallback string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", FontWeightRegular, "normal":
+		if strings.TrimSpace(raw) == "" {
+			break
+		}
+		return FontWeightRegular
+	case "light", "medium":
+		return FontWeightRegular
+	case FontWeightBold:
+		return FontWeightBold
+	}
+	switch strings.ToLower(strings.TrimSpace(fallback)) {
+	case FontWeightRegular, "normal":
+		return FontWeightRegular
+	case "light", "medium":
+		return FontWeightRegular
+	case FontWeightBold:
+		return FontWeightBold
+	default:
+		return FontWeightRegular
+	}
 }
 
 func NormalizeCompletionSound(raw string) string {
@@ -475,13 +520,16 @@ type ViewerConfig struct {
 	Background              string              `yaml:"background,omitempty"`
 	Text                    string              `yaml:"text,omitempty"`
 	Selection               string              `yaml:"selection,omitempty"`
+	HexSelection            string              `yaml:"hex_selection,omitempty"`
+	HexOffsetText           string              `yaml:"hex_offset_text,omitempty"`
+	HexBytesText            string              `yaml:"hex_bytes_text,omitempty"`
+	HexASCIIText            string              `yaml:"hex_ascii_text,omitempty"`
 	SmoothScrolling         bool                `yaml:"smooth_scrolling"`
 	Shell                   string              `yaml:"shell"`
 	Command                 string              `yaml:"command"`
 	RemoteSearchMode        string              `yaml:"remote_search_mode"`
 	RemoteSearchCommand     string              `yaml:"remote_search_command"`
 	Associations            []ViewerAssociation `yaml:"associations,omitempty"`
-	AssociatedExtensions    []string            `yaml:"associated_extensions,omitempty"`
 	CommandRules            []ViewerCommandRule `yaml:"command_rules,omitempty"`
 	CommandByTarget         map[string]string   `yaml:"command_by_target"`
 	CommandHistory          []string            `yaml:"command_history"`
@@ -502,6 +550,29 @@ type SSHSetup struct {
 	Password      string `yaml:"password"`
 	KeyPath       string `yaml:"key_path"`
 	KeyPassphrase string `yaml:"key_passphrase"`
+	CredentialID  string `yaml:"credential_id,omitempty"`
+}
+
+// MarshalYAML deliberately excludes authentication secrets. Password and
+// key_passphrase remain tagged above so older plaintext configs can be read
+// once and migrated to the operating system credential store.
+func (s SSHSetup) MarshalYAML() (any, error) {
+	type persistedSSHSetup struct {
+		Name         string `yaml:"name"`
+		Host         string `yaml:"host"`
+		Port         int    `yaml:"port"`
+		User         string `yaml:"user"`
+		KeyPath      string `yaml:"key_path"`
+		CredentialID string `yaml:"credential_id,omitempty"`
+	}
+	return persistedSSHSetup{
+		Name:         s.Name,
+		Host:         s.Host,
+		Port:         s.Port,
+		User:         s.User,
+		KeyPath:      s.KeyPath,
+		CredentialID: s.CredentialID,
+	}, nil
 }
 
 type SSHConfig struct {
@@ -611,7 +682,7 @@ func DefaultConfig() *Config {
 		Terminal: TerminalConfig{
 			HeightRows:      defaultTerminalHeightRows,
 			Typeface:        resources.BundledFontFamilyFiraCodeNerdFontMono,
-			FontSizeSp:      13,
+			FontSizeSp:      14,
 			AcceleratedKeys: true,
 		},
 		Tabs: TabsConfig{
@@ -619,8 +690,8 @@ func DefaultConfig() *Config {
 			MinWidthDp:   defaultTabMinWidthDp,
 			FixedWidthDp: defaultTabFixedWidthDp,
 			MaxWidthDp:   defaultTabMaxWidthDp,
-			Typeface:     resources.BundledFontFamilyFiraCodeNerdFontMono,
-			FontSizeSp:   10,
+			Typeface:     resources.BundledFontFamilyIosevkaNerdFontMono,
+			FontSizeSp:   12,
 		},
 		Interface: InterfaceConfig{
 			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
@@ -628,7 +699,12 @@ func DefaultConfig() *Config {
 		},
 		General: GeneralConfig{
 			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
-			FontSizeSp:            14,
+			FontSizeSp:            15,
+			FileWeight:            FontWeightRegular,
+			DirWeight:             FontWeightBold,
+			PermissionsWeight:     FontWeightRegular,
+			SizeWeight:            FontWeightRegular,
+			DateWeight:            FontWeightRegular,
 			DimInactivePanes:      true,
 			OpenFavoritesInNewTab: true,
 			CompletionSound:       CompletionSoundBackground,
@@ -637,26 +713,31 @@ func DefaultConfig() *Config {
 			FilePaneBackground:  DefaultFilePaneBackgroundHex,
 			FilePaneText:        DefaultFilePaneTextHex,
 			Hover:               DefaultFilePaneHoverHex,
-			HoverText:           DefaultFilePaneHoverTextHex,
+			HoverText:           TransparentColor,
 			PopupHover:          DefaultPopupHoverHex,
 			PopupHoverText:      DefaultPopupHoverTextHex,
 			Selection:           DefaultFilePaneSelectionHex,
-			SelectionText:       DefaultFilePaneSelectionTextHex,
+			SelectionText:       TransparentColor,
 			SelectedFiles:       DefaultFilePaneSelectedFilesHex,
 			SelectedFilesText:   DefaultFilePaneSelectedTextHex,
 			FocusedSelected:     DefaultFilePaneFocusedSelectedHex,
 			FocusedSelectedText: DefaultFilePaneFocusedSelectedTextHex,
 			CurrentDirBg:        DefaultCurrentDirBackgroundHex,
 			CurrentDirText:      DefaultCurrentDirTextHex,
+			Filenames: FilenameColorsConfig{
+				AgeRules: []FilenameAgeRule{
+					{MaxAge: "1d", Text: "#FFFFFF"},
+				},
+			},
 		},
 		Associations:   nil,
 		CustomCommands: nil,
 		Viewer: ViewerConfig{
 			FileEncoding:            ViewerFileEncodingAuto,
 			Typeface:                resources.BundledFontFamilyFiraCodeNerdFontMono,
-			Background:              DefaultFilePaneBackgroundHex,
-			Text:                    DefaultFilePaneTextHex,
-			Selection:               DefaultFilePaneSelectionHex,
+			Background:              DefaultViewerBackgroundHex,
+			Text:                    DefaultViewerTextHex,
+			Selection:               DefaultViewerSelectionHex,
 			SmoothScrolling:         true,
 			Shell:                   "auto",
 			Command:                 "cat {path}",
@@ -667,7 +748,7 @@ func DefaultConfig() *Config {
 			CommandByTarget:         map[string]string{},
 			CommandHistory:          []string{},
 			WordSelectRegex:         "[a-zA-Z0-9]+",
-			FontSizeSp:              13,
+			FontSizeSp:              14,
 			WordWrap:                false,
 			MaxReadMB:               1,
 			CommandAutoRefresh:      true,
@@ -683,18 +764,40 @@ func DefaultConfig() *Config {
 }
 
 func SaveConfig(path string, cfg *Config) error {
+	data, err := marshalConfig(cfg)
+	if err != nil {
+		return err
+	}
+	return writeConfigFileAtomic(path, data, 0o644, true)
+}
+
+// RewriteConfigWithoutBackup is reserved for migrations that remove sensitive
+// data from an existing config. It also removes the previous backup so the
+// sensitive representation is not retained there.
+func RewriteConfigWithoutBackup(path string, cfg *Config) error {
+	data, err := marshalConfig(cfg)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(configBackupPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove config backup %s: %w", configBackupPath(path), err)
+	}
+	return writeConfigFileAtomic(path, data, 0o644, false)
+}
+
+func marshalConfig(cfg *Config) ([]byte, error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
 	if err := cfg.LoadIssue(); err != nil {
-		return fmt.Errorf("refusing to overwrite config because the existing file did not load cleanly: %w", err)
+		return nil, fmt.Errorf("refusing to overwrite config because the existing file did not load cleanly: %w", err)
 	}
 	cfg.normalize()
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeConfigFileAtomic(path, data, 0o644)
+	return data, nil
 }
 
 func LoadConfig(path string) *Config {
@@ -778,7 +881,7 @@ func configBackupPath(path string) string {
 	return path + configBackupSuffix
 }
 
-func writeConfigFileAtomic(path string, data []byte, defaultMode os.FileMode) error {
+func writeConfigFileAtomic(path string, data []byte, defaultMode os.FileMode, createBackup bool) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("config path is empty")
 	}
@@ -794,8 +897,10 @@ func writeConfigFileAtomic(path string, data []byte, defaultMode os.FileMode) er
 	mode := defaultMode
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
-		if err := copyFile(path, configBackupPath(path), mode); err != nil {
-			return fmt.Errorf("backup config %s: %w", path, err)
+		if createBackup {
+			if err := copyFile(path, configBackupPath(path), mode); err != nil {
+				return fmt.Errorf("backup config %s: %w", path, err)
+			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -936,6 +1041,11 @@ func (c *Config) normalize() {
 	if c.General.FontSizeSp <= 0 {
 		c.General.FontSizeSp = 14
 	}
+	c.General.FileWeight = NormalizeFontWeight(c.General.FileWeight, FontWeightRegular)
+	c.General.DirWeight = NormalizeFontWeight(c.General.DirWeight, FontWeightBold)
+	c.General.PermissionsWeight = NormalizeFontWeight(c.General.PermissionsWeight, FontWeightRegular)
+	c.General.SizeWeight = NormalizeFontWeight(c.General.SizeWeight, FontWeightRegular)
+	c.General.DateWeight = NormalizeFontWeight(c.General.DateWeight, FontWeightRegular)
 	c.General.CompletionSound = NormalizeCompletionSound(c.General.CompletionSound)
 	if c.Interface.Typeface == "" || !resources.IsBundledFontFamily(c.Interface.Typeface) {
 		c.Interface.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
@@ -973,25 +1083,30 @@ func (c *Config) normalize() {
 	if c.Viewer.Typeface != c.General.Typeface && !resources.IsBundledFontFamily(c.Viewer.Typeface) {
 		c.Viewer.Typeface = c.General.Typeface
 	}
-	c.Viewer.Background = NormalizeHexColor(c.Viewer.Background, c.Colors.FilePaneBackground)
-	c.Viewer.Text = NormalizeHexColor(c.Viewer.Text, c.Colors.FilePaneText)
-	c.Viewer.Selection = NormalizeHexColor(c.Viewer.Selection, c.Colors.Selection)
+	c.Viewer.Background = NormalizeHexColor(c.Viewer.Background, DefaultViewerBackgroundHex)
+	c.Viewer.Text = NormalizeHexColor(c.Viewer.Text, DefaultViewerTextHex)
+	c.Viewer.Selection = NormalizeHexColor(c.Viewer.Selection, DefaultViewerSelectionHex)
+	c.Viewer.HexSelection = NormalizeOptionalHexColor(c.Viewer.HexSelection)
+	c.Viewer.HexOffsetText = NormalizeOptionalHexColor(c.Viewer.HexOffsetText)
+	c.Viewer.HexBytesText = NormalizeOptionalHexColor(c.Viewer.HexBytesText)
+	c.Viewer.HexASCIIText = NormalizeOptionalHexColor(c.Viewer.HexASCIIText)
 	c.Colors.FilePaneBackground = NormalizeHexColor(c.Colors.FilePaneBackground, DefaultFilePaneBackgroundHex)
 	c.Colors.FilePaneText = NormalizeHexColor(c.Colors.FilePaneText, DefaultFilePaneTextHex)
 	c.Colors.Hover = NormalizeHexColor(c.Colors.Hover, DefaultFilePaneHoverHex)
-	c.Colors.HoverText = NormalizeHexColor(c.Colors.HoverText, DefaultFilePaneHoverTextHex)
+	c.Colors.HoverText = NormalizeHexOrTransparentColor(c.Colors.HoverText, TransparentColor)
 	c.Colors.PopupHover = NormalizeHexColor(c.Colors.PopupHover, DefaultPopupHoverHex)
 	c.Colors.PopupHoverText = NormalizeHexColor(c.Colors.PopupHoverText, DefaultPopupHoverTextHex)
 	c.Colors.Selection = NormalizeHexColor(c.Colors.Selection, DefaultFilePaneSelectionHex)
-	c.Colors.SelectionText = NormalizeHexColor(c.Colors.SelectionText, DefaultFilePaneSelectionTextHex)
+	c.Colors.SelectionText = NormalizeHexOrTransparentColor(c.Colors.SelectionText, TransparentColor)
 	c.Colors.SelectedFiles = NormalizeHexColor(c.Colors.SelectedFiles, DefaultFilePaneSelectedFilesHex)
-	c.Colors.SelectedFilesText = NormalizeHexColor(c.Colors.SelectedFilesText, DefaultFilePaneSelectedTextHex)
+	c.Colors.SelectedFilesText = NormalizeHexOrTransparentColor(c.Colors.SelectedFilesText, TransparentColor)
 	c.Colors.FocusedSelected = NormalizeHexColor(c.Colors.FocusedSelected, DefaultFilePaneFocusedSelectedHex)
-	c.Colors.FocusedSelectedText = NormalizeHexColor(c.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
+	c.Colors.FocusedSelectedText = NormalizeHexOrTransparentColor(c.Colors.FocusedSelectedText, TransparentColor)
 	c.Colors.CurrentDirBg = NormalizeHexColor(c.Colors.CurrentDirBg, DefaultCurrentDirBackgroundHex)
 	c.Colors.CurrentDirText = NormalizeHexColor(c.Colors.CurrentDirText, DefaultCurrentDirTextHex)
 	c.Colors.ScrollbarThumb = NormalizeOptionalHexColor(c.Colors.ScrollbarThumb)
 	c.Colors.ScrollbarTrack = NormalizeOptionalHexColor(c.Colors.ScrollbarTrack)
+	c.Colors.Filenames.Target = NormalizeFilenameTarget(c.Colors.Filenames.Target)
 	c.Colors.Filenames.Text = NormalizeOptionalHexColor(c.Colors.Filenames.Text)
 	c.Colors.Filenames.Icon = NormalizeFilenameIcon(c.Colors.Filenames.Icon)
 	c.Colors.Filenames.AgeRules = NormalizeFilenameAgeRules(c.Colors.Filenames.AgeRules)
@@ -1014,7 +1129,6 @@ func (c *Config) normalize() {
 		c.Associations = GroupViewerAssociations(legacyAssociations)
 	}
 	c.Viewer.Associations = nil
-	c.Viewer.AssociatedExtensions = nil
 	c.Viewer.CommandRules = NormalizeViewerCommandRules(c.Viewer.CommandRules)
 	if len(c.Viewer.CommandByTarget) > 0 {
 		normalized := make(map[string]string, len(c.Viewer.CommandByTarget))
@@ -1187,6 +1301,7 @@ func (c *Config) normalizeSSHSetups() {
 			Password:      raw.Password,
 			KeyPath:       strings.TrimSpace(raw.KeyPath),
 			KeyPassphrase: raw.KeyPassphrase,
+			CredentialID:  strings.TrimSpace(raw.CredentialID),
 		}
 		if setup.Port <= 0 {
 			setup.Port = 22
@@ -1686,6 +1801,10 @@ func ColumnPadDp() int {
 	return defaultColumnPadDp
 }
 
+func FullColumnGapDp() int {
+	return defaultFullColumnGapDp
+}
+
 func BriefGapDp() int {
 	return defaultBriefGapDp
 }
@@ -1706,7 +1825,11 @@ func NameMinWidthDp(cfg *Config) int {
 }
 
 func PermWidthDp(cfg *Config) int {
-	return columnWidthDp(defaultPermWidthChars, false)
+	chars := float32(defaultPermWidthChars)
+	if cfg != nil && cfg.Columns.PermissionFormat == "octal" {
+		chars = defaultOctalWidthChars
+	}
+	return columnWidthDp(chars, false)
 }
 
 func SizeWidthDp(cfg *Config) int {
@@ -1714,7 +1837,16 @@ func SizeWidthDp(cfg *Config) int {
 }
 
 func DateWidthDp(cfg *Config) int {
-	return columnWidthDp(defaultDateWidthChars, false)
+	chars := float32(defaultDateWidthChars)
+	if cfg != nil && len(cfg.DateFormats) > 0 {
+		// formatDate keeps a small safety reserve when exact glyph metrics are
+		// unavailable. Include the same half-character here so the preferred
+		// (first) layout is not skipped at the column's configured width.
+		if preferred := float32(utf8.RuneCountInString(cfg.DateFormats[0])) + 0.5; preferred > chars {
+			chars = preferred
+		}
+	}
+	return columnWidthDp(chars, false)
 }
 
 func BriefWidthDp(cfg *Config) int {
@@ -1730,12 +1862,9 @@ func SizeMinWidthDp(cfg *Config) int {
 }
 
 func PermMinWidthDp(cfg *Config) int {
-	permChars := 4
-	if cfg != nil && cfg.Columns.PermissionFormat == "symbolic" {
-		permChars = 9
-	}
-	padReserve := columnPadReserveDp()
-	return defaultApproxCharPx*permChars + 12 + padReserve
+	// Permissions can fall back from symbolic to the four-digit octal form
+	// as the pane narrows, so the minimum only needs to fit that fallback.
+	return columnWidthDp(defaultOctalWidthChars, false)
 }
 
 func DateMinWidthDp(cfg *Config) int {

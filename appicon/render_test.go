@@ -17,6 +17,9 @@ func TestDefaultAppIconSourceDecodes(t *testing.T) {
 	if img.Bounds().Dx() <= 0 || img.Bounds().Dy() <= 0 {
 		t.Fatalf("decoded source bounds = %v", img.Bounds())
 	}
+	if got, want := img.Bounds().Size(), image.Pt(512, 512); got != want {
+		t.Fatalf("decoded source size = %v, want %v from assets/h1_icon_art.png", got, want)
+	}
 }
 
 func TestDefaultAppIconPreparedIsCropped(t *testing.T) {
@@ -118,6 +121,18 @@ func TestRenderWindowsICOAppIconGeometry(t *testing.T) {
 	overscanned := visibleAlphaBounds(img, 8)
 	if overscanned.Dx() < base.Dx() || overscanned.Dy() < base.Dy() {
 		t.Fatalf("windows ico icon should not shrink visible bounds: base=%v overscanned=%v", base, overscanned)
+	}
+}
+
+func TestWindowsPackageAppIconIsTransparentAndTightlyCropped(t *testing.T) {
+	size := 50
+	img := renderOverscannedAppIcon(size, windowsPackageOverscanPct)
+	if alpha := img.RGBAAt(0, 0).A; alpha != 0 {
+		t.Fatalf("windows package icon corner alpha=%d want 0", alpha)
+	}
+	visible := visibleAlphaBounds(img, 8)
+	if visible.Dy() < size-2 {
+		t.Fatalf("windows package icon should use nearly all available height: %v", visible)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"image"
 	"image/color"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -147,6 +148,99 @@ func TestFavoriteMenuCardWidthStaysFixedWhileRevealExpandsAfterDelay(t *testing.
 	}
 	if fullWidth <= trimmedWidth {
 		t.Fatalf("full width=%d want > trimmed width %d", fullWidth, trimmedWidth)
+	}
+}
+
+func TestMoveFavoriteLocationPersistsOrderAndHonorsBoundaries(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.FavoriteLocations = []string{"/alpha", "/beta", "/gamma"}
+	configPath := filepath.Join(t.TempDir(), "hexone.yaml")
+	if err := fm.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	ui := NewUI(cfg)
+	ui.configPath = configPath
+
+	if moved, err := ui.moveFavoriteLocation(1, -1); err != nil || !moved {
+		t.Fatalf("move favorite up = (%v, %v), want (true, nil)", moved, err)
+	}
+	want := []string{"/beta", "/alpha", "/gamma"}
+	if got := ui.fmCfg.FavoriteLocations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("runtime favorite order=%v want %v", got, want)
+	}
+	if got := fm.LoadConfig(configPath).FavoriteLocations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("saved favorite order=%v want %v", got, want)
+	}
+	if moved, err := ui.moveFavoriteLocation(0, -1); err != nil || moved {
+		t.Fatalf("move top favorite up = (%v, %v), want (false, nil)", moved, err)
+	}
+	if moved, err := ui.moveFavoriteLocation(2, 1); err != nil || moved {
+		t.Fatalf("move bottom favorite down = (%v, %v), want (false, nil)", moved, err)
+	}
+}
+
+func TestFavoriteOrderMenuDisablesBoundaryActions(t *testing.T) {
+	top := filePaneFavoriteOrderItems(0, 3)
+	if len(top) != 2 || !top[0].Disabled || top[1].Disabled {
+		t.Fatalf("top favorite actions=%+v", top)
+	}
+	bottom := filePaneFavoriteOrderItems(2, 3)
+	if bottom[0].Disabled || !bottom[1].Disabled {
+		t.Fatalf("bottom favorite actions=%+v", bottom)
+	}
+}
+
+func TestFavoriteRightClickOpensOrderMenuAndMovesItem(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.FavoriteLocations = []string{"/alpha", "/beta", "/gamma"}
+	configPath := filepath.Join(t.TempDir(), "hexone.yaml")
+	if err := fm.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	ui := NewUI(cfg)
+	ui.configPath = configPath
+	pane := ui.filePanes[0]
+	now := time.Date(2026, time.July, 4, 12, 0, 0, 0, time.UTC)
+	pane.openFavoriteMenu(now)
+	th := material.NewTheme()
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Now:    now,
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(640, 360),
+		},
+	}
+	frame := func() {
+		gtx.Now = gtx.Now.Add(time.Millisecond)
+		gtx.Ops.Reset()
+		ui.layoutFilePaneFavoriteMenu(th, gtx, 0, pane)
+		router.Frame(gtx.Ops)
+	}
+
+	frame()
+	items := ui.paneFavoriteItems(pane)
+	menuRect := ui.filePaneFavoriteMenuBaseRect(gtx, pane, items, 0)
+	rowY := menuRect.Min.Y + ui.filePaneFavoriteMenuItemOffsetY(gtx, items, 1) + ui.filePaneFavoriteMenuRowHeight(gtx)/2
+	rowPos := f32.Pt(float32(menuRect.Min.X+20), float32(rowY))
+	router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonSecondary, Position: rowPos})
+	frame()
+	if !pane.favoriteOrderOpen || pane.favoriteOrderIndex != 1 {
+		t.Fatalf("favorite order menu state open=%v index=%d, want open at 1", pane.favoriteOrderOpen, pane.favoriteOrderIndex)
+	}
+
+	orderRect := pane.favoriteOrderRect
+	moveUpPos := f32.Pt(float32(orderRect.Min.X+orderRect.Dx()/2), float32(orderRect.Min.Y+ui.fileContextMenuRowHeight(gtx, fileContextMenuItem{Label: "Move up"})/2))
+	router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: moveUpPos})
+	frame()
+	router.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: moveUpPos})
+	frame()
+
+	want := []string{"/beta", "/alpha", "/gamma"}
+	if got := ui.fmCfg.FavoriteLocations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("favorite order after context action=%v want %v", got, want)
 	}
 }
 
@@ -614,7 +708,8 @@ func TestActivatePaneDriveMenuSelectionLoadsSelectedDrive(t *testing.T) {
 
 func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 	cfg := fm.DefaultConfig()
-	cfg.Colors.Filenames.Text = "#8899AA"
+	cfg.Colors.FilePaneText = "#8899AA"
+	cfg.Colors.Filenames.Text = "#CCDDEE"
 	cfg.Colors.Filenames.AgeRules = []fm.FilenameAgeRule{
 		{MaxAge: "1h", Text: "#112233", Icon: fm.FilenameIconRecent},
 	}
@@ -625,7 +720,7 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 	now := time.Date(2026, time.March, 20, 12, 0, 0, 0, time.UTC)
 	model := &filePaneModel{
 		cfg:           cfg,
-		baseTextColor: color.NRGBA{R: 210, G: 210, B: 210, A: 255},
+		baseTextColor: color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF},
 		filenameTheme: newFilePaneFilenameTheme(cfg),
 		entries: []filesys.Entry{
 			{Name: "fresh.log", DisplayName: "fresh.log", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-20 * time.Minute)},
@@ -634,6 +729,8 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 			{Name: "bundle.zip", DisplayName: "bundle.zip", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
 			{Name: "photo.png", DisplayName: "photo.png", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
 			{Name: "clip.mp4", DisplayName: "clip.mp4", Kind: filesys.EntryFile, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
+			{Name: "bin", DisplayName: "bin", Kind: filesys.EntryDir, PermOctal: "0755", ModTime: now.Add(-48 * time.Hour)},
+			{Name: "docs", DisplayName: "docs", Kind: filesys.EntryDir, PermOctal: "0640", ModTime: now.Add(-48 * time.Hour)},
 		},
 	}
 	model.rebuildFilenameVisuals(now)
@@ -655,14 +752,33 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 	if icon, ok := model.LeadingIcon(1, 0); !ok || icon.Widget == nil {
 		t.Fatal("permission override should expose a custom cached icon")
 	}
+	for _, tc := range []struct {
+		col  int
+		name string
+	}{
+		{col: 1, name: "permissions"},
+		{col: 2, name: "size"},
+		{col: 3, name: "date"},
+	} {
+		if _, st := model.Cell(1, tc.col); st.Color != (color.NRGBA{R: 0x44, G: 0x55, B: 0x66, A: 0xFF}) {
+			t.Fatalf("%s column color=%v want #445566", tc.name, st.Color)
+		} else if !st.PreserveColor {
+			t.Fatalf("%s column should preserve custom filename color on row states", tc.name)
+		}
+	}
 
 	if _, st := model.Cell(2, 0); st.Color != (color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF}) {
-		t.Fatalf("default filename color=%v want #8899AA", st.Color)
-	} else if !st.PreserveColor {
-		t.Fatal("default filename rule should preserve custom filename color on row states")
+		t.Fatalf("normal filename color=%v want #8899AA", st.Color)
+	} else if st.PreserveColor {
+		t.Fatal("normal filename color should remain row-state overridable")
+	}
+	if _, st := model.Cell(2, 1); st.Color != (color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF}) {
+		t.Fatalf("normal metadata color=%v want #8899AA", st.Color)
+	} else if st.PreserveColor {
+		t.Fatal("normal metadata color should remain row-state overridable")
 	}
 	if icon, ok := model.LeadingIcon(2, 0); !ok || icon.Widget != nil {
-		t.Fatal("default filename rule should keep the stock file icon")
+		t.Fatal("normal filename should keep the stock file icon")
 	}
 
 	if icon, ok := model.LeadingIcon(3, 0); !ok || icon.Widget == nil {
@@ -675,6 +791,24 @@ func TestFilePaneModelFilenameRulesApplyCachedColorAndIcon(t *testing.T) {
 
 	if icon, ok := model.LeadingIcon(5, 0); !ok || icon.Widget == nil {
 		t.Fatal("video files should use the stock video icon by default")
+	}
+
+	if _, st := model.Cell(6, 0); st.Color != (color.NRGBA{R: 0x44, G: 0x55, B: 0x66, A: 0xFF}) {
+		t.Fatalf("directory permission override color=%v want #445566", st.Color)
+	} else if !st.PreserveColor {
+		t.Fatal("directory permission override should preserve custom filename color on row states")
+	}
+	if icon, ok := model.LeadingIcon(6, 0); !ok || icon.Widget == nil || icon.Color != (color.NRGBA{R: 205, G: 176, B: 88, A: 255}) {
+		t.Fatalf("directory permission override icon=%#v want custom icon and folder color", icon)
+	}
+
+	if _, st := model.Cell(7, 0); st.Color != (color.NRGBA{R: 0x88, G: 0x99, B: 0xAA, A: 0xFF}) {
+		t.Fatalf("normal directory color=%v want #8899AA", st.Color)
+	} else if st.PreserveColor {
+		t.Fatal("normal directory color should remain row-state overridable")
+	}
+	if icon, ok := model.LeadingIcon(7, 0); !ok || icon.Widget != nil || icon.Color != (color.NRGBA{R: 205, G: 176, B: 88, A: 255}) {
+		t.Fatalf("normal directory icon=%#v want stock folder icon and folder color", icon)
 	}
 }
 
@@ -752,6 +886,75 @@ func TestFilePaneFilenameThemeRulePrecedenceSupportsPartialPermissions(t *testin
 	}
 	if extVisual.iconKey != fm.FilenameIconArchive {
 		t.Fatalf("extension visual icon=%q want %q", extVisual.iconKey, fm.FilenameIconArchive)
+	}
+
+	dirMetadataVisual := theme.visualForEntry(filesys.Entry{
+		Name:      "release.tar.gz",
+		Kind:      filesys.EntryDir,
+		PermOctal: "0644",
+		SizeBytes: 512,
+		ModTime:   now.Add(-48 * time.Hour),
+	}, now)
+	if dirMetadataVisual.hasColor || dirMetadataVisual.iconKey != "" {
+		t.Fatalf("extension and size rules should not style directories: %#v", dirMetadataVisual)
+	}
+
+	dirOnlyTheme := newFilePaneFilenameTheme(&fm.Config{
+		Colors: fm.ColorsConfig{
+			Filenames: fm.FilenameColorsConfig{
+				Target: fm.FilenameTargetFiles,
+				PermissionRules: []fm.FilenamePermissionRule{
+					{Permissions: "0755", Target: fm.FilenameTargetDirs, Text: "#667788", Icon: fm.FilenameIconLocked},
+				},
+			},
+		},
+	})
+	dirVisual := dirOnlyTheme.visualForEntry(filesys.Entry{
+		Name:      "bin",
+		Kind:      filesys.EntryDir,
+		PermOctal: "0755",
+		ModTime:   now.Add(-48 * time.Hour),
+	}, now)
+	if dirVisual.color != (color.NRGBA{R: 0x66, G: 0x77, B: 0x88, A: 0xFF}) {
+		t.Fatalf("directory target visual color=%v want #667788", dirVisual.color)
+	}
+	fileVisual := dirOnlyTheme.visualForEntry(filesys.Entry{
+		Name:      "deploy.sh",
+		Kind:      filesys.EntryFile,
+		PermOctal: "0755",
+		ModTime:   now.Add(-48 * time.Hour),
+	}, now)
+	if fileVisual.hasColor || fileVisual.iconKey != "" {
+		t.Fatalf("directory-only rule should not style regular files: %#v", fileVisual)
+	}
+}
+
+func TestFilePaneApplySortKeepsFilenameVisualsAligned(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Colors.Filenames.AgeRules = []fm.FilenameAgeRule{
+		{MaxAge: "1d", Text: "#123456", Target: fm.FilenameTargetFiles},
+	}
+
+	now := time.Now()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	pane.sortKey = fileSortDate
+	pane.sortDesc = true
+	pane.dirsFirst = false
+	pane.model.entries = []filesys.Entry{
+		{Name: "old.txt", DisplayName: "old.txt", Kind: filesys.EntryFile, ModTime: now.Add(-48 * time.Hour)},
+		{Name: "fresh.txt", DisplayName: "fresh.txt", Kind: filesys.EntryFile, ModTime: now.Add(-20 * time.Minute)},
+	}
+
+	pane.applySort("")
+
+	if got := pane.model.entries[0].Name; got != "fresh.txt" {
+		t.Fatalf("first row after date sort=%q want fresh.txt", got)
+	}
+	if visual := pane.model.filenameVisual(0); !visual.hasColor || visual.color != (color.NRGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xFF}) {
+		t.Fatalf("fresh row visual=%#v want age color #123456", visual)
+	}
+	if visual := pane.model.filenameVisual(1); visual.hasColor {
+		t.Fatalf("old row visual=%#v want no age color", visual)
 	}
 }
 

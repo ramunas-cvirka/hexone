@@ -4,6 +4,7 @@
 package ui
 
 import (
+	resources "hexone"
 	"image"
 	"os"
 	"path/filepath"
@@ -34,6 +35,33 @@ func TestEventTagsAreNonZeroSized(t *testing.T) {
 	}
 	if unsafe.Sizeof(fileViewerEventTag{}) == 0 {
 		t.Fatal("fileViewerEventTag must remain non-zero-sized")
+	}
+}
+
+func TestFileViewerContextMenuWordWrapToggle(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	if err := fm.SaveConfig(ui.configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	st := &fileViewerState{menuOpen: true}
+	ui.fileViewer = st
+	st.wrapToggle.Click()
+
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(640, 480)),
+		Now:         time.Now(),
+	}
+	ui.layoutFileViewerContextMenu(material.NewTheme(), gtx, st)
+
+	if !st.wrapEnabled || !cfg.Viewer.WordWrap {
+		t.Fatalf("context toggle state: viewer=%v config=%v", st.wrapEnabled, cfg.Viewer.WordWrap)
+	}
+	if st.menuOpen {
+		t.Fatal("context menu should close after toggling word wrap")
 	}
 }
 
@@ -243,6 +271,114 @@ func TestFileViewerTabAnimationFollowsHistoryToggle(t *testing.T) {
 	}
 }
 
+func TestFileViewerModeTabsUseRegularConfiguredTabWidths(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Tabs.WidthMode = "fixed"
+	cfg.Tabs.FixedWidthDp = 84
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	st := &fileViewerState{mode: "hex"}
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(640, 24),
+		},
+	}
+	items := []appTabItem{{title: "File"}, {title: "Hex"}, {title: "Cmd"}}
+	widths := ui.tabStripWidths(th, gtx, cfg, items)
+
+	dims := ui.layoutFileViewerModeTabs(th, gtx, st, 24)
+	separatorW := tabStripSeparatorWidth(gtx)
+	historyW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "..") + gtx.Dp(unit.Dp(14))
+	if minW := tabStripControlWidth(gtx); historyW < minW {
+		historyW = minW
+	}
+	wantW := widths[0] + widths[1] + widths[2] + separatorW*3 + historyW
+	if dims.Size.X != wantW {
+		t.Fatalf("mode tab strip width=%d want regular tab width total %d", dims.Size.X, wantW)
+	}
+	wantActive := image.Rect(widths[0]+separatorW, 0, widths[0]+separatorW+widths[1], 24)
+	if st.activeTabRect != wantActive {
+		t.Fatalf("active Hex tab rect=%v want %v", st.activeTabRect, wantActive)
+	}
+}
+
+func TestViewerModeTabTitleMovesFilenameToActiveMode(t *testing.T) {
+	st := &fileViewerState{name: "tik_tok.jpg", mode: "file"}
+	if got := viewerModeTabTitle(st, "file", "File"); got != "File - tik_tok.jpg" {
+		t.Fatalf("file tab=%q", got)
+	}
+	if got := viewerModeTabTitle(st, "hex", "Hex"); got != "Hex" {
+		t.Fatalf("inactive hex tab=%q", got)
+	}
+	st.mode = "hex"
+	if got := viewerModeTabTitle(st, "hex", "Hex"); got != "Hex - tik_tok.jpg" {
+		t.Fatalf("hex tab=%q", got)
+	}
+	st.mode = "command"
+	if got := viewerModeTabTitle(st, "command", "Cmd"); got != "Cmd - tik_tok.jpg" {
+		t.Fatalf("command tab=%q", got)
+	}
+	st.historyOpen = true
+	if got := viewerModeTabTitle(st, "command", "Cmd"); got != "Cmd" {
+		t.Fatalf("history-open command tab=%q", got)
+	}
+}
+
+func TestFileViewerActiveModeTabExpandsForFullFilename(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Tabs.WidthMode = "fixed"
+	cfg.Tabs.FixedWidthDp = 48
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	st := &fileViewerState{name: "a-fully-visible-image-name.jpg", mode: "file"}
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(900, 24)},
+	}
+	ui.layoutFileViewerModeTabs(th, gtx, st, 24)
+	wantMin := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "File - "+st.name)
+	if got := st.activeTabRect.Dx(); got < wantMin {
+		t.Fatalf("active tab width=%d want at least full title width %d", got, wantMin)
+	}
+}
+
+func TestFileViewerHistoryUsesInterfaceFontAndFullWidth(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Interface.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.Interface.FontSizeSp = 16
+	cfg.Viewer.Typeface = resources.BundledFontFamilyHackNerdFontMono
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	st := &fileViewerState{mode: "command", historyOpen: true}
+
+	if got, want := ui.fileViewerHistoryTypeface(), font.Typeface(cfg.Interface.Typeface); got != want {
+		t.Fatalf("history typeface=%q want interface typeface %q", got, want)
+	}
+	if got, want := ui.fileViewerHistoryTextSize(), ui.scaleInterfaceFontSize(9); got != want {
+		t.Fatalf("history text size=%v want interface-scaled %v", got, want)
+	}
+
+	var r input.Router
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: r.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(720, 120),
+		},
+	}
+	dims := ui.layoutFileViewerHistoryList(th, gtx, st, []string{"tail -f {path}", "tail -n200 {path}"})
+	if dims.Size.X != gtx.Constraints.Max.X {
+		t.Fatalf("history width=%d want full available width %d", dims.Size.X, gtx.Constraints.Max.X)
+	}
+}
+
 func TestFileViewerHeaderDetailsDropPlainFileSizeStatus(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	st := &fileViewerState{
@@ -281,18 +417,154 @@ func TestViewerImageZoomLabelUsesCurrentZoom(t *testing.T) {
 	}
 }
 
-func TestViewerPDFPageLabelUsesDraggedTargetPage(t *testing.T) {
+func TestViewerPDFPageLabelUsesScrolledDocumentPage(t *testing.T) {
 	st := &fileViewerState{
 		detectedImagePreview:  true,
 		imagePreviewFormat:    "pdf",
 		imagePreviewPage:      1,
 		imagePreviewPageCount: 9,
 	}
-	st.imageView.pdfDragging = true
-	st.imageView.pdfDragPage = 6
+	sizes := make([]viewerPDFPageSize, 9)
+	for i := range sizes {
+		sizes[i] = viewerPDFPageSize{W: 612, H: 792}
+	}
+	st.pdfDoc.viewportRect = image.Rect(0, 0, 200, 260)
+	st.pdfDoc.configure(viewerPDFDocInfo{PageCount: 9, PageSizes: sizes})
+	st.pdfDoc.scrollToPage(6)
 
 	if got := viewerPDFPageLabel(st); got != "Page 7/9" {
 		t.Fatalf("page label=%q want %q", got, "Page 7/9")
+	}
+}
+
+func TestViewerTOCAccordionStartsAtRootsAndKeepsOneBranchOpen(t *testing.T) {
+	st := &fileViewerState{}
+	st.pdfDoc.toc = normalizeViewerPDFTOC([]viewerPDFTOCEntry{
+		{Title: "Chapter A", Page: 0, Level: 0},
+		{Title: "Section A.1", Page: 1, Level: 1},
+		{Title: "Topic A.1.a", Page: 2, Level: 2},
+		{Title: "Section A.2", Page: 3, Level: 1},
+		{Title: "Chapter B", Page: 4, Level: 0},
+		{Title: "Section B.1", Page: 5, Level: 1},
+	})
+
+	assertVisible := func(want ...int) {
+		t.Helper()
+		got := viewerTOCVisibleIndices(st)
+		if len(got) != len(want) {
+			t.Fatalf("visible=%v want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("visible=%v want %v", got, want)
+			}
+		}
+	}
+
+	assertVisible(0, 4)
+	if !toggleViewerTOCEntry(st, st.pdfDoc.toc[0]) {
+		t.Fatal("root entry should expand")
+	}
+	assertVisible(0, 1, 3, 4)
+	if !toggleViewerTOCEntry(st, st.pdfDoc.toc[1]) {
+		t.Fatal("nested entry should expand")
+	}
+	assertVisible(0, 1, 2, 3, 4)
+
+	// Expanding another root closes the previous root and all of its nested
+	// expansion state while keeping both root rows visible.
+	if !toggleViewerTOCEntry(st, st.pdfDoc.toc[4]) {
+		t.Fatal("second root entry should expand")
+	}
+	assertVisible(0, 4, 5)
+	if viewerTOCEntryExpanded(st, st.pdfDoc.toc[0]) || viewerTOCEntryExpanded(st, st.pdfDoc.toc[1]) {
+		t.Fatal("opening a sibling branch should close the previous branch")
+	}
+	if !viewerTOCEntryExpanded(st, st.pdfDoc.toc[4]) {
+		t.Fatal("second root should be marked expanded")
+	}
+
+	if !toggleViewerTOCEntry(st, st.pdfDoc.toc[4]) {
+		t.Fatal("expanded root should collapse")
+	}
+	assertVisible(0, 4)
+}
+
+func TestNormalizeViewerTOCBuildsStableHierarchy(t *testing.T) {
+	toc := normalizeViewerPDFTOC([]viewerPDFTOCEntry{
+		{Title: "Root", Level: 0},
+		{Title: "Child", Level: 1},
+		{Title: "Grandchild", Level: 4},
+		{Title: "Other root", Level: 0},
+	})
+	if len(toc) != 4 {
+		t.Fatalf("TOC length=%d want 4", len(toc))
+	}
+	if toc[0].ID == "" || !toc[0].HasChildren {
+		t.Fatalf("root=%+v want stable ID and children", toc[0])
+	}
+	if toc[1].ParentID != toc[0].ID || !toc[1].HasChildren {
+		t.Fatalf("child=%+v want parent %q and children", toc[1], toc[0].ID)
+	}
+	if toc[2].Level != 2 || toc[2].ParentID != toc[1].ID {
+		t.Fatalf("grandchild=%+v want clamped level 2 and parent %q", toc[2], toc[1].ID)
+	}
+	if toc[3].Level != 0 || toc[3].ParentID != "" || toc[3].HasChildren {
+		t.Fatalf("other root=%+v", toc[3])
+	}
+}
+
+func TestViewerTOCDisclosureAndTitleHaveIndependentActions(t *testing.T) {
+	st := &fileViewerState{}
+	st.mode = "file"
+	st.tocMenuOpen = true
+	st.pdfDoc.viewportRect = image.Rect(0, 0, 300, 240)
+	st.pdfDoc.configure(viewerPDFDocInfo{
+		PageCount: 2,
+		PageSizes: []viewerPDFPageSize{{W: 612, H: 792}, {W: 612, H: 792}},
+	})
+	st.pdfDoc.toc = normalizeViewerPDFTOC([]viewerPDFTOCEntry{
+		{Title: "Chapter", Page: 0, Level: 0},
+		{Title: "Leaf", Page: 1, Level: 1},
+	})
+
+	root := st.pdfDoc.toc[0]
+	if !viewerTOCEntryNavigates(st, root) {
+		t.Fatal("a branch title with a valid destination should navigate")
+	}
+	if !viewerTOCEntryNavigates(st, st.pdfDoc.toc[1]) {
+		t.Fatal("a leaf with a valid destination should navigate")
+	}
+	if glyph := viewerTOCDisclosureGlyph(st, root); glyph != "→" {
+		t.Fatalf("collapsed disclosure=%q want right arrow", glyph)
+	}
+	if !st.pdfDoc.scrollToPage(1) {
+		t.Fatal("test document should scroll to page 2")
+	}
+	before := st.pdfDoc.scrollY
+
+	ensureViewerTOCClicks(st)
+	st.tocDisclosureClicks[0].Click()
+	ui := NewUI(fm.DefaultConfig())
+	gtx := layout.Context{Ops: new(op.Ops), Now: time.Now()}
+	ui.handleFileViewerTOCClicks(gtx, st)
+	if st.pdfDoc.scrollY != before {
+		t.Fatalf("disclosure changed scrollY=%f want %f", st.pdfDoc.scrollY, before)
+	}
+	if !st.tocMenuOpen || !viewerTOCEntryExpanded(st, root) {
+		t.Fatal("disclosure should expand the branch and keep the TOC open")
+	}
+	if glyph := viewerTOCDisclosureGlyph(st, root); glyph != "↓" {
+		t.Fatalf("expanded disclosure=%q want down arrow", glyph)
+	}
+
+	st.tocClicks[0].Click()
+	ui.handleFileViewerTOCClicks(gtx, st)
+	if got := st.pdfDoc.currentPage(); got != 0 {
+		t.Fatalf("root title navigated to page=%d want 0", got)
+	}
+	if st.tocMenuOpen {
+		t.Fatal("title navigation should close the TOC")
 	}
 }
 
@@ -448,13 +720,40 @@ func TestFileViewerInlineCommandDisplayWidthLeavesFullTextPadding(t *testing.T) 
 	dims := ui.layoutFileViewerInlineCommand(th, gtx, st, 24)
 
 	lbl := material.Body2(th, st.command)
-	lbl.Font.Typeface = ui.viewerTypeface()
+	lbl.Font.Typeface = ui.tabStripTypeface()
 	lbl.Font.Weight = font.Medium
-	lbl.TextSize = ui.viewerTextSize()
+	lbl.TextSize = ui.tabStripTextSize()
 	labelW := measureLabelUnconstrained(gtx, lbl).Size.X
-	wantPadding := gtx.Dp(unit.Dp(viewerInlineCommandDisplayInsetDp * 2))
+	wantPadding := gtx.Dp(unit.Dp(viewerInlineCommandMeasurePaddingDp))
 	if got := dims.Size.X - labelW; got < wantPadding {
 		t.Fatalf("inline command padding=%dpx want at least %dpx", got, wantPadding)
+	}
+}
+
+func TestFileViewerInlineCommandKeepsPlateGeometryWhileEditing(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	command := "tail -f {path}"
+	st := &fileViewerState{mode: "command", command: command}
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: router.Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(960, 48),
+		},
+	}
+
+	display := ui.layoutFileViewerInlineCommand(th, gtx, st, 24)
+	gtx.Ops.Reset()
+	st.commandEditOn = true
+	st.commandFocus = true
+	st.commandEditor.SetText(command)
+	editing := ui.layoutFileViewerInlineCommand(th, gtx, st, 24)
+
+	if editing.Size != display.Size {
+		t.Fatalf("inline command geometry changed while editing: display=%v editing=%v", display.Size, editing.Size)
 	}
 }
 
@@ -475,6 +774,37 @@ func TestFileViewerOverlayTextUsesWidthAsMaximum(t *testing.T) {
 
 	if constrained.Size.X != unconstrained.Size.X {
 		t.Fatalf("overlay text width=%d want intrinsic width %d", constrained.Size.X, unconstrained.Size.X)
+	}
+}
+
+func TestFileViewerOverlayBarKeepsPreviewControlsCompact(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Source: new(input.Router).Source(),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(500, 60),
+		},
+	}
+	st := &fileViewerState{
+		name:                  "preview.pdf",
+		mode:                  "file",
+		detectedImagePreview:  true,
+		imagePreviewFormat:    "pdf",
+		imagePreviewPage:      2,
+		imagePreviewPageCount: 12,
+	}
+	st.imageView.zoom = 1.25
+
+	dims := ui.layoutFileViewerOverlayBar(th, gtx, st)
+
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		t.Fatalf("overlay dimensions=%v want visible bar", dims.Size)
+	}
+	if maxH := gtx.Dp(unit.Dp(20)); dims.Size.Y > maxH {
+		t.Fatalf("overlay height=%d want <= %d", dims.Size.Y, maxH)
 	}
 }
 

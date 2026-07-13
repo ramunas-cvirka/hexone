@@ -1694,6 +1694,52 @@ func TestTerminalVisualScrollAnimatesShortSteps(t *testing.T) {
 	}
 }
 
+func TestTerminalVisualScrollSnapsDuringSelectionAutoScroll(t *testing.T) {
+	st := newTerminalSession(nil)
+	st.parserMu.Lock()
+	st.term.Resize(3, 12)
+	if _, err := st.term.Write([]byte("line0\r\nline1\r\nline2\r\nline3\r\nline4\r\nline5")); err != nil {
+		st.parserMu.Unlock()
+		t.Fatalf("Write lines: %v", err)
+	}
+	st.parserMu.Unlock()
+	st.snapshot()
+
+	now := time.Now()
+	st.prepareVisualScroll(now, true)
+	if !st.scrollByDelta(-1) {
+		t.Fatal("scroll should move into terminal history")
+	}
+	st.viewMu.Lock()
+	st.selectionSelecting = true
+	st.autoScrollDir = 1
+	st.autoScrollStep = 1
+	st.viewMu.Unlock()
+
+	if animating := st.prepareVisualScroll(now.Add(terminalSmoothTick), true); animating {
+		t.Fatal("terminal selection autoscroll should bypass smooth scrolling")
+	}
+	st.State.Mu.RLock()
+	target := float32(st.State.ViewStart)
+	st.State.Mu.RUnlock()
+	st.viewMu.Lock()
+	visual := st.visualTop
+	st.selectionSelecting = false
+	st.autoScrollDir = 0
+	st.autoScrollStep = 0
+	st.viewMu.Unlock()
+	if visual != target {
+		t.Fatalf("terminal visual top=%v want snapped target %v", visual, target)
+	}
+
+	if !st.scrollByDelta(-1) {
+		t.Fatal("second scroll should move farther into terminal history")
+	}
+	if animating := st.prepareVisualScroll(now.Add(2*terminalSmoothTick), true); !animating {
+		t.Fatal("normal smooth scrolling should resume after selection autoscroll stops")
+	}
+}
+
 func TestTerminalPointFromPositionOutsideGridUsesLogicalViewStart(t *testing.T) {
 	st := newTerminalSession(nil)
 	st.parserMu.Lock()
@@ -1983,8 +2029,8 @@ func TestTerminalPaneHeightPrefersFullscreenRows(t *testing.T) {
 	if rows < terminalPreferredRows {
 		t.Fatalf("terminal rows=%d want at least %d, height=%d", rows, terminalPreferredRows, h)
 	}
-	if h > gtx.Constraints.Max.Y-gtx.Dp(unit.Dp(150)) {
-		t.Fatalf("terminal height=%d should leave file pane room in %dpx", h, gtx.Constraints.Max.Y)
+	if h > terminalMaxPaneHeight(gtx) {
+		t.Fatalf("terminal height=%d should stay within 75%% cap %d", h, terminalMaxPaneHeight(gtx))
 	}
 }
 
@@ -2015,8 +2061,27 @@ func TestTerminalPaneHeightFallsBackInSmallWindow(t *testing.T) {
 	if h <= 0 || h >= gtx.Constraints.Max.Y {
 		t.Fatalf("terminal height=%d should fit small window height=%d", h, gtx.Constraints.Max.Y)
 	}
-	if h > gtx.Constraints.Max.Y-gtx.Dp(unit.Dp(150)) {
-		t.Fatalf("terminal height=%d should leave minimum file pane room in %dpx", h, gtx.Constraints.Max.Y)
+	if h > terminalMaxPaneHeight(gtx) {
+		t.Fatalf("terminal height=%d should stay within 75%% cap %d", h, terminalMaxPaneHeight(gtx))
+	}
+}
+
+func TestTerminalPaneCanGrowPastOldFixedCapToSeventyFivePercent(t *testing.T) {
+	gtx := testTerminalPaneHeightContext(image.Pt(1200, 1200))
+	cellH := 16
+	maxH := terminalMaxPaneHeight(gtx)
+	if want := 900; maxH != want {
+		t.Fatalf("maximum terminal height=%d want %d", maxH, want)
+	}
+	h := terminalPaneHeight(gtx, cellH, 300)
+	if h <= 560 {
+		t.Fatalf("terminal height=%d should grow beyond old 560px cap", h)
+	}
+	if h > maxH || maxH-h >= cellH {
+		t.Fatalf("row-snapped terminal height=%d should be within one row of 75%% cap %d", h, maxH)
+	}
+	if remaining := gtx.Constraints.Max.Y - h; remaining < gtx.Constraints.Max.Y/4 {
+		t.Fatalf("remaining file pane height=%d want at least %d", remaining, gtx.Constraints.Max.Y/4)
 	}
 }
 

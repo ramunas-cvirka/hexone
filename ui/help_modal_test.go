@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"gioui.org/layout"
 	"hexone/ui/widget/table"
 )
 
@@ -84,7 +83,6 @@ func TestHelpModalSetActiveSectionTracksAnimation(t *testing.T) {
 				{Title: "Analyzer"},
 			},
 		},
-		bodyList:      layout.List{Axis: layout.Vertical},
 		activeSection: 0,
 	}
 	now := time.Now()

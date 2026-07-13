@@ -114,3 +114,30 @@ func fillRoundedClipBox(gtx layout.Context, radius int, bg, border color.NRGBA, 
 	paint.FillShape(gtx.Ops, border, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1}.Op())
 	return dims
 }
+
+func fillFlatBox(gtx layout.Context, bg, border color.NRGBA, w layout.Widget) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := m.Stop()
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		call.Add(gtx.Ops)
+		return dims
+	}
+
+	if bg.A != 0 {
+		paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rectangle{Max: dims.Size}).Op())
+	}
+	drawFlatBorder(gtx, dims.Size, border)
+	call.Add(gtx.Ops)
+	return dims
+}
+
+func drawFlatBorder(gtx layout.Context, size image.Point, border color.NRGBA) {
+	if border.A == 0 || size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	paint.FillShape(gtx.Ops, border, clip.Rect(image.Rect(0, 0, size.X, 1)).Op())
+	paint.FillShape(gtx.Ops, border, clip.Rect(image.Rect(0, size.Y-1, size.X, size.Y)).Op())
+	paint.FillShape(gtx.Ops, border, clip.Rect(image.Rect(0, 0, 1, size.Y)).Op())
+	paint.FillShape(gtx.Ops, border, clip.Rect(image.Rect(size.X-1, 0, size.X, size.Y)).Op())
+}

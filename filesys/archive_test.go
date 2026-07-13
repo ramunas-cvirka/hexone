@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,6 +30,29 @@ func TestArchiveNameSupported(t *testing.T) {
 	}
 	if ArchiveNameSupported("notes.txt.gz") {
 		t.Fatal("compressed regular file should not be treated as archive")
+	}
+}
+
+func TestOpenArchiveFSReusesIndexedArchive(t *testing.T) {
+	root := t.TempDir()
+	archivePath := filepath.Join(root, "cached.zip")
+	if err := writeTestArchive(archivePath, map[string]string{"docs/readme.txt": "hello"}); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+	loc := ArchivePath{ArchivePath: archivePath, InnerPath: "."}
+	first, err := openArchiveFSForLocation(loc)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	if _, err := fs.ReadDir(first, "."); err != nil {
+		t.Fatalf("index archive: %v", err)
+	}
+	second, err := openArchiveFSForLocation(loc)
+	if err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	if first != second {
+		t.Fatal("unchanged archive should reuse its indexed filesystem")
 	}
 }
 

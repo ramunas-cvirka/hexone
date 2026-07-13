@@ -9,13 +9,100 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+	"gioui.org/widget/material"
 	"hexone/fm"
 )
+
+func TestImagePreviewInitialZoomFitsOversizedImageAndAlignsTop(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 400, 600))
+	var v imagePreviewView
+	v.initializeZoom(image.Pt(200, 150), 10, img)
+	v.computeLayout(image.Pt(200, 150), 0, 10, 10, img)
+
+	if !v.zoomReady || !v.alignTop {
+		t.Fatalf("initial state zoomReady=%v alignTop=%v want true/true", v.zoomReady, v.alignTop)
+	}
+	if got := v.contentSize(img).X; got != v.viewportRect.Dx() {
+		t.Fatalf("fitted image width=%d want viewport width %d", got, v.viewportRect.Dx())
+	}
+	if got := v.contentOrigin(img).Y; got != v.viewportRect.Min.Y {
+		t.Fatalf("fitted image origin Y=%d want top %d", got, v.viewportRect.Min.Y)
+	}
+	if !v.zoomBy(img, fileViewerImageZoomFactor) {
+		t.Fatal("zooming fitted image should change zoom")
+	}
+	v.computeLayout(image.Pt(200, 150), 0, 10, 10, img)
+	if got := v.contentOrigin(img).Y; got != v.viewportRect.Min.Y {
+		t.Fatalf("zoomed image origin Y=%d want top %d", got, v.viewportRect.Min.Y)
+	}
+}
+
+func TestImagePreviewNativeSizeCentersSmallImage(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 100, 80))
+	var v imagePreviewView
+	v.initializeZoom(image.Pt(300, 200), 10, img)
+	v.computeLayout(image.Pt(300, 200), 0, 10, 10, img)
+
+	if got := v.effectiveZoom(); got != 1 {
+		t.Fatalf("small image zoom=%v want native size", got)
+	}
+	if got, want := v.contentOrigin(img), image.Pt(100, 60); got != want {
+		t.Fatalf("small image origin=%v want centered %v", got, want)
+	}
+}
+
+func TestImagePreviewDragPansContent(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{
+		mode:                 "file",
+		detectedImagePreview: true,
+		imagePreview:         image.NewNRGBA(image.Rect(0, 0, 400, 600)),
+	}
+	ui.fileViewer = st
+	th := material.NewTheme()
+	router := new(input.Router)
+	now := time.Date(2026, time.July, 10, 12, 0, 0, 0, time.UTC)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Source:      router.Source(),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(200, 150)},
+	}
+	frame := func() {
+		gtx.Ops.Reset()
+		gtx.Now = now
+		ui.layoutImageOutputView(th, gtx, st)
+		router.Frame(gtx.Ops)
+		now = now.Add(16 * time.Millisecond)
+	}
+	frame()
+	st.imageView.scrollY = 100
+	st.imageView.syncVisualScroll()
+
+	start := f32.Pt(80, 70)
+	router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Position: start, Buttons: pointer.ButtonPrimary})
+	frame()
+	if !st.imageView.panning {
+		t.Fatal("primary press on the image should start panning")
+	}
+	router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(start.X, start.Y+40), Buttons: pointer.ButtonPrimary})
+	frame()
+	if got := st.imageView.scrollY; got >= 100 {
+		t.Fatalf("dragging image down left scrollY=%d want < 100", got)
+	}
+	router.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(start.X, start.Y+40)})
+	frame()
+	if st.imageView.panning {
+		t.Fatal("release should stop image panning")
+	}
+}
 
 func TestImagePreviewViewComputeLayoutAddsScrollbarsWhenNeeded(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 240))
@@ -135,6 +222,36 @@ func TestViewerImageZoomFactorForKey(t *testing.T) {
 	}
 }
 
+func TestViewerZoomPresetsApplyToImagesAndPDFs(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 400, 300))
+	imageState := &fileViewerState{detectedImagePreview: true, imagePreview: img}
+	imageState.imageView.viewportRect = image.Rect(0, 0, 200, 150)
+	imageState.imageView.zoom = 1
+	if !applyViewerZoomPreset(imageState, viewerZoomPresets[0]) {
+		t.Fatal("fit-width image preset should change zoom")
+	}
+	if got := imageState.imageView.effectiveZoom(); math.Abs(float64(got-0.5)) > 0.0001 {
+		t.Fatalf("image fit-width zoom=%v want 0.5", got)
+	}
+	if !imageState.imageView.alignTop {
+		t.Fatal("fit-width image preset should align the image top")
+	}
+	if !applyViewerZoomPreset(imageState, viewerZoomPresets[4]) {
+		t.Fatal("100% image preset should restore native zoom")
+	}
+
+	pdfState := &fileViewerState{detectedImagePreview: true, imagePreviewFormat: "pdf", imagePreviewPageCount: 1}
+	pdfState.pdfDoc.viewportRect = image.Rect(0, 0, 200, 150)
+	pdfState.pdfDoc.configure(viewerPDFDocInfo{PageCount: 1, PageSizes: []viewerPDFPageSize{{W: 612, H: 792}}})
+	pdfState.pdfDoc.setZoom(2)
+	if !applyViewerZoomPreset(pdfState, viewerZoomPresets[0]) {
+		t.Fatal("fit-width PDF preset should reset zoom")
+	}
+	if got := pdfState.pdfDoc.effectiveZoom(); got != 1 {
+		t.Fatalf("PDF fit-width zoom=%v want 1", got)
+	}
+}
+
 func TestPerformFileViewerKeyScrollMovesImagePreview(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	now := time.Date(2026, time.March, 27, 15, 0, 0, 0, time.UTC)
@@ -152,76 +269,5 @@ func TestPerformFileViewerKeyScrollMovesImagePreview(t *testing.T) {
 	}
 	if st.imageView.scrollX <= 0 {
 		t.Fatalf("scrollX=%d want > 0", st.imageView.scrollX)
-	}
-}
-
-func TestLayoutImageOutputViewAppliesPendingScrollToEnd(t *testing.T) {
-	ui := NewUI(fm.DefaultConfig())
-	st := &fileViewerState{
-		detectedImagePreview:    true,
-		imagePreview:            image.NewNRGBA(image.Rect(0, 0, 400, 600)),
-		pendingImageScrollToEnd: true,
-	}
-	router := new(input.Router)
-	gtx := layout.Context{
-		Ops:    new(op.Ops),
-		Source: router.Source(),
-		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
-		Constraints: layout.Constraints{
-			Max: image.Pt(160, 120),
-		},
-	}
-
-	ui.layoutImageOutputView(nil, gtx, st)
-
-	_, maxY := st.imageView.maxScroll(st.imagePreview)
-	if got := st.imageView.scrollY; got != maxY {
-		t.Fatalf("scrollY=%d want %d", got, maxY)
-	}
-	if st.pendingImageScrollToEnd {
-		t.Fatal("pendingImageScrollToEnd should be consumed during layout")
-	}
-}
-
-func TestLayoutImageOutputViewAddsPDFDocumentScrollbar(t *testing.T) {
-	ui := NewUI(fm.DefaultConfig())
-	st := &fileViewerState{
-		detectedImagePreview:  true,
-		imagePreview:          image.NewNRGBA(image.Rect(0, 0, 400, 600)),
-		imagePreviewFormat:    "pdf",
-		imagePreviewPage:      2,
-		imagePreviewPageCount: 8,
-	}
-	router := new(input.Router)
-	gtx := layout.Context{
-		Ops:    new(op.Ops),
-		Source: router.Source(),
-		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
-		Constraints: layout.Constraints{
-			Max: image.Pt(200, 140),
-		},
-	}
-
-	ui.layoutImageOutputView(nil, gtx, st)
-
-	if st.imageView.pdfTrackRect.Dx() <= 0 || st.imageView.pdfThumbRect.Dy() <= 0 {
-		t.Fatal("expected pdf document scrollbar to be laid out")
-	}
-	if st.imageView.pdfTrackRect.Min.X != st.imageView.surfaceRect.Max.X {
-		t.Fatalf("pdf doc scrollbar should be the single vertical gutter, track=%v surface=%v", st.imageView.pdfTrackRect, st.imageView.surfaceRect)
-	}
-}
-
-func TestImagePreviewViewPDFDocumentPageFromVerticalDrag(t *testing.T) {
-	var v imagePreviewView
-	track := image.Rect(0, 0, 8, 240)
-	v.setPDFDocumentScrollbar(track, 0, 10)
-
-	page, ok := v.pdfDocumentPageFromVerticalDrag(track.Max.Y, v.pdfDocumentThumbGrabY(image.Pt(4, track.Max.Y)), 10)
-	if !ok {
-		t.Fatal("expected document drag mapping to succeed")
-	}
-	if page != 9 {
-		t.Fatalf("page=%d want 9", page)
 	}
 }

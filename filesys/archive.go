@@ -26,6 +26,52 @@ type ArchivePath struct {
 
 var archiveNameMatchCache sync.Map
 
+const archiveFSCacheLimit = 12
+const rarIndexBufferSize = 256 << 10
+
+type archiveFSStamp struct {
+	size       int64
+	modifiedNS int64
+}
+
+type archiveFSCacheEntry struct {
+	stamp archiveFSStamp
+	fsys  fs.FS
+	used  uint64
+}
+
+type synchronizedArchiveFS struct {
+	mu   sync.Mutex
+	fsys fs.FS
+}
+
+func (s *synchronizedArchiveFS) Open(name string) (fs.File, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fsys.Open(name)
+}
+
+func (s *synchronizedArchiveFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rd, ok := s.fsys.(fs.ReadDirFS); ok {
+		return rd.ReadDir(name)
+	}
+	return fs.ReadDir(s.fsys, name)
+}
+
+func (s *synchronizedArchiveFS) Stat(name string) (fs.FileInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fs.Stat(s.fsys, name)
+}
+
+var archiveFSCache = struct {
+	sync.Mutex
+	entries map[string]archiveFSCacheEntry
+	clock   uint64
+}{entries: make(map[string]archiveFSCacheEntry)}
+
 func ArchiveNameSupported(name string) bool {
 	key := strings.ToLower(strings.TrimSpace(filepath.Base(name)))
 	if key == "" {
@@ -216,15 +262,63 @@ func splitArchivePath(raw string) (archivePath, innerPath string, ok bool) {
 }
 
 func openArchiveFSForLocation(loc ArchivePath) (fs.FS, error) {
-	if archivePathIsRar(loc.ArchivePath) {
-		fsys, err := openRarArchiveFS(loc.ArchivePath)
+	archivePath := filepath.Clean(loc.ArchivePath)
+	info, err := os.Stat(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	stamp := archiveFSStamp{size: info.Size(), modifiedNS: info.ModTime().UnixNano()}
+
+	archiveFSCache.Lock()
+	if cached, ok := archiveFSCache.entries[archivePath]; ok && cached.stamp == stamp {
+		archiveFSCache.clock++
+		cached.used = archiveFSCache.clock
+		archiveFSCache.entries[archivePath] = cached
+		archiveFSCache.Unlock()
+		return cached.fsys, nil
+	}
+	archiveFSCache.Unlock()
+
+	fSys, err := buildArchiveFS(archivePath)
+	if err != nil {
+		return nil, err
+	}
+	locked := &synchronizedArchiveFS{fsys: fSys}
+
+	archiveFSCache.Lock()
+	defer archiveFSCache.Unlock()
+	if cached, ok := archiveFSCache.entries[archivePath]; ok && cached.stamp == stamp {
+		return cached.fsys, nil
+	}
+	archiveFSCache.clock++
+	archiveFSCache.entries[archivePath] = archiveFSCacheEntry{stamp: stamp, fsys: locked, used: archiveFSCache.clock}
+	for len(archiveFSCache.entries) > archiveFSCacheLimit {
+		oldestPath := ""
+		oldestUse := ^uint64(0)
+		for candidate, entry := range archiveFSCache.entries {
+			if entry.used < oldestUse {
+				oldestPath = candidate
+				oldestUse = entry.used
+			}
+		}
+		if oldestPath == "" {
+			break
+		}
+		delete(archiveFSCache.entries, oldestPath)
+	}
+	return locked, nil
+}
+
+func buildArchiveFS(archivePath string) (fs.FS, error) {
+	if archivePathIsRar(archivePath) {
+		fsys, err := openRarArchiveFS(archivePath)
 		if err != nil {
 			return nil, err
 		}
 		return fsys, nil
 	}
 
-	fsys, err := archives.FileSystem(context.Background(), loc.ArchivePath, nil)
+	fsys, err := archives.FileSystem(context.Background(), archivePath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -244,5 +338,9 @@ func openRarArchiveFS(archivePath string) (fs.FS, error) {
 	if name == "" {
 		return nil, errors.New("archive name is empty")
 	}
-	return rardecode.OpenFS(name, rardecode.FileSystem(archives.DirFS(filepath.Clean(dir))))
+	return rardecode.OpenFS(
+		name,
+		rardecode.FileSystem(archives.DirFS(filepath.Clean(dir))),
+		rardecode.BufferSize(rarIndexBufferSize),
+	)
 }

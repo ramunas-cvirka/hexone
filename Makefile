@@ -1,4 +1,4 @@
-.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-linux-pdfium build-macos-pdfium build-windows-pdfium build-all package-linux package-linux-zip package-macos package-windows package-all windows-resource
+.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-linux-pdfium build-macos-pdfium build-windows-pdfium build-all package-linux package-linux-zip package-macos package-windows package-windows-msix package-all windows-resource
 
 APP := hexone
 CMD := ./cmd/hexone
@@ -69,6 +69,13 @@ WINDOWS_ARCH := amd64
 WINDOWS_STAGE := $(DIST_DIR)/$(APP)-windows-$(WINDOWS_ARCH)-portable
 WINDOWS_BIN := $(WINDOWS_STAGE)/$(APP).exe
 WINDOWS_ZIP := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_portable.zip
+WINDOWS_MSIX := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH).msix
+WINDOWS_MSIX_DEV := $(DIST_DIR)/$(APP)_windows_$(WINDOWS_ARCH)_dev.msix
+WINDOWS_MSIX_ASSETS := $(DIST_DIR)/msix-assets
+MSIX_DEV_SIGN ?= true
+WINDOWS_POWERSHELL ?= $(SystemRoot)/System32/WindowsPowerShell/v1.0/powershell.exe
+HEXONE_MSIX_IDENTITY_NAME ?= RamnasCvirka.hexone
+HEXONE_MSIX_PUBLISHER ?= CN=F267E84A-8585-42BC-92A8-D98FDFEA2938
 WINDOWS_RC_TEMPLATE := cmd/hexone/app_icon_windows.rc
 WINDOWS_MANIFEST_TEMPLATE := cmd/hexone/app_windows.manifest
 WINDOWS_MANIFEST_RENDERED := cmd/hexone/hexone_windows.generated.manifest
@@ -417,10 +424,22 @@ ifeq ($(OS),Windows_NT)
 package-windows: build-windows-pdfium
 	@if exist "$(subst /,\,$(WINDOWS_ZIP))" del /q "$(subst /,\,$(WINDOWS_ZIP))"
 	@powershell -NoProfile -Command "Compress-Archive -Path '$(subst /,\,$(WINDOWS_STAGE))\\*' -DestinationPath '$(subst /,\,$(WINDOWS_ZIP))' -Force"
+
+package-windows-msix: build-windows-pdfium
+	@if exist "$(subst /,\,$(WINDOWS_MSIX_ASSETS))" powershell -NoProfile -Command "Remove-Item -LiteralPath '$(subst /,\,$(WINDOWS_MSIX_ASSETS))' -Recurse -Force"
+	@go run ./tools/msixassets "$(WINDOWS_MSIX_ASSETS)"
+	@if exist "$(subst /,\,$(WINDOWS_MSIX))" del /q "$(subst /,\,$(WINDOWS_MSIX))"
+	@if exist "$(subst /,\,$(WINDOWS_MSIX_DEV))" del /q "$(subst /,\,$(WINDOWS_MSIX_DEV))"
+	@powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build_msix.ps1 -AppDirectory "$(WINDOWS_STAGE)" -AssetsDirectory "$(WINDOWS_MSIX_ASSETS)" -OutputPackage "$(WINDOWS_MSIX)" -IdentityName "$(HEXONE_MSIX_IDENTITY_NAME)" -Publisher "$(HEXONE_MSIX_PUBLISHER)" -Version "$(APP_FILE_VERSION)"
+	@if /I "$(MSIX_DEV_SIGN)"=="true" "$(WINDOWS_POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -File packaging/windows/sign_msix_dev.ps1 -InputPackage "$(WINDOWS_MSIX)" -OutputPackage "$(WINDOWS_MSIX_DEV)" -Publisher "$(HEXONE_MSIX_PUBLISHER)"
 else
 package-windows: build-windows-pdfium
 	rm -f "$(WINDOWS_ZIP)"
 	cd "$(WINDOWS_STAGE)" && zip -rq "../$(notdir $(WINDOWS_ZIP))" .
+
+package-windows-msix:
+	@echo "package-windows-msix requires Windows and the Windows SDK's MakeAppx.exe."
+	@exit 1
 endif
 
 package-all: package-linux package-macos package-windows

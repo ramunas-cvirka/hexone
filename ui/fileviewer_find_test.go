@@ -4,8 +4,10 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"image"
+	"image/color"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,9 +18,63 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"hexone/fm"
 )
+
+type blockingPDFFindRenderer struct {
+	started chan struct{}
+	release chan struct{}
+	pages   []viewerPDFPageText
+}
+
+func (r *blockingPDFFindRenderer) Available() bool { return true }
+
+func (r *blockingPDFFindRenderer) RenderPage(req viewerPDFRenderRequest) (viewerPDFRenderResult, error) {
+	return viewerPDFRenderResult{
+		Image:     image.NewNRGBA(image.Rect(0, 0, req.Width, req.Width*4/3)),
+		Page:      req.Page,
+		PageCount: len(r.pages),
+	}, nil
+}
+
+func (r *blockingPDFFindRenderer) DocInfo(viewerPDFRenderRequest) (viewerPDFDocInfo, error) {
+	sizes := make([]viewerPDFPageSize, len(r.pages))
+	for i := range sizes {
+		sizes[i] = viewerPDFPageSize{W: 100, H: 160}
+	}
+	return viewerPDFDocInfo{PageCount: len(sizes), PageSizes: sizes}, nil
+}
+
+func (r *blockingPDFFindRenderer) PageText(req viewerPDFRenderRequest) (viewerPDFPageText, error) {
+	if req.Page == 0 && r.started != nil {
+		select {
+		case r.started <- struct{}{}:
+		default:
+		}
+		<-r.release
+	}
+	return r.pages[req.Page], nil
+}
+
+func (r *blockingPDFFindRenderer) PageLinks(req viewerPDFRenderRequest) (viewerPDFPageLinks, error) {
+	return viewerPDFPageLinks{Page: req.Page}, nil
+}
+
+func (r *blockingPDFFindRenderer) TOC(viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error) {
+	return nil, nil
+}
+
+func testPDFFindPage(page int, value string) viewerPDFPageText {
+	chars := make([]viewerPDFTextChar, 0, len([]rune(value)))
+	for i, r := range value {
+		chars = append(chars, viewerPDFTextChar{
+			Rune: r, Left: 5 + float64(i)*5, Top: 20, Right: 10 + float64(i)*5, Bottom: 30,
+		})
+	}
+	return viewerPDFPageText{Page: page, Chars: chars}
+}
 
 func TestViewerFindTextMatchesAllowsOverlaps(t *testing.T) {
 	got := viewerFindTextMatches("banana", "ana")
@@ -31,6 +87,253 @@ func TestViewerFindTextMatchesAllowsOverlaps(t *testing.T) {
 	}
 	if got[1].Start != 3 || got[1].End != 6 {
 		t.Fatalf("second match=%+v want {Start:3 End:6}", got[1])
+	}
+}
+
+func TestViewerFindTextMatchesIncludesLineAndCompactSnippet(t *testing.T) {
+	got := viewerFindTextMatches("header\nsecond needle with context\nfooter", "needle")
+	if len(got) != 1 {
+		t.Fatalf("matches=%d want 1", len(got))
+	}
+	if got[0].Line != 2 {
+		t.Fatalf("line=%d want 2", got[0].Line)
+	}
+	if got[0].Snippet != "second needle with context" {
+		t.Fatalf("snippet=%q", got[0].Snippet)
+	}
+}
+
+func TestViewerFindBytesAllReturnsOverlapsAndHonorsLimit(t *testing.T) {
+	data := []byte("aaaaa")
+	src := viewerFindChunkSource{
+		size: int64(len(data)),
+		read: func(start, length int64) ([]byte, error) {
+			end := start + length
+			if end > int64(len(data)) {
+				end = int64(len(data))
+			}
+			return append([]byte(nil), data[start:end]...), nil
+		},
+	}
+	offsets, limited, err := viewerFindBytesAll(context.Background(), src, []byte("aa"), 4, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(offsets) != 3 || offsets[0] != 0 || offsets[1] != 1 || offsets[2] != 2 {
+		t.Fatalf("offsets=%v want [0 1 2]", offsets)
+	}
+	if !limited {
+		t.Fatal("expected capped result set to be marked limited")
+	}
+}
+
+func TestViewerRemoteSearchOffsetsParsesMultipleSortedOffsets(t *testing.T) {
+	offsets, valid := viewerRemoteSearchOffsets("18:needle\n2:needle\n18:needle\n", 64, 10)
+	if !valid {
+		t.Fatal("expected valid multi-result output")
+	}
+	if len(offsets) != 2 || offsets[0] != 2 || offsets[1] != 18 {
+		t.Fatalf("offsets=%v want sorted unique offsets", offsets)
+	}
+}
+
+func TestViewerRunRemoteSearchAllRequestsMultipleResults(t *testing.T) {
+	prev := runViewerRemoteSearchCommandFunc
+	defer func() { runViewerRemoteSearchCommandFunc = prev }()
+	var gotCmd string
+	runViewerRemoteSearchCommandFunc = func(_ context.Context, _ *paneSSHSession, cmdline string, _ viewerShellSpec) (string, error) {
+		gotCmd = cmdline
+		return "2:needle\n18:needle\n", nil
+	}
+	spec := viewerRemoteSearchSpec{
+		template: fm.DefaultViewerRemoteSearchCommand,
+		mode:     fm.ViewerRemoteSearchModeRemote,
+		shell:    resolveViewerShell("sh", true),
+	}
+	offsets, used := viewerRunRemoteSearchAll(context.Background(), "/tmp/sample", &paneSSHSession{}, []byte("needle"), spec, 64, 59, 20)
+	if !used || len(offsets) != 2 || offsets[0] != 2 || offsets[1] != 18 {
+		t.Fatalf("offsets=%v used=%v", offsets, used)
+	}
+	if strings.Contains(gotCmd, "-m 1") {
+		t.Fatalf("multi-result command unexpectedly limited to one match: %q", gotCmd)
+	}
+	if !strings.Contains(gotCmd, "head -n 20") {
+		t.Fatalf("multi-result command missing result cap: %q", gotCmd)
+	}
+}
+
+func TestViewerHexFindPreviewSwitchesBetweenTextAndHex(t *testing.T) {
+	raw := []byte{0x00, 'h', 'e', 'l', 'l', 'o', 0x01, 0x02}
+	st := &fileViewerState{hex: &hexViewerState{
+		bufferStart: 0,
+		buffer:      raw,
+	}}
+	match := viewerHexFindMatch{Start: 1, Length: 5, PreviewBytes: append([]byte(nil), raw...)}
+	st.find.hexMatches = []viewerHexFindMatch{match}
+
+	textPreview := viewerHexFindSnippet(st, match)
+	if !strings.Contains(textPreview, "hello") || strings.Contains(textPreview, "68 65") {
+		t.Fatalf("text preview=%q", textPreview)
+	}
+
+	st.find.hexPreview = true
+	redecodeViewerHexFindPreviews(st)
+	hexPreview := viewerHexFindSnippet(st, st.find.hexMatches[0])
+	if !strings.Contains(hexPreview, "68 65 6C 6C 6F") || strings.Contains(hexPreview, "hello") {
+		t.Fatalf("hex preview=%q", hexPreview)
+	}
+}
+
+func TestViewerBufferedHexFindMatchesAreImmediatelyPreviewable(t *testing.T) {
+	buffer := []byte("before needle between needle after")
+	matches := viewerBufferedHexFindMatches(buffer, 4096, []byte("needle"), 20)
+	if len(matches) != 2 {
+		t.Fatalf("matches=%d want 2", len(matches))
+	}
+	if matches[0].Start != 4096+7 || len(matches[0].PreviewBytes) == 0 {
+		t.Fatalf("first match=%+v", matches[0])
+	}
+	if preview := viewerHexFindSnippet(&fileViewerState{}, matches[0]); !strings.Contains(preview, "needle") {
+		t.Fatalf("preview=%q", preview)
+	}
+}
+
+func TestPrepareFileViewerFindModeClearsSharedResults(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{mode: "hex"}
+	st.find.modeKey = "file"
+	st.find.matches = []viewerFindMatch{{Start: 1, End: 2}}
+	st.find.textClicks = make([]widget.Clickable, 1)
+	st.find.currentValid = true
+
+	ui.prepareFileViewerFindMode(st)
+	if st.find.modeKey != "hex" || len(st.find.matches) != 0 || len(st.find.textClicks) != 0 || st.find.currentValid {
+		t.Fatalf("mode transition left shared state: key=%q matches=%d clicks=%d valid=%v", st.find.modeKey, len(st.find.matches), len(st.find.textClicks), st.find.currentValid)
+	}
+}
+
+func TestPDFPreviewIsInactiveAfterSwitchingToHex(t *testing.T) {
+	st := &fileViewerState{
+		mode:                  "file",
+		detectedImagePreview:  true,
+		imagePreviewFormat:    "pdf",
+		imagePreviewPageCount: 3,
+	}
+	if !viewerPDFPreviewActive(st) {
+		t.Fatal("PDF preview should be active in File mode")
+	}
+	st.mode = "hex"
+	if viewerPDFPreviewActive(st) {
+		t.Fatal("PDF preview must not remain active in Hex mode")
+	}
+	st.find.pdfMatches = []viewerPDFFindMatch{{Page: 0}, {Page: 1}}
+	st.find.hexMatches = []viewerHexFindMatch{{Start: 12, Length: 4}}
+	if got := fileViewerFindResultCount(st); got != 1 {
+		t.Fatalf("Hex result count=%d want 1", got)
+	}
+}
+
+func TestViewerPDFFindPageMatchesIsCaseInsensitiveAndOverlapping(t *testing.T) {
+	text := testPDFFindPage(2, "BANANa")
+	matches := viewerPDFFindPageMatches(text, "ana")
+
+	if len(matches) != 2 {
+		t.Fatalf("matches=%d want 2", len(matches))
+	}
+	if matches[0].Page != 2 || matches[0].Start != 1 || matches[0].End != 4 {
+		t.Fatalf("first match=%+v", matches[0])
+	}
+	if matches[1].Start != 3 || matches[1].End != 6 {
+		t.Fatalf("second match=%+v", matches[1])
+	}
+}
+
+func TestPDFViewerFindRunsAsynchronouslyAndStreamsMultipleResults(t *testing.T) {
+	prev := viewerPDFPreviewBackend
+	renderer := &blockingPDFFindRenderer{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+		pages: []viewerPDFPageText{
+			testPDFFindPage(0, "needle first needle"),
+			testPDFFindPage(1, "nothing here"),
+			testPDFFindPage(2, "last NEEDLE"),
+		},
+	}
+	viewerPDFPreviewBackend = renderer
+	t.Cleanup(func() { viewerPDFPreviewBackend = prev })
+
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{
+		detectedImagePreview:  true,
+		imagePreviewFormat:    "pdf",
+		imagePreviewPageCount: len(renderer.pages),
+		pdfDocCh:              make(chan pdfDocResult, 4),
+	}
+	st.pdfDoc.configure(viewerPDFDocInfo{PageCount: 3, PageSizes: []viewerPDFPageSize{{W: 100, H: 160}, {W: 100, H: 160}, {W: 100, H: 160}}})
+	st.pdfDoc.viewportRect = image.Rect(0, 0, 100, 120)
+	st.pdfDoc.relayout()
+	st.find.open = true
+	st.find.editor.SetText("needle")
+	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	st.find.pdfResultCh = make(chan viewerPDFFindResult, 16)
+	st.find.pdfList.Axis = layout.Vertical
+	st.find.index = -1
+	ui.fileViewer = st
+
+	start := time.Now()
+	ui.refreshFileViewerFind(start, false)
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("refresh blocked for %v", elapsed)
+	}
+	select {
+	case <-renderer.started:
+	case <-time.After(time.Second):
+		t.Fatal("background PDF search did not start")
+	}
+	if !st.find.searching {
+		t.Fatal("search should remain active while page extraction is blocked")
+	}
+	close(renderer.release)
+
+	gtx := layout.Context{Ops: new(op.Ops), Now: time.Now()}
+	deadline := time.Now().Add(2 * time.Second)
+	for st.find.searching && time.Now().Before(deadline) {
+		gtx.Now = time.Now()
+		ui.pumpFileViewerFindState(gtx, st)
+		time.Sleep(time.Millisecond)
+	}
+	if st.find.searching {
+		t.Fatal("PDF search did not finish")
+	}
+	if got := len(st.find.pdfMatches); got != 3 {
+		t.Fatalf("matches=%d want 3", got)
+	}
+	if st.find.pdfSearched != 3 {
+		t.Fatalf("searched pages=%d want 3", st.find.pdfSearched)
+	}
+	if st.find.index != 0 || !st.find.currentValid {
+		t.Fatalf("current result=(%d,%v) want first valid result", st.find.index, st.find.currentValid)
+	}
+	if got := st.find.status; got != "1/3" {
+		t.Fatalf("status=%q want 1/3", got)
+	}
+	if st.pdfDoc.text[2].Page != 2 {
+		t.Fatal("search results should populate the PDF text cache")
+	}
+	if !ui.stepFileViewerFind(time.Now(), 1) || st.find.index != 1 {
+		t.Fatalf("next result index=%d want 1", st.find.index)
+	}
+	if got := st.find.pdfMatches[st.find.index].Page; got != 0 {
+		t.Fatalf("second result page=%d want page 0", got)
+	}
+	if !ui.stepFileViewerFind(time.Now(), 1) || st.find.index != 2 {
+		t.Fatalf("third result index=%d want 2", st.find.index)
+	}
+	if got := st.find.pdfMatches[st.find.index].Page; got != 2 {
+		t.Fatalf("third result page=%d want page 2", got)
+	}
+	if st.pdfDoc.scrollY <= 0 {
+		t.Fatal("jumping to a later-page result should scroll the document")
 	}
 }
 
@@ -206,6 +509,32 @@ func TestFileViewerFindBarHeightStaysStableAcrossStatusChanges(t *testing.T) {
 	}
 }
 
+func TestViewerFindModeGlyphKeepsStableCanvas(t *testing.T) {
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(14, 10)),
+	}
+	fg := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	textDims := layoutFileViewerFindModeGlyph(gtx, false, fg)
+	gtx.Ops = new(op.Ops)
+	hexDims := layoutFileViewerFindModeGlyph(gtx, true, fg)
+	if textDims.Size != hexDims.Size || textDims.Size != image.Pt(14, 10) {
+		t.Fatalf("mode glyph sizes text=%v hex=%v", textDims.Size, hexDims.Size)
+	}
+}
+
+func TestViewerFindHintCentersUnderItsGlyph(t *testing.T) {
+	anchor := image.Rect(100, 8, 122, 30)
+	pos := viewerFindHintPoint(anchor, image.Pt(80, 18), image.Pt(300, 100), 2)
+	if want := image.Pt(71, 32); pos != want {
+		t.Fatalf("hint position=%v want %v", pos, want)
+	}
+	if gotCenter := pos.X + 40; gotCenter != anchor.Min.X+anchor.Dx()/2 {
+		t.Fatalf("hint center=%d glyph center=%d", gotCenter, anchor.Min.X+anchor.Dx()/2)
+	}
+}
+
 func TestViewerScrollStreamFindMatchKeepsMatchVisibleBeforeScrolling(t *testing.T) {
 	now := time.Now()
 	st := &fileViewerState{}
@@ -256,54 +585,75 @@ func TestViewerScrollHexFindMatchKeepsMatchVisibleBeforeScrolling(t *testing.T) 
 	}
 }
 
-func TestViewerFindHexModeFromQuery(t *testing.T) {
-	tests := []struct {
-		name  string
-		query string
-		want  bool
-	}{
-		{name: "even upper hex", query: "DEADBEEF", want: true},
-		{name: "even lower hex", query: "deed", want: true},
-		{name: "trimmed hex", query: "  0A0B  ", want: true},
-		{name: "odd digits fall back to text", query: "ABC", want: false},
-		{name: "non hex text falls back to text", query: "needle", want: false},
-		{name: "hex with separators falls back to text", query: "DE AD", want: false},
+func TestViewerFindPatternModeIsExplicit(t *testing.T) {
+	textPattern, errText := viewerFindPatternBytes("DEADBEEF", false)
+	if errText != "" || string(textPattern) != "DEADBEEF" {
+		t.Fatalf("text pattern=%q err=%q", textPattern, errText)
 	}
 
-	for _, tt := range tests {
-		if got := viewerFindHexModeFromQuery(tt.query); got != tt.want {
-			t.Fatalf("%s: viewerFindHexModeFromQuery(%q)=%v want %v", tt.name, tt.query, got, tt.want)
-		}
+	hexPattern, errText := viewerFindPatternBytes("DE AD BE EF", true)
+	if errText != "" {
+		t.Fatalf("hex pattern err=%q", errText)
+	}
+	wantHex := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	if !bytes.Equal(hexPattern, wantHex) {
+		t.Fatalf("hex pattern=% X want % X", hexPattern, wantHex)
+	}
+
+	if _, errText := viewerFindPatternBytes("ABC", true); errText == "" {
+		t.Fatal("explicit hex mode should reject an incomplete byte")
 	}
 }
 
-func TestViewerFindAutoPatternBytesPrefersHexOnlyForPureEvenHex(t *testing.T) {
-	pattern, useHex, errText := viewerFindAutoPatternBytes("DEADBEEF")
-	if errText != "" {
-		t.Fatalf("viewerFindAutoPatternBytes hex err=%q", errText)
-	}
-	if !useHex {
-		t.Fatal("viewerFindAutoPatternBytes should treat pure even hex as bytes")
-	}
-	wantHex := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-	if len(pattern) != len(wantHex) {
-		t.Fatalf("hex pattern len=%d want %d", len(pattern), len(wantHex))
-	}
-	for i := range wantHex {
-		if pattern[i] != wantHex[i] {
-			t.Fatalf("hex pattern[%d]=0x%X want 0x%X", i, pattern[i], wantHex[i])
-		}
+func TestHexFindWorkerWakesWindowOnCompletion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "typing.bin")
+	if err := os.WriteFile(path, []byte("before needle after needle"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	pattern, useHex, errText = viewerFindAutoPatternBytes("ABC")
-	if errText != "" {
-		t.Fatalf("viewerFindAutoPatternBytes text err=%q", errText)
+	ui := NewUI(fm.DefaultConfig())
+	wake := make(chan struct{}, 1)
+	ui.SetInvalidateFunc(func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	})
+	st := &fileViewerState{mode: "hex", path: path, hex: newHexViewerState()}
+	st.hex.fileSize = 26
+	st.hex.bytesPerLine = 16
+	st.find.open = true
+	st.find.editor.SetText("needle")
+	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	st.find.index = -1
+	ui.fileViewer = st
+
+	ui.refreshFileViewerFind(time.Now(), false)
+	select {
+	case <-wake:
+	case <-time.After(2 * time.Second):
+		t.Fatal("completed asynchronous Hex find did not wake the window")
 	}
-	if useHex {
-		t.Fatal("viewerFindAutoPatternBytes should fall back to text for odd-length hex-like input")
+
+	gtx := layout.Context{Ops: new(op.Ops), Now: time.Now()}
+	ui.pumpFileViewerFindState(gtx, st)
+	if got := len(st.find.hexMatches); got != 2 {
+		t.Fatalf("matches=%d want 2", got)
 	}
-	if got := string(pattern); got != "ABC" {
-		t.Fatalf("text pattern=%q want %q", got, "ABC")
+}
+
+func TestSendFileViewerFindResultKeepsNewestRequest(t *testing.T) {
+	ch := make(chan fileViewerFindResult, 1)
+	sendFileViewerFindResult(ch, fileViewerFindResult{requestSeq: 12})
+	sendFileViewerFindResult(ch, fileViewerFindResult{requestSeq: 11})
+	if got := (<-ch).requestSeq; got != 12 {
+		t.Fatalf("request sequence=%d want newest 12", got)
+	}
+
+	sendFileViewerFindResult(ch, fileViewerFindResult{requestSeq: 12})
+	sendFileViewerFindResult(ch, fileViewerFindResult{requestSeq: 13})
+	if got := (<-ch).requestSeq; got != 13 {
+		t.Fatalf("request sequence=%d want newest 13", got)
 	}
 }
 

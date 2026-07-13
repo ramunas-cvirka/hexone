@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"hexone/filesys"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -29,6 +28,8 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 )
+
+var dialogDividerColor = color.NRGBA{R: 255, G: 255, B: 255, A: 30}
 
 type fileCopyState struct {
 	pane    int
@@ -60,20 +61,24 @@ type fileCopyState struct {
 	srcInfo fileCopyPathInfo
 	dstInfo fileCopyPathInfo
 
-	progressCh  chan filesys.CopyProgress
-	doneCh      chan error
-	startedAt   time.Time
-	speedBytes  int64
-	speedAt     time.Time
-	speedDone   int64
-	speedSeenAt time.Time
-	cancelFunc  context.CancelFunc
-	cancelUntil time.Time
-	canceling   bool
-	actionsAnim segmentedAnimState
-	keyFocus    dialogKeyboardFocusState
-	focus       fileCopyDialogFocus
-	actionFocus fileCopyDialogAction
+	progressCh    chan filesys.CopyProgress
+	doneCh        chan error
+	previewCh     chan fileCopyPreviewResult
+	previewID     uint64
+	previewing    bool
+	previewCancel context.CancelFunc
+	startedAt     time.Time
+	speedBytes    int64
+	speedAt       time.Time
+	speedDone     int64
+	speedSeenAt   time.Time
+	cancelFunc    context.CancelFunc
+	cancelUntil   time.Time
+	canceling     bool
+	actionsAnim   segmentedAnimState
+	keyFocus      dialogKeyboardFocusState
+	focus         fileCopyDialogFocus
+	actionFocus   fileCopyDialogAction
 }
 
 type fileCopyDialogFocus uint8
@@ -108,14 +113,8 @@ const (
 	fileCopyCancelConfirmCountdown = 5 * time.Second
 	fileCopySpeedSampleInterval    = 750 * time.Millisecond
 	fileCopySpeedStaleAfter        = 3 * fileCopySpeedSampleInterval
+	fileCopyRemotePreviewDebounce  = 180 * time.Millisecond
 )
-
-type fileCopyPlan struct {
-	srcPath      string
-	dstPath      string
-	entriesTotal int
-	bytesTotal   int64
-}
 
 type fileCopyPathInfo struct {
 	Path    string
@@ -123,6 +122,15 @@ type fileCopyPathInfo struct {
 	IsDir   bool
 	Size    int64
 	ModTime time.Time
+}
+
+type fileCopyPreviewResult struct {
+	id      uint64
+	raw     string
+	dstPath string
+	srcInfo fileCopyPathInfo
+	dstInfo fileCopyPathInfo
+	err     error
 }
 
 type segmentedAnimState struct {
@@ -266,6 +274,9 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 }
 
 func (ui *UI) closeFileCopyDialog() {
+	if ui.fileCopy != nil && ui.fileCopy.previewCancel != nil {
+		ui.fileCopy.previewCancel()
+	}
 	ui.fileCopy = nil
 	ui.clearFileCopyHotkeyHold()
 }
@@ -548,6 +559,52 @@ func (st *fileCopyState) sourceSummary() string {
 	return fmt.Sprintf("%d items selected", count)
 }
 
+func (st *fileCopyState) sourceOperationSummary() string {
+	return fileOpSourceCountText(st.sourceCount())
+}
+
+func (st *fileCopyState) sourceLocation() string {
+	if st == nil {
+		return ""
+	}
+	if st.multiSource() {
+		return st.sourceSummary()
+	}
+	if st.op == fileCopyOpExtract {
+		if len(st.sources) > 0 {
+			return fileOpPreviewLabel(st.sources[0].Name, st.sources[0].Path)
+		}
+		return st.srcEndpoint.baseName(st.srcPath)
+	}
+	if len(st.sources) > 0 {
+		return fileOpPreviewLabel(st.sources[0].Name, st.sources[0].Path)
+	}
+	return st.srcEndpoint.baseName(st.srcPath)
+}
+
+func (st *fileCopyState) progressCurrentLabel() string {
+	if st == nil {
+		return ""
+	}
+	current := copyProgressCurrent(st.progress)
+	if current == "" {
+		return current
+	}
+	rootPath := strings.TrimSpace(st.progress.CurrentRootPath)
+	if rootPath == "" {
+		return current
+	}
+	rootName := st.srcEndpoint.baseName(rootPath)
+	currentPath := strings.TrimSpace(st.progress.CurrentPath)
+	if st.srcEndpoint.samePath(rootPath, currentPath) {
+		return current
+	}
+	if rootName == "" || rootName == "." || rootName == string(filepath.Separator) {
+		return current
+	}
+	return rootName + "  ›  " + current
+}
+
 func (st *fileCopyState) title() string {
 	if st != nil && st.op == fileCopyOpExtract {
 		return "Extract"
@@ -574,46 +631,6 @@ func (st *fileCopyState) confirmLabel() string {
 	return "Copy"
 }
 
-func (st *fileCopyState) sourcePreviewLines() []string {
-	if st == nil || len(st.sources) == 0 {
-		return nil
-	}
-	labels := make([]string, 0, len(st.sources))
-	for _, src := range st.sources {
-		labels = append(labels, fileOpPreviewLabel(src.Name, src.Path))
-	}
-	return fileOpPreviewLines(labels)
-}
-
-func (st *fileCopyState) buildCopyPlans(dstRaw string) (string, fileCopyPathInfo, []fileCopyPlan, error) {
-	if st == nil {
-		return "", fileCopyPathInfo{}, nil, fmt.Errorf("copy state is nil")
-	}
-	dstDir, dstInfo, err := inspectCopyDestinationDir(st.dstEndpoint, dstRaw)
-	if err != nil {
-		return "", fileCopyPathInfo{}, nil, err
-	}
-	plans := make([]fileCopyPlan, 0, len(st.sources))
-	for _, src := range st.sources {
-		target := st.dstEndpoint.join(dstDir, st.srcEndpoint.baseName(src.Path))
-		dstPath, _, _, err := inspectCopyPaths(st.srcEndpoint, src.Path, st.dstEndpoint, target)
-		if err != nil {
-			return "", fileCopyPathInfo{}, nil, err
-		}
-		srcPath, entriesTotal, bytesTotal, err := collectCopyTransferTotals(st.srcEndpoint, src.Path)
-		if err != nil {
-			return "", fileCopyPathInfo{}, nil, err
-		}
-		plans = append(plans, fileCopyPlan{
-			srcPath:      srcPath,
-			dstPath:      dstPath,
-			entriesTotal: entriesTotal,
-			bytesTotal:   bytesTotal,
-		})
-	}
-	return dstDir, dstInfo, plans, nil
-}
-
 func (st *fileCopyState) refreshPreview() {
 	if st == nil {
 		return
@@ -621,8 +638,57 @@ func (st *fileCopyState) refreshPreview() {
 	raw := strings.TrimSpace(st.dstEdit.Text())
 	st.dstRaw = raw
 	if raw == "" {
+		if st.previewCancel != nil {
+			st.previewCancel()
+			st.previewCancel = nil
+		}
+		st.previewID++
+		st.previewing = false
 		st.dstPath = ""
 		st.dstInfo = fileCopyPathInfo{}
+		return
+	}
+
+	// SFTP metadata calls can take seconds on a high-latency or unhealthy
+	// connection. Never perform them from Gio's event/layout goroutine.
+	if st.srcEndpoint.isRemote() || st.dstEndpoint.isRemote() {
+		if st.previewCancel != nil {
+			st.previewCancel()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		st.previewCancel = cancel
+		st.previewID++
+		id := st.previewID
+		st.previewing = true
+		st.srcInfo = fileCopyPathInfo{}
+		st.dstInfo = fileCopyPathInfo{}
+		if dstPath, err := st.dstEndpoint.normalizePath(raw); err == nil {
+			st.dstPath = dstPath
+		} else {
+			st.dstPath = raw
+		}
+		st.previewCh = make(chan fileCopyPreviewResult, 1)
+		ch := st.previewCh
+		srcEndpoint := st.srcEndpoint
+		dstEndpoint := st.dstEndpoint
+		srcPath := st.srcPath
+		multi := st.multiSource()
+		go func() {
+			timer := time.NewTimer(fileCopyRemotePreviewDebounce)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			res := fileCopyPreviewResult{id: id, raw: raw}
+			if multi {
+				res.dstPath, res.dstInfo, res.err = inspectCopyDestinationDir(dstEndpoint, raw)
+			} else {
+				res.dstPath, res.srcInfo, res.dstInfo, res.err = inspectCopyPaths(srcEndpoint, srcPath, dstEndpoint, raw)
+			}
+			ch <- res
+		}()
 		return
 	}
 	if st.multiSource() {
@@ -648,6 +714,31 @@ func (st *fileCopyState) refreshPreview() {
 	st.dstInfo = dstInfo
 }
 
+func (st *fileCopyState) pumpPreview() {
+	if st == nil || st.previewCh == nil {
+		return
+	}
+	for {
+		select {
+		case res := <-st.previewCh:
+			if res.id != st.previewID || res.raw != strings.TrimSpace(st.dstEdit.Text()) {
+				continue
+			}
+			st.previewing = false
+			st.previewCancel = nil
+			if res.err != nil {
+				st.dstPath = res.raw
+				continue
+			}
+			st.dstPath = res.dstPath
+			st.srcInfo = res.srcInfo
+			st.dstInfo = res.dstInfo
+		default:
+			return
+		}
+	}
+}
+
 func (ui *UI) submitFileCopyDialog(now time.Time) {
 	st := ui.fileCopy
 	if st == nil || st.running {
@@ -661,97 +752,14 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 	}
 
 	st.dstRaw = dst
-	if st.multiSource() {
-		effectiveDst, dstInfo, plans, err := st.buildCopyPlans(dst)
-		if err != nil {
-			st.lastErr = err.Error()
-			return
-		}
-		totalEntries := 0
-		var totalBytes int64
-		for _, plan := range plans {
-			totalEntries += plan.entriesTotal
-			totalBytes += plan.bytesTotal
-		}
-		st.dstInfo = dstInfo
-		st.dstPath = effectiveDst
-		st.srcInfo = fileCopyPathInfo{}
-		st.lastErr = ""
-		st.progress = filesys.CopyProgress{
-			EntriesTotal: totalEntries,
-			BytesTotal:   totalBytes,
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		st.beginCopyRun(cancel, now)
-
-		progressCh := make(chan filesys.CopyProgress, 32)
-		doneCh := make(chan error, 1)
-		st.progressCh = progressCh
-		st.doneCh = doneCh
-
-		srcEndpoint := st.srcEndpoint
-		dstEndpoint := st.dstEndpoint
-		go func(ctx context.Context, plans []fileCopyPlan, totalEntries int, totalBytes int64) {
-			sendProgress := func(p filesys.CopyProgress) {
-				for {
-					select {
-					case progressCh <- p:
-						return
-					default:
-					}
-					select {
-					case <-progressCh:
-					default:
-					}
-				}
-			}
-
-			doneEntries := 0
-			var doneBytes int64
-			for _, plan := range plans {
-				if err := ctx.Err(); err != nil {
-					doneCh <- err
-					return
-				}
-				err := runCopyBetweenEndpoints(ctx, srcEndpoint, plan.srcPath, dstEndpoint, plan.dstPath, func(progress filesys.CopyProgress) {
-					progress.EntriesDone += doneEntries
-					progress.BytesDone += doneBytes
-					progress.EntriesTotal = totalEntries
-					progress.BytesTotal = totalBytes
-					sendProgress(progress)
-				})
-				if err != nil {
-					doneCh <- err
-					return
-				}
-				doneEntries += plan.entriesTotal
-				doneBytes += plan.bytesTotal
-			}
-			doneCh <- nil
-		}(ctx, plans, totalEntries, totalBytes)
-
-		return
+	if st.previewCancel != nil {
+		st.previewCancel()
+		st.previewCancel = nil
 	}
-	effectiveDst, srcInfo, dstInfo, err := inspectCopyPaths(st.srcEndpoint, st.srcPath, st.dstEndpoint, dst)
-	if err != nil {
-		st.lastErr = err.Error()
-		return
-	}
-	st.srcInfo = srcInfo
-	st.dstInfo = dstInfo
-	st.dstPath = effectiveDst
-
-	_, entriesTotal, bytesTotal, err := collectCopyTransferTotals(st.srcEndpoint, st.srcPath)
-	if err != nil {
-		st.lastErr = err.Error()
-		return
-	}
-
+	st.previewID++
+	st.previewing = false
 	st.lastErr = ""
-	st.progress = filesys.CopyProgress{
-		EntriesTotal: entriesTotal,
-		BytesTotal:   bytesTotal,
-	}
+	st.progress = filesys.CopyProgress{}
 	ctx, cancel := context.WithCancel(context.Background())
 	st.beginCopyRun(cancel, now)
 
@@ -760,10 +768,11 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 	st.progressCh = progressCh
 	st.doneCh = doneCh
 
-	src := st.srcPath
-	dst = st.dstPath
 	srcEndpoint := st.srcEndpoint
 	dstEndpoint := st.dstEndpoint
+	srcPath := st.srcPath
+	sources := append([]fileCopySource(nil), st.sources...)
+	multi := st.multiSource()
 	go func(ctx context.Context) {
 		sendProgress := func(p filesys.CopyProgress) {
 			for {
@@ -778,9 +787,62 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 				}
 			}
 		}
-		doneCh <- runCopyBetweenEndpoints(ctx, srcEndpoint, src, dstEndpoint, dst, sendProgress)
-	}(ctx)
+		if endpointsUseSameRemote(srcEndpoint, dstEndpoint) {
+			remoteSources := sources
+			if !multi {
+				remoteSources = []fileCopySource{{Path: srcPath, Name: srcEndpoint.baseName(srcPath)}}
+			}
+			destinationDir := dst
+			if multi {
+				var err error
+				destinationDir, _, err = inspectCopyDestinationDir(dstEndpoint, dst)
+				if err != nil {
+					doneCh <- err
+					return
+				}
+			}
+			remoteProgress := filesys.CopyProgress{
+				Streaming:       true,
+				ScanDone:        true,
+				FilesDiscovered: len(remoteSources),
+				EntriesTotal:    len(remoteSources),
+			}
+			sendProgress(remoteProgress)
+			for _, source := range remoteSources {
+				if err := ctx.Err(); err != nil {
+					doneCh <- err
+					return
+				}
+				target := destinationDir
+				if multi {
+					target = dstEndpoint.join(destinationDir, srcEndpoint.baseName(source.Path))
+				}
+				remoteProgress.CurrentPath = source.Path
+				remoteProgress.CurrentRootPath = source.Path
+				sendProgress(remoteProgress)
+				_, err := runSameRemoteCopyContext(ctx, srcEndpoint, source.Path, dstEndpoint, target)
+				if err != nil && !errors.Is(err, errRemoteCommandUnavailable) {
+					doneCh <- err
+					return
+				}
+				if err == nil {
+					remoteProgress.FilesCopied++
+					remoteProgress.EntriesDone++
+					sendProgress(remoteProgress)
+					continue
+				}
+				// No SSH command channel is available; retain the portable SFTP
+				// implementation below.
+				break
+			}
+			if remoteProgress.EntriesDone == len(remoteSources) {
+				doneCh <- nil
+				return
+			}
+		}
 
+		doneCh <- runStreamingCopyContext(ctx, srcEndpoint, sources, srcPath, dstEndpoint, dst, multi, sendProgress)
+	}(ctx)
 }
 
 func (ui *UI) pumpFileCopyState(gtx layout.Context) {
@@ -788,6 +850,7 @@ func (ui *UI) pumpFileCopyState(gtx layout.Context) {
 	if st == nil {
 		return
 	}
+	st.pumpPreview()
 
 	if st.running {
 		if st.expireCancelConfirm(gtx.Now) {
@@ -948,6 +1011,9 @@ func fileCopySuccessNotice(st *fileCopyState) (string, time.Duration) {
 		label = "item"
 	}
 	msg := fmt.Sprintf("copied %d %s", count, label)
+	if st.progress.Streaming {
+		return msg, fileCopySuccessNoticeDur
+	}
 	if nestedCount := st.progress.EntriesTotal - count; nestedCount > 0 {
 		nestedLabel := "nested items"
 		if nestedCount == 1 {
@@ -1132,7 +1198,7 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		paint.FillShape(gtx.Ops, color.NRGBA{A: 120}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
-		width := gtx.Dp(unit.Dp(320))
+		width := gtx.Dp(ui.scaleInterfaceDp(unit.Dp(500)))
 		maxWidth := gtx.Constraints.Max.X - gtx.Dp(unit.Dp(16))
 		if width > maxWidth {
 			width = maxWidth
@@ -1168,7 +1234,7 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 		call.Add(gtx.Ops)
 		offset.Pop()
 
-		if st.running {
+		if st.running || st.previewing {
 			gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
 		}
 		return layout.Dimensions{Size: gtx.Constraints.Max, Baseline: dialog.Baseline}
@@ -1192,27 +1258,19 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
-	srcHdr := material.Caption(th, "Source")
-	srcHdr.Font.Typeface = ui.interfaceTypeface()
-	srcHdr.TextSize = ui.scaleDialogFontSize(9)
-	srcHdr.Color = hintColor
-
-	srcText := material.Body2(th, st.srcPath)
-	srcText.Font.Typeface = ui.interfaceTypeface()
-	srcText.TextSize = ui.scaleDialogFontSize(10)
-	srcText.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
-	srcText.MaxLines = 1
-	srcText.Truncator = "…"
-
-	dstHdr := material.Caption(th, "Destination")
-	dstHdr.Font.Typeface = ui.interfaceTypeface()
-	dstHdr.TextSize = ui.scaleDialogFontSize(9)
-	dstHdr.Color = hintColor
-
 	progress := st.progress
-	status := copyProgressText(progress, st.speedBytes)
-	current := copyProgressCurrent(progress)
+	progressDisplay := buildFileCopyProgressDisplay(progress, st.speedBytes)
+	current := st.progressCurrentLabel()
 	progressFrac := copyProgressFraction(progress)
+	sourceLabel := "Copy"
+	sourceValue := st.sourceOperationSummary()
+	if st.running {
+		sourceLabel = "Copying"
+	}
+	if st.op == fileCopyOpExtract {
+		sourceLabel = "Archive"
+		sourceValue = st.sourceLocation()
+	}
 	overwriteLabel := ""
 	if !st.running && st.dstInfo.Exists && !st.multiSource() {
 		overwriteLabel = "Destination exists. Overwrite will replace it."
@@ -1230,84 +1288,43 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.op == fileCopyOpExtract {
-				srcHdr.Text = "Archive"
-			} else if st.multiSource() {
-				srcHdr.Text = "Sources"
-			}
-			return srcHdr.Layout(gtx)
+			return ui.layoutFileOpTextRow(th, gtx, sourceLabel, sourceValue, txtColor)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.op == fileCopyOpExtract || st.multiSource() {
-				srcText.Text = st.sourceSummary()
-			}
-			return srcText.Layout(gtx)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if !st.multiSource() {
-				return layout.Dimensions{}
-			}
-			return ui.layoutFileOpPreviewList(th, gtx, st.sourcePreviewLines())
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.op == fileCopyOpExtract {
-				dstHdr.Text = "Extract To"
-			} else if st.multiSource() {
-				dstHdr.Text = "Destination Directory"
-			}
-			return dstHdr.Layout(gtx)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.running {
-				lbl := material.Body2(th, st.dstPath)
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleDialogFontSize(10)
-				lbl.Color = txtColor
-				lbl.MaxLines = 1
-				lbl.Truncator = "…"
-				return fillRoundedBox(
-					gtx,
-					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
-					func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
-					},
-				)
-			}
-			if st.dstLocked {
-				lbl := material.Body2(th, st.dstPath)
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleDialogFontSize(10)
-				lbl.Color = txtColor
-				lbl.MaxLines = 1
-				lbl.Truncator = "…"
-				return fillRoundedBox(
-					gtx,
-					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
-					func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
-					},
-				)
-			}
-			ed := material.Editor(th, &st.dstEdit, "")
-			ed.Font.Typeface = ui.interfaceTypeface()
-			ed.TextSize = ui.scaleDialogFontSize(10)
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			return ui.layoutEditorWithContextMenu(th, gtx, "filecopy-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, st.focus == fileCopyDialogFocusDestination, true, ed.Layout)
+			return ui.layoutFileOpRow(th, gtx, "To", func(gtx layout.Context) layout.Dimensions {
+				if st.running || st.dstLocked {
+					lbl := material.Body2(th, st.dstPath)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.fileOpDialogTextSize()
+					lbl.Color = txtColor
+					lbl.MaxLines = 1
+					lbl.Truncator = "…"
+					return fillFlatBox(
+						gtx,
+						color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+						color.NRGBA{R: 255, G: 255, B: 255, A: 20},
+						func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+						},
+					)
+				}
+				ed := material.Editor(th, &st.dstEdit, "")
+				ed.Font.Typeface = ui.interfaceTypeface()
+				ed.TextSize = ui.fileOpDialogTextSize()
+				ed.Color = txtColor
+				ed.HintColor = hintColor
+				return ui.layoutEditorWithContextMenu(th, gtx, "filecopy-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
+					return layoutNeutralEditorBox(gtx, st.focus == fileCopyDialogFocusDestination, true, ed.Layout)
+				})
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
@@ -1336,7 +1353,7 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 				return layout.Dimensions{}
 			}
 			if st.running {
-				return ui.layoutFileCopyProgress(th, gtx, progressFrac, status, current)
+				return ui.layoutFileCopyProgress(th, gtx, progressFrac, current, progressDisplay)
 			}
 			lbl := material.Body2(th, st.lastErr)
 			lbl.Font.Typeface = ui.interfaceTypeface()
@@ -1345,7 +1362,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				if st.running {
@@ -1367,32 +1385,40 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 	)
 }
 
-func (ui *UI) layoutFileCopyProgress(th *material.Theme, gtx layout.Context, frac float32, status, current string) layout.Dimensions {
+type fileCopyProgressDisplay struct {
+	Indeterminate  bool
+	PrimaryLabel   string
+	PrimaryValue   string
+	SecondaryLabel string
+	SecondaryValue string
+}
+
+func (ui *UI) layoutFileCopyProgress(th *material.Theme, gtx layout.Context, frac float32, current string, display fileCopyProgressDisplay) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutProgressBar(gtx, frac)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, status)
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleDialogFontSize(9)
-			lbl.Color = hintColor
-			lbl.MaxLines = 1
-			lbl.Truncator = "…"
-			return lbl.Layout(gtx)
-		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if current == "" {
 				return layout.Dimensions{}
 			}
-			lbl := material.Caption(th, current)
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleDialogFontSize(9)
-			lbl.Color = color.NRGBA{R: 168, G: 168, B: 168, A: 255}
-			lbl.MaxLines = 1
-			lbl.Truncator = "…"
-			return lbl.Layout(gtx)
+			return ui.layoutFileOpTextRow(th, gtx, "Current", current, txtColor)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFileCopyTextBar(th, gtx, frac, display.Indeterminate)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if display.PrimaryValue == "" {
+				return layout.Dimensions{}
+			}
+			return ui.layoutFileOpTextRow(th, gtx, display.PrimaryLabel, display.PrimaryValue, txtColor)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if display.SecondaryValue == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFileOpTextRow(th, gtx, display.SecondaryLabel, display.SecondaryValue, color.NRGBA{R: 184, G: 184, B: 184, A: 255})
+			})
 		}),
 	)
 }
@@ -1434,9 +1460,8 @@ func (ui *UI) layoutFileOverwriteDiffInfo(th *material.Theme, gtx layout.Context
 	style := ui.fileOverwriteDiffStyle(panelBg)
 	rows := fileOverwriteDiffRows(srcInfo, dstInfo)
 	columns := ui.fileOverwriteDiffColumns(th, gtx, rows)
-	return fillRoundedBox(
+	return fillFlatBox(
 		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
 		panelBg,
 		panelBorder,
 		func(gtx layout.Context) layout.Dimensions {
@@ -1546,9 +1571,8 @@ func (ui *UI) layoutFileOverwriteDiffPart(th *material.Theme, gtx layout.Context
 		})
 	}
 	return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return fillRoundedBox(
+		return fillFlatBox(
 			gtx,
-			gtx.Dp(unit.Dp(2)),
 			style.HighlightBg,
 			style.HighlightBr,
 			func(gtx layout.Context) layout.Dimensions {
@@ -1779,19 +1803,9 @@ func (ui *UI) layoutDialogActionSingle(th *material.Theme, gtx layout.Context, c
 	if stripH < 1 {
 		stripH = 1
 	}
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutDialogActionSegment(th, gtx, click, label, hover, pulse, segW, stripH, true, true, disabled, state)
-				})
-			})
-		},
-	)
+	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutDialogFlatActionSegment(th, gtx, click, label, hover, pulse, segW, stripH, disabled, state)
+	})
 }
 
 func (ui *UI) layoutDialogActionPairState(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool, leftState, rightState dialogActionVisualState) layout.Dimensions {
@@ -1804,43 +1818,28 @@ func (ui *UI) layoutDialogActionPairState(th *material.Theme, gtx layout.Context
 	if stripH < 1 {
 		stripH = 1
 	}
-	sepW := gtx.Dp(unit.Dp(1))
-	if sepW < 1 {
-		sepW = 1
-	}
+	gap := dialogActionGapPx(gtx)
 	maxW := gtx.Constraints.Max.X
-	if maxW > 0 && leftW+sepW+rightW > maxW {
-		segW := (maxW - sepW) / 2
-		minSegW := gtx.Dp(unit.Dp(64))
+	if maxW > 0 && leftW+gap+rightW > maxW {
+		segW := (maxW - gap) / 2
+		minSegW := gtx.Dp(unit.Dp(52))
 		if segW < minSegW {
 			segW = minSegW
 		}
 		leftW = segW
 		rightW = segW
 	}
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled, leftState)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return toolbarSeparator(gtx, stripH)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, false, true, rightDisabled, rightState)
-						}),
-					)
-				})
-			})
-		},
-	)
+	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, leftDisabled, leftState)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, rightDisabled, rightState)
+			}),
+		)
+	})
 }
 
 func (ui *UI) layoutDialogActionTriple(th *material.Theme, gtx layout.Context, leftClick *widget.Clickable, leftLabel string, leftHover, leftPulse float32, leftDisabled bool, middleClick *widget.Clickable, middleLabel string, middleHover, middlePulse float32, middleDisabled bool, rightClick *widget.Clickable, rightLabel string, rightHover, rightPulse float32, rightDisabled bool, leftState, middleState, rightState dialogActionVisualState) layout.Dimensions {
@@ -1863,15 +1862,12 @@ func (ui *UI) layoutDialogActionTripleState(th *material.Theme, gtx layout.Conte
 		stripH = 1
 	}
 
-	sepW := gtx.Dp(unit.Dp(1))
-	if sepW < 1 {
-		sepW = 1
-	}
+	gap := dialogActionGapPx(gtx)
 	maxW := gtx.Constraints.Max.X
-	totalW := leftW + middleW + rightW + sepW*2
+	totalW := leftW + middleW + rightW + gap*2
 	if maxW > 0 && totalW > maxW {
-		segW := (maxW - sepW*2) / 3
-		minSegW := gtx.Dp(unit.Dp(64))
+		segW := (maxW - gap*2) / 3
+		minSegW := gtx.Dp(unit.Dp(52))
 		if segW < minSegW {
 			segW = minSegW
 		}
@@ -1880,71 +1876,190 @@ func (ui *UI) layoutDialogActionTripleState(th *material.Theme, gtx layout.Conte
 		rightW = segW
 	}
 
-	return fillRoundedBox(
-		gtx,
-		gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-		color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, true, false, leftDisabled, leftState)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return toolbarSeparator(gtx, stripH)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, middleClick, middleLabel, middleHover, middlePulse, middleW, stripH, false, false, middleDisabled, middleState)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return toolbarSeparator(gtx, stripH)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutDialogActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, false, true, rightDisabled, rightState)
-						}),
-					)
-				})
-			})
-		},
-	)
+	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, leftClick, leftLabel, leftHover, leftPulse, leftW, stripH, leftDisabled, leftState)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, middleClick, middleLabel, middleHover, middlePulse, middleW, stripH, middleDisabled, middleState)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutDialogFlatActionSegment(th, gtx, rightClick, rightLabel, rightHover, rightPulse, rightW, stripH, rightDisabled, rightState)
+			}),
+		)
+	})
 }
 
-func layoutProgressBar(gtx layout.Context, frac float32) layout.Dimensions {
-	if frac < 0 {
-		frac = 0
+func dialogActionGapPx(gtx layout.Context) int {
+	gap := gtx.Dp(unit.Dp(4))
+	if gap < 1 {
+		gap = 1
 	}
-	if frac > 1 {
-		frac = 1
+	return gap
+}
+
+func layoutDialogHorizontalDivider(gtx layout.Context) layout.Dimensions {
+	h := gtx.Dp(unit.Dp(1))
+	if h < 1 {
+		h = 1
+	}
+	w := gtx.Constraints.Max.X
+	if w < 1 {
+		w = 1
+	}
+	paint.FillShape(gtx.Ops, dialogDividerColor, clip.Rect(image.Rect(0, 0, w, h)).Op())
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+func layoutDialogVerticalDivider(gtx layout.Context) layout.Dimensions {
+	w := gtx.Dp(unit.Dp(1))
+	if w < 1 {
+		w = 1
+	}
+	h := gtx.Constraints.Max.Y
+	if h < 1 {
+		h = 1
+	}
+	paint.FillShape(gtx.Ops, dialogDividerColor, clip.Rect(image.Rect(0, 0, w, h)).Op())
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+func (ui *UI) layoutDialogFlatActionSegment(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, hoverFill, pulseFill float32, segW, stripH int, disabled bool, state dialogActionVisualState) layout.Dimensions {
+	if click == nil {
+		return layout.Dimensions{}
+	}
+	hoverFill = clamp01(hoverFill)
+	pulseFill = clamp01(pulseFill)
+	focusFill := float32(0)
+	defaultFill := float32(0)
+	if state.Focused {
+		focusFill = 1
+	}
+	if state.Default {
+		defaultFill = 1
+	}
+	if disabled {
+		hoverFill = 0
+		pulseFill = 0
+		if focusFill == 0 {
+			defaultFill = 0
+		}
 	}
 
-	height := gtx.Dp(unit.Dp(7))
-	if height < 2 {
-		height = 2
-	}
-	width := gtx.Constraints.Max.X
-	if width < 1 {
-		width = 1
-	}
-	fillW := int(float32(width) * frac)
-	if fillW < 0 {
-		fillW = 0
-	}
-	if fillW > width {
-		fillW = width
-	}
+	dims := fixedWidth(gtx, segW, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if click.Pressed() && !disabled && pulseFill < 0.5 {
+					pulseFill = 0.5
+				}
 
-	bg := image.Rect(0, 0, width, height)
-	paint.FillShape(gtx.Ops, color.NRGBA{R: 34, G: 34, B: 34, A: 255}, clip.Rect(bg).Op())
-	if fillW > 0 {
-		fg := image.Rect(0, 0, fillW, height)
-		paint.FillShape(gtx.Ops, color.NRGBA{R: 140, G: 140, B: 140, A: 255}, clip.Rect(fg).Op())
+				bg := color.NRGBA{}
+				bg = mixNRGBA(bg, color.NRGBA{R: 34, G: 34, B: 34, A: 190}, hoverFill)
+				bg = mixNRGBA(bg, color.NRGBA{R: 48, G: 48, B: 48, A: 210}, pulseFill*0.35)
+				bg = mixNRGBA(bg, color.NRGBA{R: 60, G: 54, B: 44, A: 210}, defaultFill*0.5)
+				bg = mixNRGBA(bg, color.NRGBA{R: 72, G: 66, B: 54, A: 230}, focusFill*0.42)
+
+				fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, hoverFill*0.75)
+				fg = mixNRGBA(fg, color.NRGBA{R: 248, G: 248, B: 248, A: 255}, pulseFill*0.25)
+				fg = mixNRGBA(fg, color.NRGBA{R: 244, G: 234, B: 206, A: 255}, defaultFill*0.32)
+				fg = mixNRGBA(fg, color.NRGBA{R: 250, G: 246, B: 236, A: 255}, focusFill*0.3)
+
+				line := color.NRGBA{}
+				lineH := 1
+				if hoverFill > 0 {
+					line = mixNRGBA(line, color.NRGBA{R: 255, G: 255, B: 255, A: 70}, hoverFill)
+				}
+				if defaultFill > 0 {
+					line = mixNRGBA(line, color.NRGBA{R: 200, G: 182, B: 144, A: 168}, defaultFill)
+				}
+				if focusFill > 0 {
+					line = color.NRGBA{R: 214, G: 198, B: 166, A: 225}
+					lineH = 2
+				}
+				if disabled {
+					fg = color.NRGBA{R: 160, G: 166, B: 180, A: 255}
+					bg = color.NRGBA{}
+				}
+
+				dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(th, label)
+							lbl.Font.Typeface = ui.interfaceTypeface()
+							lbl.Font.Weight = font.Medium
+							lbl.TextSize = ui.scaleDialogFontSize(10)
+							lbl.Color = fg
+							lbl.MaxLines = 1
+							return lbl.Layout(gtx)
+						})
+					})
+				})
+				if dims.Size.X > 0 && dims.Size.Y >= lineH && line.A != 0 {
+					paint.FillShape(gtx.Ops, line, clip.Rect(image.Rect(0, dims.Size.Y-lineH, dims.Size.X, dims.Size.Y)).Op())
+				}
+				return dims
+			})
+		})
+	})
+	if dims.Size.X > 0 && dims.Size.Y > 0 && !disabled {
+		defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
+		pointer.CursorPointer.Add(gtx.Ops)
 	}
-	return layout.Dimensions{Size: image.Pt(width, height)}
+	return dims
+}
+
+func (ui *UI) layoutFileCopyTextBar(th *material.Theme, gtx layout.Context, frac float32, indeterminate bool) layout.Dimensions {
+	barText := func(width int) string {
+		cells := textCellProgressBar(frac, width)
+		if indeterminate {
+			cells = textCellActivityBar(gtx.Now, width)
+		}
+		return "[" + cells + "]"
+	}
+	barFits := func(width int) bool {
+		probe := material.Body2(th, barText(width))
+		probe.Font.Typeface = ui.interfaceTypeface()
+		probe.TextSize = ui.fileOpDialogTextSize()
+		probe.MaxLines = 1
+		return measureLabelUnconstrained(gtx, probe).Size.X <= gtx.Constraints.Max.X
+	}
+	// Measure shaped runs rather than multiplying a single glyph width. Some
+	// configured fonts compact adjacent block cells, which otherwise leaves a
+	// conspicuous unused strip at the right edge.
+	barWidth := 8
+	low, high := 8, 160
+	for low <= high {
+		middle := low + (high-low)/2
+		if barFits(middle) {
+			barWidth = middle
+			low = middle + 1
+		} else {
+			high = middle - 1
+		}
+	}
+	lbl := material.Body2(th, barText(barWidth))
+	lbl.Font.Typeface = ui.interfaceTypeface()
+	lbl.TextSize = ui.fileOpDialogTextSize()
+	lbl.Color = color.NRGBA{R: 190, G: 190, B: 190, A: 255}
+	lbl.MaxLines = 1
+	return lbl.Layout(gtx)
 }
 
 func copyProgressFraction(progress filesys.CopyProgress) float32 {
+	if progress.Streaming {
+		if progress.CurrentBytesTotal > 0 {
+			return float32(progress.CurrentBytesDone) / float32(progress.CurrentBytesTotal)
+		}
+		// Server-side same-host copies cannot expose byte progress, so use the
+		// selected-file counter as a compact fallback.
+		if progress.ScanDone && progress.FilesDiscovered > 0 {
+			return float32(progress.FilesCopied) / float32(progress.FilesDiscovered)
+		}
+		return 0
+	}
 	if progress.BytesTotal > 0 {
 		return float32(progress.BytesDone) / float32(progress.BytesTotal)
 	}
@@ -1954,8 +2069,111 @@ func copyProgressFraction(progress filesys.CopyProgress) float32 {
 	return 0
 }
 
+const fileCopyMeaningfulProgressMinBytes = 1 << 20
+
+func copyProgressIndeterminate(progress filesys.CopyProgress) bool {
+	return progress.Streaming && progress.CurrentBytesTotal < fileCopyMeaningfulProgressMinBytes
+}
+
+func buildFileCopyProgressDisplay(progress filesys.CopyProgress, speed int64) fileCopyProgressDisplay {
+	display := fileCopyProgressDisplay{
+		Indeterminate: copyProgressIndeterminate(progress),
+		PrimaryLabel:  "Processed",
+	}
+	if !progress.Streaming {
+		display.PrimaryValue = copyProgressText(progress, speed)
+		return display
+	}
+
+	if progress.CurrentBytesTotal >= fileCopyMeaningfulProgressMinBytes {
+		percent := 0
+		if progress.CurrentBytesTotal > 0 {
+			percent = int(float64(progress.CurrentBytesDone) * 100 / float64(progress.CurrentBytesTotal))
+		}
+		display.PrimaryValue = fmt.Sprintf(
+			"%s / %s (%d%%)",
+			formatCopySize(progress.CurrentBytesDone),
+			formatCopySize(progress.CurrentBytesTotal),
+			percent,
+		)
+		if speed > 0 {
+			display.PrimaryValue += " @ " + formatCopySize(speed) + "/s"
+		}
+		display.SecondaryLabel = "Remaining"
+		display.SecondaryValue = formatCopyRemaining(progress.CurrentBytesTotal-progress.CurrentBytesDone, speed)
+		return display
+	}
+
+	display.PrimaryValue = fileOpCountText(progress.FilesCopied, "file", "files")
+	if progress.BytesDone > 0 {
+		display.PrimaryValue += " (" + formatCopySize(progress.BytesDone) + ")"
+	}
+	if speed > 0 {
+		display.PrimaryValue += " @ " + formatCopySize(speed) + "/s"
+	}
+	display.SecondaryLabel = "Discovered"
+	if progress.FilesDiscovered <= 0 {
+		display.SecondaryValue = "Scanning..."
+	} else {
+		display.SecondaryValue = fileOpCountText(progress.FilesDiscovered, "file", "files")
+		if !progress.ScanDone {
+			display.SecondaryValue += "..."
+		}
+	}
+	return display
+}
+
+func formatCopyRemaining(remainingBytes, speed int64) string {
+	if speed <= 0 {
+		return "Calculating..."
+	}
+	if remainingBytes < 0 {
+		remainingBytes = 0
+	}
+	seconds := (remainingBytes + speed - 1) / speed
+	hours := seconds / 3600
+	minutes := (seconds % 3600) / 60
+	seconds %= 60
+	return fmt.Sprintf("~%02d:%02d:%02d", hours, minutes, seconds)
+}
+
+func copyProgressCountText(progress filesys.CopyProgress) string {
+	if !progress.Streaming {
+		return ""
+	}
+	if progress.FilesDiscovered <= 0 {
+		return "Scanning..."
+	}
+	return fmt.Sprintf("%d copied  •  %d discovered", progress.FilesCopied, progress.FilesDiscovered)
+}
+
+func copyProgressTransferText(progress filesys.CopyProgress, speed int64) string {
+	if !progress.Streaming {
+		return ""
+	}
+	text := ""
+	if progress.CurrentBytesTotal > 0 {
+		text = formatCopySize(progress.CurrentBytesDone) + " / " + formatCopySize(progress.CurrentBytesTotal)
+	} else if progress.BytesDone > 0 {
+		text = formatCopySize(progress.BytesDone) + " copied"
+	}
+	if speed > 0 {
+		if text != "" {
+			text += "  •  "
+		}
+		text += formatCopySize(speed) + "/s"
+	}
+	return text
+}
+
 func copyProgressText(progress filesys.CopyProgress, speed int64) string {
+	if progress.Streaming {
+		return copyProgressCountText(progress)
+	}
 	if progress.EntriesTotal <= 0 && progress.BytesTotal <= 0 {
+		if progress.EntriesDone > 0 {
+			return fmt.Sprintf("Preparing... %d entries found", progress.EntriesDone)
+		}
 		return "Preparing..."
 	}
 	speedText := ""
@@ -2045,22 +2263,6 @@ func inspectCopyDestinationDir(dstEp copyEndpoint, dstRaw string) (string, fileC
 		}
 	}
 	return dstNorm, info, nil
-}
-
-func collectCopyTransferTotals(srcEp copyEndpoint, srcPath string) (string, int, int64, error) {
-	srcNorm, err := srcEp.normalizeSourcePath(srcPath)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	srcInfo, err := endpointLstat(srcEp, srcNorm)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	entries, bytesTotal, err := collectTransferEntries(srcEp, srcNorm, srcInfo)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	return srcNorm, len(entries), bytesTotal, nil
 }
 
 func samePath(a, b string) bool {

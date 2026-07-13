@@ -73,6 +73,19 @@ func (ui *UI) saveFMConfigWithOptions(reason string, allowDefaultReset bool) err
 	if ui == nil {
 		return nil
 	}
+	if configHasUnstoredSSHSecrets(ui.fmCfg) {
+		if ui.sshCredentials.store == nil {
+			return errors.New("secure credential storage is unavailable")
+		}
+		if err := ui.loadSSHSecrets(true); err != nil {
+			ui.sshCredentials.plaintextMigrationBlocked = true
+			return err
+		}
+		ui.sshCredentials.plaintextMigrationBlocked = false
+	}
+	if ui.sshCredentials.plaintextMigrationBlocked {
+		return errors.New("refusing to save while plaintext SSH credentials could not be moved to secure storage")
+	}
 	if err := ui.ensureFMConfigLoaded(); err != nil {
 		return err
 	}
@@ -112,6 +125,20 @@ func (ui *UI) loadExistingFMConfig(path string) (*fm.Config, error) {
 	if err != nil {
 		return cfg, err
 	}
+	if configHasUnstoredSSHSecrets(cfg) {
+		if ui.sshCredentials.store == nil {
+			return cfg, errors.New("secure credential storage is unavailable for SSH credentials added to the config")
+		}
+		active := ui.fmCfg
+		ui.fmCfg = cfg
+		err = ui.loadSSHSecrets(true)
+		ui.fmCfg = active
+		if err != nil {
+			ui.sshCredentials.plaintextMigrationBlocked = true
+			return cfg, err
+		}
+		ui.sshCredentials.plaintextMigrationBlocked = false
+	}
 	return cfg, nil
 }
 
@@ -142,6 +169,7 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 		reason = "runtime"
 	}
 	rebased := cloneFMConfigForRuntimeSave(existing)
+	mergeRuntimeSSHSecrets(rebased, next)
 	switch reason {
 	case "viewer-auto-refresh":
 		rebased.Viewer.CommandAutoRefresh = next.Viewer.CommandAutoRefresh
@@ -172,6 +200,41 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 	return rebased, true
 }
 
+func mergeRuntimeSSHSecrets(dst, src *fm.Config) {
+	if dst == nil || src == nil || len(dst.SSH.Setups) == 0 || len(src.SSH.Setups) == 0 {
+		return
+	}
+	byID := make(map[string]fm.SSHSetup, len(src.SSH.Setups))
+	byIdentity := make(map[string]fm.SSHSetup, len(src.SSH.Setups))
+	for _, setup := range src.SSH.Setups {
+		if id := strings.TrimSpace(setup.CredentialID); id != "" {
+			byID[id] = setup
+		}
+		byIdentity[runtimeSSHSetupIdentity(setup)] = setup
+	}
+	for i := range dst.SSH.Setups {
+		setup := &dst.SSH.Setups[i]
+		match, ok := byID[strings.TrimSpace(setup.CredentialID)]
+		if !ok || strings.TrimSpace(setup.CredentialID) == "" {
+			match, ok = byIdentity[runtimeSSHSetupIdentity(*setup)]
+		}
+		if !ok {
+			continue
+		}
+		setup.Password = match.Password
+		setup.KeyPassphrase = match.KeyPassphrase
+	}
+}
+
+func runtimeSSHSetupIdentity(setup fm.SSHSetup) string {
+	port := setup.Port
+	if port <= 0 {
+		port = 22
+	}
+	return strings.ToLower(strings.TrimSpace(setup.User)) + "\x00" +
+		strings.ToLower(strings.TrimSpace(setup.Host)) + "\x00" + fmt.Sprint(port)
+}
+
 func cloneFMConfigForRuntimeSave(cfg *fm.Config) *fm.Config {
 	if cfg == nil {
 		return nil
@@ -184,7 +247,6 @@ func cloneFMConfigForRuntimeSave(cfg *fm.Config) *fm.Config {
 	out.Associations = cloneAssociationPrograms(cfg.Associations)
 	out.CustomCommands = cloneCustomCommands(cfg.CustomCommands)
 	out.Viewer.Associations = cloneViewerAssociations(cfg.Viewer.Associations)
-	out.Viewer.AssociatedExtensions = cloneStringSlice(cfg.Viewer.AssociatedExtensions)
 	out.Viewer.CommandRules = cloneViewerCommandRules(cfg.Viewer.CommandRules)
 	out.Viewer.CommandByTarget = cloneStringMap(cfg.Viewer.CommandByTarget)
 	out.Viewer.CommandHistory = cloneStringSlice(cfg.Viewer.CommandHistory)

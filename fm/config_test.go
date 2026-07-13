@@ -7,6 +7,7 @@ import (
 	resources "hexone"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -47,7 +48,7 @@ date_formats:
 	if got, want := SizeMinWidthDp(cfg), defaultApproxCharPx*5+8+8; got != want {
 		t.Fatalf("SizeMinWidthDp=%d, want %d", got, want)
 	}
-	if got, want := PermMinWidthDp(cfg), defaultApproxCharPx*9+12+8; got != want {
+	if got, want := PermMinWidthDp(cfg), columnWidthDp(defaultOctalWidthChars, false); got != want {
 		t.Fatalf("PermMinWidthDp=%d, want %d", got, want)
 	}
 	if got, want := DateMinWidthDp(cfg), defaultApproxCharPx*5+16+8; got != want {
@@ -101,6 +102,39 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	}
 }
 
+func TestNormalizeTerminalHeightRowsAllowsTallDynamicLayouts(t *testing.T) {
+	if got, want := NormalizeTerminalHeightRows(180), 180; got != want {
+		t.Fatalf("NormalizeTerminalHeightRows(180)=%d want %d", got, want)
+	}
+	if got, want := NormalizeTerminalHeightRows(10_000), maxTerminalHeightRows; got != want {
+		t.Fatalf("NormalizeTerminalHeightRows safety clamp=%d want %d", got, want)
+	}
+}
+
+func TestDateWidthFitsPreferredFormat(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.DateFormats = []string{"2006-01-02 15:04:05", "01-02"}
+	got := DateWidthDp(cfg)
+	want := columnWidthDp(float32(len(cfg.DateFormats[0]))+0.5, false)
+	if got != want {
+		t.Fatalf("DateWidthDp=%d want %d for preferred format", got, want)
+	}
+}
+
+func TestMetadataWidthsFitPreferredTextWithoutExcessSlack(t *testing.T) {
+	cfg := DefaultConfig()
+	if got, want := PermWidthDp(cfg), columnWidthDp(defaultPermWidthChars, false); got != want {
+		t.Fatalf("symbolic permission width=%d want %d", got, want)
+	}
+	cfg.Columns.PermissionFormat = "octal"
+	if got, want := PermWidthDp(cfg), columnWidthDp(defaultOctalWidthChars, false); got != want {
+		t.Fatalf("octal permission width=%d want %d", got, want)
+	}
+	if got, want := SizeWidthDp(cfg), columnWidthDp(defaultSizeWidthChars, false); got != want {
+		t.Fatalf("size width=%d want %d", got, want)
+	}
+}
+
 func TestInterfaceFontDefaultsIndependentlyFromPaneFont(t *testing.T) {
 	raw := `
 general:
@@ -121,6 +155,101 @@ general:
 	}
 	if got, want := cfg.Interface.Typeface, resources.BundledFontFamilyFiraCodeNerdFontMono; got != want {
 		t.Fatalf("interface typeface=%q want %q", got, want)
+	}
+}
+
+func TestDefaultConfigUsesShippedVisualStyle(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if got, want := cfg.General.Typeface, resources.BundledFontFamilyFiraCodeNerdFontMono; got != want {
+		t.Fatalf("pane typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.General.FontSizeSp, float32(15); got != want {
+		t.Fatalf("pane font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Interface.FontSizeSp, float32(14); got != want {
+		t.Fatalf("interface font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Tabs.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("tabs typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.Tabs.FontSizeSp, float32(12); got != want {
+		t.Fatalf("tabs font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Terminal.FontSizeSp, float32(14); got != want {
+		t.Fatalf("terminal font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Viewer.FontSizeSp, float32(14); got != want {
+		t.Fatalf("viewer font size=%v want %v", got, want)
+	}
+
+	colors := map[string]struct {
+		got  string
+		want string
+	}{
+		"pane background":       {cfg.Colors.FilePaneBackground, "#202020"},
+		"pane text":             {cfg.Colors.FilePaneText, "#BABABA"},
+		"hover":                 {cfg.Colors.Hover, "#2A2A2A"},
+		"selection":             {cfg.Colors.Selection, "#3A3A3A"},
+		"selected files":        {cfg.Colors.SelectedFiles, "#002CF0"},
+		"selected files text":   {cfg.Colors.SelectedFilesText, "#FBC4DF"},
+		"focused selected":      {cfg.Colors.FocusedSelected, "#0000F0"},
+		"focused selected text": {cfg.Colors.FocusedSelectedText, "#F66EB2"},
+		"viewer background":     {cfg.Viewer.Background, "#202020"},
+		"viewer text":           {cfg.Viewer.Text, "#D2D2D2"},
+		"viewer selection":      {cfg.Viewer.Selection, "#3C3C50"},
+	}
+	for name, test := range colors {
+		if test.got != test.want {
+			t.Errorf("%s=%q want %q", name, test.got, test.want)
+		}
+	}
+
+	if got, want := cfg.Colors.Filenames.AgeRules, []FilenameAgeRule{{MaxAge: "1d", Text: "#FFFFFF"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("filename age rules=%#v want %#v", got, want)
+	}
+}
+
+func TestGeneralPaneWeightDefaultsAndNormalization(t *testing.T) {
+	cfg := DefaultConfig()
+	if got, want := cfg.General.FileWeight, FontWeightRegular; got != want {
+		t.Fatalf("default file weight=%q want %q", got, want)
+	}
+	if got, want := cfg.General.DirWeight, FontWeightBold; got != want {
+		t.Fatalf("default dir weight=%q want %q", got, want)
+	}
+	if got, want := cfg.General.PermissionsWeight, FontWeightRegular; got != want {
+		t.Fatalf("default permissions weight=%q want %q", got, want)
+	}
+
+	raw := `
+general:
+  file_weight: light
+  dir_weight: normal
+  permissions_weight: invalid
+  size_weight: bold
+  date_weight: regular
+`
+	cfg = DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.General.FileWeight, FontWeightRegular; got != want {
+		t.Fatalf("file weight=%q want normalized %q", got, want)
+	}
+	if got, want := cfg.General.DirWeight, FontWeightRegular; got != want {
+		t.Fatalf("dir weight=%q want %q", got, want)
+	}
+	if got, want := cfg.General.PermissionsWeight, FontWeightRegular; got != want {
+		t.Fatalf("permissions weight=%q want fallback %q", got, want)
+	}
+	if got, want := cfg.General.SizeWeight, FontWeightBold; got != want {
+		t.Fatalf("size weight=%q want %q", got, want)
+	}
+	if got, want := cfg.General.DateWeight, FontWeightRegular; got != want {
+		t.Fatalf("date weight=%q want %q", got, want)
 	}
 }
 
@@ -223,7 +352,6 @@ tabs:
   max_width_dp: 90
   typeface: Iosevka Nerd Font Mono
   font_size_sp: 11
-  alternating_colors: true
   color: aa3366
   alt_color: nope
   active_color: '#112233'
@@ -253,9 +381,6 @@ tabs:
 	if got, want := cfg.Tabs.FontSizeSp, float32(11); got != want {
 		t.Fatalf("Tabs.FontSizeSp=%v want %v", got, want)
 	}
-	if !cfg.Tabs.AlternatingColors {
-		t.Fatal("Tabs.AlternatingColors should preserve true")
-	}
 	if got, want := cfg.Tabs.Color, "#AA3366"; got != want {
 		t.Fatalf("Tabs.Color=%q want %q", got, want)
 	}
@@ -274,11 +399,35 @@ func TestDefaultConfigSerializesTabs(t *testing.T) {
 		"tabs:",
 		"width_mode: variable",
 		"max_width_dp:",
-		"typeface: FiraCode Nerd Font Mono",
-		"font_size_sp: 10",
+		"typeface: Iosevka Nerd Font Mono",
+		"font_size_sp: 12",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("serialized config missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestConfigDropsStaleFieldsOnSave(t *testing.T) {
+	raw := `
+tabs:
+  alternating_colors: true
+viewer:
+  mode: file
+  associated_extensions:
+    - txt
+`
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	out := string(mustMarshalConfig(t, cfg))
+	for _, stale := range []string{"alternating_colors:", "associated_extensions:", "mode: file"} {
+		if strings.Contains(out, stale) {
+			t.Fatalf("serialized config retained stale field %q:\n%s", stale, out)
 		}
 	}
 }
@@ -457,10 +606,6 @@ func TestNormalizeViewerAssociations(t *testing.T) {
 	}
 
 	cfg.normalize()
-
-	if strings.Contains(string(mustMarshalConfig(t, cfg)), "associated_extensions:") {
-		t.Fatal("deprecated associated_extensions should not be serialized")
-	}
 
 	if len(cfg.Viewer.Associations) != 0 {
 		t.Fatalf("viewer.associations should be cleared after normalize, got %#v", cfg.Viewer.Associations)
@@ -938,6 +1083,69 @@ func TestSaveConfigCreatesBackupWhenReplacingExistingFile(t *testing.T) {
 	}
 }
 
+func TestSaveConfigOmitsSSHAuthenticationSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	cfg := DefaultConfig()
+	cfg.SSH.Setups = []SSHSetup{{
+		Name:          "alice@example.test:22",
+		Host:          "example.test",
+		Port:          22,
+		User:          "alice",
+		Password:      "plain-password",
+		KeyPath:       "/home/alice/.ssh/id_ed25519",
+		KeyPassphrase: "plain-passphrase",
+		CredentialID:  "credential-id",
+	}}
+
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{"plain-password", "plain-passphrase", "password:", "key_passphrase:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("saved config contains %q:\n%s", forbidden, text)
+		}
+	}
+	if !strings.Contains(text, "credential_id: credential-id") {
+		t.Fatalf("saved config is missing credential reference:\n%s", text)
+	}
+}
+
+func TestRewriteConfigWithoutBackupRemovesSensitiveBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hexone.yaml")
+	legacy := []byte("ssh:\n  setups:\n    - host: example.test\n      port: 22\n      user: alice\n      password: plain-password\n")
+	if err := os.WriteFile(path, legacy, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.WriteFile(path+configBackupSuffix, legacy, 0o644); err != nil {
+		t.Fatalf("write backup: %v", err)
+	}
+
+	cfg, err := decodeConfigData(legacy)
+	if err != nil {
+		t.Fatalf("decodeConfigData: %v", err)
+	}
+	cfg.SSH.Setups[0].CredentialID = "credential-id"
+	if err := RewriteConfigWithoutBackup(path, cfg); err != nil {
+		t.Fatalf("RewriteConfigWithoutBackup: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read rewritten config: %v", err)
+	}
+	if strings.Contains(string(data), "plain-password") {
+		t.Fatalf("rewritten config retained secret:\n%s", data)
+	}
+	if _, err := os.Stat(path + configBackupSuffix); !os.IsNotExist(err) {
+		t.Fatalf("sensitive backup still exists: %v", err)
+	}
+}
+
 func TestLoadConfigEnsuringFileFallsBackToBackupWhenPrimaryInvalid(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
 
@@ -1026,8 +1234,8 @@ func TestNormalizeColors(t *testing.T) {
 	if cfg.Colors.Hover != DefaultFilePaneHoverHex {
 		t.Fatalf("Hover=%q, want %q", cfg.Colors.Hover, DefaultFilePaneHoverHex)
 	}
-	if cfg.Colors.HoverText != DefaultFilePaneHoverTextHex {
-		t.Fatalf("HoverText=%q, want %q", cfg.Colors.HoverText, DefaultFilePaneHoverTextHex)
+	if cfg.Colors.HoverText != TransparentColor {
+		t.Fatalf("HoverText=%q, want %q", cfg.Colors.HoverText, TransparentColor)
 	}
 	if cfg.Colors.PopupHover != DefaultPopupHoverHex {
 		t.Fatalf("PopupHover=%q, want %q", cfg.Colors.PopupHover, DefaultPopupHoverHex)
@@ -1038,20 +1246,20 @@ func TestNormalizeColors(t *testing.T) {
 	if cfg.Colors.Selection != DefaultFilePaneSelectionHex {
 		t.Fatalf("Selection=%q, want %q", cfg.Colors.Selection, DefaultFilePaneSelectionHex)
 	}
-	if cfg.Colors.SelectionText != DefaultFilePaneSelectionTextHex {
-		t.Fatalf("SelectionText=%q, want %q", cfg.Colors.SelectionText, DefaultFilePaneSelectionTextHex)
+	if cfg.Colors.SelectionText != TransparentColor {
+		t.Fatalf("SelectionText=%q, want %q", cfg.Colors.SelectionText, TransparentColor)
 	}
 	if cfg.Colors.SelectedFiles != DefaultFilePaneSelectedFilesHex {
 		t.Fatalf("SelectedFiles=%q, want %q", cfg.Colors.SelectedFiles, DefaultFilePaneSelectedFilesHex)
 	}
-	if cfg.Colors.SelectedFilesText != DefaultFilePaneSelectedTextHex {
-		t.Fatalf("SelectedFilesText=%q, want %q", cfg.Colors.SelectedFilesText, DefaultFilePaneSelectedTextHex)
+	if cfg.Colors.SelectedFilesText != TransparentColor {
+		t.Fatalf("SelectedFilesText=%q, want %q", cfg.Colors.SelectedFilesText, TransparentColor)
 	}
 	if cfg.Colors.FocusedSelected != DefaultFilePaneFocusedSelectedHex {
 		t.Fatalf("FocusedSelected=%q, want %q", cfg.Colors.FocusedSelected, DefaultFilePaneFocusedSelectedHex)
 	}
-	if cfg.Colors.FocusedSelectedText != DefaultFilePaneFocusedSelectedTextHex {
-		t.Fatalf("FocusedSelectedText=%q, want %q", cfg.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
+	if cfg.Colors.FocusedSelectedText != TransparentColor {
+		t.Fatalf("FocusedSelectedText=%q, want %q", cfg.Colors.FocusedSelectedText, TransparentColor)
 	}
 	if cfg.Colors.CurrentDirBg != DefaultCurrentDirBackgroundHex {
 		t.Fatalf("CurrentDirBg=%q, want %q", cfg.Colors.CurrentDirBg, DefaultCurrentDirBackgroundHex)
@@ -1067,27 +1275,81 @@ func TestNormalizeColors(t *testing.T) {
 	}
 }
 
+func TestNormalizeColorsPreservesTransparentRowText(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Colors.HoverText = "Transparent"
+	cfg.Colors.SelectionText = "transparent"
+	cfg.Colors.SelectedFilesText = "TRANSPARENT"
+	cfg.Colors.FocusedSelectedText = "transparent"
+	cfg.Colors.PopupHoverText = "transparent"
+
+	cfg.normalize()
+
+	if cfg.Colors.HoverText != TransparentColor {
+		t.Fatalf("HoverText=%q want %q", cfg.Colors.HoverText, TransparentColor)
+	}
+	if cfg.Colors.SelectionText != TransparentColor {
+		t.Fatalf("SelectionText=%q want %q", cfg.Colors.SelectionText, TransparentColor)
+	}
+	if cfg.Colors.SelectedFilesText != TransparentColor {
+		t.Fatalf("SelectedFilesText=%q want %q", cfg.Colors.SelectedFilesText, TransparentColor)
+	}
+	if cfg.Colors.FocusedSelectedText != TransparentColor {
+		t.Fatalf("FocusedSelectedText=%q want %q", cfg.Colors.FocusedSelectedText, TransparentColor)
+	}
+	if cfg.Colors.PopupHoverText != DefaultPopupHoverTextHex {
+		t.Fatalf("PopupHoverText=%q want fallback %q", cfg.Colors.PopupHoverText, DefaultPopupHoverTextHex)
+	}
+}
+
+func TestDefaultConfigPreservesFilenameColorsForHoverAndFocus(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Colors.HoverText != TransparentColor {
+		t.Fatalf("HoverText=%q want %q", cfg.Colors.HoverText, TransparentColor)
+	}
+	if cfg.Colors.SelectionText != TransparentColor {
+		t.Fatalf("SelectionText=%q want %q", cfg.Colors.SelectionText, TransparentColor)
+	}
+	if cfg.Colors.SelectedFilesText != DefaultFilePaneSelectedTextHex {
+		t.Fatalf("SelectedFilesText=%q want %q", cfg.Colors.SelectedFilesText, DefaultFilePaneSelectedTextHex)
+	}
+	if cfg.Colors.FocusedSelectedText != DefaultFilePaneFocusedSelectedTextHex {
+		t.Fatalf("FocusedSelectedText=%q want %q", cfg.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
+	}
+}
+
 func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Viewer.Background = "viewerbg"
 	cfg.Viewer.Text = "viewtext"
 	cfg.Viewer.Selection = "viewsel"
+	cfg.Viewer.HexSelection = "hexsel"
+	cfg.Viewer.HexOffsetText = "offset"
+	cfg.Viewer.HexBytesText = "bytes"
+	cfg.Viewer.HexASCIIText = "ascii"
 
 	cfg.normalize()
 
-	if cfg.Viewer.Background != DefaultFilePaneBackgroundHex {
-		t.Fatalf("Viewer.Background=%q, want %q", cfg.Viewer.Background, DefaultFilePaneBackgroundHex)
+	if cfg.Viewer.Background != DefaultViewerBackgroundHex {
+		t.Fatalf("Viewer.Background=%q, want %q", cfg.Viewer.Background, DefaultViewerBackgroundHex)
 	}
-	if cfg.Viewer.Text != DefaultFilePaneTextHex {
-		t.Fatalf("Viewer.Text=%q, want %q", cfg.Viewer.Text, DefaultFilePaneTextHex)
+	if cfg.Viewer.Text != DefaultViewerTextHex {
+		t.Fatalf("Viewer.Text=%q, want %q", cfg.Viewer.Text, DefaultViewerTextHex)
 	}
-	if cfg.Viewer.Selection != DefaultFilePaneSelectionHex {
-		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, DefaultFilePaneSelectionHex)
+	if cfg.Viewer.Selection != DefaultViewerSelectionHex {
+		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, DefaultViewerSelectionHex)
+	}
+	if cfg.Viewer.HexSelection != "" || cfg.Viewer.HexOffsetText != "" || cfg.Viewer.HexBytesText != "" || cfg.Viewer.HexASCIIText != "" {
+		t.Fatal("invalid optional hex colors should normalize to empty")
 	}
 
 	cfg.Viewer.Background = "#112233"
 	cfg.Viewer.Text = "aabbcc"
 	cfg.Viewer.Selection = "3355dd"
+	cfg.Viewer.HexSelection = "223344"
+	cfg.Viewer.HexOffsetText = "445566"
+	cfg.Viewer.HexBytesText = "#778899"
+	cfg.Viewer.HexASCIIText = "aabbcc"
 	cfg.normalize()
 
 	if cfg.Viewer.Background != "#112233" {
@@ -1099,19 +1361,26 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 	if cfg.Viewer.Selection != "#3355DD" {
 		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, "#3355DD")
 	}
+	if cfg.Viewer.HexSelection != "#223344" {
+		t.Fatalf("Viewer.HexSelection=%q, want #223344", cfg.Viewer.HexSelection)
+	}
+	if cfg.Viewer.HexOffsetText != "#445566" || cfg.Viewer.HexBytesText != "#778899" || cfg.Viewer.HexASCIIText != "#AABBCC" {
+		t.Fatalf("normalized hex text colors = %q, %q, %q", cfg.Viewer.HexOffsetText, cfg.Viewer.HexBytesText, cfg.Viewer.HexASCIIText)
+	}
 }
 
 func TestNormalizeFilenameColors(t *testing.T) {
 	cfg := DefaultConfig()
+	cfg.Colors.Filenames.Target = "dirs"
 	cfg.Colors.Filenames.Text = "oops"
 	cfg.Colors.Filenames.Icon = "mystery"
 	cfg.Colors.Filenames.AgeRules = []FilenameAgeRule{
-		{MaxAge: "24h", Text: "aabbcc", Icon: "schedule"},
+		{MaxAge: "24h", Target: "regular", Text: "aabbcc", Icon: "schedule"},
 		{MaxAge: "bad", Text: "#112233", Icon: "lock"},
 		{MaxAge: "1w", Text: "", Icon: ""},
 	}
 	cfg.Colors.Filenames.PermissionRules = []FilenamePermissionRule{
-		{Permissions: "755", Match: "partial", Text: "#556677", Icon: "lock"},
+		{Permissions: "755", Match: "partial", Target: "folders", Text: "#556677", Icon: "lock"},
 		{Permissions: "oops", Text: "#123456", Icon: "document"},
 		{Permissions: "0644", Text: "bad", Icon: "description"},
 		{Permissions: "0000", Match: "any", Text: "#654321", Icon: "document"},
@@ -1122,7 +1391,7 @@ func TestNormalizeFilenameColors(t *testing.T) {
 		{Extension: "bad/name", Text: "#123456", Icon: "document"},
 	}
 	cfg.Colors.Filenames.SizeRules = []FilenameSizeRule{
-		{Size: "10mb", Match: "max", Text: "102030", Icon: "movie"},
+		{Size: "10mb", Match: "max", Target: "dir", Text: "102030", Icon: "movie"},
 		{Size: "1g", Text: "", Icon: ""},
 		{Size: "oops", Text: "#123456", Icon: "lock"},
 	}
@@ -1134,6 +1403,9 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	}
 	if cfg.Colors.Filenames.Icon != "" {
 		t.Fatalf("Filenames.Icon=%q want empty", cfg.Colors.Filenames.Icon)
+	}
+	if cfg.Colors.Filenames.Target != FilenameTargetDirs {
+		t.Fatalf("Filenames.Target=%q want %q", cfg.Colors.Filenames.Target, FilenameTargetDirs)
 	}
 	if len(cfg.Colors.Filenames.AgeRules) != 1 {
 		t.Fatalf("len(Filenames.AgeRules)=%d want 1", len(cfg.Colors.Filenames.AgeRules))
@@ -1147,6 +1419,9 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	if got := cfg.Colors.Filenames.AgeRules[0].Icon; got != FilenameIconRecent {
 		t.Fatalf("AgeRules[0].Icon=%q want %q", got, FilenameIconRecent)
 	}
+	if got := cfg.Colors.Filenames.AgeRules[0].Target; got != FilenameTargetFiles {
+		t.Fatalf("AgeRules[0].Target=%q want %q", got, FilenameTargetFiles)
+	}
 	if len(cfg.Colors.Filenames.PermissionRules) != 2 {
 		t.Fatalf("len(Filenames.PermissionRules)=%d want 2", len(cfg.Colors.Filenames.PermissionRules))
 	}
@@ -1158,6 +1433,9 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	}
 	if got := cfg.Colors.Filenames.PermissionRules[0].Icon; got != FilenameIconLocked {
 		t.Fatalf("PermissionRules[0].Icon=%q want %q", got, FilenameIconLocked)
+	}
+	if got := cfg.Colors.Filenames.PermissionRules[0].Target; got != FilenameTargetDirs {
+		t.Fatalf("PermissionRules[0].Target=%q want %q", got, FilenameTargetDirs)
 	}
 	if got := cfg.Colors.Filenames.PermissionRules[1].Permissions; got != "0644" {
 		t.Fatalf("PermissionRules[1].Permissions=%q want %q", got, "0644")
@@ -1204,6 +1482,9 @@ func TestNormalizeFilenameColors(t *testing.T) {
 	if got := cfg.Colors.Filenames.SizeRules[0].Icon; got != FilenameIconVideo {
 		t.Fatalf("SizeRules[0].Icon=%q want %q", got, FilenameIconVideo)
 	}
+	if got := cfg.Colors.Filenames.SizeRules[0].Target; got != "" {
+		t.Fatalf("SizeRules[0].Target=%q want empty file-only rule", got)
+	}
 }
 
 func TestNormalizeFilenameAgeRulesSortsAndDedupes(t *testing.T) {
@@ -1222,6 +1503,43 @@ func TestNormalizeFilenameAgeRulesSortsAndDedupes(t *testing.T) {
 	}
 	if got[1].Text != "#556677" || got[1].Icon != FilenameIconRecent {
 		t.Fatalf("NormalizeFilenameAgeRules duplicate merge=%#v want last 1d rule", got[1])
+	}
+}
+
+func TestNormalizeFilenameRulesTargetsOnlyApplyToAgeAndPermissions(t *testing.T) {
+	age := NormalizeFilenameAgeRules([]FilenameAgeRule{
+		{MaxAge: "1d", Target: "files", Text: "#112233"},
+		{MaxAge: "1d", Target: "dirs", Text: "#445566"},
+		{MaxAge: "1d", Target: "both", Text: "#778899"},
+	})
+	if len(age) != 3 {
+		t.Fatalf("len(NormalizeFilenameAgeRules)=%d want 3 target variants", len(age))
+	}
+	if age[0].Target != FilenameTargetFiles || age[1].Target != FilenameTargetDirs || age[2].Target != FilenameTargetBoth {
+		t.Fatalf("age targets=%#v want files, dirs, both", age)
+	}
+
+	ext := NormalizeFilenameExtensionRules([]FilenameExtensionRule{
+		{Extension: ".go", Target: "files", Text: "#112233"},
+		{Extension: ".go", Target: "dirs", Text: "#445566"},
+		{Extension: ".go", Target: "both", Text: "#778899"},
+	})
+	if len(ext) != 1 {
+		t.Fatalf("len(NormalizeFilenameExtensionRules)=%d want 1 file-only rule", len(ext))
+	}
+	if ext[0].Target != "" || ext[0].Text != "#778899" {
+		t.Fatalf("extension rule=%#v want targetless last rule", ext[0])
+	}
+
+	size := NormalizeFilenameSizeRules([]FilenameSizeRule{
+		{Size: "1m", Match: FilenameSizeMatchAtMost, Target: "files", Text: "#112233"},
+		{Size: "1m", Match: FilenameSizeMatchAtMost, Target: "dirs", Text: "#445566"},
+	})
+	if len(size) != 1 {
+		t.Fatalf("len(NormalizeFilenameSizeRules)=%d want 1 file-only rule", len(size))
+	}
+	if size[0].Target != "" || size[0].Text != "#445566" {
+		t.Fatalf("size rule=%#v want targetless last rule", size[0])
 	}
 }
 

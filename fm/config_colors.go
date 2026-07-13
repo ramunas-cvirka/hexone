@@ -12,19 +12,23 @@ import (
 
 const (
 	DefaultFilePaneBackgroundHex          = "#202020"
-	DefaultFilePaneTextHex                = "#D2D2D2"
-	DefaultFilePaneHoverHex               = "#2D2D2D"
+	DefaultFilePaneTextHex                = "#BABABA"
+	DefaultFilePaneHoverHex               = "#2A2A2A"
 	DefaultFilePaneHoverTextHex           = "#E8E8E8"
 	DefaultPopupHoverHex                  = "#485F96"
 	DefaultPopupHoverTextHex              = "#F6F9FF"
-	DefaultFilePaneSelectionHex           = "#3C3C50"
+	DefaultFilePaneSelectionHex           = "#3A3A3A"
 	DefaultFilePaneSelectionTextHex       = "#F4F4F4"
-	DefaultFilePaneSelectedFilesHex       = "#4A4A4A"
-	DefaultFilePaneSelectedTextHex        = "#F4F4F4"
-	DefaultFilePaneFocusedSelectedHex     = "#58586C"
-	DefaultFilePaneFocusedSelectedTextHex = "#F4F4F4"
+	DefaultFilePaneSelectedFilesHex       = "#002CF0"
+	DefaultFilePaneSelectedTextHex        = "#FBC4DF"
+	DefaultFilePaneFocusedSelectedHex     = "#0000F0"
+	DefaultFilePaneFocusedSelectedTextHex = "#F66EB2"
 	DefaultCurrentDirBackgroundHex        = "#363636"
 	DefaultCurrentDirTextHex              = "#F0F0F0"
+	DefaultViewerBackgroundHex            = "#202020"
+	DefaultViewerTextHex                  = "#D2D2D2"
+	DefaultViewerSelectionHex             = "#3C3C50"
+	TransparentColor                      = "transparent"
 )
 
 type ColorsConfig struct {
@@ -72,6 +76,26 @@ func FormatHexColor(c color.NRGBA) string {
 func NormalizeHexColor(raw, fallback string) string {
 	if c, ok := ParseHexColor(raw); ok {
 		return FormatHexColor(c)
+	}
+	if c, ok := ParseHexColor(fallback); ok {
+		return FormatHexColor(c)
+	}
+	return DefaultFilePaneBackgroundHex
+}
+
+func IsTransparentColor(raw string) bool {
+	return strings.EqualFold(strings.TrimSpace(raw), TransparentColor)
+}
+
+func NormalizeHexOrTransparentColor(raw, fallback string) string {
+	if IsTransparentColor(raw) {
+		return TransparentColor
+	}
+	if c, ok := ParseHexColor(raw); ok {
+		return FormatHexColor(c)
+	}
+	if IsTransparentColor(fallback) {
+		return TransparentColor
 	}
 	if c, ok := ParseHexColor(fallback); ok {
 		return FormatHexColor(c)

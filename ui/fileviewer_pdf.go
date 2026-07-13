@@ -28,9 +28,104 @@ type viewerPDFRenderResult struct {
 	Size      image.Point
 }
 
+// viewerPDFPageSize is a native page size in PDF points.
+type viewerPDFPageSize struct {
+	W float64
+	H float64
+}
+
+type viewerPDFDocInfo struct {
+	PageCount int
+	PageSizes []viewerPDFPageSize
+}
+
+type viewerPDFTOCEntry struct {
+	Title       string
+	Page        int
+	Level       int
+	ID          string
+	ParentID    string
+	HasChildren bool
+}
+
+// normalizeViewerPDFTOC turns a flat, pre-order outline into a stable tree
+// model. Renderers only need to provide titles, pages, and levels; identity,
+// parent links, and disclosure state are derived here for the TOC accordion.
+func normalizeViewerPDFTOC(entries []viewerPDFTOCEntry) []viewerPDFTOCEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	normalized := append([]viewerPDFTOCEntry(nil), entries...)
+	stack := make([]string, 0, 8)
+	for i := range normalized {
+		entry := &normalized[i]
+		if entry.Level < 0 {
+			entry.Level = 0
+		}
+		// A level cannot skip past its nearest available ancestor.
+		if entry.Level > len(stack) {
+			entry.Level = len(stack)
+		}
+		if entry.ID == "" {
+			entry.ID = "toc-" + strconv.Itoa(i)
+		}
+		entry.ParentID = ""
+		if entry.Level > 0 {
+			entry.ParentID = stack[entry.Level-1]
+		}
+		if entry.Level < len(stack) {
+			stack[entry.Level] = entry.ID
+			stack = stack[:entry.Level+1]
+		} else {
+			stack = append(stack, entry.ID)
+		}
+		entry.HasChildren = false
+	}
+	for i := 0; i+1 < len(normalized); i++ {
+		normalized[i].HasChildren = normalized[i+1].Level > normalized[i].Level
+	}
+	return normalized
+}
+
+// viewerPDFTextChar is one character of page text. The rect is in page
+// points with the origin at the top-left corner of the page (already
+// flipped from pdfium's bottom-left origin).
+type viewerPDFTextChar struct {
+	Rune   rune
+	Left   float64
+	Top    float64
+	Right  float64
+	Bottom float64
+}
+
+type viewerPDFPageText struct {
+	Page  int
+	Chars []viewerPDFTextChar
+}
+
+// viewerPDFPageLink is one internal link annotation on a page. The rect is
+// in page points with a top-left origin (the same display space as
+// viewerPDFTextChar rects); DestPage is the 0-based page it navigates to.
+type viewerPDFPageLink struct {
+	Left     float64
+	Top      float64
+	Right    float64
+	Bottom   float64
+	DestPage int
+}
+
+type viewerPDFPageLinks struct {
+	Page  int
+	Links []viewerPDFPageLink
+}
+
 type viewerPDFRenderer interface {
 	Available() bool
 	RenderPage(req viewerPDFRenderRequest) (viewerPDFRenderResult, error)
+	DocInfo(req viewerPDFRenderRequest) (viewerPDFDocInfo, error)
+	PageText(req viewerPDFRenderRequest) (viewerPDFPageText, error)
+	PageLinks(req viewerPDFRenderRequest) (viewerPDFPageLinks, error)
+	TOC(req viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error)
 }
 
 type viewerNoopPDFRenderer struct{}
@@ -41,6 +136,22 @@ func (viewerNoopPDFRenderer) Available() bool {
 
 func (viewerNoopPDFRenderer) RenderPage(_ viewerPDFRenderRequest) (viewerPDFRenderResult, error) {
 	return viewerPDFRenderResult{}, errors.New("pdf preview is unavailable")
+}
+
+func (viewerNoopPDFRenderer) DocInfo(_ viewerPDFRenderRequest) (viewerPDFDocInfo, error) {
+	return viewerPDFDocInfo{}, errors.New("pdf preview is unavailable")
+}
+
+func (viewerNoopPDFRenderer) PageText(_ viewerPDFRenderRequest) (viewerPDFPageText, error) {
+	return viewerPDFPageText{}, errors.New("pdf preview is unavailable")
+}
+
+func (viewerNoopPDFRenderer) PageLinks(_ viewerPDFRenderRequest) (viewerPDFPageLinks, error) {
+	return viewerPDFPageLinks{}, errors.New("pdf preview is unavailable")
+}
+
+func (viewerNoopPDFRenderer) TOC(_ viewerPDFRenderRequest) ([]viewerPDFTOCEntry, error) {
+	return nil, errors.New("pdf preview is unavailable")
 }
 
 var viewerPDFPreviewBackend viewerPDFRenderer = viewerNoopPDFRenderer{}
@@ -58,6 +169,10 @@ func viewerCanPreviewPDFPath(path string) bool {
 	return viewerPathLooksPDF(path) && viewerPDFPreviewBackend.Available()
 }
 
+func viewerPathSupportsUnboundedPreview(path string) bool {
+	return viewerCanPreviewPDFPath(path) || viewerPathLooksImage(path)
+}
+
 func viewerLooksPreviewablePDF(path string, data []byte) bool {
 	if len(data) == 0 {
 		return false
@@ -73,6 +188,7 @@ func viewerLooksPreviewablePDF(path string, data []byte) bool {
 
 func viewerPDFPreviewActive(st *fileViewerState) bool {
 	return st != nil &&
+		normalizeViewerMode(st.mode) == "file" &&
 		st.detectedImagePreview &&
 		normalizeViewerImageFormat(st.imagePreviewFormat) == "pdf" &&
 		st.imagePreviewPageCount > 0
@@ -98,10 +214,8 @@ func viewerPDFDisplayedPage(st *fileViewerState) int {
 		return 0
 	}
 	page := st.imagePreviewPage
-	if st.imageView.pdfDragging {
-		page = st.imageView.pdfDragPage
-	} else if st.previewRenderActive {
-		page = st.previewRenderPage
+	if st.pdfDoc.pageCount() > 0 {
+		page = st.pdfDoc.currentPage()
 	}
 	if page < 0 {
 		return 0

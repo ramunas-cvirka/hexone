@@ -40,6 +40,9 @@ type Column struct {
 	Flex     bool    // takes share of remaining width
 	Align    Align
 	PadX     unit.Dp
+	// GapBefore reserves explicit space before this column in full mode.
+	// It is included in Width calculations but not in the cell's content box.
+	GapBefore unit.Dp
 	// DropPriority controls full-mode column drop order when width is too small.
 	// Smaller values are dropped earlier; ties drop rightmost columns first.
 	// Column 0 is always preserved.
@@ -713,6 +716,41 @@ func leadingWidgetIcon(kind IconKind) *widget.Icon {
 	}
 }
 
+// LayoutLeadingIcon renders the same icon, size, and trailing gap used by
+// table name cells. It is useful for previews that must match pane rows.
+func LayoutLeadingIcon(gtx layout.Context, icon LeadingIcon) layout.Dimensions {
+	if icon.Kind == IconNone {
+		return layout.Dimensions{Size: image.Pt(0, gtx.Constraints.Max.Y)}
+	}
+	iconPx, gapPx := leadingIconMetrics(icon.Kind, gtx.Constraints.Max.Y)
+	if iconPx > gtx.Constraints.Max.X {
+		iconPx = gtx.Constraints.Max.X
+	}
+	reserve := iconPx
+	if reserve > 0 {
+		reserve += gapPx
+	}
+	if reserve > gtx.Constraints.Max.X {
+		reserve = gtx.Constraints.Max.X
+	}
+	ic := icon.Widget
+	if ic == nil {
+		ic = leadingWidgetIcon(icon.Kind)
+	}
+	if ic != nil && iconPx > 0 {
+		iconGtx := gtx
+		iconGtx.Constraints = layout.Exact(image.Pt(iconPx, iconPx))
+		y := (gtx.Constraints.Max.Y - iconPx) / 2
+		if y < 0 {
+			y = 0
+		}
+		tr := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+		ic.Layout(iconGtx, icon.Color)
+		tr.Pop()
+	}
+	return layout.Dimensions{Size: image.Pt(reserve, gtx.Constraints.Max.Y)}
+}
+
 func layoutCellLabelWithIcon(gtx layout.Context, th *material.Theme, face font.Typeface, size unit.Sp, txt string, st CellStyle, align text.Alignment, hideIfTruncated bool, icon LeadingIcon) layout.Dimensions {
 	if icon.Kind == IconNone || align != text.Start {
 		return layoutCellLabel(gtx, th, face, size, txt, st, align, hideIfTruncated)
@@ -777,6 +815,11 @@ func (t *Table) columnWidthPx(gtx layout.Context, c Column) (base, min int) {
 	}
 	if base < min {
 		base = min
+	}
+	gap := gtx.Dp(c.GapBefore)
+	if gap > 0 {
+		base += gap
+		min += gap
 	}
 	return base, min
 }
@@ -1772,8 +1815,13 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 						w = 0
 					}
 
-					padX := adaptiveCellPadX(gtx, c.PadX, w)
-					contentW := w - 2*gtx.Dp(padX)
+					gapBefore := gtx.Dp(c.GapBefore)
+					if gapBefore > w {
+						gapBefore = w
+					}
+					cellW := w - gapBefore
+					padX := adaptiveCellPadX(gtx, c.PadX, cellW)
+					contentW := cellW - 2*gtx.Dp(padX)
 					if contentW < 0 {
 						contentW = 0
 					}
@@ -1811,9 +1859,9 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 					}
 
 					cellGtx := gtx
-					cellGtx.Constraints = layout.Exact(image.Pt(w, cellH))
+					cellGtx.Constraints = layout.Exact(image.Pt(cellW, cellH))
 
-					tr := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+					tr := op.Offset(image.Pt(x+gapBefore, 0)).Push(gtx.Ops)
 					hideIfTruncated := false
 					_ = layout.Inset{Left: padX, Right: padX}.Layout(cellGtx, func(gtx layout.Context) layout.Dimensions {
 						if hasIcon && icon.Kind != IconNone {

@@ -44,6 +44,34 @@ func TestGlobalEscapeLeavesViewerEscapeInTab0(t *testing.T) {
 	}
 }
 
+func TestViewerEscapeClosesImagePopupBeforeViewer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		open func(*fileViewerState)
+	}{
+		{name: "zoom", open: func(st *fileViewerState) { st.zoomMenuOpen = true }},
+		{name: "toc", open: func(st *fileViewerState) { st.tocMenuOpen = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &fileViewerState{}
+			tc.open(st)
+			ui := &UI{Tabs: widget.Enum{Value: "tab0"}, fileViewer: st}
+
+			gtx, router := testKeyContext()
+			router.Event(key.Filter{Name: key.NameEscape})
+			router.Queue(key.Event{Name: key.NameEscape, State: key.Press})
+			ui.handleFileViewerKeys(gtx)
+
+			if ui.fileViewer != st {
+				t.Fatal("escape should keep the viewer open while closing its popup")
+			}
+			if st.zoomMenuOpen || st.tocMenuOpen {
+				t.Fatal("escape should close the open viewer popup")
+			}
+		})
+	}
+}
+
 func TestGlobalEscapeClosesFunctionBarToolsInTab0(t *testing.T) {
 	ui := &UI{
 		Tabs:                 widget.Enum{Value: "tab0"},

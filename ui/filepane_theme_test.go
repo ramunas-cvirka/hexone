@@ -84,3 +84,39 @@ func TestFilePaneScrollbarUsesConfigOverrides(t *testing.T) {
 		t.Fatalf("scrollbar track=%q want override", got)
 	}
 }
+
+func TestFilePaneTransparentRowTextDisablesTableOverride(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Colors.HoverText = fm.TransparentColor
+	cfg.Colors.SelectionText = fm.TransparentColor
+	cfg.Colors.SelectedFilesText = fm.TransparentColor
+	cfg.Colors.FocusedSelectedText = fm.TransparentColor
+
+	palette := filePanePaletteFromConfig(cfg)
+	if palette.HoverFg != (color.NRGBA{}) {
+		t.Fatalf("HoverFg=%v want transparent", palette.HoverFg)
+	}
+	if palette.SelectedFg != (color.NRGBA{}) {
+		t.Fatalf("SelectedFg=%v want transparent", palette.SelectedFg)
+	}
+	if palette.MarkedFg != (color.NRGBA{}) {
+		t.Fatalf("MarkedFg=%v want transparent", palette.MarkedFg)
+	}
+	if palette.MarkedSelFg != (color.NRGBA{}) {
+		t.Fatalf("MarkedSelFg=%v want transparent", palette.MarkedSelFg)
+	}
+
+	pane := newFilePaneState("", cfg)
+	if pane.table.HoverFg != nil {
+		t.Fatalf("HoverFg table override=%v want nil", *pane.table.HoverFg)
+	}
+	if pane.table.SelectedFg != nil {
+		t.Fatalf("SelectedFg table override=%v want nil", *pane.table.SelectedFg)
+	}
+	if pane.table.MarkedFg != nil {
+		t.Fatalf("MarkedFg table override=%v want nil", *pane.table.MarkedFg)
+	}
+	if pane.table.MarkedSelFg != nil {
+		t.Fatalf("MarkedSelFg table override=%v want nil", *pane.table.MarkedSelFg)
+	}
+}

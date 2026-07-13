@@ -5,11 +5,12 @@ package appicon
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/binary"
 	"fmt"
+	resources "hexone"
 	"image"
 	"image/color"
+	"image/color/palette"
 	"image/draw"
 	"image/png"
 	"os"
@@ -29,18 +30,13 @@ const (
 	windowsICOTinyOverscanPct   = 0
 	windowsICOSmallOverscanPct  = 0
 	windowsICOMediumOverscanPct = 0
+	windowsPackageOverscanPct   = 0
 	macBundleTinyOverscanPct    = 10
 	macBundleSmallOverscanPct   = 6
 	macBundleBackdropRadiusPct  = 23
 )
 
 var macBundleBackdropColor = color.NRGBA{R: 22, G: 26, B: 36, A: 255}
-
-// Embed the canonical icon artwork so every platform icon path is derived from
-// the same source image and does not depend on the working directory.
-//
-//go:embed hexone_icon_art.png
-var embeddedIconArtPNG []byte
 
 func init() {
 	if app.ID == "" {
@@ -100,7 +96,7 @@ func renderOverscannedAppIcon(size int, overscanPct int) *image.RGBA {
 
 func defaultAppIconSource() (image.Image, error) {
 	iconSourceOnce.Do(func() {
-		iconSourceImg, iconSourceErr = png.Decode(bytes.NewReader(embeddedIconArtPNG))
+		iconSourceImg, iconSourceErr = png.Decode(bytes.NewReader(resources.AppIconPNG()))
 	})
 	return iconSourceImg, iconSourceErr
 }
@@ -113,8 +109,8 @@ func defaultAppIconPrepared() (image.Image, error) {
 			return
 		}
 		// Crop away the transparent halo around the source art before scaling it
-		// into tiny taskbar sizes. Keep only a near-zero safety margin so the
-		// icon fills the slot more like native taskbar icons.
+		// into tiny taskbar sizes. The square crop preserves all visible artwork
+		// while filling the shell slot as tightly as its aspect ratio permits.
 		iconPreparedImg = cloneImageRect(src, visibleSquareCrop(src, iconVisibleAlphaThreshold, iconVisibleMarginPct))
 	})
 	return iconPreparedImg, iconPreparedErr
@@ -131,6 +127,25 @@ func defaultAppIconPNG(size int) ([]byte, error) {
 	data := append([]byte(nil), buf.Bytes()...)
 	iconPNGCache.Store(size, data)
 	return data, nil
+}
+
+func windowsPackageAppIconPNG(size int) ([]byte, error) {
+	img := image.Image(renderOverscannedAppIcon(size, windowsPackageOverscanPct))
+	if size >= 512 {
+		// Store certification limits package images to 200 KiB. Large, true-color
+		// scale-400 artwork can exceed that even with maximum DEFLATE compression,
+		// so use a high-quality indexed PNG for those variants.
+		colors := append(color.Palette{color.NRGBA{}}, palette.Plan9[:255]...)
+		indexed := image.NewPaletted(img.Bounds(), colors)
+		draw.FloydSteinberg.Draw(indexed, indexed.Bounds(), img, img.Bounds().Min)
+		img = indexed
+	}
+	var buf bytes.Buffer
+	encoder := png.Encoder{CompressionLevel: png.BestCompression}
+	if err := encoder.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return append([]byte(nil), buf.Bytes()...), nil
 }
 
 func desktopAppIconPNG(size int) ([]byte, error) {
@@ -267,6 +282,19 @@ func WriteICO(path string) error {
 
 func WritePNG(path string, size int) error {
 	data, err := defaultAppIconPNG(size)
+	if err != nil {
+		return err
+	}
+	if path == "" {
+		return fmt.Errorf("empty icon path")
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// WriteWindowsPackagePNG writes tightly cropped transparent MSIX artwork.
+// Windows selects the matching qualified asset for each shell context.
+func WriteWindowsPackagePNG(path string, size int) error {
+	data, err := windowsPackageAppIconPNG(size)
 	if err != nil {
 		return err
 	}

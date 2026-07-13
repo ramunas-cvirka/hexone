@@ -6,7 +6,6 @@ package ui
 import (
 	"fmt"
 	"hexone/fm"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	pathpkg "path"
@@ -574,6 +573,7 @@ func (ui *UI) openCustomCommandEditor(index int) {
 		}
 		return
 	}
+	ui.resetKeys()
 	slots := customCommandSlots(ui.fmCfg.CustomCommands)
 	st := &customCommandEditorState{
 		draft:        cloneCustomCommands(slots),
@@ -1230,11 +1230,13 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			leftW := gtx.Dp(unit.Dp(190))
 			if gtx.Constraints.Max.X < gtx.Dp(unit.Dp(520)) {
@@ -1243,24 +1245,28 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 			if leftW <= 0 {
 				return ui.layoutCustomCommandEditorFields(th, gtx, st)
 			}
+			_, _, totalH := customCommandEditorListMetrics(gtx)
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Start}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedWidth(gtx, leftW, func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutCustomCommandEditorList(th, gtx, st)
 					})
 				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedHeight(gtx, totalH, layoutDialogVerticalDivider)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(14)}.Layout),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutCustomCommandEditorFields(th, gtx, st)
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedHeight(gtx, gtx.Dp(unit.Dp(18)), func(gtx layout.Context) layout.Dimensions {
-				if st.lastErr == "" {
-					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Min.Y)}
-				}
+			if st.lastErr == "" {
+				return layout.Dimensions{}
+			}
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Caption(th, st.lastErr)
 				lbl.Font.Typeface = ui.interfaceTypeface()
 				lbl.TextSize = ui.scaleDialogFontSize(9)
@@ -1269,7 +1275,9 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 				return lbl.Layout(gtx)
 			})
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutDialogActionTriple(
@@ -1303,15 +1311,7 @@ func customCommandEditorSlotLabel(st *customCommandEditorState, index int) strin
 
 func (ui *UI) layoutCustomCommandEditorList(th *material.Theme, gtx layout.Context, st *customCommandEditorState) layout.Dimensions {
 	st.ensureDraftSlots()
-	stripH := gtx.Dp(unit.Dp(30))
-	if stripH < 1 {
-		stripH = 1
-	}
-	sepH := gtx.Dp(unit.Dp(1))
-	if sepH < 1 {
-		sepH = 1
-	}
-	totalH := stripH*10 + sepH*9
+	stripH, sepH, totalH := customCommandEditorListMetrics(gtx)
 	selected := st.selected
 	if selected < 0 || selected >= 10 {
 		selected = 0
@@ -1367,6 +1367,19 @@ func (ui *UI) layoutCustomCommandEditorList(th *material.Theme, gtx layout.Conte
 	})
 }
 
+func customCommandEditorListMetrics(gtx layout.Context) (stripH, sepH, totalH int) {
+	stripH = gtx.Dp(unit.Dp(30))
+	if stripH < 1 {
+		stripH = 1
+	}
+	sepH = gtx.Dp(unit.Dp(1))
+	if sepH < 1 {
+		sepH = 1
+	}
+	totalH = stripH*10 + sepH*9
+	return stripH, sepH, totalH
+}
+
 func (ui *UI) layoutCustomCommandEditorFields(th *material.Theme, gtx layout.Context, st *customCommandEditorState) layout.Dimensions {
 	rowLabel := func(label string) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
@@ -1398,27 +1411,33 @@ func (ui *UI) layoutCustomCommandEditorFields(th *material.Theme, gtx layout.Con
 			return ui.layoutEditorWithContextMenu(th, gtx, id, ed, true, host)
 		}
 	}
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(rowLabel("Slot")),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			text := fmt.Sprintf("%d / %s", st.selected+1, customCommandMenuShortcut(st.selected))
-			lbl := material.Body2(th, text)
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleDialogFontSize(10)
-			lbl.Color = txtColor
-			lbl.MaxLines = 1
-			return lbl.Layout(gtx)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(rowLabel("Short name")),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(editor("custom-command-name", "gpstrack summary", &st.nameEdit, 0, customCommandEditorFocusName)),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(rowLabel("Command")),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(editor("custom-command-body", "python - <<'PY'\nprint('hello')\nPY", &st.commandEdit, 230, customCommandEditorFocusCommand)),
-	)
+	_, _, totalH := customCommandEditorListMetrics(gtx)
+	return fixedHeight(gtx, totalH, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(rowLabel("Slot")),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				text := fmt.Sprintf("%d / %s", st.selected+1, customCommandMenuShortcut(st.selected))
+				lbl := material.Body2(th, text)
+				lbl.Font.Typeface = ui.interfaceTypeface()
+				lbl.TextSize = ui.scaleDialogFontSize(10)
+				lbl.Color = txtColor
+				lbl.MaxLines = 1
+				return lbl.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+			layout.Rigid(rowLabel("Short name")),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+			layout.Rigid(editor("custom-command-name", "gpstrack summary", &st.nameEdit, 0, customCommandEditorFocusName)),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+			layout.Rigid(rowLabel("Command")),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+				return editor("custom-command-body", "python - <<'PY'\nprint('hello')\nPY", &st.commandEdit, 0, customCommandEditorFocusCommand)(gtx)
+			}),
+		)
+	})
 }
 
 func (ui *UI) startCustomCommandViewer(raw fm.CustomCommand, now time.Time) bool {
@@ -1441,19 +1460,16 @@ func (ui *UI) startCustomCommandViewer(raw fm.CustomCommand, now time.Time) bool
 	}
 	targetPath := ui.customCommandViewerTarget(pane, remote)
 	st := &fileViewerState{
-		pane:            idx,
-		path:            targetPath,
-		name:            cmd.Name,
-		remote:          remote,
-		status:          "loading...",
-		fileEncoding:    fm.ViewerFileEncodingAuto,
-		wrapEnabled:     viewerWordWrap(ui.fmCfg),
-		commandOnly:     true,
-		resultCh:        make(chan fileViewerResult, 4),
-		previewRenderCh: make(chan fileViewerPreviewRenderResult, 2),
-		previewCacheCh:  make(chan fileViewerPDFCacheResult, 4),
-		pdfPageCache:    make(map[int]viewerPDFRenderResult, 3),
-		pdfPreloadPages: make(map[int]struct{}, 2),
+		pane:         idx,
+		path:         targetPath,
+		name:         cmd.Name,
+		remote:       remote,
+		status:       "loading...",
+		fileEncoding: fm.ViewerFileEncodingAuto,
+		wrapEnabled:  viewerWordWrap(ui.fmCfg),
+		commandOnly:  true,
+		resultCh:     make(chan fileViewerResult, 4),
+		pdfDocCh:     make(chan pdfDocResult, 16),
 	}
 	st.mode = "command"
 	st.command = cmd.Command
@@ -1470,6 +1486,10 @@ func (ui *UI) startCustomCommandViewer(raw fm.CustomCommand, now time.Time) bool
 	st.find.editor.SingleLine = true
 	st.find.editor.Submit = false
 	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	st.find.pdfResultCh = make(chan viewerPDFFindResult, 16)
+	st.find.pdfList.Axis = layout.Vertical
+	st.find.textList.Axis = layout.Vertical
+	st.find.hexList.Axis = layout.Vertical
 	st.find.index = -1
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.hex = newHexViewerState()

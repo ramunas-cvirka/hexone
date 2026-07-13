@@ -71,6 +71,13 @@ type fileViewerEventTag struct {
 	_ byte
 }
 
+type fileViewerPaneScrollSnapshot struct {
+	pane       *filePaneState
+	dir        string
+	position   layout.Position
+	anchorPath string
+}
+
 type fileViewerState struct {
 	pane    int
 	path    string
@@ -79,18 +86,26 @@ type fileViewerState struct {
 	tabPrev string
 	remote  *paneSSHSession
 
+	paneScrollSnapshots []fileViewerPaneScrollSnapshot
+
 	backdropClick        widget.Clickable
 	closeClick           widget.Clickable
 	autoRefreshClick     widget.Clickable
 	modeFileClick        widget.Clickable
 	modeHexClick         widget.Clickable
 	modeCmdClick         widget.Clickable
+	zoomMenuClick        widget.Clickable
+	tocMenuClick         widget.Clickable
 	encodingMenuClick    widget.Clickable
 	encodingAutoClick    widget.Clickable
 	encodingUTF8Click    widget.Clickable
 	encodingUTF16LEClick widget.Clickable
 	encodingUTF16BEClick widget.Clickable
 	encodingCP437Click   widget.Clickable
+	zoomPresetClicks     [9]widget.Clickable
+	tocClicks            []widget.Clickable
+	tocDisclosureClicks  []widget.Clickable
+	tocExpanded          map[int]string
 	historyClick         widget.Clickable
 	commandClick         widget.Clickable
 	contentEditor        widget.Editor
@@ -102,36 +117,43 @@ type fileViewerState struct {
 	commandFocus         bool
 	fileEncoding         string
 	encodingMenuOpen     bool
+	zoomMenuOpen         bool
+	tocMenuOpen          bool
+	tocList              widget.List
 
-	content                 string
-	status                  string
-	err                     string
-	command                 string
-	detectedEncoding        string
-	detectedEncodingBOM     bool
-	detectedImagePreview    bool
-	imagePreview            image.Image
-	imagePreviewData        []byte
-	imagePreviewFormat      string
-	imagePreviewSize        image.Point
-	imagePreviewPage        int
-	imagePreviewPageCount   int
-	pendingImageScrollToEnd bool
-	detectedBinaryPreview   bool
-	detectedLineEnding      string
-	binaryPreviewData       []byte
-	binaryPreviewCols       int
-	commandInfinite         bool
-	autoRefresh             bool
-	wordSelectRE            *regexp.Regexp
-	wordSelectExpr          string
-	updatedAt               time.Time
-	tabAnimAt               time.Time
-	stream                  streamOutputView
-	imageView               imagePreviewView
-	hex                     *hexViewerState
-	find                    fileViewerFindState
-	historyOpen             bool
+	content              string
+	status               string
+	err                  string
+	command              string
+	detectedEncoding     string
+	detectedEncodingBOM  bool
+	detectedImagePreview bool
+	imagePreview         image.Image
+	imagePreviewData     []byte
+	imagePreviewFormat   string
+	imagePreviewSize     image.Point
+	imagePreviewPage     int
+	// imagePreviewSeedPage is the page imagePreview depicts. Unlike
+	// imagePreviewPage (which the PDF doc view reuses as current-page
+	// bookkeeping while scrolling) it only changes when imagePreview does.
+	imagePreviewSeedPage  int
+	imagePreviewPageCount int
+	detectedBinaryPreview bool
+	detectedLineEnding    string
+	binaryPreviewData     []byte
+	binaryPreviewCols     int
+	commandInfinite       bool
+	autoRefresh           bool
+	wordSelectRE          *regexp.Regexp
+	wordSelectExpr        string
+	updatedAt             time.Time
+	tabAnimAt             time.Time
+	stream                streamOutputView
+	imageView             imagePreviewView
+	pdfDoc                pdfDocView
+	hex                   *hexViewerState
+	find                  fileViewerFindState
+	historyOpen           bool
 
 	loading    bool
 	seq        int
@@ -177,28 +199,26 @@ type fileViewerState struct {
 	scrollbarLines        int
 	scrollbarVisibleN     int
 
-	nextWatchCheck      time.Time
-	watchExists         bool
-	watchSize           int64
-	watchModTime        time.Time
-	fileSelection       streamSelectionState
-	commandSelection    streamSelectionState
-	pendingSelection    string
-	resultCh            chan fileViewerResult
-	previewRenderCh     chan fileViewerPreviewRenderResult
-	previewCacheCh      chan fileViewerPDFCacheResult
-	previewRenderSeq    int
-	previewRenderActive bool
-	previewRenderPage   int
-	pdfPageCache        map[int]viewerPDFRenderResult
-	pdfPreloadPages     map[int]struct{}
-	historyClicks       map[string]*widget.Clickable
-	tabAnim             segmentedAnimState
-	menuHoverAnim       segmentedAnimState
-	activeTabRect       image.Rectangle
-	encodingBarRect     image.Rectangle
-	encodingMenuRect    image.Rectangle
-	encodingMenuAt      time.Time
+	nextWatchCheck   time.Time
+	watchExists      bool
+	watchSize        int64
+	watchModTime     time.Time
+	fileSelection    streamSelectionState
+	commandSelection streamSelectionState
+	pendingSelection string
+	resultCh         chan fileViewerResult
+	pdfDocCh         chan pdfDocResult
+	historyClicks    map[string]*widget.Clickable
+	tabAnim          segmentedAnimState
+	menuHoverAnim    segmentedAnimState
+	activeTabRect    image.Rectangle
+	encodingBarRect  image.Rectangle
+	encodingMenuRect image.Rectangle
+	encodingMenuAt   time.Time
+	zoomMenuRect     image.Rectangle
+	zoomMenuAt       time.Time
+	tocMenuRect      image.Rectangle
+	tocMenuAt        time.Time
 }
 
 type fileViewerResult struct {
@@ -239,24 +259,6 @@ type viewerReadInfo struct {
 	binaryData     []byte
 }
 
-type fileViewerPreviewRenderResult struct {
-	seq         int
-	renderID    int
-	image       image.Image
-	imageSize   image.Point
-	page        int
-	pageCount   int
-	scrollToEnd bool
-	err         string
-}
-
-type fileViewerPDFCacheResult struct {
-	seq    int
-	page   int
-	result viewerPDFRenderResult
-	err    string
-}
-
 func (st *fileViewerState) openContextMenu(pos image.Point, now time.Time) {
 	if st == nil {
 		return
@@ -287,6 +289,12 @@ func (st *fileViewerState) closeEncodingMenu() {
 	st.encodingBarRect = image.Rectangle{}
 	st.encodingMenuRect = image.Rectangle{}
 	st.encodingMenuAt = time.Time{}
+	st.zoomMenuOpen = false
+	st.zoomMenuRect = image.Rectangle{}
+	st.zoomMenuAt = time.Time{}
+	st.tocMenuOpen = false
+	st.tocMenuRect = image.Rectangle{}
+	st.tocMenuAt = time.Time{}
 }
 
 func (st *fileViewerState) clearSyntaxState() {
@@ -464,7 +472,13 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			if ke.State != key.Press || !st.detectedImagePreview {
 				continue
 			}
-			if st.imageView.zoomBy(st.imagePreview, factor) {
+			changed := false
+			if viewerPDFPreviewActive(st) {
+				changed = st.pdfDoc.zoomBy(factor)
+			} else {
+				changed = st.imageView.zoomBy(st.imagePreview, factor)
+			}
+			if changed {
 				st.markUserBrowsing(gtx.Now)
 				gtx.Execute(op.InvalidateCmd{})
 			}
@@ -513,7 +527,8 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			if ke.Name == "[" {
 				step = -1
 			}
-			if ui.stepFileViewerPDFPage(gtx.Now, step) {
+			if st.pdfDoc.scrollToPage(st.pdfDoc.currentPage() + step) {
+				st.markUserBrowsing(gtx.Now)
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case "f", "F":
@@ -523,6 +538,11 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			ui.openFileViewerFind(gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
 		case key.NameEscape:
+			if st.zoomMenuOpen || st.tocMenuOpen {
+				st.closeEncodingMenu()
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
 			if st.find.open {
 				if st.find.sourceMenuOpen {
 					st.find.closeSourceMenu()
@@ -600,6 +620,19 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 	st := ui.fileViewer
 	if st == nil {
 		return false
+	}
+	if viewerPDFPreviewActive(st) && st.pdfDoc.hasSelection() {
+		text := st.pdfDoc.selectedText()
+		if text == "" {
+			st.status = "nothing to copy"
+			return false
+		}
+		gtx.Execute(clipboard.WriteCmd{
+			Type: "application/text",
+			Data: io.NopCloser(strings.NewReader(text)),
+		})
+		st.err = ""
+		return true
 	}
 	if st.mode == "hex" && st.hex != nil {
 		var data []byte
@@ -692,18 +725,16 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	}
 
 	st := &fileViewerState{
-		pane:            idx,
-		path:            entry.Path,
-		name:            entry.DisplayName,
-		remote:          remote,
-		status:          "loading...",
-		fileEncoding:    fm.ViewerFileEncodingAuto,
-		wrapEnabled:     false,
-		resultCh:        make(chan fileViewerResult, 4),
-		previewRenderCh: make(chan fileViewerPreviewRenderResult, 2),
-		previewCacheCh:  make(chan fileViewerPDFCacheResult, 4),
-		pdfPageCache:    make(map[int]viewerPDFRenderResult, 3),
-		pdfPreloadPages: make(map[int]struct{}, 2),
+		pane:                idx,
+		path:                entry.Path,
+		name:                entry.DisplayName,
+		remote:              remote,
+		paneScrollSnapshots: ui.captureFileViewerPaneScrollSnapshots(),
+		status:              "loading...",
+		fileEncoding:        fm.ViewerFileEncodingAuto,
+		wrapEnabled:         viewerWordWrap(ui.fmCfg),
+		resultCh:            make(chan fileViewerResult, 4),
+		pdfDocCh:            make(chan pdfDocResult, 16),
 	}
 	st.mode = "file"
 	st.command = "cat {path}"
@@ -736,6 +767,10 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.find.editor.SingleLine = true
 	st.find.editor.Submit = false
 	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	st.find.pdfResultCh = make(chan viewerPDFFindResult, 16)
+	st.find.pdfList.Axis = layout.Vertical
+	st.find.textList.Axis = layout.Vertical
+	st.find.hexList.Axis = layout.Vertical
 	st.find.index = -1
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.hex = newHexViewerState()
@@ -868,11 +903,41 @@ func (ui *UI) closeFileViewer() {
 			st.remote.close()
 			st.remote = nil
 		}
+		ui.restoreFileViewerPaneScrollSnapshots(st.paneScrollSnapshots)
 	}
 	ui.clearFileViewHotkeyHold()
 	ui.clearFileViewerScrollHold()
 	ui.fileViewer = nil
 	ui.functionBarViewerShown = false
+}
+
+func (ui *UI) captureFileViewerPaneScrollSnapshots() []fileViewerPaneScrollSnapshot {
+	if ui == nil || len(ui.filePanes) == 0 {
+		return nil
+	}
+	snapshots := make([]fileViewerPaneScrollSnapshot, 0, len(ui.filePanes))
+	for _, pane := range ui.filePanes {
+		if pane == nil || pane.table == nil {
+			continue
+		}
+		snapshots = append(snapshots, fileViewerPaneScrollSnapshot{
+			pane:       pane,
+			dir:        pane.dir,
+			position:   sanitizePaneListPosition(pane.table.List.Position),
+			anchorPath: pane.visibleAnchorPath(),
+		})
+	}
+	return snapshots
+}
+
+func (ui *UI) restoreFileViewerPaneScrollSnapshots(snapshots []fileViewerPaneScrollSnapshot) {
+	for _, snapshot := range snapshots {
+		pane := snapshot.pane
+		if pane == nil || pane.table == nil || pane.model == nil || pane.dir != snapshot.dir {
+			continue
+		}
+		pane.table.List.Position = restorePaneListPosition(pane.model.entries, snapshot.position, snapshot.anchorPath)
+	}
 }
 
 func (ui *UI) clearFileViewHotkeyHold() {
@@ -946,32 +1011,30 @@ func (ui *UI) performFileViewerImageKeyScroll(now time.Time, st *fileViewerState
 		return false
 	}
 	if viewerPDFPreviewActive(st) {
+		v := &st.pdfDoc
+		changed := false
 		switch name {
 		case key.NameUpArrow:
-			if st.imageView.scrollByKeyStep(st.imagePreview, 0, -1) {
-				st.markUserBrowsing(now)
-				return true
-			}
-			return ui.stepFileViewerPDFPageWithEdge(now, -1, true)
+			changed = v.scrollBy(0, -fileViewerImageKeyStepPx)
 		case key.NameDownArrow:
-			if st.imageView.scrollByKeyStep(st.imagePreview, 0, 1) {
-				st.markUserBrowsing(now)
-				return true
-			}
-			return ui.stepFileViewerPDFPageWithEdge(now, 1, false)
+			changed = v.scrollBy(0, fileViewerImageKeyStepPx)
+		case key.NameLeftArrow:
+			changed = v.scrollBy(-fileViewerImageKeyStepPx, 0)
+		case key.NameRightArrow:
+			changed = v.scrollBy(fileViewerImageKeyStepPx, 0)
 		case key.NamePageUp:
-			if st.imageView.scrollByPage(st.imagePreview, -1) {
-				st.markUserBrowsing(now)
-				return true
-			}
-			return ui.stepFileViewerPDFPageWithEdge(now, -1, true)
+			changed = v.scrollByViewport(-1)
 		case key.NamePageDown:
-			if st.imageView.scrollByPage(st.imagePreview, 1) {
-				st.markUserBrowsing(now)
-				return true
-			}
-			return ui.stepFileViewerPDFPageWithEdge(now, 1, false)
+			changed = v.scrollByViewport(1)
+		case key.NameHome:
+			changed = v.scrollToStart()
+		case key.NameEnd:
+			changed = v.scrollToEnd()
 		}
+		if changed {
+			st.markUserBrowsing(now)
+		}
+		return changed
 	}
 	changed := false
 	switch name {
@@ -1110,10 +1173,6 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	st.seq++
 	seq := st.seq
 	st.loading = true
-	st.previewRenderActive = false
-	st.previewRenderPage = 0
-	st.pendingImageScrollToEnd = false
-	clearFileViewerPDFPageCache(st)
 	if st.updatedAt.IsZero() && st.content == "" {
 		st.err = ""
 		st.status = "loading..."
@@ -1202,236 +1261,6 @@ func sendViewerResult(ch chan fileViewerResult, res fileViewerResult) {
 	}
 }
 
-func sendFileViewerPreviewRenderResult(ch chan fileViewerPreviewRenderResult, res fileViewerPreviewRenderResult) {
-	if ch == nil {
-		return
-	}
-	select {
-	case ch <- res:
-	default:
-		select {
-		case <-ch:
-		default:
-		}
-		select {
-		case ch <- res:
-		default:
-		}
-	}
-}
-
-func sendFileViewerPDFCacheResult(ch chan fileViewerPDFCacheResult, res fileViewerPDFCacheResult) {
-	if ch == nil {
-		return
-	}
-	select {
-	case ch <- res:
-	default:
-		select {
-		case <-ch:
-		default:
-		}
-		select {
-		case ch <- res:
-		default:
-		}
-	}
-}
-
-func clearFileViewerPDFPageCache(st *fileViewerState) {
-	if st == nil {
-		return
-	}
-	if st.pdfPageCache != nil {
-		clear(st.pdfPageCache)
-	}
-	if st.pdfPreloadPages != nil {
-		clear(st.pdfPreloadPages)
-	}
-}
-
-func storeFileViewerPDFPageCache(st *fileViewerState, rendered viewerPDFRenderResult) {
-	if st == nil || rendered.Page < 0 {
-		return
-	}
-	if st.pdfPageCache == nil {
-		st.pdfPageCache = make(map[int]viewerPDFRenderResult, 5)
-	}
-	st.pdfPageCache[rendered.Page] = rendered
-}
-
-func pruneFileViewerPDFPageCache(st *fileViewerState, center int) {
-	if st == nil || st.pdfPageCache == nil {
-		return
-	}
-	for page := range st.pdfPageCache {
-		if page < center-2 || page > center+2 {
-			delete(st.pdfPageCache, page)
-		}
-	}
-	if st.pdfPreloadPages == nil {
-		return
-	}
-	for page := range st.pdfPreloadPages {
-		if page < center-1 || page > center+1 {
-			delete(st.pdfPreloadPages, page)
-		}
-	}
-}
-
-func applyFileViewerPDFRenderedPage(st *fileViewerState, now time.Time, rendered viewerPDFRenderResult, scrollToEnd bool) {
-	if st == nil {
-		return
-	}
-	zoom := st.imageView.effectiveZoom()
-	st.imagePreview = rendered.Image
-	st.imagePreviewSize = rendered.Size
-	st.imagePreviewPage = rendered.Page
-	st.imagePreviewPageCount = rendered.PageCount
-	st.pendingImageScrollToEnd = scrollToEnd
-	st.imageView.reset()
-	st.imageView.zoom = zoom
-	st.err = ""
-	st.status = "ready"
-	st.closeEncodingMenu()
-	storeFileViewerPDFPageCache(st, rendered)
-	pruneFileViewerPDFPageCache(st, rendered.Page)
-	st.markUpdated(now)
-}
-
-func (ui *UI) scheduleFileViewerPDFNeighborPreloads() {
-	st := ui.fileViewer
-	if !viewerPDFPreviewActive(st) || st.previewCacheCh == nil {
-		return
-	}
-	center := st.imagePreviewPage
-	pruneFileViewerPDFPageCache(st, center)
-	for _, page := range []int{center - 2, center - 1, center + 1, center + 2} {
-		ui.startFileViewerPDFPagePreload(page)
-	}
-}
-
-func (ui *UI) startFileViewerPDFPagePreload(page int) {
-	st := ui.fileViewer
-	if !viewerPDFPreviewActive(st) || st.previewCacheCh == nil {
-		return
-	}
-	if page < 0 || page >= st.imagePreviewPageCount || page == st.imagePreviewPage {
-		return
-	}
-	if st.pdfPageCache != nil {
-		if _, ok := st.pdfPageCache[page]; ok {
-			return
-		}
-	}
-	if st.pdfPreloadPages == nil {
-		st.pdfPreloadPages = make(map[int]struct{}, 4)
-	}
-	if _, ok := st.pdfPreloadPages[page]; ok {
-		return
-	}
-	st.pdfPreloadPages[page] = struct{}{}
-
-	localPath := ""
-	if viewerPDFPreviewUsesLocalPath && st.remote == nil && !filesys.ArchiveMemberPath(st.path) {
-		localPath = st.path
-	}
-	data := st.imagePreviewData
-	seq := st.seq
-	ch := st.previewCacheCh
-	go func() {
-		info, err := decodeViewerPDFPreview(localPath, data, page)
-		res := fileViewerPDFCacheResult{
-			seq:  seq,
-			page: page,
-		}
-		if err != nil {
-			res.err = err.Error()
-			sendFileViewerPDFCacheResult(ch, res)
-			return
-		}
-		res.result = viewerPDFRenderResult{
-			Image:     info.image,
-			Page:      info.imagePage,
-			PageCount: info.imagePageCount,
-			Size:      info.imageSize,
-		}
-		sendFileViewerPDFCacheResult(ch, res)
-	}()
-}
-
-func (ui *UI) stepFileViewerPDFPage(now time.Time, step int) bool {
-	return ui.stepFileViewerPDFPageWithEdge(now, step, false)
-}
-
-func (ui *UI) stepFileViewerPDFPageWithEdge(now time.Time, step int, scrollToEnd bool) bool {
-	st := ui.fileViewer
-	if !viewerPDFPreviewActive(st) || step == 0 {
-		return false
-	}
-	next := st.imagePreviewPage + step
-	if next < 0 || next >= st.imagePreviewPageCount {
-		return false
-	}
-	ui.startFileViewerPDFPageRender(now, next, scrollToEnd)
-	return true
-}
-
-func (ui *UI) startFileViewerPDFPageRender(now time.Time, page int, scrollToEnd bool) {
-	st := ui.fileViewer
-	if !viewerPDFPreviewActive(st) || st.previewRenderCh == nil {
-		return
-	}
-	if page < 0 || page >= st.imagePreviewPageCount || page == st.imagePreviewPage {
-		return
-	}
-	if st.previewRenderActive && st.previewRenderPage == page {
-		return
-	}
-	if cached, ok := st.pdfPageCache[page]; ok {
-		st.previewRenderSeq++
-		st.previewRenderActive = false
-		st.previewRenderPage = 0
-		st.markUserBrowsing(now)
-		applyFileViewerPDFRenderedPage(st, now, cached, scrollToEnd)
-		ui.scheduleFileViewerPDFNeighborPreloads()
-		return
-	}
-	st.previewRenderActive = true
-	st.previewRenderPage = page
-	st.previewRenderSeq++
-	renderID := st.previewRenderSeq
-	st.markUserBrowsing(now)
-	st.err = ""
-	st.status = fmt.Sprintf("rendering page %d/%d", page+1, st.imagePreviewPageCount)
-
-	localPath := ""
-	if viewerPDFPreviewUsesLocalPath && st.remote == nil && !filesys.ArchiveMemberPath(st.path) {
-		localPath = st.path
-	}
-	data := st.imagePreviewData
-	seq := st.seq
-	ch := st.previewRenderCh
-	go func() {
-		info, err := decodeViewerPDFPreview(localPath, data, page)
-		res := fileViewerPreviewRenderResult{
-			seq:         seq,
-			renderID:    renderID,
-			scrollToEnd: scrollToEnd,
-		}
-		if err != nil {
-			res.err = err.Error()
-			sendFileViewerPreviewRenderResult(ch, res)
-			return
-		}
-		res.image = info.image
-		res.imageSize = info.imageSize
-		res.page = info.imagePage
-		res.pageCount = info.imagePageCount
-		sendFileViewerPreviewRenderResult(ch, res)
-	}()
-}
-
 func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 	st := ui.fileViewer
 	if st == nil {
@@ -1454,31 +1283,19 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		st.imagePreviewFormat = st.pendingImageFormat
 		st.imagePreviewSize = st.pendingImageSize
 		st.imagePreviewPage = st.pendingImagePage
+		st.imagePreviewSeedPage = st.pendingImagePage
 		st.imagePreviewPageCount = st.pendingImagePageCount
-		st.pendingImageScrollToEnd = false
 		st.detectedBinaryPreview = st.pendingBinaryPreview
 		st.detectedLineEnding = st.pendingLineEnding
 		st.binaryPreviewData = st.pendingBinaryData
+		st.pdfDoc.reset()
 		if st.detectedImagePreview {
 			st.imageView.reset()
-			if viewerPDFPreviewActive(st) {
-				storeFileViewerPDFPageCache(st, viewerPDFRenderResult{
-					Image:     st.imagePreview,
-					Page:      st.imagePreviewPage,
-					PageCount: st.imagePreviewPageCount,
-					Size:      st.imagePreviewSize,
-				})
-				pruneFileViewerPDFPageCache(st, st.imagePreviewPage)
-			} else {
-				clearFileViewerPDFPageCache(st)
-			}
 			st.closeEncodingMenu()
 			st.binaryPreviewCols = 0
 		} else if st.detectedBinaryPreview {
-			clearFileViewerPDFPageCache(st)
 			st.binaryPreviewCols = viewerBinaryPreviewBytes
 		} else {
-			clearFileViewerPDFPageCache(st)
 			st.binaryPreviewCols = 0
 		}
 		st.pendingEncoding = ""
@@ -1509,9 +1326,6 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		ui.refreshFileViewerFind(gtx.Now, true)
 		st.markUpdated(gtx.Now)
 		st.captureWatchState()
-		if viewerPDFPreviewActive(st) {
-			ui.scheduleFileViewerPDFNeighborPreloads()
-		}
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
@@ -1611,35 +1425,27 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.imagePreviewFormat = res.imageFormat
 			st.imagePreviewSize = res.imageSize
 			st.imagePreviewPage = res.imagePage
+			st.imagePreviewSeedPage = res.imagePage
 			st.imagePreviewPageCount = res.imagePageCount
-			st.pendingImageScrollToEnd = false
 			st.detectedBinaryPreview = res.binaryPreview
 			st.detectedLineEnding = res.lineEnding
 			st.binaryPreviewData = append([]byte(nil), res.binaryData...)
+			if updateAction != viewerUpdateSame {
+				st.pdfDoc.reset()
+			}
 			if st.detectedImagePreview {
 				if updateAction != viewerUpdateSame {
 					st.imageView.reset()
 				}
-				if viewerPDFPreviewActive(st) {
-					storeFileViewerPDFPageCache(st, viewerPDFRenderResult{
-						Image:     st.imagePreview,
-						Page:      st.imagePreviewPage,
-						PageCount: st.imagePreviewPageCount,
-						Size:      st.imagePreviewSize,
-					})
-					pruneFileViewerPDFPageCache(st, st.imagePreviewPage)
-				} else {
-					clearFileViewerPDFPageCache(st)
-				}
 				st.closeEncodingMenu()
 				st.binaryPreviewCols = 0
 			} else if st.detectedBinaryPreview {
-				clearFileViewerPDFPageCache(st)
+				st.pdfDoc.reset()
 				if updateAction != viewerUpdateSame {
 					st.binaryPreviewCols = viewerBinaryPreviewBytes
 				}
 			} else {
-				clearFileViewerPDFPageCache(st)
+				st.pdfDoc.reset()
 				st.binaryPreviewCols = 0
 			}
 			applyFileViewerContentResult(st, contentToApply)
@@ -1651,66 +1457,9 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.markUpdated(gtx.Now)
 			st.captureWatchState()
 			ui.scheduleFileViewerWatch(gtx)
-			if viewerPDFPreviewActive(st) {
-				ui.scheduleFileViewerPDFNeighborPreloads()
-			}
 			gtx.Execute(op.InvalidateCmd{})
 		default:
-			goto previewRenders
-		}
-	}
-
-previewRenders:
-	for {
-		if st.previewRenderCh == nil {
-			return
-		}
-		select {
-		case res := <-st.previewRenderCh:
-			if res.seq != st.seq || res.renderID != st.previewRenderSeq {
-				continue
-			}
-			st.previewRenderActive = false
-			st.previewRenderPage = 0
-			if res.err != "" {
-				st.pendingImageScrollToEnd = false
-				st.err = res.err
-				st.status = "ready"
-				gtx.Execute(op.InvalidateCmd{})
-				continue
-			}
-			applyFileViewerPDFRenderedPage(st, gtx.Now, viewerPDFRenderResult{
-				Image:     res.image,
-				Page:      res.page,
-				PageCount: res.pageCount,
-				Size:      res.imageSize,
-			}, res.scrollToEnd)
-			ui.scheduleFileViewerPDFNeighborPreloads()
-			gtx.Execute(op.InvalidateCmd{})
-		default:
-			goto previewCaches
-		}
-	}
-
-previewCaches:
-	for {
-		if st.previewCacheCh == nil {
-			return
-		}
-		select {
-		case res := <-st.previewCacheCh:
-			if st.pdfPreloadPages != nil {
-				delete(st.pdfPreloadPages, res.page)
-			}
-			if res.seq != st.seq || res.err != "" || !viewerPDFPreviewActive(st) {
-				continue
-			}
-			if res.page < st.imagePreviewPage-2 || res.page > st.imagePreviewPage+2 {
-				continue
-			}
-			storeFileViewerPDFPageCache(st, res.result)
-			pruneFileViewerPDFPageCache(st, st.imagePreviewPage)
-		default:
+			ui.pumpPDFDocResults(gtx, st)
 			return
 		}
 	}
@@ -2617,7 +2366,7 @@ func (ui *UI) viewerInitialModeAndCommand(path string, remote *paneSSHSession, f
 	if ui != nil {
 		cfg = ui.fmCfg
 	}
-	if viewerPathExceedsMaxLoadLimit(path, remote, viewerMaxLoadBytes(cfg)) {
+	if !viewerPathSupportsUnboundedPreview(path) && viewerPathExceedsMaxLoadLimit(path, remote, viewerMaxLoadBytes(cfg)) {
 		return "hex", cmd
 	}
 	return "file", cmd
@@ -2776,10 +2525,23 @@ func (ui *UI) toggleViewerWordWrap() {
 		return
 	}
 	st.wrapEnabled = !st.wrapEnabled
+	st.stream.hCol = 0
+	st.stream.hDragCol = 0
+	st.stream.topLine = 0
+	st.stream.dragTopLine = 0
+	st.stream.wrapRows = nil
+	st.stream.resetVisualTop()
 	if ui.fmCfg != nil {
 		ui.fmCfg.Viewer.WordWrap = st.wrapEnabled
 		_ = ui.saveFMConfigWithOptions("viewer-word-wrap", false)
 	}
+}
+
+func viewerWordWrapMenuLabel(enabled bool) string {
+	if enabled {
+		return "Word Wrap: On"
+	}
+	return "Word Wrap: Off"
 }
 
 func (ui *UI) setFileViewerEncoding(encoding string, now time.Time) {
@@ -2821,7 +2583,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 	if maxBytes < 1 {
 		maxBytes = viewerDefaultMaxLoadBytes
 	}
-	unlimitedPreview := viewerCanPreviewPDFPath(path) || viewerPathLooksImage(path)
+	unlimitedPreview := viewerPathSupportsUnboundedPreview(path)
 
 	var (
 		size    int64 = -1
@@ -3771,7 +3533,7 @@ func viewerSupportsFind(st *fileViewerState) bool {
 	if st.mode == "command" {
 		return true
 	}
-	return !st.detectedImagePreview
+	return !st.detectedImagePreview || viewerPDFPreviewActive(st)
 }
 
 func viewerImageZoomFactorForKey(name key.Name, mods key.Modifiers) (float32, bool) {

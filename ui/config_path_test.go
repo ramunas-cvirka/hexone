@@ -147,6 +147,35 @@ func TestViewerCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 	}
 }
 
+func TestToggleViewerWordWrapPersistsOnlyViewerSetting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(original)
+	ui.configPath = path
+	ui.fileViewer = &fileViewerState{}
+	ui.fileViewer.stream.hCol = 17
+	ui.toggleViewerWordWrap()
+
+	if !ui.fileViewer.wrapEnabled {
+		t.Fatal("word wrap toggle did not enable viewer state")
+	}
+	if ui.fileViewer.stream.hCol != 0 {
+		t.Fatalf("horizontal position=%d want reset to 0", ui.fileViewer.stream.hCol)
+	}
+	saved := fm.LoadConfig(path)
+	if !saved.Viewer.WordWrap {
+		t.Fatal("viewer.word_wrap was not persisted")
+	}
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+}
+
 func TestCustomCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
 	original := fm.DefaultConfig()

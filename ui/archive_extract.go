@@ -24,8 +24,6 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
-
-	uitheme "hexone/ui/theme"
 )
 
 var (
@@ -577,21 +575,7 @@ func archiveExtractTrimMiddleToWidth(text string, maxWidth int, measure func(str
 }
 
 func archiveExtractStatusBar(frac float32) string {
-	const width = 10
-	if frac < 0 {
-		frac = 0
-	}
-	if frac > 1 {
-		frac = 1
-	}
-	done := int(frac*width + 0.5)
-	if done < 0 {
-		done = 0
-	}
-	if done > width {
-		done = width
-	}
-	return strings.Repeat("█", done) + strings.Repeat("░", width-done)
+	return textCellProgressBar(frac, 10)
 }
 
 func archiveExtractSpeed(progress filesys.CopyProgress, startedAt, now time.Time) int64 {
@@ -870,7 +854,7 @@ func (ui *UI) layoutArchiveExtractConflictBody(th *material.Theme, gtx layout.Co
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, title.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 				}),
 			)
 		}),

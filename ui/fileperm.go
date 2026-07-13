@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"hexone/filesys"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -415,11 +414,13 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(targetLabel.Layout),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(pathLabel.Layout),
@@ -453,7 +454,8 @@ func (ui *UI) layoutFilePermDialogBody(th *material.Theme, gtx layout.Context, s
 			lbl.Color = hintColor
 			return lbl.Layout(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				label := "Apply"

@@ -77,21 +77,19 @@ func mustFont(path string) font.Face {
 	return face
 }
 
-func appendTypefaceFaces(dst []text.FontFace, typeface string, regularPath, mediumPath, boldPath string) []text.FontFace {
+func appendTypefaceFaces(dst []text.FontFace, typeface string, regularPath, boldPath string) []text.FontFace {
 	regular := mustFont(regularPath)
-	medium := mustFont(mediumPath)
 	bold := mustFont(boldPath)
 	return append(dst,
 		text.FontFace{Font: font.Font{Typeface: font.Typeface(typeface), Weight: font.Normal}, Face: regular},
-		text.FontFace{Font: font.Font{Typeface: font.Typeface(typeface), Weight: font.Medium}, Face: medium},
 		text.FontFace{Font: font.Font{Typeface: font.Typeface(typeface), Weight: font.Bold}, Face: bold},
 	)
 }
 
 func buildFontCollection() []text.FontFace {
-	collection := make([]text.FontFace, 0, 12)
+	collection := make([]text.FontFace, 0, 8)
 	for _, family := range resources.BundledFontFamilies() {
-		collection = appendTypefaceFaces(collection, family.Name, family.RegularPath, family.MediumPath, family.BoldPath)
+		collection = appendTypefaceFaces(collection, family.Name, family.RegularPath, family.BoldPath)
 	}
 	return collection
 }
@@ -109,7 +107,7 @@ func run(window *app.Window) error {
 	}
 	session := fm.LoadSession(sessionPath)
 	window.Option(app.Title(appicon.AppTitle))
-	windowstate.ApplyWindowOptions(window, session)
+	centerOnStartup := windowstate.ApplyWindowOptions(window, session)
 	th := material.NewTheme()
 	collection := buildFontCollection()
 
@@ -119,6 +117,9 @@ func run(window *app.Window) error {
 
 	var ops op.Ops
 	mainUI := ui.NewUI(cfg)
+	if err := mainUI.InitializeSSHCredentialStore(); err != nil {
+		log.Printf("initialize SSH credential store: %v", err)
+	}
 	mainUI.SetInvalidateFunc(window.Invalidate)
 	setNativeInsertInvalidate(window.Invalidate)
 	windowTracker := windowstate.NewTracker(session, window.Run)
@@ -143,6 +144,10 @@ func run(window *app.Window) error {
 		case app.ViewEvent:
 			windowTracker.ObserveView(typ)
 			iconSetter.HandleViewEvent(typ)
+			if centerOnStartup && typ.Valid() {
+				window.Perform(system.ActionCenter)
+				centerOnStartup = false
+			}
 			if !nativeInsertMonitorInstalled {
 				installNativeInsertMonitor(window.Run)
 				nativeInsertMonitorInstalled = true

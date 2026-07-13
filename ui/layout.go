@@ -55,9 +55,8 @@ type KeyRepeat struct {
 }
 
 type fileOpenRequest struct {
-	pane           int
-	row            int
-	systemOpenOnly bool
+	pane int
+	row  int
 }
 
 type FieldSpan struct {
@@ -203,6 +202,7 @@ type UI struct {
 	helpModal                   *helpModalState
 	settingsModal               *settingsModalState
 	sshModal                    *sshModalState
+	sshCredentials              sshCredentialState
 	editorMenuOpenID            string
 	editorMenuTarget            *widget.Editor
 	editorMenuPos               image.Point

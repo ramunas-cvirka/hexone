@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"hexone/filesys"
 	"hexone/fm"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"os"
@@ -318,15 +317,21 @@ func (st *fileMoveState) sourceSummary() string {
 	return fmt.Sprintf("%d items selected", count)
 }
 
-func (st *fileMoveState) sourcePreviewLines() []string {
-	if st == nil || len(st.sources) == 0 {
-		return nil
+func (st *fileMoveState) sourceOperationSummary() string {
+	return fileOpSourceCountText(st.sourceCount())
+}
+
+func (st *fileMoveState) sourceLocation() string {
+	if st == nil {
+		return ""
 	}
-	labels := make([]string, 0, len(st.sources))
-	for _, src := range st.sources {
-		labels = append(labels, fileOpPreviewLabel(src.Name, src.Path))
+	if st.multiSource() {
+		return st.sourceSummary()
 	}
-	return fileOpPreviewLines(labels)
+	if len(st.sources) > 0 {
+		return fileOpPreviewLabel(st.sources[0].Name, st.sources[0].Path)
+	}
+	return st.endpoint.baseName(st.srcPath)
 }
 
 func (st *fileMoveState) refreshPreview() {
@@ -810,7 +815,7 @@ func (ui *UI) layoutFileMoveDialog(th *material.Theme, gtx layout.Context) layou
 		paint.FillShape(gtx.Ops, color.NRGBA{A: 120}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
 		paneRect := ui.filePaneRectForOverlay(gtx, st.pane)
-		width := gtx.Dp(unit.Dp(320))
+		width := gtx.Dp(ui.scaleInterfaceDp(unit.Dp(390)))
 		maxWidth := paneRect.Dx() - gtx.Dp(unit.Dp(16))
 		if maxWidth < 220 {
 			maxWidth = 220
@@ -874,28 +879,11 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
-	sourceHdr := material.Caption(th, "Source")
-	sourceHdr.Font.Typeface = ui.interfaceTypeface()
-	sourceHdr.TextSize = ui.scaleDialogFontSize(9)
-	sourceHdr.Color = hintColor
-
-	sourcePath := material.Body2(th, st.srcPath)
-	sourcePath.Font.Typeface = ui.interfaceTypeface()
-	sourcePath.TextSize = ui.scaleDialogFontSize(10)
-	sourcePath.Color = txtColor
-	sourcePath.MaxLines = 1
-	sourcePath.Truncator = "…"
-
-	dstHdr := material.Caption(th, "Destination")
-	dstHdr.Font.Typeface = ui.interfaceTypeface()
-	dstHdr.TextSize = ui.scaleDialogFontSize(9)
-	dstHdr.Color = hintColor
-
 	meta := formatCopyPathInfo(st.srcInfo)
 	sameTarget := st.previewSameTarget()
 	showTargetDiff := st.dstInfo.Exists && !sameTarget && !st.multiSource()
 	if st.multiSource() {
-		meta = st.sourceSummary()
+		meta = ""
 		if st.dstInfo.Exists {
 			meta = "dst: " + formatCopyPathInfo(st.dstInfo)
 		}
@@ -903,12 +891,10 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 	if st.dstInfo.Exists && !sameTarget && !st.multiSource() {
 		meta = "dst exists: " + formatCopyPathInfo(st.dstInfo)
 	}
-	metaLbl := material.Caption(th, meta)
-	metaLbl.Font.Typeface = ui.interfaceTypeface()
-	metaLbl.TextSize = ui.scaleDialogFontSize(9)
-	metaLbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
-	metaLbl.MaxLines = 1
-	metaLbl.Truncator = "…"
+	sourceLabel := "Move"
+	if st.running {
+		sourceLabel = "Moving"
+	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -926,71 +912,54 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 					return title.Layout(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTinyIconModeButton(th, gtx, &st.closeClick, uitheme.CloseIcon(), false)
+					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 				}),
 			)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.multiSource() {
-				sourceHdr.Text = "Sources"
-			}
-			return sourceHdr.Layout(gtx)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.multiSource() {
-				sourcePath.Text = st.sourceSummary()
-			}
-			return sourcePath.Layout(gtx)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if !st.multiSource() {
-				return layout.Dimensions{}
-			}
-			return ui.layoutFileOpPreviewList(th, gtx, st.sourcePreviewLines())
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.multiSource() {
-				dstHdr.Text = "Destination Directory"
-			}
-			return dstHdr.Layout(gtx)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.running {
-				lbl := material.Body2(th, st.dstPath)
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleDialogFontSize(10)
-				lbl.Color = txtColor
-				lbl.MaxLines = 1
-				lbl.Truncator = "…"
-				return fillRoundedBox(
-					gtx,
-					gtx.Dp(unit.Dp(filePaneControlCornerDp)),
-					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
-					func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
-					},
-				)
-			}
-			ed := material.Editor(th, &st.dstEdit, "")
-			ed.Font.Typeface = ui.interfaceTypeface()
-			ed.TextSize = ui.scaleDialogFontSize(10)
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			return ui.layoutEditorWithContextMenu(th, gtx, "filemove-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, st.focus == fileMoveDialogFocusDestination, true, ed.Layout)
-			})
+			return ui.layoutFileOpTextRow(th, gtx, sourceLabel, st.sourceOperationSummary(), txtColor)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFileOpRow(th, gtx, "To", func(gtx layout.Context) layout.Dimensions {
+				if st.running {
+					lbl := material.Body2(th, st.dstPath)
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.fileOpDialogTextSize()
+					lbl.Color = txtColor
+					lbl.MaxLines = 1
+					lbl.Truncator = "…"
+					return fillFlatBox(
+						gtx,
+						color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+						color.NRGBA{R: 255, G: 255, B: 255, A: 20},
+						func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+						},
+					)
+				}
+				ed := material.Editor(th, &st.dstEdit, "")
+				ed.Font.Typeface = ui.interfaceTypeface()
+				ed.TextSize = ui.fileOpDialogTextSize()
+				ed.Color = txtColor
+				ed.HintColor = hintColor
+				return ui.layoutEditorWithContextMenu(th, gtx, "filemove-dst", &st.dstEdit, true, func(gtx layout.Context) layout.Dimensions {
+					return layoutNeutralEditorBox(gtx, st.focus == fileMoveDialogFocusDestination, true, ed.Layout)
+				})
+			})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if showTargetDiff {
 				return ui.layoutFileOverwriteDiffInfo(th, gtx, "Target Details", st.srcInfo, st.dstInfo)
 			}
-			return metaLbl.Layout(gtx)
+			if meta == "" {
+				return layout.Dimensions{}
+			}
+			return ui.layoutFileOpTextRow(th, gtx, "Details", meta, color.NRGBA{R: 184, G: 184, B: 184, A: 255})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1000,11 +969,7 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 					return layout.Dimensions{}
 				}
 				if st.running {
-					lbl := material.Caption(th, runningLabel)
-					lbl.Font.Typeface = ui.interfaceTypeface()
-					lbl.TextSize = ui.scaleDialogFontSize(9)
-					lbl.Color = hintColor
-					return lbl.Layout(gtx)
+					return ui.layoutFileOpTextRow(th, gtx, "Status", runningLabel, hintColor)
 				}
 				lbl := material.Caption(th, "Destination for "+strings.ToLower(actionLabel)+" already exists.")
 				lbl.Font.Typeface = ui.interfaceTypeface()
@@ -1020,7 +985,8 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 			lbl.MaxLines = 2
 			return lbl.Layout(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(layoutDialogHorizontalDivider),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				label, runningLabel := st.actionLabels()

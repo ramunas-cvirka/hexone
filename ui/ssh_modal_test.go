@@ -14,6 +14,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -80,6 +81,39 @@ func TestSSHModalSecretsAreNotMasked(t *testing.T) {
 	}
 	if st.keyPassEdit.Mask != 0 {
 		t.Fatalf("key passphrase mask=%q want none", st.keyPassEdit.Mask)
+	}
+}
+
+func TestSSHModalFlatAddButtonUsesTabControlGeometry(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	var click widget.Clickable
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(100, 100),
+		},
+	}
+
+	if got, want := ui.layoutSSHAddButton(th, gtx, &click, false).Size, image.Pt(22, 20); got != want {
+		t.Fatalf("SSH add button size=%v want %v", got, want)
+	}
+}
+
+func TestSSHModalFooterClaimsFullWidthForRightAlignedActions(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:    new(op.Ops),
+		Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{
+			Max: image.Pt(500, 60),
+		},
+	}
+
+	if got, want := ui.layoutSSHModalFooter(th, gtx, &sshModalState{}).Size.X, 500; got != want {
+		t.Fatalf("SSH footer width=%d want %d", got, want)
 	}
 }
 
@@ -299,6 +333,7 @@ func TestSSHModalSaveKeepsSelectedSetup(t *testing.T) {
 		{Host: "one.test", Port: 22, User: "alice"},
 	}
 	ui := NewUI(cfg)
+	ui.sshCredentials.store = newMemorySecretStore()
 	ui.configPath = filepath.Join(t.TempDir(), "hexone-config.yaml")
 	ui.openSSHModal()
 	if ui.sshModal == nil {
@@ -346,6 +381,7 @@ func TestSSHModalDirtyDraftDefaultsToSaveAndEnterSaves(t *testing.T) {
 		{Host: "one.test", Port: 22, User: "alice", Password: "secret"},
 	}
 	ui := NewUI(cfg)
+	ui.sshCredentials.store = newMemorySecretStore()
 	ui.configPath = filepath.Join(t.TempDir(), "hexone-config.yaml")
 	ui.openSSHModal()
 	if ui.sshModal == nil {

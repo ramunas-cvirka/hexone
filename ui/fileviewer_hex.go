@@ -31,6 +31,7 @@ const (
 	hexViewerMinBytesPerLine = 4
 	hexViewerMaxBytesPerLine = 64
 	hexViewerMinChunkBytes   = 4096
+	hexViewerSectionPadDp    = 8
 )
 
 type hexViewerState struct {
@@ -50,7 +51,11 @@ type hexViewerState struct {
 	displayTop    int64
 	displayY      int
 	displayCount  int
+	lastPaintTop  int64
+	lastPaintSet  bool
 	lastScrollDir int
+	loadStart     int64
+	loadEnd       int64
 
 	offsetDigits int
 	charW        int
@@ -122,10 +127,19 @@ func (v *hexViewerState) ensureMetrics(ui *UI, th *material.Theme, gtx layout.Co
 	if v.leftPad < 2 {
 		v.leftPad = 2
 	}
-	v.columnGap = gtx.Dp(unit.Dp(12))
-	if v.columnGap < v.charW {
-		v.columnGap = v.charW
+	v.columnGap = hexSectionColumnGap(gtx, v.charW)
+}
+
+func hexSectionColumnGap(gtx layout.Context, charW int) int {
+	pad := gtx.Dp(unit.Dp(hexViewerSectionPadDp))
+	if pad < charW {
+		pad = charW
 	}
+	if pad < 2 {
+		pad = 2
+	}
+	// Keep one full, equal pad on either side of the one-pixel separator.
+	return pad*2 + 1
 }
 
 func (v *hexViewerState) totalLines() int64 {
@@ -338,33 +352,8 @@ func (v *hexViewerState) smoothJumpThreshold() float64 {
 	return limit
 }
 
-func (v *hexViewerState) autoScrollSmoothActive() bool {
+func (v *hexViewerState) selectionAutoScrollActive() bool {
 	return v != nil && v.autoScrollActive && v.selecting
-}
-
-func (v *hexViewerState) smoothJumpLimit() float64 {
-	if v.autoScrollSmoothActive() {
-		return streamSmoothAutoJumpLines
-	}
-	return v.smoothJumpThreshold()
-}
-
-func (v *hexViewerState) smoothTau() time.Duration {
-	if v.autoScrollSmoothActive() {
-		return streamSmoothAutoTau
-	}
-	return streamSmoothTau
-}
-
-func (v *hexViewerState) clampAutoScrollVisualLag(target float64) {
-	if !v.autoScrollSmoothActive() {
-		return
-	}
-	if delta := target - v.visualTop; delta > streamSmoothAutoMaxLag {
-		v.visualTop = target - streamSmoothAutoMaxLag
-	} else if delta < -streamSmoothAutoMaxLag {
-		v.visualTop = target + streamSmoothAutoMaxLag
-	}
 }
 
 func (v *hexViewerState) updateDisplayState() {
@@ -462,14 +451,13 @@ func (v *hexViewerState) prepareVisualScroll(now time.Time, smooth bool) bool {
 		v.updateDisplayState()
 		return false
 	}
-	autoScrollSmooth := v.autoScrollSmoothActive()
-	if !smooth || v.dragging || (v.selecting && !autoScrollSmooth) || v.cancelPending {
+	if !smooth || v.dragging || v.selecting || v.cancelPending {
 		v.visualTop = target
 		v.visualAt = now
 		v.updateDisplayState()
 		return false
 	}
-	if math.Abs(target-v.visualTop) > v.smoothJumpLimit() {
+	if math.Abs(target-v.visualTop) > v.smoothJumpThreshold() {
 		v.visualTop = target
 		v.visualAt = now
 		v.updateDisplayState()
@@ -493,10 +481,9 @@ func (v *hexViewerState) prepareVisualScroll(now time.Time, smooth bool) bool {
 		dt = streamSmoothTick
 	}
 	if dt > 0 {
-		blend := float64(clamp01(float32(1 - math.Exp(-float64(dt)/float64(v.smoothTau())))))
+		blend := float64(clamp01(float32(1 - math.Exp(-float64(dt)/float64(streamSmoothTau)))))
 		v.visualTop += (target - v.visualTop) * blend
 	}
-	v.clampAutoScrollVisualLag(target)
 	v.visualAt = now
 	if math.Abs(target-v.visualTop) < streamSmoothSnapEpsilon {
 		v.visualTop = target
@@ -749,6 +736,37 @@ func (v *hexViewerState) lineBytes(line int64) ([]byte, int64) {
 		return nil, start
 	}
 	return v.buffer[relStart:relEnd], start
+}
+
+// displayStartWithFallback keeps the last fully painted viewport visible
+// while a newly requested scroll/jump target is still outside the buffer.
+func (v *hexViewerState) displayStartWithFallback(start, end int64) (int64, bool) {
+	if v == nil || v.bytesPerLine <= 0 || len(v.buffer) == 0 {
+		return start, false
+	}
+	visibleStart := start * int64(v.bytesPerLine)
+	visibleEnd := end * int64(v.bytesPerLine)
+	if visibleEnd > v.fileSize {
+		visibleEnd = v.fileSize
+	}
+	if v.bufferCovers(visibleStart, visibleEnd) {
+		v.lastPaintTop = start
+		v.lastPaintSet = true
+		return start, false
+	}
+	fallback := v.lastPaintTop
+	if !v.lastPaintSet {
+		fallback = v.bufferStart / int64(v.bytesPerLine)
+	}
+	fallbackStart := fallback * int64(v.bytesPerLine)
+	fallbackEnd := fallbackStart + (end-start)*int64(v.bytesPerLine)
+	if fallbackEnd > v.fileSize {
+		fallbackEnd = v.fileSize
+	}
+	if !v.bufferCovers(fallbackStart, fallbackEnd) {
+		fallback = v.bufferStart / int64(v.bytesPerLine)
+	}
+	return fallback, true
 }
 
 func (v *hexViewerState) scrollByLines(lines int64) {
@@ -1343,12 +1361,24 @@ func (ui *UI) startHexViewerLoad(st *fileViewerState, force bool) {
 		return
 	}
 	if st.loading {
-		return
+		// A fast scroll or find jump can move outside the in-flight request.
+		// Supersede that request immediately instead of waiting for it and then
+		// starting a second load for the actual target.
+		if visibleStart >= v.loadStart && visibleEnd <= v.loadEnd {
+			return
+		}
+		if st.loadCancel != nil {
+			st.loadCancel()
+		}
+		st.loadCancel = nil
+		st.loading = false
 	}
 
 	st.seq++
 	seq := st.seq
 	st.loading = true
+	v.loadStart = wantStart
+	v.loadEnd = wantEnd
 	st.err = ""
 	if len(v.buffer) == 0 {
 		st.status = "loading..."
@@ -1365,6 +1395,7 @@ func (ui *UI) startHexViewerLoad(st *fileViewerState, force bool) {
 			return
 		}
 		sendHexViewerResult(ch, res)
+		ui.invalidateFromWorker()
 	}()
 }
 
@@ -1493,6 +1524,8 @@ func (ui *UI) pumpHexViewerState(gtx layout.Context, st *fileViewerState) {
 			}
 			st.loading = false
 			st.loadCancel = nil
+			st.hex.loadStart = 0
+			st.hex.loadEnd = 0
 			if res.err != "" {
 				st.err = res.err
 				st.status = ""
@@ -1547,7 +1580,7 @@ func (ui *UI) layoutHexOutputView(th *material.Theme, gtx layout.Context, st *fi
 		ui.startHexViewerLoad(st, false)
 	}
 	animating := v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg))
-	if v.autoScrollSmoothActive() && v.selecting {
+	if v.selectionAutoScrollActive() && v.selecting {
 		beforeStart, beforeLen := v.selectionStart, v.selectionLen
 		if byteOff, ok := hexSelectionByteAtPoint(v, v.selectPos); ok {
 			v.setSelectionFromAnchor(v.dragAnchor, byteOff)
@@ -1586,9 +1619,11 @@ func (ui *UI) drawHexOutput(gtx layout.Context, th *material.Theme, st *fileView
 		return
 	}
 	theme := ui.fileViewerTheme()
-	sepColor := theme.Separator
-	paint.FillShape(gtx.Ops, sepColor, clip.Rect(image.Rect(v.offsetRect.Max.X+v.columnGap/2, 0, v.offsetRect.Max.X+v.columnGap/2+1, v.offsetRect.Max.Y)).Op())
-	paint.FillShape(gtx.Ops, sepColor, clip.Rect(image.Rect(v.hexRect.Max.X+v.columnGap/2, 0, v.hexRect.Max.X+v.columnGap/2+1, v.hexRect.Max.Y)).Op())
+	for _, rect := range hexSectionSeparatorRects(v) {
+		if !rect.Empty() {
+			paint.FillShape(gtx.Ops, theme.Separator, clip.Rect(rect).Op())
+		}
+	}
 
 	y := v.displayY
 	total := v.totalLines()
@@ -1601,36 +1636,44 @@ func (ui *UI) drawHexOutput(gtx layout.Context, th *material.Theme, st *fileView
 	if end > total {
 		end = total
 	}
+	if fallbackStart, fallback := v.displayStartWithFallback(start, end); fallback {
+		start = fallbackStart
+		y = 0
+		end = start + int64(v.renderedLineCount())
+		if end > total {
+			end = total
+		}
+	}
 	for line := start; line < end; line++ {
 		lineBytes, lineStart := v.lineBytes(line)
 		offsetText := formatHexOffset(lineStart, v.offsetDigits)
 		offset := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 		ui.drawHexLineFindMatch(gtx, th, st, line, len(lineBytes))
 		ui.drawHexLineSelections(gtx, th, st, line, len(lineBytes))
-		ui.drawHexLineLabel(th, gtx, image.Pt(v.offsetRect.Min.X, 0), v.offsetRect.Dx(), v.lineH, offsetText, theme.OffsetText)
-		ui.drawHexBytesLine(th, gtx, v, lineBytes, theme.Text)
+		ui.drawHexOffsetLine(th, gtx, v, offsetText, theme.OffsetText)
+		ui.drawHexBytesLine(th, gtx, v, lineBytes, theme.HexText)
 		ui.drawHexASCIIline(th, gtx, v, lineBytes, theme.ASCIIText)
 		offset.Pop()
 		y += v.lineH
 	}
 }
 
-func (ui *UI) drawHexLineLabel(th *material.Theme, gtx layout.Context, pos image.Point, width, rowH int, text string, fg color.NRGBA) {
-	if width <= 0 || rowH <= 0 {
-		return
+func hexSectionSeparatorRects(v *hexViewerState) [2]image.Rectangle {
+	if v == nil {
+		return [2]image.Rectangle{}
 	}
-	offset := op.Offset(pos).Push(gtx.Ops)
-	lineGTX := gtx
-	lineGTX.Constraints = layout.Exact(image.Pt(width, rowH))
-	lbl := material.Body2(th, text)
-	lbl.Font.Typeface = ui.viewerMonospaceTypeface()
-	lbl.Font.Weight = font.Normal
-	lbl.TextSize = ui.viewerTextSize()
-	lbl.Color = fg
-	lbl.MaxLines = 1
-	lbl.Truncator = ""
-	layoutVCenteredLabel(lineGTX, lbl)
-	offset.Pop()
+	height := v.offsetRect.Dy()
+	if height <= 0 {
+		return [2]image.Rectangle{}
+	}
+	firstGap := v.hexRect.Min.X - v.offsetRect.Max.X
+	secondGap := v.textRect.Min.X - v.hexRect.Max.X
+	firstX := v.offsetRect.Max.X + (firstGap-1)/2
+	secondX := v.hexRect.Max.X + (secondGap-1)/2
+	return [2]image.Rectangle{
+		image.Rect(firstX, v.offsetRect.Min.Y, firstX+1, v.offsetRect.Min.Y+height),
+		image.Rect(secondX, v.offsetRect.Min.Y, secondX+1, v.offsetRect.Min.Y+height),
+	}
 }
 
 func (ui *UI) drawMonoCell(th *material.Theme, gtx layout.Context, pos image.Point, width, rowH int, text string, fg color.NRGBA) {
@@ -1649,6 +1692,16 @@ func (ui *UI) drawMonoCell(th *material.Theme, gtx layout.Context, pos image.Poi
 	lbl.Truncator = ""
 	layoutVCenteredLabel(lineGTX, lbl)
 	offset.Pop()
+}
+
+func (ui *UI) drawHexOffsetLine(th *material.Theme, gtx layout.Context, v *hexViewerState, text string, fg color.NRGBA) {
+	if v == nil {
+		return
+	}
+	for i, r := range text {
+		x := v.offsetRect.Min.X + i*v.charW
+		ui.drawMonoCell(th, gtx, image.Pt(x, 0), v.charW, v.lineH, string(r), fg)
+	}
 }
 
 func (ui *UI) drawHexBytesLine(th *material.Theme, gtx layout.Context, v *hexViewerState, data []byte, fg color.NRGBA) {
@@ -1683,7 +1736,7 @@ func (ui *UI) drawHexLineSelections(gtx layout.Context, th *material.Theme, st *
 		return
 	}
 	theme := ui.fileViewerTheme()
-	ui.drawHexLineRangeHighlight(gtx, th, st, line, lineLen, v.selectionStart, v.selectionEnd(), theme.Selection, theme.StrongSelection, true)
+	ui.drawHexLineRangeHighlight(gtx, th, st, line, lineLen, v.selectionStart, v.selectionEnd(), theme.HexSelection, theme.HexStrongSelection, true)
 }
 
 func (ui *UI) drawHexLineFindMatch(gtx layout.Context, th *material.Theme, st *fileViewerState, line int64, lineLen int) {

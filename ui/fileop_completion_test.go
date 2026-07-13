@@ -4,12 +4,14 @@
 package ui
 
 import (
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"gioui.org/widget/material"
 	"hexone/filesys"
 	"hexone/fm"
 )
@@ -287,6 +289,46 @@ func TestFinishFileCreateKeepsScrollStableAndShowsNotice(t *testing.T) {
 	}
 	if got, want := pane.noticeText, "created file"; got != want {
 		t.Fatalf("noticeText = %q, want %q", got, want)
+	}
+}
+
+func TestFinishFolderCreateRevealsSelectionInReducedPane(t *testing.T) {
+	dir := t.TempDir()
+	createFileOpRows(t, dir, 30)
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	waitForPaneLoads(t, ui, pane)
+	prepareFileOpPane(t, pane, dir, 10)
+
+	createdPath := filepath.Join(dir, "aaa-new-folder")
+	if err := os.Mkdir(createdPath, 0o755); err != nil {
+		t.Fatalf("os.Mkdir(%q): %v", createdPath, err)
+	}
+	ui.fileCreate = &fileCreateState{
+		pane:       0,
+		targetPath: createdPath,
+		kind:       fileCreateKindFolder,
+	}
+
+	ui.finishFileCreate(time.Now())
+	waitForPaneLoads(t, ui, pane)
+
+	createdRow := pane.findEntryPathIndex(createdPath)
+	if createdRow < 0 {
+		t.Fatal("created folder missing from refreshed listing")
+	}
+	if pane.table.Selected != createdRow {
+		t.Fatalf("selected row=%d want created folder row %d", pane.table.Selected, createdRow)
+	}
+
+	gtx := testPathLayoutContext()
+	gtx.Constraints.Min = image.Point{}
+	gtx.Constraints.Max.Y = 84 // Model the shorter file pane while the terminal drawer is open.
+	pane.table.Layout(material.NewTheme(), gtx, pane.model)
+	pos := pane.table.List.Position
+	if createdRow < pos.First || createdRow >= pos.First+pos.Count {
+		t.Fatalf("created folder row %d is outside visible rows [%d,%d)", createdRow, pos.First, pos.First+pos.Count)
 	}
 }
 
