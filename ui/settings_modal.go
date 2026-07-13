@@ -1589,9 +1589,9 @@ func (st *settingsModalState) draftViewerTheme(cfg *fm.Config) (fileViewerTheme,
 	}
 	draft.Colors = filePanePaletteToConfigColors(palette)
 
-	viewBgFallback := fm.DefaultFilePaneBackgroundHex
-	viewTextFallback := fm.DefaultFilePaneTextHex
-	viewSelectionFallback := fm.DefaultFilePaneSelectionHex
+	viewBgFallback := fm.DefaultViewerBackgroundHex
+	viewTextFallback := fm.DefaultViewerTextHex
+	viewSelectionFallback := fm.DefaultViewerSelectionHex
 	if cfg != nil {
 		viewBgFallback = cfg.Viewer.Background
 		viewTextFallback = cfg.Viewer.Text

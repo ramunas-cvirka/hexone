@@ -66,6 +66,7 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## v0.9.0
 
+- Promoted the tuned FiraCode/Iosevka font sizes, blue-and-pink file selection palette, and one-day recent-file highlight to the fresh-install defaults while keeping the brighter viewer palette independent.
 - Switched desktop, portable, and MSIX icons on every platform to the transparent H1 Hexone artwork, and streamlined File panes settings with consistent labels, an integrated permissions Off option, and a preview matching the real headerless pane.
 - Clean desktop launches now open at 60% of the primary display and centered, while saved window geometry continues to be restored on later launches.
 - Made Enter launch ordinary files with their system association while continuing to traverse directories and archives.

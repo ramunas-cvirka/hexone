@@ -160,15 +160,15 @@ type TerminalConfig struct {
 }
 
 type TabsConfig struct {
-	WidthMode         string  `yaml:"width_mode"`
-	MinWidthDp        int     `yaml:"min_width_dp"`
-	FixedWidthDp      int     `yaml:"fixed_width_dp"`
-	MaxWidthDp        int     `yaml:"max_width_dp"`
-	Typeface          string  `yaml:"typeface"`
-	FontSizeSp        float32 `yaml:"font_size_sp"`
-	Color             string  `yaml:"color,omitempty"`
-	AltColor          string  `yaml:"alt_color,omitempty"`
-	ActiveColor       string  `yaml:"active_color,omitempty"`
+	WidthMode    string  `yaml:"width_mode"`
+	MinWidthDp   int     `yaml:"min_width_dp"`
+	FixedWidthDp int     `yaml:"fixed_width_dp"`
+	MaxWidthDp   int     `yaml:"max_width_dp"`
+	Typeface     string  `yaml:"typeface"`
+	FontSizeSp   float32 `yaml:"font_size_sp"`
+	Color        string  `yaml:"color,omitempty"`
+	AltColor     string  `yaml:"alt_color,omitempty"`
+	ActiveColor  string  `yaml:"active_color,omitempty"`
 }
 
 type InterfaceConfig struct {
@@ -657,7 +657,7 @@ func DefaultConfig() *Config {
 		Terminal: TerminalConfig{
 			HeightRows:      defaultTerminalHeightRows,
 			Typeface:        resources.BundledFontFamilyFiraCodeNerdFontMono,
-			FontSizeSp:      13,
+			FontSizeSp:      14,
 			AcceleratedKeys: true,
 		},
 		Tabs: TabsConfig{
@@ -665,8 +665,8 @@ func DefaultConfig() *Config {
 			MinWidthDp:   defaultTabMinWidthDp,
 			FixedWidthDp: defaultTabFixedWidthDp,
 			MaxWidthDp:   defaultTabMaxWidthDp,
-			Typeface:     resources.BundledFontFamilyFiraCodeNerdFontMono,
-			FontSizeSp:   10,
+			Typeface:     resources.BundledFontFamilyIosevkaNerdFontMono,
+			FontSizeSp:   12,
 		},
 		Interface: InterfaceConfig{
 			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
@@ -674,7 +674,7 @@ func DefaultConfig() *Config {
 		},
 		General: GeneralConfig{
 			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
-			FontSizeSp:            14,
+			FontSizeSp:            15,
 			FileWeight:            FontWeightRegular,
 			DirWeight:             FontWeightBold,
 			PermissionsWeight:     FontWeightRegular,
@@ -694,20 +694,25 @@ func DefaultConfig() *Config {
 			Selection:           DefaultFilePaneSelectionHex,
 			SelectionText:       TransparentColor,
 			SelectedFiles:       DefaultFilePaneSelectedFilesHex,
-			SelectedFilesText:   TransparentColor,
+			SelectedFilesText:   DefaultFilePaneSelectedTextHex,
 			FocusedSelected:     DefaultFilePaneFocusedSelectedHex,
-			FocusedSelectedText: TransparentColor,
+			FocusedSelectedText: DefaultFilePaneFocusedSelectedTextHex,
 			CurrentDirBg:        DefaultCurrentDirBackgroundHex,
 			CurrentDirText:      DefaultCurrentDirTextHex,
+			Filenames: FilenameColorsConfig{
+				AgeRules: []FilenameAgeRule{
+					{MaxAge: "1d", Text: "#FFFFFF"},
+				},
+			},
 		},
 		Associations:   nil,
 		CustomCommands: nil,
 		Viewer: ViewerConfig{
 			FileEncoding:            ViewerFileEncodingAuto,
 			Typeface:                resources.BundledFontFamilyFiraCodeNerdFontMono,
-			Background:              DefaultFilePaneBackgroundHex,
-			Text:                    DefaultFilePaneTextHex,
-			Selection:               DefaultFilePaneSelectionHex,
+			Background:              DefaultViewerBackgroundHex,
+			Text:                    DefaultViewerTextHex,
+			Selection:               DefaultViewerSelectionHex,
 			SmoothScrolling:         true,
 			Shell:                   "auto",
 			Command:                 "cat {path}",
@@ -718,7 +723,7 @@ func DefaultConfig() *Config {
 			CommandByTarget:         map[string]string{},
 			CommandHistory:          []string{},
 			WordSelectRegex:         "[a-zA-Z0-9]+",
-			FontSizeSp:              13,
+			FontSizeSp:              14,
 			WordWrap:                false,
 			MaxReadMB:               1,
 			CommandAutoRefresh:      true,
@@ -1029,9 +1034,9 @@ func (c *Config) normalize() {
 	if c.Viewer.Typeface != c.General.Typeface && !resources.IsBundledFontFamily(c.Viewer.Typeface) {
 		c.Viewer.Typeface = c.General.Typeface
 	}
-	c.Viewer.Background = NormalizeHexColor(c.Viewer.Background, c.Colors.FilePaneBackground)
-	c.Viewer.Text = NormalizeHexColor(c.Viewer.Text, c.Colors.FilePaneText)
-	c.Viewer.Selection = NormalizeHexColor(c.Viewer.Selection, c.Colors.Selection)
+	c.Viewer.Background = NormalizeHexColor(c.Viewer.Background, DefaultViewerBackgroundHex)
+	c.Viewer.Text = NormalizeHexColor(c.Viewer.Text, DefaultViewerTextHex)
+	c.Viewer.Selection = NormalizeHexColor(c.Viewer.Selection, DefaultViewerSelectionHex)
 	c.Viewer.HexSelection = NormalizeOptionalHexColor(c.Viewer.HexSelection)
 	c.Viewer.HexOffsetText = NormalizeOptionalHexColor(c.Viewer.HexOffsetText)
 	c.Viewer.HexBytesText = NormalizeOptionalHexColor(c.Viewer.HexBytesText)

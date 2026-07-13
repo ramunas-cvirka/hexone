@@ -7,6 +7,7 @@ import (
 	resources "hexone"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -145,6 +146,58 @@ general:
 	}
 	if got, want := cfg.Interface.Typeface, resources.BundledFontFamilyFiraCodeNerdFontMono; got != want {
 		t.Fatalf("interface typeface=%q want %q", got, want)
+	}
+}
+
+func TestDefaultConfigUsesShippedVisualStyle(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if got, want := cfg.General.Typeface, resources.BundledFontFamilyFiraCodeNerdFontMono; got != want {
+		t.Fatalf("pane typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.General.FontSizeSp, float32(15); got != want {
+		t.Fatalf("pane font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Interface.FontSizeSp, float32(14); got != want {
+		t.Fatalf("interface font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Tabs.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("tabs typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.Tabs.FontSizeSp, float32(12); got != want {
+		t.Fatalf("tabs font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Terminal.FontSizeSp, float32(14); got != want {
+		t.Fatalf("terminal font size=%v want %v", got, want)
+	}
+	if got, want := cfg.Viewer.FontSizeSp, float32(14); got != want {
+		t.Fatalf("viewer font size=%v want %v", got, want)
+	}
+
+	colors := map[string]struct {
+		got  string
+		want string
+	}{
+		"pane background":       {cfg.Colors.FilePaneBackground, "#202020"},
+		"pane text":             {cfg.Colors.FilePaneText, "#BABABA"},
+		"hover":                 {cfg.Colors.Hover, "#2A2A2A"},
+		"selection":             {cfg.Colors.Selection, "#3A3A3A"},
+		"selected files":        {cfg.Colors.SelectedFiles, "#002CF0"},
+		"selected files text":   {cfg.Colors.SelectedFilesText, "#FBC4DF"},
+		"focused selected":      {cfg.Colors.FocusedSelected, "#0000F0"},
+		"focused selected text": {cfg.Colors.FocusedSelectedText, "#F66EB2"},
+		"viewer background":     {cfg.Viewer.Background, "#202020"},
+		"viewer text":           {cfg.Viewer.Text, "#D2D2D2"},
+		"viewer selection":      {cfg.Viewer.Selection, "#3C3C50"},
+	}
+	for name, test := range colors {
+		if test.got != test.want {
+			t.Errorf("%s=%q want %q", name, test.got, test.want)
+		}
+	}
+
+	if got, want := cfg.Colors.Filenames.AgeRules, []FilenameAgeRule{{MaxAge: "1d", Text: "#FFFFFF"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("filename age rules=%#v want %#v", got, want)
 	}
 }
 
@@ -337,8 +390,8 @@ func TestDefaultConfigSerializesTabs(t *testing.T) {
 		"tabs:",
 		"width_mode: variable",
 		"max_width_dp:",
-		"typeface: FiraCode Nerd Font Mono",
-		"font_size_sp: 10",
+		"typeface: Iosevka Nerd Font Mono",
+		"font_size_sp: 12",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("serialized config missing %q:\n%s", want, out)
@@ -1177,7 +1230,7 @@ func TestNormalizeColorsPreservesTransparentRowText(t *testing.T) {
 	}
 }
 
-func TestDefaultConfigUsesTransparentRowText(t *testing.T) {
+func TestDefaultConfigPreservesFilenameColorsForHoverAndFocus(t *testing.T) {
 	cfg := DefaultConfig()
 	if cfg.Colors.HoverText != TransparentColor {
 		t.Fatalf("HoverText=%q want %q", cfg.Colors.HoverText, TransparentColor)
@@ -1185,11 +1238,11 @@ func TestDefaultConfigUsesTransparentRowText(t *testing.T) {
 	if cfg.Colors.SelectionText != TransparentColor {
 		t.Fatalf("SelectionText=%q want %q", cfg.Colors.SelectionText, TransparentColor)
 	}
-	if cfg.Colors.SelectedFilesText != TransparentColor {
-		t.Fatalf("SelectedFilesText=%q want %q", cfg.Colors.SelectedFilesText, TransparentColor)
+	if cfg.Colors.SelectedFilesText != DefaultFilePaneSelectedTextHex {
+		t.Fatalf("SelectedFilesText=%q want %q", cfg.Colors.SelectedFilesText, DefaultFilePaneSelectedTextHex)
 	}
-	if cfg.Colors.FocusedSelectedText != TransparentColor {
-		t.Fatalf("FocusedSelectedText=%q want %q", cfg.Colors.FocusedSelectedText, TransparentColor)
+	if cfg.Colors.FocusedSelectedText != DefaultFilePaneFocusedSelectedTextHex {
+		t.Fatalf("FocusedSelectedText=%q want %q", cfg.Colors.FocusedSelectedText, DefaultFilePaneFocusedSelectedTextHex)
 	}
 }
 
@@ -1205,14 +1258,14 @@ func TestNormalizeViewerThemeOverrides(t *testing.T) {
 
 	cfg.normalize()
 
-	if cfg.Viewer.Background != DefaultFilePaneBackgroundHex {
-		t.Fatalf("Viewer.Background=%q, want %q", cfg.Viewer.Background, DefaultFilePaneBackgroundHex)
+	if cfg.Viewer.Background != DefaultViewerBackgroundHex {
+		t.Fatalf("Viewer.Background=%q, want %q", cfg.Viewer.Background, DefaultViewerBackgroundHex)
 	}
-	if cfg.Viewer.Text != DefaultFilePaneTextHex {
-		t.Fatalf("Viewer.Text=%q, want %q", cfg.Viewer.Text, DefaultFilePaneTextHex)
+	if cfg.Viewer.Text != DefaultViewerTextHex {
+		t.Fatalf("Viewer.Text=%q, want %q", cfg.Viewer.Text, DefaultViewerTextHex)
 	}
-	if cfg.Viewer.Selection != DefaultFilePaneSelectionHex {
-		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, DefaultFilePaneSelectionHex)
+	if cfg.Viewer.Selection != DefaultViewerSelectionHex {
+		t.Fatalf("Viewer.Selection=%q, want %q", cfg.Viewer.Selection, DefaultViewerSelectionHex)
 	}
 	if cfg.Viewer.HexSelection != "" || cfg.Viewer.HexOffsetText != "" || cfg.Viewer.HexBytesText != "" || cfg.Viewer.HexASCIIText != "" {
 		t.Fatal("invalid optional hex colors should normalize to empty")

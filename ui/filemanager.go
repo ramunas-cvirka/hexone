@@ -2291,7 +2291,11 @@ func (m *filePaneModel) approxChars(widthPx, reservePx int) int {
 	if widthPx <= reservePx {
 		return 0
 	}
-	return (widthPx - reservePx) / m.approxCharPx()
+	charWidth := float32(filePaneApproxCharPx) * filePaneFontScale(m.cfg)
+	if charWidth <= 0 {
+		charWidth = filePaneApproxCharPx
+	}
+	return int(float32(widthPx-reservePx) / charWidth)
 }
 
 func (m *filePaneModel) nameOrEmpty(text string, widthPx int) string {

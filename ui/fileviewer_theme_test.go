@@ -50,7 +50,7 @@ func TestFileViewerThemeUsesHexSectionTextOverrides(t *testing.T) {
 	if got := fm.FormatHexColor(theme.ASCIIText); got != "#789ABC" {
 		t.Fatalf("ASCIIText=%q want #789ABC", got)
 	}
-	if got := fm.FormatHexColor(theme.Text); got != fm.DefaultFilePaneTextHex {
+	if got := fm.FormatHexColor(theme.Text); got != fm.DefaultViewerTextHex {
 		t.Fatalf("general viewer Text=%q changed with hex override", got)
 	}
 }

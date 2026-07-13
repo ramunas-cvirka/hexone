@@ -48,7 +48,9 @@ func TestFilePanePreferredDateFormatFitsConfiguredColumn(t *testing.T) {
 	ts := time.Date(2026, time.July, 11, 16, 47, 9, 0, time.UTC)
 	entry := filesys.Entry{ModTime: ts}
 	model := &filePaneModel{cfg: cfg}
-	contentWidth := fm.DateWidthDp(cfg) - 2*fm.ColumnPadDp()
+	pane := newFilePaneState(".", cfg)
+	dateColumn := pane.table.Columns[len(pane.table.Columns)-1]
+	contentWidth := int(dateColumn.Width) - 2*fm.ColumnPadDp()
 	if got, want := model.formatDate(entry, contentWidth), ts.Format(cfg.DateFormats[0]); got != want {
 		t.Fatalf("preferred date format=%q want %q at configured width %d", got, want, contentWidth)
 	}
