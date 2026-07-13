@@ -151,6 +151,30 @@ func TestHexViewerComputeScrollbarUsesDragTopWhileDragging(t *testing.T) {
 	}
 }
 
+func TestHexDisplayStartFallsBackUntilJumpTargetIsBuffered(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     16 * 1000,
+		bytesPerLine: 16,
+		bufferStart:  0,
+		buffer:       make([]byte, 4096),
+		lastPaintTop: 2,
+		lastPaintSet: true,
+	}
+
+	start, fallback := v.displayStartWithFallback(700, 710)
+	if !fallback || start != 2 {
+		t.Fatalf("unbuffered jump display=(%d,%v) want last painted top 2", start, fallback)
+	}
+
+	start, fallback = v.displayStartWithFallback(4, 14)
+	if fallback || start != 4 {
+		t.Fatalf("buffered display=(%d,%v) want target top 4", start, fallback)
+	}
+	if !v.lastPaintSet || v.lastPaintTop != 4 {
+		t.Fatalf("last painted state=(%d,%v) want 4,true", v.lastPaintTop, v.lastPaintSet)
+	}
+}
+
 func TestHexScrollTooltipMeasurementExpandsPastOldFixedWidth(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()

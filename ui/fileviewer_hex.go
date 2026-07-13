@@ -51,7 +51,11 @@ type hexViewerState struct {
 	displayTop    int64
 	displayY      int
 	displayCount  int
+	lastPaintTop  int64
+	lastPaintSet  bool
 	lastScrollDir int
+	loadStart     int64
+	loadEnd       int64
 
 	offsetDigits int
 	charW        int
@@ -734,6 +738,37 @@ func (v *hexViewerState) lineBytes(line int64) ([]byte, int64) {
 	return v.buffer[relStart:relEnd], start
 }
 
+// displayStartWithFallback keeps the last fully painted viewport visible
+// while a newly requested scroll/jump target is still outside the buffer.
+func (v *hexViewerState) displayStartWithFallback(start, end int64) (int64, bool) {
+	if v == nil || v.bytesPerLine <= 0 || len(v.buffer) == 0 {
+		return start, false
+	}
+	visibleStart := start * int64(v.bytesPerLine)
+	visibleEnd := end * int64(v.bytesPerLine)
+	if visibleEnd > v.fileSize {
+		visibleEnd = v.fileSize
+	}
+	if v.bufferCovers(visibleStart, visibleEnd) {
+		v.lastPaintTop = start
+		v.lastPaintSet = true
+		return start, false
+	}
+	fallback := v.lastPaintTop
+	if !v.lastPaintSet {
+		fallback = v.bufferStart / int64(v.bytesPerLine)
+	}
+	fallbackStart := fallback * int64(v.bytesPerLine)
+	fallbackEnd := fallbackStart + (end-start)*int64(v.bytesPerLine)
+	if fallbackEnd > v.fileSize {
+		fallbackEnd = v.fileSize
+	}
+	if !v.bufferCovers(fallbackStart, fallbackEnd) {
+		fallback = v.bufferStart / int64(v.bytesPerLine)
+	}
+	return fallback, true
+}
+
 func (v *hexViewerState) scrollByLines(lines int64) {
 	if v == nil || lines == 0 {
 		return
@@ -1326,12 +1361,24 @@ func (ui *UI) startHexViewerLoad(st *fileViewerState, force bool) {
 		return
 	}
 	if st.loading {
-		return
+		// A fast scroll or find jump can move outside the in-flight request.
+		// Supersede that request immediately instead of waiting for it and then
+		// starting a second load for the actual target.
+		if visibleStart >= v.loadStart && visibleEnd <= v.loadEnd {
+			return
+		}
+		if st.loadCancel != nil {
+			st.loadCancel()
+		}
+		st.loadCancel = nil
+		st.loading = false
 	}
 
 	st.seq++
 	seq := st.seq
 	st.loading = true
+	v.loadStart = wantStart
+	v.loadEnd = wantEnd
 	st.err = ""
 	if len(v.buffer) == 0 {
 		st.status = "loading..."
@@ -1348,6 +1395,7 @@ func (ui *UI) startHexViewerLoad(st *fileViewerState, force bool) {
 			return
 		}
 		sendHexViewerResult(ch, res)
+		ui.invalidateFromWorker()
 	}()
 }
 
@@ -1476,6 +1524,8 @@ func (ui *UI) pumpHexViewerState(gtx layout.Context, st *fileViewerState) {
 			}
 			st.loading = false
 			st.loadCancel = nil
+			st.hex.loadStart = 0
+			st.hex.loadEnd = 0
 			if res.err != "" {
 				st.err = res.err
 				st.status = ""
@@ -1585,6 +1635,14 @@ func (ui *UI) drawHexOutput(gtx layout.Context, th *material.Theme, st *fileView
 	end := start + int64(v.renderedLineCount())
 	if end > total {
 		end = total
+	}
+	if fallbackStart, fallback := v.displayStartWithFallback(start, end); fallback {
+		start = fallbackStart
+		y = 0
+		end = start + int64(v.renderedLineCount())
+		if end > total {
+			end = total
+		}
 	}
 	for line := start; line < end; line++ {
 		lineBytes, lineStart := v.lineBytes(line)

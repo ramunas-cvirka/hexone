@@ -767,6 +767,10 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.find.editor.SingleLine = true
 	st.find.editor.Submit = false
 	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	st.find.pdfResultCh = make(chan viewerPDFFindResult, 16)
+	st.find.pdfList.Axis = layout.Vertical
+	st.find.textList.Axis = layout.Vertical
+	st.find.hexList.Axis = layout.Vertical
 	st.find.index = -1
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.hex = newHexViewerState()
@@ -3529,7 +3533,7 @@ func viewerSupportsFind(st *fileViewerState) bool {
 	if st.mode == "command" {
 		return true
 	}
-	return !st.detectedImagePreview
+	return !st.detectedImagePreview || viewerPDFPreviewActive(st)
 }
 
 func viewerImageZoomFactorForKey(name key.Name, mods key.Modifiers) (float32, bool) {

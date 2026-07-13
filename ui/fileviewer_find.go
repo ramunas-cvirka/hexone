@@ -19,11 +19,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"gioui.org/font"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -32,7 +36,6 @@ import (
 
 const (
 	viewerFindChunkBytes       = 256 << 10
-	viewerFindBarGapDp         = 4
 	viewerFindBarInsetDp       = 6
 	viewerFindBarRowHeightDp   = 22
 	viewerFindStatusMaxDp      = 120
@@ -40,11 +43,42 @@ const (
 	viewerFindFieldMinChars    = 18
 	viewerFindSearchingDelay   = 220 * time.Millisecond
 	viewerRemoteSearchMaxBytes = 8 << 10
+	viewerFindPanelMaxDp       = 168
+	viewerFindRowHeightDp      = 28
+	viewerHexFindResultLimit   = 200
 )
 
 type viewerFindMatch struct {
-	Start int
-	End   int
+	Start   int
+	End     int
+	Line    int
+	Snippet string
+}
+
+type viewerHexFindMatch struct {
+	Start        int64
+	Length       int64
+	PreviewBytes []byte
+	TextPreview  string
+	HexPreview   string
+}
+
+// viewerPDFFindMatch keeps character offsets in the extracted page text so
+// selecting a result can both scroll to and precisely highlight the hit.
+type viewerPDFFindMatch struct {
+	Page    int
+	Start   int
+	End     int
+	Snippet string
+}
+
+type viewerPDFFindResult struct {
+	requestSeq int
+	pageText   *viewerPDFPageText
+	matches    []viewerPDFFindMatch
+	searched   int
+	done       bool
+	err        string
 }
 
 type fileViewerFindState struct {
@@ -56,11 +90,16 @@ type fileViewerFindState struct {
 	prevClick         widget.Clickable
 	nextClick         widget.Clickable
 	closeClick        widget.Clickable
+	findByClick       widget.Clickable
+	previewClick      widget.Clickable
 	sourceMenuClick   widget.Clickable
 	sourceLocalClick  widget.Clickable
 	sourceRemoteClick widget.Clickable
 
 	remoteSearch     bool
+	hexInput         bool
+	hexPreview       bool
+	modeKey          string
 	sourceInit       bool
 	sourceMenuOpen   bool
 	sourceMenuAt     time.Time
@@ -69,8 +108,13 @@ type fileViewerFindState struct {
 	status           string
 	searchStartedAt  time.Time
 
-	matches []viewerFindMatch
-	index   int
+	matches    []viewerFindMatch
+	index      int
+	textClicks []widget.Clickable
+	textList   widget.List
+	hexMatches []viewerHexFindMatch
+	hexClicks  []widget.Clickable
+	hexList    widget.List
 
 	currentStart int64
 	currentLen   int64
@@ -80,6 +124,14 @@ type fileViewerFindState struct {
 	requestSeq int
 	resultCh   chan fileViewerFindResult
 	cancel     context.CancelFunc
+
+	pdfMatches    []viewerPDFFindMatch
+	pdfClicks     []widget.Clickable
+	pdfList       widget.List
+	pdfSearched   int
+	pdfTotalPages int
+	pdfAnchorPage int
+	pdfResultCh   chan viewerPDFFindResult
 }
 
 type fileViewerFindResult struct {
@@ -89,6 +141,9 @@ type fileViewerFindResult struct {
 	length     int64
 	wrapped    bool
 	err        string
+	matches    []viewerHexFindMatch
+	all        bool
+	limited    bool
 }
 
 type viewerRemoteSearchSpec struct {
@@ -198,6 +253,38 @@ func (ui *UI) handleFileViewerFindInput(gtx layout.Context, st *fileViewerState)
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
+	if st.mode == "hex" && st.find.previewClick.Clicked(gtx) {
+		st.find.hexPreview = !st.find.hexPreview
+		redecodeViewerHexFindPreviews(st)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if st.mode == "hex" && st.find.findByClick.Clicked(gtx) {
+		st.find.hexInput = !st.find.hexInput
+		ui.refreshFileViewerFind(gtx.Now, false)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if viewerPDFPreviewActive(st) {
+		for i := range st.find.pdfClicks {
+			if st.find.pdfClicks[i].Clicked(gtx) && i < len(st.find.pdfMatches) {
+				ui.applyFileViewerPDFFindMatch(gtx.Now, i)
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+	} else if st.mode == "hex" {
+		for i := range st.find.hexClicks {
+			if st.find.hexClicks[i].Clicked(gtx) && i < len(st.find.hexMatches) {
+				ui.applyFileViewerHexFindMatch(gtx.Now, i)
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+	} else {
+		for i := range st.find.textClicks {
+			if st.find.textClicks[i].Clicked(gtx) && i < len(st.find.matches) {
+				ui.applyFileViewerTextFindMatch(gtx.Now, i)
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+	}
 	if st.mode == "hex" && ui.fileViewerFindRemoteSearchConfigured(st) {
 		if st.find.sourceMenuClick.Clicked(gtx) {
 			if st.find.sourceMenuOpen {
@@ -218,7 +305,7 @@ func (ui *UI) handleFileViewerFindInput(gtx layout.Context, st *fileViewerState)
 			st.find.closeSourceMenu()
 			if ui.setFileViewerFindRemoteSearch(gtx.Now, true) {
 				gtx.Execute(op.InvalidateCmd{})
-			} else if viewerFindHexModeFromQuery(st.find.editor.Text()) {
+			} else if st.find.hexInput {
 				st.find.status = "Remote search needs a text query or hex-aware command"
 				gtx.Execute(op.InvalidateCmd{})
 			}
@@ -259,6 +346,14 @@ func (ui *UI) closeFileViewerFind() {
 	st.find.currentValid = false
 	st.find.currentStart = 0
 	st.find.currentLen = 0
+	st.find.textClicks = nil
+	st.find.hexMatches = nil
+	st.find.hexClicks = nil
+	st.find.pdfMatches = nil
+	st.find.pdfClicks = nil
+	st.find.pdfSearched = 0
+	st.find.pdfTotalPages = 0
+	st.find.pdfAnchorPage = 0
 	st.find.sourceButtonRect = image.Rectangle{}
 	st.find.closeSourceMenu()
 	ui.cancelFileViewerFindSearch(st)
@@ -314,6 +409,7 @@ func (ui *UI) refreshFileViewerFind(now time.Time, preserve bool) {
 		ui.closeFileViewerFind()
 		return
 	}
+	ui.prepareFileViewerFindMode(st)
 	ui.ensureFileViewerFindSearchSource(now, st)
 	ui.syncFileViewerFindRemoteSearch(now, st)
 	query := st.find.editor.Text()
@@ -321,7 +417,175 @@ func (ui *UI) refreshFileViewerFind(now time.Time, preserve bool) {
 		ui.refreshHexFileViewerFind(now, query, preserve)
 		return
 	}
+	if viewerPDFPreviewActive(st) {
+		ui.refreshPDFFileViewerFind(now, query, preserve)
+		return
+	}
 	ui.refreshStreamFileViewerFind(now, query, preserve)
+}
+
+func viewerFileFindModeKey(st *fileViewerState) string {
+	if st == nil {
+		return ""
+	}
+	if viewerPDFPreviewActive(st) {
+		return "pdf"
+	}
+	return normalizeViewerMode(st.mode)
+}
+
+func (ui *UI) prepareFileViewerFindMode(st *fileViewerState) {
+	if st == nil {
+		return
+	}
+	modeKey := viewerFileFindModeKey(st)
+	if st.find.modeKey == modeKey {
+		return
+	}
+	ui.cancelFileViewerFindSearch(st)
+	st.find.modeKey = modeKey
+	st.find.matches = nil
+	st.find.textClicks = nil
+	st.find.hexMatches = nil
+	st.find.hexClicks = nil
+	st.find.pdfMatches = nil
+	st.find.pdfClicks = nil
+	st.find.pdfSearched = 0
+	st.find.pdfTotalPages = 0
+	st.find.index = -1
+	st.find.currentValid = false
+	st.find.currentStart = 0
+	st.find.currentLen = 0
+	st.find.status = ""
+}
+
+func (ui *UI) refreshPDFFileViewerFind(now time.Time, query string, preserve bool) {
+	st := ui.fileViewer
+	if st == nil {
+		return
+	}
+	anchorPage := st.pdfDoc.currentPage()
+	if preserve && st.find.index >= 0 && st.find.index < len(st.find.pdfMatches) {
+		anchorPage = st.find.pdfMatches[st.find.index].Page
+	}
+	ui.cancelFileViewerFindSearch(st)
+	st.find.pdfMatches = nil
+	st.find.pdfClicks = nil
+	st.find.pdfSearched = 0
+	st.find.pdfAnchorPage = anchorPage
+	st.find.pdfTotalPages = st.pdfDoc.pageCount()
+	if st.find.pdfTotalPages <= 0 {
+		st.find.pdfTotalPages = st.imagePreviewPageCount
+	}
+	st.find.index = -1
+	st.find.currentValid = false
+	st.find.currentStart = 0
+	st.find.currentLen = 0
+	if query == "" || st.find.pdfTotalPages <= 0 {
+		st.find.status = ""
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	st.find.cancel = cancel
+	st.find.searching = true
+	st.find.searchStartedAt = now
+	st.find.status = ""
+	st.find.requestSeq++
+	requestSeq := st.find.requestSeq
+	pageCount := st.find.pdfTotalPages
+	localPath, data := pdfDocRenderSource(st)
+	backend := viewerPDFPreviewBackend
+	ch := st.find.pdfResultCh
+
+	go func() {
+		for page := 0; page < pageCount; page++ {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			text, err := backend.PageText(viewerPDFRenderRequest{Data: data, LocalPath: localPath, Page: page})
+			res := viewerPDFFindResult{requestSeq: requestSeq, searched: page + 1}
+			if err != nil {
+				res.err = err.Error()
+				res.done = true
+				if sendViewerPDFFindResult(ctx, ch, res) {
+					ui.invalidateFromWorker()
+				}
+				return
+			}
+			res.pageText = &text
+			res.matches = viewerPDFFindPageMatches(text, query)
+			if !sendViewerPDFFindResult(ctx, ch, res) {
+				return
+			}
+			ui.invalidateFromWorker()
+		}
+		if sendViewerPDFFindResult(ctx, ch, viewerPDFFindResult{
+			requestSeq: requestSeq,
+			searched:   pageCount,
+			done:       true,
+		}) {
+			ui.invalidateFromWorker()
+		}
+	}()
+
+}
+
+func viewerPDFFindPageMatches(text viewerPDFPageText, query string) []viewerPDFFindMatch {
+	queryRunes := []rune(query)
+	if len(text.Chars) == 0 || len(queryRunes) == 0 || len(queryRunes) > len(text.Chars) {
+		return nil
+	}
+	needle := make([]rune, len(queryRunes))
+	for i, r := range queryRunes {
+		needle[i] = unicode.ToLower(r)
+	}
+	matches := make([]viewerPDFFindMatch, 0, 4)
+	for start := 0; start+len(needle) <= len(text.Chars); start++ {
+		matched := true
+		for i, r := range needle {
+			if unicode.ToLower(text.Chars[start+i].Rune) != r {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		end := start + len(needle)
+		matches = append(matches, viewerPDFFindMatch{
+			Page:    text.Page,
+			Start:   start,
+			End:     end,
+			Snippet: viewerPDFFindSnippet(text.Chars, start, end),
+		})
+	}
+	return matches
+}
+
+func viewerPDFFindSnippet(chars []viewerPDFTextChar, start, end int) string {
+	const contextRunes = 34
+	from := start - contextRunes
+	if from < 0 {
+		from = 0
+	}
+	to := end + contextRunes
+	if to > len(chars) {
+		to = len(chars)
+	}
+	runes := make([]rune, 0, to-from)
+	for _, ch := range chars[from:to] {
+		runes = append(runes, ch.Rune)
+	}
+	snippet := strings.Join(strings.Fields(string(runes)), " ")
+	if from > 0 {
+		snippet = "…" + snippet
+	}
+	if to < len(chars) {
+		snippet += "…"
+	}
+	return snippet
 }
 
 func (ui *UI) refreshStreamFileViewerFind(now time.Time, query string, preserve bool) {
@@ -341,6 +605,7 @@ func (ui *UI) refreshStreamFileViewerFind(now time.Time, query string, preserve 
 	}
 	matches := viewerFindTextMatches(st.content, query)
 	st.find.matches = matches
+	st.find.textClicks = make([]widget.Clickable, len(matches))
 	if len(matches) == 0 {
 		st.find.status = "No matches"
 		return
@@ -370,6 +635,7 @@ func (ui *UI) applyFileViewerTextFindMatch(now time.Time, idx int) {
 	st.find.currentValid = st.find.currentLen > 0
 	st.find.status = fmt.Sprintf("%d/%d", idx+1, len(st.find.matches))
 	viewerScrollStreamFindMatch(st, match, now)
+	st.find.textList.ScrollTo(idx)
 }
 
 func (ui *UI) refreshHexFileViewerFind(now time.Time, query string, preserve bool) {
@@ -377,9 +643,12 @@ func (ui *UI) refreshHexFileViewerFind(now time.Time, query string, preserve boo
 	if st == nil {
 		return
 	}
-	pattern, useHex, errText := viewerFindAutoPatternBytes(query)
+	pattern, errText := viewerFindPatternBytes(query, st.find.hexInput)
+	useHex := st.find.hexInput
 	if errText != "" {
 		ui.cancelFileViewerFindSearch(st)
+		st.find.hexMatches = nil
+		st.find.hexClicks = nil
 		st.find.status = errText
 		st.find.currentValid = false
 		st.find.currentStart = 0
@@ -388,6 +657,8 @@ func (ui *UI) refreshHexFileViewerFind(now time.Time, query string, preserve boo
 	}
 	if len(pattern) == 0 {
 		ui.cancelFileViewerFindSearch(st)
+		st.find.hexMatches = nil
+		st.find.hexClicks = nil
 		st.find.status = ""
 		st.find.currentValid = false
 		st.find.currentStart = 0
@@ -395,7 +666,60 @@ func (ui *UI) refreshHexFileViewerFind(now time.Time, query string, preserve boo
 		return
 	}
 	anchor := viewerHexFindAnchor(st, preserve)
-	ui.startHexFileViewerFindNext(now, pattern, anchor, useHex)
+	ui.startHexFileViewerFindAll(now, pattern, anchor, useHex)
+	ui.seedBufferedHexFileViewerFind(now, st, pattern, anchor)
+}
+
+func (ui *UI) seedBufferedHexFileViewerFind(now time.Time, st *fileViewerState, pattern []byte, anchor int64) {
+	if st == nil || st.hex == nil || len(st.hex.buffer) == 0 || len(pattern) == 0 {
+		return
+	}
+	matches := viewerBufferedHexFindMatches(st.hex.buffer, st.hex.bufferStart, pattern, viewerHexFindResultLimit)
+	if len(matches) == 0 {
+		return
+	}
+	st.find.hexMatches = matches
+	st.find.hexClicks = make([]widget.Clickable, len(matches))
+	idx := sort.Search(len(matches), func(i int) bool { return matches[i].Start >= anchor })
+	if idx >= len(matches) {
+		idx = 0
+	}
+	ui.applyFileViewerHexFindMatch(now, idx)
+}
+
+func viewerBufferedHexFindMatches(buffer []byte, bufferStart int64, pattern []byte, limit int) []viewerHexFindMatch {
+	if len(buffer) == 0 || len(pattern) == 0 || limit < 1 {
+		return nil
+	}
+	matches := make([]viewerHexFindMatch, 0, min(limit, 16))
+	for cursor := 0; cursor+len(pattern) <= len(buffer); {
+		idx := bytes.Index(buffer[cursor:], pattern)
+		if idx < 0 {
+			break
+		}
+		idx += cursor
+		from := idx - 8
+		if from < 0 {
+			from = 0
+		}
+		to := idx + len(pattern) + 12
+		if to > len(buffer) {
+			to = len(buffer)
+		}
+		preview := append([]byte(nil), buffer[from:to]...)
+		matches = append(matches, viewerHexFindMatch{
+			Start:        bufferStart + int64(idx),
+			Length:       int64(len(pattern)),
+			PreviewBytes: preview,
+			TextPreview:  viewerHexTextSnippet(preview),
+			HexPreview:   viewerHexBytesSnippet(preview),
+		})
+		if len(matches) >= limit {
+			break
+		}
+		cursor = idx + 1
+	}
+	return matches
 }
 
 func (ui *UI) stepFileViewerFind(now time.Time, direction int) bool {
@@ -404,7 +728,34 @@ func (ui *UI) stepFileViewerFind(now time.Time, direction int) bool {
 		return false
 	}
 	if st.mode == "hex" {
-		return ui.stepHexFileViewerFind(now, direction)
+		if len(st.find.hexMatches) == 0 {
+			return false
+		}
+		idx := st.find.index
+		if idx < 0 {
+			idx = 0
+		} else if direction < 0 {
+			idx = (idx - 1 + len(st.find.hexMatches)) % len(st.find.hexMatches)
+		} else {
+			idx = (idx + 1) % len(st.find.hexMatches)
+		}
+		ui.applyFileViewerHexFindMatch(now, idx)
+		return true
+	}
+	if viewerPDFPreviewActive(st) {
+		if len(st.find.pdfMatches) == 0 {
+			return false
+		}
+		idx := st.find.index
+		if idx < 0 {
+			idx = 0
+		} else if direction < 0 {
+			idx = (idx - 1 + len(st.find.pdfMatches)) % len(st.find.pdfMatches)
+		} else {
+			idx = (idx + 1) % len(st.find.pdfMatches)
+		}
+		ui.applyFileViewerPDFFindMatch(now, idx)
+		return true
 	}
 	query := st.find.editor.Text()
 	if query == "" {
@@ -430,12 +781,96 @@ func (ui *UI) stepFileViewerFind(now time.Time, direction int) bool {
 	return true
 }
 
+func (ui *UI) applyFileViewerPDFFindMatch(now time.Time, idx int) {
+	st := ui.fileViewer
+	if st == nil || idx < 0 || idx >= len(st.find.pdfMatches) {
+		return
+	}
+	match := st.find.pdfMatches[idx]
+	st.find.index = idx
+	st.find.currentStart = int64(match.Start)
+	st.find.currentLen = int64(match.End - match.Start)
+	st.find.currentValid = match.End > match.Start
+	st.find.status = fmt.Sprintf("%d/%d", idx+1, len(st.find.pdfMatches))
+	st.pdfDoc.scrollToTextMatch(match)
+	st.pdfDoc.clearSelection()
+	st.markUserBrowsing(now)
+	// Keep the selected result visible in the compact rail.
+	st.find.pdfList.ScrollTo(idx)
+}
+
+func (ui *UI) applyFileViewerHexFindMatch(now time.Time, idx int) {
+	st := ui.fileViewer
+	if st == nil || idx < 0 || idx >= len(st.find.hexMatches) {
+		return
+	}
+	match := st.find.hexMatches[idx]
+	st.find.index = idx
+	st.find.currentStart = match.Start
+	st.find.currentLen = match.Length
+	st.find.currentValid = match.Length > 0
+	st.find.status = fmt.Sprintf("%d/%d", idx+1, len(st.find.hexMatches))
+	viewerScrollHexFindMatch(st, match.Start, match.Length, now)
+	st.find.hexList.ScrollTo(idx)
+	ui.startHexViewerLoad(st, false)
+}
+
+func (ui *UI) startHexFileViewerFindAll(now time.Time, pattern []byte, anchor int64, useHex bool) {
+	st := ui.fileViewer
+	if st == nil {
+		return
+	}
+	ui.cancelFileViewerFindSearch(st)
+	st.find.hexMatches = nil
+	st.find.hexClicks = nil
+	st.find.index = -1
+	st.find.currentValid = false
+	st.find.currentStart = 0
+	st.find.currentLen = 0
+	ctx, cancel := context.WithCancel(context.Background())
+	st.find.cancel = cancel
+	st.find.searching = true
+	st.find.searchStartedAt = now
+	st.find.status = ""
+	st.find.requestSeq++
+	requestSeq := st.find.requestSeq
+	path := st.path
+	remote := st.remote
+	remoteSearch := ui.viewerRemoteSearchSpec(remote, useHex, st.find.remoteSearch)
+	ch := st.find.resultCh
+
+	go func() {
+		matches, limited, err := searchViewerHexAll(ctx, path, remote, pattern, remoteSearch, viewerHexFindResultLimit)
+		res := fileViewerFindResult{
+			requestSeq: requestSeq,
+			matches:    matches,
+			all:        true,
+			limited:    limited,
+		}
+		if err != nil && !errors.Is(err, context.Canceled) {
+			res.err = err.Error()
+		}
+		if len(matches) > 0 {
+			idx := sort.Search(len(matches), func(i int) bool { return matches[i].Start >= anchor })
+			if idx >= len(matches) {
+				idx = 0
+			}
+			res.found = true
+			res.start = matches[idx].Start
+			res.length = matches[idx].Length
+		}
+		sendFileViewerFindResult(ch, res)
+		ui.invalidateFromWorker()
+	}()
+}
+
 func (ui *UI) stepHexFileViewerFind(now time.Time, direction int) bool {
 	st := ui.fileViewer
 	if st == nil {
 		return false
 	}
-	pattern, useHex, errText := viewerFindAutoPatternBytes(st.find.editor.Text())
+	pattern, errText := viewerFindPatternBytes(st.find.editor.Text(), st.find.hexInput)
+	useHex := st.find.hexInput
 	if errText != "" {
 		ui.cancelFileViewerFindSearch(st)
 		st.find.status = errText
@@ -487,6 +922,7 @@ func (ui *UI) startHexFileViewerFindNext(now time.Time, pattern []byte, anchor i
 		res := searchViewerHexNext(ctx, path, remote, pattern, anchor, remoteSearch)
 		res.requestSeq = requestSeq
 		sendFileViewerFindResult(ch, res)
+		ui.invalidateFromWorker()
 	}()
 
 	if st.hex != nil {
@@ -522,6 +958,7 @@ func (ui *UI) startHexFileViewerFindPrev(now time.Time, pattern []byte, anchor i
 		res := searchViewerHexPrev(ctx, path, remote, pattern, anchor, current, remoteSearch)
 		res.requestSeq = requestSeq
 		sendFileViewerFindResult(ch, res)
+		ui.invalidateFromWorker()
 	}()
 
 	if st.hex != nil {
@@ -533,6 +970,7 @@ func (ui *UI) pumpFileViewerFindState(gtx layout.Context, st *fileViewerState) {
 	if st == nil || st.find.resultCh == nil {
 		return
 	}
+	ui.pumpPDFFileViewerFindState(gtx, st)
 	for {
 		select {
 		case res := <-st.find.resultCh:
@@ -542,6 +980,32 @@ func (ui *UI) pumpFileViewerFindState(gtx layout.Context, st *fileViewerState) {
 			st.find.searching = false
 			st.find.cancel = nil
 			st.find.searchStartedAt = time.Time{}
+			if res.all {
+				if res.err != "" {
+					st.find.status = res.err
+					st.find.currentValid = false
+					gtx.Execute(op.InvalidateCmd{})
+					continue
+				}
+				st.find.hexMatches = res.matches
+				st.find.hexClicks = make([]widget.Clickable, len(res.matches))
+				if len(res.matches) == 0 {
+					st.find.status = "No matches"
+					st.find.currentValid = false
+					gtx.Execute(op.InvalidateCmd{})
+					continue
+				}
+				idx := sort.Search(len(res.matches), func(i int) bool { return res.matches[i].Start >= res.start })
+				if idx >= len(res.matches) {
+					idx = 0
+				}
+				ui.applyFileViewerHexFindMatch(gtx.Now, idx)
+				if res.limited {
+					st.find.status += "+"
+				}
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
 			if res.err != "" {
 				st.find.status = res.err
 				st.find.currentValid = false
@@ -571,6 +1035,83 @@ func (ui *UI) pumpFileViewerFindState(gtx layout.Context, st *fileViewerState) {
 	}
 }
 
+func (ui *UI) pumpPDFFileViewerFindState(gtx layout.Context, st *fileViewerState) {
+	if st == nil || st.find.pdfResultCh == nil {
+		return
+	}
+	for {
+		select {
+		case res := <-st.find.pdfResultCh:
+			if res.requestSeq != st.find.requestSeq {
+				continue
+			}
+			if res.pageText != nil {
+				st.pdfDoc.storeText(*res.pageText)
+			}
+			st.find.pdfSearched = res.searched
+			if len(res.matches) > 0 {
+				st.find.pdfMatches = append(st.find.pdfMatches, res.matches...)
+				for len(st.find.pdfClicks) < len(st.find.pdfMatches) {
+					st.find.pdfClicks = append(st.find.pdfClicks, widget.Clickable{})
+				}
+				if st.find.index < 0 {
+					for i, match := range st.find.pdfMatches {
+						if match.Page >= st.find.pdfAnchorPage {
+							ui.applyFileViewerPDFFindMatch(gtx.Now, i)
+							break
+						}
+					}
+				}
+			}
+			if res.err != "" {
+				st.find.status = res.err
+				st.find.searching = false
+				st.find.currentValid = false
+				if st.find.cancel != nil {
+					st.find.cancel()
+					st.find.cancel = nil
+				}
+			} else if res.done {
+				st.find.searching = false
+				st.find.searchStartedAt = time.Time{}
+				if st.find.cancel != nil {
+					st.find.cancel()
+					st.find.cancel = nil
+				}
+				if len(st.find.pdfMatches) == 0 {
+					st.find.status = "No matches"
+				} else {
+					if st.find.index < 0 {
+						ui.applyFileViewerPDFFindMatch(gtx.Now, 0)
+					}
+					st.find.status = fmt.Sprintf("%d/%d", st.find.index+1, len(st.find.pdfMatches))
+				}
+			} else if len(st.find.pdfMatches) > 0 {
+				if st.find.index >= 0 {
+					st.find.status = fmt.Sprintf("%d/%d · %d/%d pages", st.find.index+1, len(st.find.pdfMatches), st.find.pdfSearched, st.find.pdfTotalPages)
+				} else {
+					st.find.status = fmt.Sprintf("%d matches · %d/%d pages", len(st.find.pdfMatches), st.find.pdfSearched, st.find.pdfTotalPages)
+				}
+			}
+			gtx.Execute(op.InvalidateCmd{})
+		default:
+			return
+		}
+	}
+}
+
+func sendViewerPDFFindResult(ctx context.Context, ch chan viewerPDFFindResult, res viewerPDFFindResult) bool {
+	if ch == nil {
+		return false
+	}
+	select {
+	case ch <- res:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 func sendFileViewerFindResult(ch chan fileViewerFindResult, res fileViewerFindResult) {
 	if ch == nil {
 		return
@@ -578,14 +1119,28 @@ func sendFileViewerFindResult(ch chan fileViewerFindResult, res fileViewerFindRe
 	select {
 	case ch <- res:
 	default:
+		// Treat the size-one channel as a latest-request mailbox. A canceled
+		// search can finish after a newer one and must never evict its result.
+		newest := res
 		select {
-		case <-ch:
+		case queued := <-ch:
+			if queued.requestSeq > newest.requestSeq {
+				newest = queued
+			}
 		default:
 		}
 		select {
-		case ch <- res:
+		case ch <- newest:
 		default:
 		}
+	}
+}
+
+// Worker completions must wake Gio explicitly. Continuous test frames and
+// animations can otherwise hide a queued result until the next user event.
+func (ui *UI) invalidateFromWorker() {
+	if ui != nil && ui.invalidate != nil {
+		ui.invalidate()
 	}
 }
 
@@ -594,16 +1149,57 @@ func viewerFindTextMatches(content, query string) []viewerFindMatch {
 		return nil
 	}
 	matches := make([]viewerFindMatch, 0, 8)
+	line := 1
+	lineScan := 0
 	for off := 0; off <= len(content)-len(query); {
 		idx := strings.Index(content[off:], query)
 		if idx < 0 {
 			break
 		}
 		start := off + idx
-		matches = append(matches, viewerFindMatch{Start: start, End: start + len(query)})
+		line += strings.Count(content[lineScan:start], "\n")
+		lineScan = start
+		end := start + len(query)
+		matches = append(matches, viewerFindMatch{
+			Start:   start,
+			End:     end,
+			Line:    line,
+			Snippet: viewerFindTextSnippet(content, start, end),
+		})
 		off = start + 1
 	}
 	return matches
+}
+
+func viewerFindTextSnippet(content string, start, end int) string {
+	if start < 0 || end < start || start > len(content) {
+		return ""
+	}
+	if end > len(content) {
+		end = len(content)
+	}
+	lineStart := strings.LastIndex(content[:start], "\n") + 1
+	lineEnd := len(content)
+	if idx := strings.IndexByte(content[end:], '\n'); idx >= 0 {
+		lineEnd = end + idx
+	}
+	from := lineStart
+	if start-from > 56 {
+		from = start - 56
+	}
+	to := lineEnd
+	if to-end > 76 {
+		to = end + 76
+	}
+	snippet := strings.ToValidUTF8(content[from:to], "")
+	snippet = strings.Join(strings.Fields(snippet), " ")
+	if from > lineStart {
+		snippet = "…" + snippet
+	}
+	if to < lineEnd {
+		snippet += "…"
+	}
+	return snippet
 }
 
 func viewerFindTextMatchIndexAtOrAfter(matches []viewerFindMatch, anchor int) int {
@@ -783,19 +1379,6 @@ func viewerFindPatternBytes(raw string, hexInput bool) ([]byte, string) {
 	return pat, ""
 }
 
-func viewerFindHexModeFromQuery(raw string) bool {
-	query := strings.TrimSpace(raw)
-	if query == "" || len(query)%2 != 0 {
-		return false
-	}
-	for i := 0; i < len(query); i++ {
-		if _, ok := viewerHexNibble(query[i]); !ok {
-			return false
-		}
-	}
-	return true
-}
-
 func (st *fileViewerFindState) setRemoteSearch(enabled bool, now time.Time) bool {
 	_ = now
 	if st == nil || st.remoteSearch == enabled {
@@ -804,15 +1387,6 @@ func (st *fileViewerFindState) setRemoteSearch(enabled bool, now time.Time) bool
 	st.remoteSearch = enabled
 	st.sourceInit = true
 	return true
-}
-
-func viewerFindAutoPatternBytes(raw string) ([]byte, bool, string) {
-	if !viewerFindHexModeFromQuery(raw) {
-		pattern, errText := viewerFindPatternBytes(raw, false)
-		return pattern, false, errText
-	}
-	pattern, errText := viewerFindPatternBytes(strings.TrimSpace(raw), true)
-	return pattern, true, errText
 }
 
 func (ui *UI) fileViewerFindRemoteSearchConfigured(st *fileViewerState) bool {
@@ -826,7 +1400,7 @@ func (ui *UI) fileViewerFindRemoteSearchAvailable(st *fileViewerState) bool {
 	if !ui.fileViewerFindRemoteSearchConfigured(st) {
 		return false
 	}
-	if st != nil && viewerFindHexModeFromQuery(st.find.editor.Text()) && !viewerRemoteSearchTemplateSupportsHex(ui.viewerRemoteSearchTemplate(st.remote)) {
+	if st != nil && st.find.hexInput && !viewerRemoteSearchTemplateSupportsHex(ui.viewerRemoteSearchTemplate(st.remote)) {
 		return false
 	}
 	return true
@@ -963,6 +1537,202 @@ func searchViewerHexNext(ctx context.Context, path string, remote *paneSSHSessio
 		}
 	}
 	return fileViewerFindResult{}
+}
+
+func searchViewerHexAll(ctx context.Context, path string, remote *paneSSHSession, pattern []byte, remoteSearch viewerRemoteSearchSpec, limit int) ([]viewerHexFindMatch, bool, error) {
+	if len(pattern) == 0 {
+		return nil, false, nil
+	}
+	if limit < 1 {
+		limit = viewerHexFindResultLimit
+	}
+	src, err := openViewerFindChunkSource(path, remote)
+	if err != nil {
+		return nil, false, err
+	}
+	defer src.Close()
+	totalStarts := src.size - int64(len(pattern)) + 1
+	if totalStarts <= 0 {
+		return nil, false, nil
+	}
+	if viewerRemoteSearchUsable(remoteSearch, src.size) {
+		if offsets, used := viewerRunRemoteSearchAll(ctx, path, remote, pattern, remoteSearch, src.size, totalStarts, limit); used {
+			matches := make([]viewerHexFindMatch, 0, len(offsets))
+			for _, off := range offsets {
+				matches = append(matches, viewerHexFindMatch{Start: off, Length: int64(len(pattern))})
+			}
+			populateViewerHexFindPreviews(src, matches, 32)
+			return matches, len(offsets) >= limit, nil
+		}
+	}
+	offsets, limited, err := viewerFindBytesAll(ctx, src, pattern, totalStarts, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	matches := make([]viewerHexFindMatch, 0, len(offsets))
+	for _, off := range offsets {
+		matches = append(matches, viewerHexFindMatch{Start: off, Length: int64(len(pattern))})
+	}
+	populateViewerHexFindPreviews(src, matches, 32)
+	return matches, limited, nil
+}
+
+func populateViewerHexFindPreviews(src viewerFindChunkSource, matches []viewerHexFindMatch, limit int) {
+	if src.read == nil || limit <= 0 {
+		return
+	}
+	if limit > len(matches) {
+		limit = len(matches)
+	}
+	for i := 0; i < limit; i++ {
+		match := &matches[i]
+		start := match.Start - 8
+		if start < 0 {
+			start = 0
+		}
+		end := match.Start + match.Length + 12
+		if end > src.size {
+			end = src.size
+		}
+		if end <= start {
+			continue
+		}
+		data, err := src.read(start, end-start)
+		if err != nil || len(data) == 0 {
+			continue
+		}
+		match.PreviewBytes = append(match.PreviewBytes[:0], data...)
+		match.TextPreview = viewerHexTextSnippet(match.PreviewBytes)
+		match.HexPreview = viewerHexBytesSnippet(match.PreviewBytes)
+	}
+}
+
+func redecodeViewerHexFindPreviews(st *fileViewerState) {
+	if st == nil {
+		return
+	}
+	for i := range st.find.hexMatches {
+		match := &st.find.hexMatches[i]
+		if len(match.PreviewBytes) == 0 {
+			if data, ok := viewerHexFindContext(st, *match); ok {
+				match.PreviewBytes = append([]byte(nil), data...)
+			}
+		}
+		if len(match.PreviewBytes) == 0 {
+			continue
+		}
+		if st.find.hexPreview {
+			match.HexPreview = viewerHexBytesSnippet(match.PreviewBytes)
+		} else {
+			match.TextPreview = viewerHexTextSnippet(match.PreviewBytes)
+		}
+	}
+}
+
+func viewerFindBytesAll(ctx context.Context, src viewerFindChunkSource, pattern []byte, totalStarts int64, limit int) ([]int64, bool, error) {
+	if len(pattern) == 0 || totalStarts <= 0 || limit < 1 {
+		return nil, false, nil
+	}
+	chunkBytes := int64(viewerFindChunkBytes)
+	if chunkBytes < int64(len(pattern)) {
+		chunkBytes = int64(len(pattern))
+	}
+	offsets := make([]int64, 0, min(limit, 32))
+	for pos := int64(0); pos < totalStarts; pos += chunkBytes {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		rangeEnd := pos + chunkBytes
+		if rangeEnd > totalStarts {
+			rangeEnd = totalStarts
+		}
+		readLen := rangeEnd - pos + int64(len(pattern)) - 1
+		data, err := src.read(pos, readLen)
+		if err != nil {
+			return nil, false, err
+		}
+		for cursor := 0; cursor+len(pattern) <= len(data); {
+			idx := bytes.Index(data[cursor:], pattern)
+			if idx < 0 {
+				break
+			}
+			idx += cursor
+			off := pos + int64(idx)
+			if off >= rangeEnd {
+				break
+			}
+			offsets = append(offsets, off)
+			if len(offsets) >= limit {
+				return offsets, off+1 < totalStarts, nil
+			}
+			cursor = idx + 1
+		}
+	}
+	return offsets, false, nil
+}
+
+func viewerRunRemoteSearchAll(ctx context.Context, path string, remote *paneSSHSession, pattern []byte, spec viewerRemoteSearchSpec, rangeEnd, totalStarts int64, limit int) ([]int64, bool) {
+	if remote == nil || strings.TrimSpace(spec.template) == "" || rangeEnd <= 0 || totalStarts <= 0 {
+		return nil, false
+	}
+	cmdline := expandViewerRemoteSearchTemplate(spec.template, viewerRemoteSearchTemplateArgs{
+		fullpath:     path,
+		filename:     viewerCommandMatchName(path, remote),
+		patternText:  string(pattern),
+		patternBytes: append([]byte(nil), pattern...),
+		rangeStart:   0,
+		rangeEnd:     rangeEnd,
+		direction:    "next",
+		matchLimit:   "",
+		resultSelect: "head -n " + strconv.Itoa(limit),
+	}, spec.shell.quoteFn)
+	content, err := runViewerRemoteSearchCommandFunc(ctx, remote, cmdline, spec.shell)
+	if err != nil {
+		return nil, false
+	}
+	offsets, valid := viewerRemoteSearchOffsets(content, totalStarts, limit)
+	if !valid {
+		return nil, false
+	}
+	return offsets, true
+}
+
+func viewerRemoteSearchOffsets(raw string, end int64, limit int) ([]int64, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, true
+	}
+	offsets := make([]int64, 0, min(limit, 32))
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		digitEnd := 0
+		for digitEnd < len(line) && line[digitEnd] >= '0' && line[digitEnd] <= '9' {
+			digitEnd++
+		}
+		if digitEnd == 0 {
+			return nil, false
+		}
+		off, err := strconv.ParseInt(line[:digitEnd], 10, 64)
+		if err != nil || off < 0 || off >= end {
+			return nil, false
+		}
+		if len(offsets) == 0 || offsets[len(offsets)-1] != off {
+			offsets = append(offsets, off)
+		}
+		if len(offsets) >= limit {
+			break
+		}
+	}
+	sort.Slice(offsets, func(i, j int) bool { return offsets[i] < offsets[j] })
+	unique := offsets[:0]
+	for _, off := range offsets {
+		if len(unique) == 0 || unique[len(unique)-1] != off {
+			unique = append(unique, off)
+		}
+	}
+	return unique, true
 }
 
 func searchViewerHexPrev(ctx context.Context, path string, remote *paneSSHSession, pattern []byte, anchor, selfStart int64, remoteSearch viewerRemoteSearchSpec) fileViewerFindResult {
@@ -1494,10 +2264,21 @@ func (ui *UI) fileViewerFindStatusWidth(th *material.Theme, gtx layout.Context) 
 
 func (ui *UI) fileViewerFindBarWidths(th *material.Theme, gtx layout.Context, st *fileViewerState, now time.Time) (barW, editorW int) {
 	editorDesiredW, editorMinW := ui.fileViewerFindEditorWidths(th, gtx)
+	if cap := gtx.Dp(unit.Dp(164)); editorDesiredW > cap {
+		editorDesiredW = cap
+	}
+	if cap := gtx.Dp(unit.Dp(112)); editorMinW > cap {
+		editorMinW = cap
+	}
 	statusW := ui.fileViewerFindStatusWidth(th, gtx)
 	reserved := gtx.Dp(unit.Dp(16))
 	if sourceW := ui.fileViewerFindSourceChipWidth(th, gtx, st); sourceW > 0 {
 		reserved += sourceW + gtx.Dp(unit.Dp(6))
+	}
+	if st != nil && st.mode == "hex" {
+		// One square mode glyph on each side of the editor plus the two tight
+		// gaps between glyphs and the field.
+		reserved += 2*gtx.Dp(unit.Dp(viewerFindBarRowHeightDp)) + gtx.Dp(unit.Dp(8))
 	}
 	findLbl := material.Body2(th, "Find")
 	findLbl.Font.Typeface = ui.viewerTypeface()
@@ -1560,7 +2341,7 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 	barDims := fixedWidth(gtx, barW, func(gtx layout.Context) layout.Dimensions {
 		return fillRoundedClipBox(
 			gtx,
-			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
+			0,
 			bg,
 			border,
 			func(gtx layout.Context) layout.Dimensions {
@@ -1594,6 +2375,18 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 							}),
 							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if st.mode != "hex" {
+									return layout.Dimensions{}
+								}
+								return ui.layoutFileViewerFindModeButton(gtx, &st.find.findByClick, st.find.hexInput)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if st.mode != "hex" {
+									return layout.Dimensions{}
+								}
+								return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 								return fixedWidth(gtx, editorW, func(gtx layout.Context) layout.Dimensions {
 									return ui.layoutEditorWithContextMenu(th, gtx, "viewer-find", &st.find.editor, true, func(gtx layout.Context) layout.Dimensions {
 										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1613,6 +2406,18 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 										})
 									})
 								})
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if st.mode != "hex" {
+									return layout.Dimensions{}
+								}
+								return layout.Spacer{Width: unit.Dp(4)}.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if st.mode != "hex" {
+									return layout.Dimensions{}
+								}
+								return ui.layoutFileViewerFindModeButton(gtx, &st.find.previewClick, st.find.hexPreview)
 							}),
 							layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1658,7 +2463,7 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 	}
 	barPos := image.Pt(
 		gtx.Constraints.Max.X-barDims.Size.X-gtx.Dp(unit.Dp(viewerFindBarInsetDp)),
-		gtx.Dp(unit.Dp(viewerFindBarGapDp)),
+		0,
 	)
 	if barPos.X < 0 {
 		barPos.X = 0
@@ -1690,12 +2495,402 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 	} else {
 		st.find.sourceMenuRect = image.Rectangle{}
 	}
+	if !st.find.sourceMenuOpen && (fileViewerFindResultCount(st) > 0 || viewerFindPendingPanel(st)) {
+		panelW := barDims.Size.X
+		panel := op.Record(gtx.Ops)
+		ui.layoutFileViewerFindResults(th, gtx, st, panelW)
+		panelCall := panel.Stop()
+		panelPos := image.Pt(
+			barPos.X,
+			barPos.Y+barDims.Size.Y,
+		)
+		if panelPos.X < 0 {
+			panelPos.X = 0
+		}
+		offset = op.Offset(panelPos).Push(gtx.Ops)
+		panelCall.Add(gtx.Ops)
+		offset.Pop()
+	}
+	ui.deferFileViewerFindModeHint(th, gtx, st, barPos, barDims.Size)
 	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+func (ui *UI) layoutFileViewerFindModeButton(gtx layout.Context, click *widget.Clickable, hexMode bool) layout.Dimensions {
+	if click == nil {
+		return layout.Dimensions{}
+	}
+	theme := ui.fileViewerTheme()
+	size := gtx.Dp(unit.Dp(viewerFindBarRowHeightDp))
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return fixedWidth(gtx, size, func(gtx layout.Context) layout.Dimensions {
+			return fixedHeight(gtx, size, func(gtx layout.Context) layout.Dimensions {
+				bg := mixNRGBA(theme.CommandBg, theme.TooltipBg, 0.28)
+				border := scaleColorAlpha(theme.CommandBorder, 0.68)
+				fg := theme.CommandText
+				if click.Hovered() {
+					bg = mixNRGBA(theme.CommandBgHover, theme.TooltipBg, 0.24)
+					border = scaleColorAlpha(theme.CommandBorderHover, 0.84)
+					fg = theme.HeaderText
+				}
+				return fillFlatBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
+					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						glyphGTX := gtx
+						glyphGTX.Constraints = layout.Exact(image.Pt(gtx.Dp(unit.Dp(14)), gtx.Dp(unit.Dp(10))))
+						return layoutFileViewerFindModeGlyph(glyphGTX, hexMode, fg)
+					})
+				})
+			})
+		})
+	})
+}
+
+func layoutFileViewerFindModeGlyph(gtx layout.Context, hexMode bool, fg color.NRGBA) layout.Dimensions {
+	size := gtx.Constraints.Min
+	if size.X < 8 || size.Y < 6 {
+		return layout.Dimensions{Size: size}
+	}
+	rowH := 2
+	top := (size.Y - (3*rowH + 2)) / 2
+	if top < 0 {
+		top = 0
+	}
+	draw := func(x, y, width int) {
+		if width > 0 {
+			paint.FillShape(gtx.Ops, fg, clip.Rect(image.Rect(x, y, x+width, y+rowH)).Op())
+		}
+	}
+	for row := 0; row < 3; row++ {
+		y := top + row*(rowH+1)
+		if hexMode {
+			cellW := 2
+			gap := 1
+			groupGap := 2
+			left := (size.X - (4*cellW + 2*gap + groupGap)) / 2
+			draw(left, y, cellW)
+			draw(left+cellW+gap, y, cellW)
+			right := left + 2*cellW + gap + groupGap
+			draw(right, y, cellW)
+			draw(right+cellW+gap, y, cellW)
+			continue
+		}
+		width := size.X - 2
+		if row == 1 {
+			width -= 3
+		}
+		draw(1, y, width)
+	}
+	return layout.Dimensions{Size: size}
+}
+
+func (ui *UI) deferFileViewerFindModeHint(th *material.Theme, gtx layout.Context, st *fileViewerState, barPos, barSize image.Point) {
+	if st == nil || st.mode != "hex" || barSize.X <= 0 || barSize.Y <= 0 {
+		return
+	}
+	tip := ""
+	alignRight := false
+	if st.find.findByClick.Hovered() {
+		if st.find.hexInput {
+			tip = "Search as hex"
+		} else {
+			tip = "Search as text"
+		}
+	} else if st.find.previewClick.Hovered() {
+		alignRight = true
+		if st.find.hexPreview {
+			tip = "Preview as hex"
+		} else {
+			tip = "Preview as text"
+		}
+	}
+	if tip == "" {
+		return
+	}
+	tipGTX := gtx
+	tipGTX.Constraints.Min = image.Point{}
+	tipGTX.Constraints.Max = image.Pt(gtx.Dp(unit.Dp(140)), gtx.Dp(unit.Dp(24)))
+	recorded := op.Record(gtx.Ops)
+	theme := ui.fileViewerTheme()
+	tipDims := fillFlatBox(tipGTX, theme.TooltipBg, theme.TooltipBorder, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, tip)
+			lbl.Font.Typeface = ui.viewerTypeface()
+			lbl.TextSize = scaleThemeFontSize(th, 9)
+			lbl.Color = theme.TooltipText
+			lbl.MaxLines = 1
+			return lbl.Layout(gtx)
+		})
+	})
+	tipCall := recorded.Stop()
+	x := barPos.X + gtx.Dp(unit.Dp(8))
+	if alignRight {
+		x = barPos.X + barSize.X - tipDims.Size.X - gtx.Dp(unit.Dp(8))
+	}
+	pos := image.Pt(x, barPos.Y+barSize.Y+gtx.Dp(unit.Dp(2)))
+	pos = clampFilePaneMenuPoint(pos, tipDims.Size, gtx.Constraints.Max)
+	deferred := op.Record(gtx.Ops)
+	offset := op.Offset(pos).Push(gtx.Ops)
+	tipCall.Add(gtx.Ops)
+	offset.Pop()
+	op.Defer(gtx.Ops, deferred.Stop())
+}
+
+func fileViewerFindResultCount(st *fileViewerState) int {
+	if st == nil {
+		return 0
+	}
+	if viewerPDFPreviewActive(st) {
+		return len(st.find.pdfMatches)
+	}
+	if st.mode == "hex" {
+		return len(st.find.hexMatches)
+	}
+	return len(st.find.matches)
+}
+
+func viewerFindPendingPanel(st *fileViewerState) bool {
+	return st != nil && st.mode == "hex" && st.find.open && st.find.searching && strings.TrimSpace(st.find.editor.Text()) != ""
+}
+
+func (ui *UI) layoutFileViewerFindResults(th *material.Theme, gtx layout.Context, st *fileViewerState, width int) layout.Dimensions {
+	count := fileViewerFindResultCount(st)
+	if st == nil || width <= 0 || (count == 0 && !viewerFindPendingPanel(st)) {
+		return layout.Dimensions{}
+	}
+	listState := &st.find.textList
+	if viewerPDFPreviewActive(st) {
+		listState = &st.find.pdfList
+	} else if st.mode == "hex" {
+		listState = &st.find.hexList
+	}
+	theme := ui.fileViewerTheme()
+	bg := mixNRGBA(theme.PanelBg, theme.HeaderBg, 0.18)
+	bg.A = 248
+	border := mixNRGBA(theme.Divider, theme.HeaderText, 0.18)
+	border.A = 84
+	maxH := gtx.Dp(unit.Dp(viewerFindPanelMaxDp))
+	rowCount := count
+	if rowCount == 0 {
+		rowCount = 1
+	}
+	wantH := rowCount * gtx.Dp(unit.Dp(viewerFindRowHeightDp))
+	if wantH < maxH {
+		maxH = wantH
+	}
+	if available := gtx.Constraints.Max.Y - gtx.Dp(unit.Dp(48)); maxH > available {
+		maxH = available
+	}
+	if maxH < 1 {
+		return layout.Dimensions{}
+	}
+	gtx.Constraints.Max.Y = maxH
+	gtx.Constraints.Min.Y = maxH
+	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedClipBox(gtx, 0, bg, border, func(gtx layout.Context) layout.Dimensions {
+			if count == 0 {
+				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, "Searching…")
+					lbl.Font.Typeface = ui.viewerTypeface()
+					lbl.TextSize = scaleThemeFontSize(th, 10)
+					lbl.Color = theme.Hint
+					lbl.MaxLines = 1
+					return layoutVCenteredLabel(gtx, lbl)
+				})
+			}
+			list := material.List(th, listState)
+			list.AnchorStrategy = material.Occupy
+			list.ScrollbarStyle.Track.MajorPadding = 0
+			list.ScrollbarStyle.Track.MinorPadding = unit.Dp(1)
+			list.ScrollbarStyle.Track.Color = color.NRGBA{}
+			list.ScrollbarStyle.Indicator.MajorMinLen = unit.Dp(18)
+			list.ScrollbarStyle.Indicator.MinorWidth = unit.Dp(3)
+			list.ScrollbarStyle.Indicator.CornerRadius = 0
+			list.ScrollbarStyle.Indicator.Color = theme.ScrollThumb
+			list.ScrollbarStyle.Indicator.HoverColor = theme.ScrollThumbHover
+			return list.Layout(gtx, count, func(gtx layout.Context, index int) layout.Dimensions {
+				if index < 0 || index >= count {
+					return layout.Dimensions{}
+				}
+				return ui.layoutFileViewerFindResult(th, gtx, st, index)
+			})
+		})
+	})
+}
+
+func (ui *UI) layoutFileViewerFindResult(th *material.Theme, gtx layout.Context, st *fileViewerState, index int) layout.Dimensions {
+	marker, snippet, click, markerWidth := ui.fileViewerFindResultPresentation(st, index)
+	if click == nil {
+		return layout.Dimensions{}
+	}
+	theme := ui.fileViewerTheme()
+	active := index == st.find.index
+	rowBg := color.NRGBA{}
+	if active {
+		rowBg = mixNRGBA(theme.PanelBg, theme.StrongSelection, 0.34)
+		rowBg.A = 224
+	} else if click.Hovered() {
+		rowBg = mixNRGBA(theme.PanelBg, theme.HeaderText, 0.08)
+		rowBg.A = 238
+	}
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		return fixedHeight(gtx, gtx.Dp(unit.Dp(viewerFindRowHeightDp)), func(gtx layout.Context) layout.Dimensions {
+			return fillBgExact(gtx, rowBg, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(6), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							page := material.Body2(th, marker)
+							page.Font.Typeface = ui.viewerTypeface()
+							page.Font.Weight = font.Bold
+							page.TextSize = scaleThemeFontSize(th, 9)
+							page.Color = theme.StatusAccent
+							page.MaxLines = 1
+							return fixedWidth(gtx, gtx.Dp(unit.Dp(markerWidth)), func(gtx layout.Context) layout.Dimensions {
+								return layoutVCenteredLabel(gtx, page)
+							})
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							label := material.Body2(th, snippet)
+							label.Font.Typeface = ui.viewerTypeface()
+							label.TextSize = scaleThemeFontSize(th, 10)
+							label.Color = theme.HeaderText
+							label.MaxLines = 1
+							label.Truncator = "…"
+							return layoutVCenteredLabel(gtx, label)
+						}),
+					)
+				})
+			})
+		})
+	})
+}
+
+func (ui *UI) fileViewerFindResultPresentation(st *fileViewerState, index int) (marker, snippet string, click *widget.Clickable, markerWidth int) {
+	if st == nil || index < 0 {
+		return "", "", nil, 0
+	}
+	if viewerPDFPreviewActive(st) {
+		if index >= len(st.find.pdfMatches) || index >= len(st.find.pdfClicks) {
+			return "", "", nil, 0
+		}
+		match := st.find.pdfMatches[index]
+		return strconv.Itoa(match.Page+1) + "p", match.Snippet, &st.find.pdfClicks[index], 28
+	}
+	if st.mode == "hex" {
+		if index >= len(st.find.hexMatches) || index >= len(st.find.hexClicks) {
+			return "", "", nil, 0
+		}
+		match := st.find.hexMatches[index]
+		return fmt.Sprintf("0x%X", match.Start), viewerHexFindSnippet(st, match), &st.find.hexClicks[index], 66
+	}
+	if index >= len(st.find.matches) || index >= len(st.find.textClicks) {
+		return "", "", nil, 0
+	}
+	match := st.find.matches[index]
+	return strconv.Itoa(match.Line) + "l", match.Snippet, &st.find.textClicks[index], 34
+}
+
+func viewerHexFindSnippet(st *fileViewerState, match viewerHexFindMatch) string {
+	if len(match.PreviewBytes) > 0 {
+		if st != nil && st.find.hexPreview {
+			return viewerHexBytesSnippet(match.PreviewBytes)
+		}
+		return viewerHexTextSnippet(match.PreviewBytes)
+	}
+	if st != nil && st.find.hexPreview && match.HexPreview != "" {
+		return match.HexPreview
+	}
+	if st != nil && !st.find.hexPreview && match.TextPreview != "" {
+		return match.TextPreview
+	}
+	data, ok := viewerHexFindContext(st, match)
+	if !ok {
+		return viewerHexFindPatternSnippet(st)
+	}
+	if st.find.hexPreview {
+		return viewerHexBytesSnippet(data)
+	}
+	return viewerHexTextSnippet(data)
+}
+
+func viewerHexFindContext(st *fileViewerState, match viewerHexFindMatch) ([]byte, bool) {
+	if st == nil || st.hex == nil || len(st.hex.buffer) == 0 {
+		return nil, false
+	}
+	from := match.Start - 8
+	to := match.Start + match.Length + 12
+	bufferStart := st.hex.bufferStart
+	bufferEnd := bufferStart + int64(len(st.hex.buffer))
+	if from < bufferStart {
+		from = bufferStart
+	}
+	if to > bufferEnd {
+		to = bufferEnd
+	}
+	if from >= to || from < bufferStart || to > bufferEnd {
+		return nil, false
+	}
+	return st.hex.buffer[from-bufferStart : to-bufferStart], true
+}
+
+func viewerHexBytesSnippet(data []byte) string {
+	var hexText strings.Builder
+	for i, b := range data {
+		if i > 0 {
+			hexText.WriteByte(' ')
+		}
+		fmt.Fprintf(&hexText, "%02X", b)
+	}
+	return hexText.String()
+}
+
+func viewerHexTextSnippet(data []byte) string {
+	var text strings.Builder
+	for _, b := range data {
+		switch {
+		case b >= 0x20 && b <= 0x7E:
+			text.WriteByte(b)
+		case b == '\t' || b == '\r' || b == '\n':
+			text.WriteByte(' ')
+		default:
+			text.WriteByte('.')
+		}
+	}
+	return strings.Join(strings.Fields(text.String()), " ")
+}
+
+func viewerHexFindPatternSnippet(st *fileViewerState) string {
+	if st == nil {
+		return "byte match"
+	}
+	pattern, _ := viewerFindPatternBytes(st.find.editor.Text(), st.find.hexInput)
+	if len(pattern) == 0 {
+		return "byte match"
+	}
+	if !st.find.hexPreview {
+		return viewerHexTextSnippet(pattern)
+	}
+	var hexText strings.Builder
+	for i, b := range pattern {
+		if i >= 20 {
+			hexText.WriteString(" …")
+			break
+		}
+		if i > 0 {
+			hexText.WriteByte(' ')
+		}
+		fmt.Fprintf(&hexText, "%02X", b)
+	}
+	return hexText.String()
 }
 
 func (ui *UI) fileViewerFindPlaceholder(st *fileViewerState) string {
 	if st != nil && st.mode == "hex" {
-		return "Text or DEADBEEF"
+		if st.find.hexInput {
+			return "DE AD BE EF"
+		}
+		return "text"
 	}
 	return "Find text"
 }
@@ -1753,7 +2948,7 @@ func (ui *UI) layoutFileViewerFindSourceMenu(th *material.Theme, gtx layout.Cont
 	}
 	theme := ui.filePanePopupTheme()
 	remoteDetail := "SSH utility command"
-	if viewerFindHexModeFromQuery(st.find.editor.Text()) && !viewerRemoteSearchTemplateSupportsHex(ui.viewerRemoteSearchTemplate(st.remote)) {
+	if st.find.hexInput && !viewerRemoteSearchTemplateSupportsHex(ui.viewerRemoteSearchTemplate(st.remote)) {
 		remoteDetail = "Current template is text-only"
 	}
 	type menuRow struct {

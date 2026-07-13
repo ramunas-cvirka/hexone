@@ -427,6 +427,25 @@ func (v *pdfDocView) scrollToPage(page int) bool {
 	return v.scrollY != before
 }
 
+func (v *pdfDocView) scrollToTextMatch(match viewerPDFFindMatch) bool {
+	if v == nil || match.Page < 0 || match.Page >= len(v.layoutTops) {
+		return false
+	}
+	beforeX, beforeY := v.scrollX, v.scrollY
+	v.scrollY = v.layoutTops[match.Page]
+	if text, ok := v.text[match.Page]; ok && match.Start >= 0 && match.Start < len(text.Chars) {
+		ch := text.Chars[match.Start]
+		v.scrollY += ch.Top*v.layoutScale - float64(v.viewportRect.Dy())*0.28
+		pageX, _, _, _ := v.pageDocRect(match.Page)
+		matchX := pageX + ch.Left*v.layoutScale
+		if matchX < v.scrollX || matchX > v.scrollX+float64(v.viewportRect.Dx())*0.8 {
+			v.scrollX = matchX - float64(v.viewportRect.Dx())*0.2
+		}
+	}
+	v.clampScroll()
+	return v.scrollX != beforeX || v.scrollY != beforeY
+}
+
 func (v *pdfDocView) scrollToStart() bool {
 	if v == nil || (v.scrollX == 0 && v.scrollY == 0) {
 		return false
@@ -1053,7 +1072,24 @@ func (v *pdfDocView) selectionRectsOnPage(page int) [][4]float64 {
 	if !ok {
 		return nil
 	}
-	text := v.text[page]
+	return pdfDocTextRects(v.text[page].Chars, from, to)
+}
+
+func (v *pdfDocView) findRectsOnPage(match viewerPDFFindMatch) [][4]float64 {
+	if v == nil || match.Page < 0 || match.Start < 0 || match.End <= match.Start {
+		return nil
+	}
+	text, ok := v.text[match.Page]
+	if !ok || match.End > len(text.Chars) {
+		return nil
+	}
+	return pdfDocTextRects(text.Chars, match.Start, match.End)
+}
+
+func pdfDocTextRects(chars []viewerPDFTextChar, from, to int) [][4]float64 {
+	if from < 0 || to > len(chars) || from >= to {
+		return nil
+	}
 	var rects [][4]float64
 	var cur [4]float64
 	curValid := false
@@ -1063,7 +1099,7 @@ func (v *pdfDocView) selectionRectsOnPage(page int) [][4]float64 {
 			curValid = false
 		}
 	}
-	for _, ch := range text.Chars[from:to] {
+	for _, ch := range chars[from:to] {
 		w := ch.Right - ch.Left
 		h := ch.Bottom - ch.Top
 		if w <= 0 || h <= 0 {
@@ -1818,6 +1854,24 @@ func (ui *UI) paintPDFDocPages(gtx layout.Context, st *fileViewerState) {
 				paint.PaintOp{}.Add(gtx.Ops)
 				offset.Pop()
 			}()
+		}
+		if st.find.open && st.find.currentValid && st.find.index >= 0 && st.find.index < len(st.find.pdfMatches) {
+			match := st.find.pdfMatches[st.find.index]
+			if match.Page == page {
+				findColor := mixNRGBA(theme.StrongSelection, color.NRGBA{R: 0xFF, G: 0xC8, B: 0x4A, A: 0xFF}, 0.52)
+				findColor.A = 186
+				for _, r := range v.findRectsOnPage(match) {
+					findRect := image.Rect(
+						origin.X+int(math.Round(px+r[0]*v.layoutScale)),
+						origin.Y+int(math.Round(py+r[1]*v.layoutScale)),
+						origin.X+int(math.Round(px+r[2]*v.layoutScale)),
+						origin.Y+int(math.Round(py+r[3]*v.layoutScale)),
+					)
+					if findRect.Dx() > 0 && findRect.Dy() > 0 {
+						paint.FillShape(gtx.Ops, findColor, clip.Rect(findRect).Op())
+					}
+				}
+			}
 		}
 		if v.hasSelection() {
 			for _, r := range v.selectionRectsOnPage(page) {

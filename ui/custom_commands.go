@@ -1486,6 +1486,10 @@ func (ui *UI) startCustomCommandViewer(raw fm.CustomCommand, now time.Time) bool
 	st.find.editor.SingleLine = true
 	st.find.editor.Submit = false
 	st.find.resultCh = make(chan fileViewerFindResult, 1)
+	st.find.pdfResultCh = make(chan viewerPDFFindResult, 16)
+	st.find.pdfList.Axis = layout.Vertical
+	st.find.textList.Axis = layout.Vertical
+	st.find.hexList.Axis = layout.Vertical
 	st.find.index = -1
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.hex = newHexViewerState()

@@ -188,6 +188,7 @@ func viewerLooksPreviewablePDF(path string, data []byte) bool {
 
 func viewerPDFPreviewActive(st *fileViewerState) bool {
 	return st != nil &&
+		normalizeViewerMode(st.mode) == "file" &&
 		st.detectedImagePreview &&
 		normalizeViewerImageFormat(st.imagePreviewFormat) == "pdf" &&
 		st.imagePreviewPageCount > 0
