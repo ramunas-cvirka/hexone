@@ -575,21 +575,7 @@ func archiveExtractTrimMiddleToWidth(text string, maxWidth int, measure func(str
 }
 
 func archiveExtractStatusBar(frac float32) string {
-	const width = 10
-	if frac < 0 {
-		frac = 0
-	}
-	if frac > 1 {
-		frac = 1
-	}
-	done := int(frac*width + 0.5)
-	if done < 0 {
-		done = 0
-	}
-	if done > width {
-		done = width
-	}
-	return strings.Repeat("█", done) + strings.Repeat("░", width-done)
+	return textCellProgressBar(frac, 10)
 }
 
 func archiveExtractSpeed(progress filesys.CopyProgress, startedAt, now time.Time) int64 {

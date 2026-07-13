@@ -697,7 +697,7 @@ func (ui *UI) layoutFileCreateDialog(th *material.Theme, gtx layout.Context) lay
 		paint.FillShape(gtx.Ops, color.NRGBA{A: 120}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
 		paneRect := ui.filePaneRectForOverlay(gtx, st.pane)
-		width := gtx.Dp(unit.Dp(320))
+		width := gtx.Dp(ui.scaleInterfaceDp(unit.Dp(390)))
 		maxWidth := paneRect.Dx() - gtx.Dp(unit.Dp(16))
 		if maxWidth < 220 {
 			maxWidth = 220
@@ -816,11 +816,7 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 		layout.Rigid(layoutDialogHorizontalDivider),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Type")
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleDialogFontSize(9)
-			lbl.Color = hintColor
-			return lbl.Layout(gtx)
+			return ui.layoutFileOpTextRow(th, gtx, "Creating", kindTitle, txtColor)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -833,58 +829,42 @@ func (ui *UI) layoutFileCreateDialogBody(th *material.Theme, gtx layout.Context,
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, kindTitle+" name/path")
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleDialogFontSize(9)
-			lbl.Color = hintColor
-			return lbl.Layout(gtx)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.running {
-				lbl := material.Body2(th, strings.TrimSpace(st.targetPath))
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleDialogFontSize(10)
-				lbl.Color = txtColor
-				lbl.MaxLines = 1
-				lbl.Truncator = "…"
-				return fillFlatBox(
-					gtx,
-					color.NRGBA{R: 24, G: 24, B: 24, A: 255},
-					color.NRGBA{R: 255, G: 255, B: 255, A: 20},
-					func(gtx layout.Context) layout.Dimensions {
-						return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
-					},
-				)
-			}
-			ed := material.Editor(th, &st.nameEdit, "")
-			ed.Font.Typeface = ui.interfaceTypeface()
-			ed.TextSize = ui.scaleDialogFontSize(10)
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			return ui.layoutEditorWithContextMenu(th, gtx, "filecreate-name", &st.nameEdit, true, func(gtx layout.Context) layout.Dimensions {
-				return layoutNeutralEditorBox(gtx, st.focus == fileCreateDialogFocusName, true, ed.Layout)
+			return ui.layoutFileOpRow(th, gtx, "Name", func(gtx layout.Context) layout.Dimensions {
+				if st.running {
+					lbl := material.Body2(th, strings.TrimSpace(st.targetPath))
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.fileOpDialogTextSize()
+					lbl.Color = txtColor
+					lbl.MaxLines = 1
+					lbl.Truncator = "…"
+					return fillFlatBox(
+						gtx,
+						color.NRGBA{R: 24, G: 24, B: 24, A: 255},
+						color.NRGBA{R: 255, G: 255, B: 255, A: 20},
+						func(gtx layout.Context) layout.Dimensions {
+							return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, lbl.Layout)
+						},
+					)
+				}
+				ed := material.Editor(th, &st.nameEdit, "")
+				ed.Font.Typeface = ui.interfaceTypeface()
+				ed.TextSize = ui.fileOpDialogTextSize()
+				ed.Color = txtColor
+				ed.HintColor = hintColor
+				return ui.layoutEditorWithContextMenu(th, gtx, "filecreate-name", &st.nameEdit, true, func(gtx layout.Context) layout.Dimensions {
+					return layoutNeutralEditorBox(gtx, st.focus == fileCreateDialogFocusName, true, ed.Layout)
+				})
 			})
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, pathInfo)
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleDialogFontSize(9)
-			lbl.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
-			lbl.MaxLines = 1
-			lbl.Truncator = "…"
-			return lbl.Layout(gtx)
+			return ui.layoutFileOpTextRow(th, gtx, "Target", pathInfo, color.NRGBA{R: 184, G: 184, B: 184, A: 255})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.lastErr == "" {
 				if st.running {
-					lbl := material.Caption(th, "Creating...")
-					lbl.Font.Typeface = ui.interfaceTypeface()
-					lbl.TextSize = ui.scaleDialogFontSize(9)
-					lbl.Color = hintColor
-					return lbl.Layout(gtx)
+					return ui.layoutFileOpTextRow(th, gtx, "Status", "Creating...", hintColor)
 				}
 				return layout.Dimensions{}
 			}
@@ -958,7 +938,7 @@ func (ui *UI) layoutFileCreateKindTabs(th *material.Theme, gtx layout.Context, s
 			focusFile = 1
 		}
 	}
-	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, ui.scaleDialogFontSize(10), []slidingTabSpec{
+	return ui.layoutSlidingTabStrip(th, gtx, stripH, pos, ui.fileOpDialogTextSize(), []slidingTabSpec{
 		{
 			Label:      "Folder",
 			Click:      &st.kindFolderClick,

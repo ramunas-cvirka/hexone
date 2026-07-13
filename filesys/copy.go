@@ -18,6 +18,17 @@ type CopyProgress struct {
 	BytesDone    int64
 	BytesTotal   int64
 	CurrentPath  string
+
+	// Streaming progress fields are used when a directory is discovered and
+	// copied concurrently, before a final total is known. BytesDone remains a
+	// cumulative counter so transfer-speed sampling stays monotonic.
+	Streaming         bool
+	ScanDone          bool
+	FilesDiscovered   int
+	FilesCopied       int
+	CurrentBytesDone  int64
+	CurrentBytesTotal int64
+	CurrentRootPath   string
 }
 
 // CopyPath copies a file or directory from srcPath to dstPath.

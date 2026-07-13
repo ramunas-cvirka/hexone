@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"hexone/filesys"
@@ -123,21 +124,14 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 		}
 	}
 
-	var (
-		info fileCopyPathInfo
-		err  error
-	)
-	if remote != nil {
-		info, err = buildCopyPathInfoRemote(remote, entry.Path)
-	} else {
-		info, err = buildCopyPathInfo(entry.Path)
-	}
-	if err != nil {
-		if remote != nil {
-			remote.close()
-		}
-		pane.setNotice(err.Error(), now)
-		return
+	// The pane listing already carries the metadata needed by the confirmation
+	// dialog. Re-statting here makes F8 block on an SFTP round trip.
+	info := fileCopyPathInfo{
+		Path:    entry.Path,
+		Exists:  true,
+		IsDir:   entry.Kind == filesys.EntryDir,
+		Size:    entry.SizeBytes,
+		ModTime: entry.ModTime,
 	}
 	targets := make([]fileDeleteTarget, 0, len(selected))
 	for _, item := range selected {
@@ -200,15 +194,21 @@ func (st *fileDeleteState) targetSummary() string {
 	return fmt.Sprintf("%d items selected", count)
 }
 
-func (st *fileDeleteState) targetPreviewLines() []string {
-	if st == nil || len(st.targets) == 0 {
-		return nil
+func (st *fileDeleteState) targetOperationSummary() string {
+	if st.targetCount() <= 1 {
+		return st.targetSummary()
 	}
-	labels := make([]string, 0, len(st.targets))
-	for _, target := range st.targets {
-		labels = append(labels, fileOpPreviewLabel(target.Name, target.Path))
+	return fileOpCountText(st.targetCount(), "selected item", "selected items")
+}
+
+func (st *fileDeleteState) targetDirectory() string {
+	if st == nil {
+		return ""
 	}
-	return fileOpPreviewLines(labels)
+	if st.remote != nil {
+		return path.Dir(st.targetPath)
+	}
+	return filepath.Dir(st.targetPath)
 }
 
 func (st *fileDeleteState) focusOrder() []fileDeleteDialogFocus {
@@ -293,9 +293,23 @@ func (ui *UI) submitFileDeleteDialog(now time.Time) {
 	remote := st.remote
 	go func() {
 		res := fileDeleteResult{}
-		if nestedCount, err := countDeleteNestedEntries(targets, remote); err == nil {
-			res.deletedNested = nestedCount
-			res.deletedCountKnown = true
+		if remote != nil {
+			var command strings.Builder
+			command.WriteString("rm -rf --")
+			for _, target := range targets {
+				command.WriteByte(' ')
+				command.WriteString(shellQuote(path.Clean(target.Path)))
+			}
+			err := runRemoteShellCommandContext(context.Background(), remote, command.String())
+			if err == nil {
+				doneCh <- res
+				return
+			}
+			if !errors.Is(err, errRemoteCommandUnavailable) {
+				res.err = err
+				doneCh <- res
+				return
+			}
 		}
 		for _, target := range targets {
 			if remote != nil {
@@ -700,7 +714,7 @@ func (ui *UI) layoutFileDeleteDialog(th *material.Theme, gtx layout.Context) lay
 		paint.FillShape(gtx.Ops, color.NRGBA{A: 120}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
 		paneRect := ui.filePaneRectForOverlay(gtx, st.pane)
-		width := gtx.Dp(unit.Dp(300))
+		width := gtx.Dp(ui.scaleInterfaceDp(unit.Dp(370)))
 		maxWidth := paneRect.Dx() - gtx.Dp(unit.Dp(16))
 		if maxWidth < 220 {
 			maxWidth = 220
@@ -764,43 +778,14 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 		gtx.Execute(op.InvalidateCmd{})
 	}
 
-	desc := material.Caption(th, "This action cannot be undone.")
-	desc.Font.Typeface = ui.interfaceTypeface()
-	desc.TextSize = ui.scaleDialogFontSize(9)
-	desc.Color = color.NRGBA{R: 206, G: 186, B: 148, A: 255}
-
-	target := st.targetSummary()
-	if target == "" {
-		if st.remote != nil {
-			target = path.Base(st.targetPath)
-		} else {
-			target = filepath.Base(st.targetPath)
-		}
-	}
-	targetLabel := material.Body2(th, target)
-	targetLabel.Font.Typeface = ui.interfaceTypeface()
-	targetLabel.TextSize = ui.scaleDialogFontSize(10)
-	targetLabel.Font.Weight = font.Medium
-	targetLabel.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255}
-	targetLabel.MaxLines = 1
-	targetLabel.Truncator = "…"
-
-	pathLabel := material.Caption(th, st.targetPath)
-	pathLabel.Font.Typeface = ui.interfaceTypeface()
-	pathLabel.TextSize = ui.scaleDialogFontSize(9)
-	pathLabel.Color = color.NRGBA{R: 172, G: 172, B: 172, A: 255}
-	pathLabel.MaxLines = 1
-	pathLabel.Truncator = "…"
-
 	metaText := formatCopyPathInfo(st.targetInfo)
 	if st.multiTarget() {
 		metaText = fmt.Sprintf("%d items will be deleted", st.targetCount())
 	}
-	meta := material.Caption(th, metaText)
-	meta.Font.Typeface = ui.interfaceTypeface()
-	meta.TextSize = ui.scaleDialogFontSize(9)
-	meta.Color = color.NRGBA{R: 184, G: 184, B: 184, A: 255}
-	meta.MaxLines = 1
+	targetLabel := "Delete"
+	if st.running {
+		targetLabel = "Deleting"
+	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -821,18 +806,21 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
 		layout.Rigid(layoutDialogHorizontalDivider),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
-		layout.Rigid(desc.Layout),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
-		layout.Rigid(targetLabel.Layout),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.multiTarget() {
-				return ui.layoutFileOpPreviewList(th, gtx, st.targetPreviewLines())
-			}
-			return pathLabel.Layout(gtx)
+			return ui.layoutFileOpTextRow(th, gtx, targetLabel, st.targetOperationSummary(), txtColor)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
-		layout.Rigid(meta.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFileOpTextRow(th, gtx, "From", st.targetDirectory(), color.NRGBA{R: 184, G: 184, B: 184, A: 255})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFileOpTextRow(th, gtx, "Warning", "This action cannot be undone.", color.NRGBA{R: 206, G: 186, B: 148, A: 255})
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFileOpTextRow(th, gtx, "Details", metaText, color.NRGBA{R: 184, G: 184, B: 184, A: 255})
+		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.lastErr == "" {
 				return layout.Dimensions{}
@@ -848,11 +836,9 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 			if !st.running {
 				return layout.Dimensions{}
 			}
-			lbl := material.Caption(th, "Deleting...")
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleDialogFontSize(9)
-			lbl.Color = hintColor
-			return lbl.Layout(gtx)
+			return layout.Inset{Top: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFileOpTextRow(th, gtx, "Status", "Deleting...", hintColor)
+			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(layoutDialogHorizontalDivider),

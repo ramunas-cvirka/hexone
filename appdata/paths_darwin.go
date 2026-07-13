@@ -6,7 +6,6 @@
 package appdata
 
 import (
-	"hexone/appicon"
 	"os"
 	"path/filepath"
 
@@ -42,7 +41,7 @@ func dataDir() string {
 	if err != nil || base == "" {
 		return ""
 	}
-	base = filepath.Join(base, appicon.AppID)
+	base = filepath.Join(base, configDirName)
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return ""
 	}
