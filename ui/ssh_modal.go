@@ -661,6 +661,7 @@ func (st *sshModalState) validatedSetupsWithSelected() ([]fm.SSHSetup, int, erro
 			Password:      raw.Password,
 			KeyPath:       strings.TrimSpace(raw.KeyPath),
 			KeyPassphrase: raw.KeyPassphrase,
+			CredentialID:  strings.TrimSpace(raw.CredentialID),
 		}
 		if setup.Port <= 0 {
 			setup.Port = 22
@@ -742,10 +743,15 @@ func (ui *UI) saveSSHModal() error {
 	if err != nil {
 		return err
 	}
+	setups, removedCredentialIDs, err := ui.prepareSSHSecretsForSave(setups)
+	if err != nil {
+		return err
+	}
 	ui.fmCfg.SSH.Setups = setups
 	if err := ui.saveFMConfigWithOptions("ssh-modal", false); err != nil {
 		return err
 	}
+	ui.deleteSSHSecrets(removedCredentialIDs)
 	st.loadFromConfigWithSelected(ui.fmCfg, selected)
 	return nil
 }

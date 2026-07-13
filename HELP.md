@@ -166,6 +166,8 @@ To manage SSH sessions:
 - add a host, port, user, and authentication method
 - save the session, then connect the active pane
 
+Saved passwords and private-key passphrases are stored in Windows Credential Manager, macOS Keychain, or the Linux Secret Service. They are not written to `hexone.yaml`; existing plaintext values are moved automatically the next time Hexone starts. If no secure credential service is available, the credentials can still be entered for a one-time connection but cannot be saved.
+
 Inside the internal viewer, the same shortcut opens Find instead of `SSH Sessions`.
 
 Once connected, a remote pane supports normal browsing plus viewer-based inspection, command-driven log viewing, and remote-assisted hex searching.

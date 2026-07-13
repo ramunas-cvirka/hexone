@@ -333,6 +333,7 @@ func TestSSHModalSaveKeepsSelectedSetup(t *testing.T) {
 		{Host: "one.test", Port: 22, User: "alice"},
 	}
 	ui := NewUI(cfg)
+	ui.sshCredentials.store = newMemorySecretStore()
 	ui.configPath = filepath.Join(t.TempDir(), "hexone-config.yaml")
 	ui.openSSHModal()
 	if ui.sshModal == nil {
@@ -380,6 +381,7 @@ func TestSSHModalDirtyDraftDefaultsToSaveAndEnterSaves(t *testing.T) {
 		{Host: "one.test", Port: 22, User: "alice", Password: "secret"},
 	}
 	ui := NewUI(cfg)
+	ui.sshCredentials.store = newMemorySecretStore()
 	ui.configPath = filepath.Join(t.TempDir(), "hexone-config.yaml")
 	ui.openSSHModal()
 	if ui.sshModal == nil {

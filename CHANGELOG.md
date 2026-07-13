@@ -64,50 +64,16 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Terminal now uses all available bottom space.
 - Fixed SSH favorites opened in new tabs using the previous local pane path.
 
-## v0.9.0
+## v1.0.0 - 2026-07-13
 
-- Promoted the tuned FiraCode/Iosevka font sizes, blue-and-pink file selection palette, and one-day recent-file highlight to the fresh-install defaults while keeping the brighter viewer palette independent.
-- Switched desktop, portable, and MSIX icons on every platform to the transparent H1 Hexone artwork, and streamlined File panes settings with consistent labels, an integrated permissions Off option, and a preview matching the real headerless pane.
-- Clean desktop launches now open at 60% of the primary display and centered, while saved window geometry continues to be restored on later launches.
-- Made Enter launch ordinary files with their system association while continuing to traverse directories and archives.
-- Sped up multipart RAR indexing and reused archive indexes while browsing nested folders and opening members.
-- Kept explicit plain-text files such as `.txt` free from content-guessed syntax highlighting.
-- Added SSH Setup to the F9 Tools menu and moved Colors directly after Fonts in Settings.
-- Added separate Full mode, Brief mode, and Other file-pane settings with large live previews, accurate Full-mode column sizing, distinct Brief-mode filenames, and a date/time builder that automatically derives responsive fallback formats.
-- Settings now marks a dirty draft explicitly as `Save (*)`, returning to `Save` after changes are saved or reverted.
-- Reworked the Settings color picker with an RGB honeycomb, tonal slider, live color indicator, and explicit Set action.
-- Replaced rounded Settings remove icons with flat close controls and red hover feedback matching Favorites.
-- Flattened the Settings Browse, Add, Update, and Remove actions for a lighter visual hierarchy.
-- Fixed keyed Settings entries so Update can change ages, permission modes, extensions, sizes, viewer targets, command patterns, and association extensions without creating a duplicate.
-- Added theme-aware separators between the offset, byte, and ASCII sections of the hex viewer without changing selection hit-boxes.
-- Added independent text color settings for all three hex viewer sections.
-- Added an independent hex-selection color setting.
-- Restyled the sticky File, Hex, and Cmd viewer tabs to use the configured tab font and color styling.
-- Added a File/Hex toggle to the viewer color preview in Settings.
-- Improved past-command visibility with a flat, full-width history list using the Interface font.
-- Centered labels across viewer, file-pane, and terminal tabs.
-- Replaced rounded dialog close buttons with flat tab-style controls and red hover feedback.
-- Fixed newly created folders remaining outside the visible file-pane rows when the terminal drawer reduces the viewport.
-- Disabled visual smoothing during active selection auto-scroll in File, Hex, Cmd, and Terminal views to keep text and selection row-aligned.
-- Improved SSH tabs and favorites with clean directory-only tab titles, hoverable host-detail indicators, and stable theme-aware colors per host.
-- Aligned SSH Setup and Settings actions with the file-operation dialogs, including right-aligned footers, improved spacing, and a flatter, roomier SSH setup layout.
-- Extended the flatter modal treatment across SSH Sessions, Multi-Rename, file-operation dialogs, Custom Commands, Settings, and F1 Help, including divider-based sections, flat action buttons, and a flattened current-directory control strip.
-- Changed the SSH Disconnect action to close the current remote tab when alternatives exist, while preserving the last tab and returning it to its previous local directory.
-- Restyled the active Cmd command as a compact fully bordered recessed field using the Tabs font and consistent display and edit-mode geometry.
-- Reworked Settings into File panes and Terminal sections, including regular/bold file-pane weight controls per file, directory, permissions, size, and date columns, plus relocated terminal shell and accelerated-key options.
-- Added file/directory/both targeting to filename color rules, applying filename customizations to both by default while preserving an explicit directory icon color.
-- Made Settings height responsive at roughly 80% of the window so dense tabs remain comfortable without filling the entire screen, retained right-aligned actions, and tightened Custom Commands so its editor aligns with the slot list and wastes less footer space.
-- Prevented Custom Commands editor navigation and shortcut keys from leaking through to the underlying file pane.
-- Applied the same responsive 80%-of-window height policy to the F1 Help modal as Settings, with an integrated scrollbar and flattened content area.
-- Fixed File-mode text shifting horizontally when asynchronous syntax highlighting appears.
-- Simplified Multi-Rename counters by replacing the manual digit-width field with automatic zero-padding.
-- Improved image previews with responsive fit-width startup, native-size centering, drag panning, and clickable zoom presets; viewer mode tabs now carry the full filename, and outlined PDFs expose dense accordion TOC navigation with separate disclosure and bookmark links.
-- Kept supported oversized images and PDFs in File preview mode instead of incorrectly opening them in Hex mode because of the text-read size limit.
-- Made `Esc` close open viewer zoom and TOC popups before closing the viewer itself.
-- Added a persisted Word Wrap toggle to the File and Cmd viewer context menu.
-- Simplified Copy and Move startup dialogs to avoid repeating the selected filename across paths and progress text.
-- Kept Windows portable configuration beside `hexone.exe` while moving MSIX configuration and session data to the package's writable `LocalState` folder.
-- Added `make package-windows-msix` to build the Windows PDFium binary, generate Store assets, and create the MSIX package in one command.
-- Repacked and validated Windows MSIX output with the Windows SDK to prevent invalid nFPM block maps from reaching App Installer or the Store.
-- Enlarged the visible MSIX icon artwork and added scale-qualified Store, app-list, and tile assets for sharper Windows rendering.
-- Made local MSIX builds create a separately signed development package with a reusable trusted certificate while keeping the Partner Center artifact unsigned.
+- Rebuilt F5 Copy so directory contents are discovered and transferred concurrently instead of scanning the complete directory tree before copying begins. The new progress view reports discovered and copied files, the current item, transferred bytes, and transfer speed for local and SFTP operations.
+- Rebuilt the PDF viewer as one continuously scrolling document with text selection and copying, clickable links, drag panning, zoom controls, page navigation, and an expandable table of contents for PDF outlines.
+- Added whole-document PDF search and redesigned Find in File, Hex, and Cmd views to show matching snippets in a result list and jump directly to any selected match.
+- Added fit-to-width startup, native-size centering, drag panning, keyboard navigation, and selectable zoom levels to image previews.
+- Added dedicated settings for Full, Brief, and Other file-pane layouts, including live previews, per-column font weights, optional permission columns, responsive date/time formats, and filename color rules that can target files, directories, or both.
+- Added separate text colors for the offset, byte, and ASCII sections of the hex viewer, a separate hex-selection color, and visual dividers between the three sections.
+- Reworked Settings, Help, SSH Sessions, Custom Commands, Multi-Rename, and file-operation dialogs around the same flat, sectioned layout, and replaced the Settings color editor with an RGB honeycomb and tonal slider.
+- Added a saved Word Wrap option for File and Cmd text views.
+- Saved SSH passwords and private-key passphrases in Windows Credential Manager, macOS Keychain, or the Linux Secret Service instead of `hexone.yaml`.
+- Changed Enter to open regular files with their system-associated application while continuing to open directories and archives inside Hexone.
+- Added a Microsoft Store MSIX distribution. Store installations keep configuration and session data in the package's `LocalState` folder, while Windows portable builds continue to keep configuration beside `hexone.exe`.

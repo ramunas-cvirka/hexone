@@ -13,6 +13,7 @@ require (
 	github.com/mholt/archives v0.1.5
 	github.com/nwaples/rardecode/v2 v2.2.5
 	github.com/pkg/sftp v1.13.10
+	github.com/zalando/go-keyring v0.2.8
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 	golang.org/x/crypto v0.54.0
 	golang.org/x/exp/shiny v0.0.0-20260709172345-9ea1abe57597
@@ -31,10 +32,12 @@ require (
 	github.com/danielgatis/go-iterator v0.0.1 // indirect
 	github.com/danielgatis/go-utf8 v1.0.1 // indirect
 	github.com/danielgatis/go-vte v1.0.11 // indirect
+	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.2 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-hclog v1.6.3 // indirect

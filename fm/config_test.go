@@ -1083,6 +1083,69 @@ func TestSaveConfigCreatesBackupWhenReplacingExistingFile(t *testing.T) {
 	}
 }
 
+func TestSaveConfigOmitsSSHAuthenticationSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	cfg := DefaultConfig()
+	cfg.SSH.Setups = []SSHSetup{{
+		Name:          "alice@example.test:22",
+		Host:          "example.test",
+		Port:          22,
+		User:          "alice",
+		Password:      "plain-password",
+		KeyPath:       "/home/alice/.ssh/id_ed25519",
+		KeyPassphrase: "plain-passphrase",
+		CredentialID:  "credential-id",
+	}}
+
+	if err := SaveConfig(path, cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{"plain-password", "plain-passphrase", "password:", "key_passphrase:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("saved config contains %q:\n%s", forbidden, text)
+		}
+	}
+	if !strings.Contains(text, "credential_id: credential-id") {
+		t.Fatalf("saved config is missing credential reference:\n%s", text)
+	}
+}
+
+func TestRewriteConfigWithoutBackupRemovesSensitiveBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hexone.yaml")
+	legacy := []byte("ssh:\n  setups:\n    - host: example.test\n      port: 22\n      user: alice\n      password: plain-password\n")
+	if err := os.WriteFile(path, legacy, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.WriteFile(path+configBackupSuffix, legacy, 0o644); err != nil {
+		t.Fatalf("write backup: %v", err)
+	}
+
+	cfg, err := decodeConfigData(legacy)
+	if err != nil {
+		t.Fatalf("decodeConfigData: %v", err)
+	}
+	cfg.SSH.Setups[0].CredentialID = "credential-id"
+	if err := RewriteConfigWithoutBackup(path, cfg); err != nil {
+		t.Fatalf("RewriteConfigWithoutBackup: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read rewritten config: %v", err)
+	}
+	if strings.Contains(string(data), "plain-password") {
+		t.Fatalf("rewritten config retained secret:\n%s", data)
+	}
+	if _, err := os.Stat(path + configBackupSuffix); !os.IsNotExist(err) {
+		t.Fatalf("sensitive backup still exists: %v", err)
+	}
+}
+
 func TestLoadConfigEnsuringFileFallsBackToBackupWhenPrimaryInvalid(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
 

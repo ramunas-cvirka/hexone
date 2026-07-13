@@ -3,7 +3,7 @@
 A fast, keyboard-driven file manager with a built-in viewer — browse, inspect, and compare files without leaving the app.
 
 <p align="center">
-  <img src="assets/main.png" alt="Hexone file manager" />
+  <img src="assets/win-screenshots/basic_file_panes.jpg" alt="Hexone dual-pane file manager on Windows" />
 </p>
 
 ## What it does
@@ -13,7 +13,13 @@ Hexone keeps you in flow. Select a file and press `F3` — the viewer opens inst
 The viewer handles text, syntax-highlighted code, hex dumps, images, PDFs, and binary files. It can also run a custom command and show the output, so you can pipe any tool's result into the same panel.
 
 <p align="center">
-  <img src="assets/viewer.png" alt="Hexone viewer" />
+  <img src="assets/win-screenshots/viewer_pdf.jpg" alt="Hexone PDF viewer with search" width="49%" />
+  <img src="assets/win-screenshots/viewer_hex.jpg" alt="Hexone hex viewer with search" width="49%" />
+</p>
+
+<p align="center">
+  <img src="assets/win-screenshots/terminal_split.jpg" alt="Hexone file panes with the integrated terminal" width="49%" />
+  <img src="assets/win-screenshots/terminal_full.jpg" alt="Hexone maximized integrated terminal" width="49%" />
 </p>
 
 ## Highlights
@@ -96,6 +102,12 @@ Hexone keeps its settings in:
 
 The main config file is `hexone.yaml`. It is created with defaults on first run.
 
+Saved SSH passwords and private-key passphrases are kept in the operating system's secure credential store rather than in `hexone.yaml`: Windows Credential Manager, macOS Keychain, or the Linux Secret Service. Existing plaintext values are migrated automatically.
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
+
+## Privacy
+
+Hexone does not include telemetry, analytics, advertising, or publisher-operated cloud services. See the [Privacy Policy](PRIVACY.md) for details about local data and SSH/SFTP connections.

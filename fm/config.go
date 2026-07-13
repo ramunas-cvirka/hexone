@@ -550,6 +550,29 @@ type SSHSetup struct {
 	Password      string `yaml:"password"`
 	KeyPath       string `yaml:"key_path"`
 	KeyPassphrase string `yaml:"key_passphrase"`
+	CredentialID  string `yaml:"credential_id,omitempty"`
+}
+
+// MarshalYAML deliberately excludes authentication secrets. Password and
+// key_passphrase remain tagged above so older plaintext configs can be read
+// once and migrated to the operating system credential store.
+func (s SSHSetup) MarshalYAML() (any, error) {
+	type persistedSSHSetup struct {
+		Name         string `yaml:"name"`
+		Host         string `yaml:"host"`
+		Port         int    `yaml:"port"`
+		User         string `yaml:"user"`
+		KeyPath      string `yaml:"key_path"`
+		CredentialID string `yaml:"credential_id,omitempty"`
+	}
+	return persistedSSHSetup{
+		Name:         s.Name,
+		Host:         s.Host,
+		Port:         s.Port,
+		User:         s.User,
+		KeyPath:      s.KeyPath,
+		CredentialID: s.CredentialID,
+	}, nil
 }
 
 type SSHConfig struct {
@@ -741,18 +764,40 @@ func DefaultConfig() *Config {
 }
 
 func SaveConfig(path string, cfg *Config) error {
+	data, err := marshalConfig(cfg)
+	if err != nil {
+		return err
+	}
+	return writeConfigFileAtomic(path, data, 0o644, true)
+}
+
+// RewriteConfigWithoutBackup is reserved for migrations that remove sensitive
+// data from an existing config. It also removes the previous backup so the
+// sensitive representation is not retained there.
+func RewriteConfigWithoutBackup(path string, cfg *Config) error {
+	data, err := marshalConfig(cfg)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(configBackupPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove config backup %s: %w", configBackupPath(path), err)
+	}
+	return writeConfigFileAtomic(path, data, 0o644, false)
+}
+
+func marshalConfig(cfg *Config) ([]byte, error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
 	if err := cfg.LoadIssue(); err != nil {
-		return fmt.Errorf("refusing to overwrite config because the existing file did not load cleanly: %w", err)
+		return nil, fmt.Errorf("refusing to overwrite config because the existing file did not load cleanly: %w", err)
 	}
 	cfg.normalize()
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return writeConfigFileAtomic(path, data, 0o644)
+	return data, nil
 }
 
 func LoadConfig(path string) *Config {
@@ -836,7 +881,7 @@ func configBackupPath(path string) string {
 	return path + configBackupSuffix
 }
 
-func writeConfigFileAtomic(path string, data []byte, defaultMode os.FileMode) error {
+func writeConfigFileAtomic(path string, data []byte, defaultMode os.FileMode, createBackup bool) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("config path is empty")
 	}
@@ -852,8 +897,10 @@ func writeConfigFileAtomic(path string, data []byte, defaultMode os.FileMode) er
 	mode := defaultMode
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
-		if err := copyFile(path, configBackupPath(path), mode); err != nil {
-			return fmt.Errorf("backup config %s: %w", path, err)
+		if createBackup {
+			if err := copyFile(path, configBackupPath(path), mode); err != nil {
+				return fmt.Errorf("backup config %s: %w", path, err)
+			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -1254,6 +1301,7 @@ func (c *Config) normalizeSSHSetups() {
 			Password:      raw.Password,
 			KeyPath:       strings.TrimSpace(raw.KeyPath),
 			KeyPassphrase: raw.KeyPassphrase,
+			CredentialID:  strings.TrimSpace(raw.CredentialID),
 		}
 		if setup.Port <= 0 {
 			setup.Port = 22

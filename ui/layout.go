@@ -202,6 +202,7 @@ type UI struct {
 	helpModal                   *helpModalState
 	settingsModal               *settingsModalState
 	sshModal                    *sshModalState
+	sshCredentials              sshCredentialState
 	editorMenuOpenID            string
 	editorMenuTarget            *widget.Editor
 	editorMenuPos               image.Point
