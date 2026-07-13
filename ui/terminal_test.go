@@ -2029,8 +2029,8 @@ func TestTerminalPaneHeightPrefersFullscreenRows(t *testing.T) {
 	if rows < terminalPreferredRows {
 		t.Fatalf("terminal rows=%d want at least %d, height=%d", rows, terminalPreferredRows, h)
 	}
-	if h > gtx.Constraints.Max.Y-gtx.Dp(unit.Dp(150)) {
-		t.Fatalf("terminal height=%d should leave file pane room in %dpx", h, gtx.Constraints.Max.Y)
+	if h > terminalMaxPaneHeight(gtx) {
+		t.Fatalf("terminal height=%d should stay within 75%% cap %d", h, terminalMaxPaneHeight(gtx))
 	}
 }
 
@@ -2061,8 +2061,27 @@ func TestTerminalPaneHeightFallsBackInSmallWindow(t *testing.T) {
 	if h <= 0 || h >= gtx.Constraints.Max.Y {
 		t.Fatalf("terminal height=%d should fit small window height=%d", h, gtx.Constraints.Max.Y)
 	}
-	if h > gtx.Constraints.Max.Y-gtx.Dp(unit.Dp(150)) {
-		t.Fatalf("terminal height=%d should leave minimum file pane room in %dpx", h, gtx.Constraints.Max.Y)
+	if h > terminalMaxPaneHeight(gtx) {
+		t.Fatalf("terminal height=%d should stay within 75%% cap %d", h, terminalMaxPaneHeight(gtx))
+	}
+}
+
+func TestTerminalPaneCanGrowPastOldFixedCapToSeventyFivePercent(t *testing.T) {
+	gtx := testTerminalPaneHeightContext(image.Pt(1200, 1200))
+	cellH := 16
+	maxH := terminalMaxPaneHeight(gtx)
+	if want := 900; maxH != want {
+		t.Fatalf("maximum terminal height=%d want %d", maxH, want)
+	}
+	h := terminalPaneHeight(gtx, cellH, 300)
+	if h <= 560 {
+		t.Fatalf("terminal height=%d should grow beyond old 560px cap", h)
+	}
+	if h > maxH || maxH-h >= cellH {
+		t.Fatalf("row-snapped terminal height=%d should be within one row of 75%% cap %d", h, maxH)
+	}
+	if remaining := gtx.Constraints.Max.Y - h; remaining < gtx.Constraints.Max.Y/4 {
+		t.Fatalf("remaining file pane height=%d want at least %d", remaining, gtx.Constraints.Max.Y/4)
 	}
 }
 

@@ -57,6 +57,8 @@ const (
 
 const (
 	terminalPreferredRows = 24
+	terminalMaxPaneNum    = 3
+	terminalMaxPaneDen    = 4
 )
 
 const (
@@ -3598,19 +3600,9 @@ func terminalMaxPaneHeight(gtx layout.Context) int {
 	if maxY <= 0 {
 		return 0
 	}
-	minH := gtx.Dp(unit.Dp(150))
-	maxH := gtx.Dp(unit.Dp(560))
-	h := maxH
-	if maxY < minH*2 {
-		h = maxY / 2
-	} else if reserve := minH; h > maxY-reserve {
-		h = maxY - reserve
-	}
-	if h < 80 && maxY >= 80 {
-		h = 80
-	}
-	if h > maxY {
-		h = maxY
+	h := maxY * terminalMaxPaneNum / terminalMaxPaneDen
+	if h < 1 {
+		h = 1
 	}
 	return h
 }
@@ -3633,9 +3625,6 @@ func terminalMaxPaneRows(gtx layout.Context, cellH int) int {
 func terminalClampPaneRows(gtx layout.Context, cellH, rows int) int {
 	if rows < 4 {
 		rows = 4
-	}
-	if rows > 80 {
-		rows = 80
 	}
 	maxRows := terminalMaxPaneRows(gtx, cellH)
 	if maxRows < 1 {

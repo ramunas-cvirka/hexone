@@ -40,10 +40,12 @@ const (
 	configBackupSuffix        = ".bak"
 	defaultTerminalHeightRows = 24
 	minTerminalHeightRows     = 4
-	maxTerminalHeightRows     = 80
-	defaultTabMinWidthDp      = 72
-	defaultTabFixedWidthDp    = 118
-	defaultTabMaxWidthDp      = 168
+	// This is only a malformed-config safety limit. The interactive terminal
+	// ceiling is derived from 75% of the available pane height.
+	maxTerminalHeightRows  = 512
+	defaultTabMinWidthDp   = 72
+	defaultTabFixedWidthDp = 118
+	defaultTabMaxWidthDp   = 168
 )
 
 const (

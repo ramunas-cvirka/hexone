@@ -524,6 +524,17 @@ func TestViewerFindModeGlyphKeepsStableCanvas(t *testing.T) {
 	}
 }
 
+func TestViewerFindHintCentersUnderItsGlyph(t *testing.T) {
+	anchor := image.Rect(100, 8, 122, 30)
+	pos := viewerFindHintPoint(anchor, image.Pt(80, 18), image.Pt(300, 100), 2)
+	if want := image.Pt(71, 32); pos != want {
+		t.Fatalf("hint position=%v want %v", pos, want)
+	}
+	if gotCenter := pos.X + 40; gotCenter != anchor.Min.X+anchor.Dx()/2 {
+		t.Fatalf("hint center=%d glyph center=%d", gotCenter, anchor.Min.X+anchor.Dx()/2)
+	}
+}
+
 func TestViewerScrollStreamFindMatchKeepsMatchVisibleBeforeScrolling(t *testing.T) {
 	now := time.Now()
 	st := &fileViewerState{}

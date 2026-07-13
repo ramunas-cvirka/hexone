@@ -102,6 +102,15 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	}
 }
 
+func TestNormalizeTerminalHeightRowsAllowsTallDynamicLayouts(t *testing.T) {
+	if got, want := NormalizeTerminalHeightRows(180), 180; got != want {
+		t.Fatalf("NormalizeTerminalHeightRows(180)=%d want %d", got, want)
+	}
+	if got, want := NormalizeTerminalHeightRows(10_000), maxTerminalHeightRows; got != want {
+		t.Fatalf("NormalizeTerminalHeightRows safety clamp=%d want %d", got, want)
+	}
+}
+
 func TestDateWidthFitsPreferredFormat(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.DateFormats = []string{"2006-01-02 15:04:05", "01-02"}

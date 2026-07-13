@@ -96,17 +96,19 @@ type fileViewerFindState struct {
 	sourceLocalClick  widget.Clickable
 	sourceRemoteClick widget.Clickable
 
-	remoteSearch     bool
-	hexInput         bool
-	hexPreview       bool
-	modeKey          string
-	sourceInit       bool
-	sourceMenuOpen   bool
-	sourceMenuAt     time.Time
-	sourceButtonRect image.Rectangle
-	sourceMenuRect   image.Rectangle
-	status           string
-	searchStartedAt  time.Time
+	remoteSearch      bool
+	hexInput          bool
+	hexPreview        bool
+	modeKey           string
+	sourceInit        bool
+	sourceMenuOpen    bool
+	sourceMenuAt      time.Time
+	sourceButtonRect  image.Rectangle
+	sourceMenuRect    image.Rectangle
+	findByButtonRect  image.Rectangle
+	previewButtonRect image.Rectangle
+	status            string
+	searchStartedAt   time.Time
 
 	matches    []viewerFindMatch
 	index      int
@@ -355,6 +357,8 @@ func (ui *UI) closeFileViewerFind() {
 	st.find.pdfTotalPages = 0
 	st.find.pdfAnchorPage = 0
 	st.find.sourceButtonRect = image.Rectangle{}
+	st.find.findByButtonRect = image.Rectangle{}
+	st.find.previewButtonRect = image.Rectangle{}
 	st.find.closeSourceMenu()
 	ui.cancelFileViewerFindSearch(st)
 	ui.closeEditorContextMenu()
@@ -2337,6 +2341,24 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 	statusW := ui.fileViewerFindStatusWidth(th, gtx)
 	barW, editorW := ui.fileViewerFindBarWidths(th, gtx, st, gtx.Now)
 	st.find.sourceButtonRect = image.Rectangle{}
+	st.find.findByButtonRect = image.Rectangle{}
+	st.find.previewButtonRect = image.Rectangle{}
+	if st.mode == "hex" {
+		buttonSize := gtx.Dp(unit.Dp(viewerFindBarRowHeightDp))
+		x := innerOrigin.X
+		if sourceW := ui.fileViewerFindSourceChipWidth(th, gtx, st); sourceW > 0 {
+			x += sourceW + gtx.Dp(unit.Dp(6))
+		}
+		findLabel := material.Body2(th, "Find")
+		findLabel.Font.Typeface = ui.viewerTypeface()
+		findLabel.Font.Weight = font.Medium
+		findLabel.TextSize = scaleThemeFontSize(th, 10)
+		findLabel.MaxLines = 1
+		x += measureLabelUnconstrained(gtx, findLabel).Size.X + gtx.Dp(unit.Dp(6))
+		st.find.findByButtonRect = image.Rect(x, innerOrigin.Y, x+buttonSize, innerOrigin.Y+buttonSize)
+		x += buttonSize + gtx.Dp(unit.Dp(4)) + editorW + gtx.Dp(unit.Dp(4))
+		st.find.previewButtonRect = image.Rect(x, innerOrigin.Y, x+buttonSize, innerOrigin.Y+buttonSize)
+	}
 	bar := op.Record(gtx.Ops)
 	barDims := fixedWidth(gtx, barW, func(gtx layout.Context) layout.Dimensions {
 		return fillRoundedClipBox(
@@ -2458,6 +2480,8 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 	barCall := bar.Stop()
 	if barDims.Size.X <= 0 || barDims.Size.Y <= 0 {
 		st.find.sourceButtonRect = image.Rectangle{}
+		st.find.findByButtonRect = image.Rectangle{}
+		st.find.previewButtonRect = image.Rectangle{}
 		st.find.sourceMenuRect = image.Rectangle{}
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
@@ -2473,6 +2497,12 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 	}
 	if st.find.sourceButtonRect.Dx() > 0 && st.find.sourceButtonRect.Dy() > 0 {
 		st.find.sourceButtonRect = st.find.sourceButtonRect.Add(barPos)
+	}
+	if !st.find.findByButtonRect.Empty() {
+		st.find.findByButtonRect = st.find.findByButtonRect.Add(barPos)
+	}
+	if !st.find.previewButtonRect.Empty() {
+		st.find.previewButtonRect = st.find.previewButtonRect.Add(barPos)
 	}
 	offset := op.Offset(barPos).Push(gtx.Ops)
 	barCall.Add(gtx.Ops)
@@ -2511,7 +2541,7 @@ func (ui *UI) layoutFileViewerFindBar(th *material.Theme, gtx layout.Context, st
 		panelCall.Add(gtx.Ops)
 		offset.Pop()
 	}
-	ui.deferFileViewerFindModeHint(th, gtx, st, barPos, barDims.Size)
+	ui.deferFileViewerFindModeHint(th, gtx, st)
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
@@ -2583,27 +2613,28 @@ func layoutFileViewerFindModeGlyph(gtx layout.Context, hexMode bool, fg color.NR
 	return layout.Dimensions{Size: size}
 }
 
-func (ui *UI) deferFileViewerFindModeHint(th *material.Theme, gtx layout.Context, st *fileViewerState, barPos, barSize image.Point) {
-	if st == nil || st.mode != "hex" || barSize.X <= 0 || barSize.Y <= 0 {
+func (ui *UI) deferFileViewerFindModeHint(th *material.Theme, gtx layout.Context, st *fileViewerState) {
+	if st == nil || st.mode != "hex" {
 		return
 	}
 	tip := ""
-	alignRight := false
+	anchor := image.Rectangle{}
 	if st.find.findByClick.Hovered() {
+		anchor = st.find.findByButtonRect
 		if st.find.hexInput {
 			tip = "Search as hex"
 		} else {
 			tip = "Search as text"
 		}
 	} else if st.find.previewClick.Hovered() {
-		alignRight = true
+		anchor = st.find.previewButtonRect
 		if st.find.hexPreview {
 			tip = "Preview as hex"
 		} else {
 			tip = "Preview as text"
 		}
 	}
-	if tip == "" {
+	if tip == "" || anchor.Empty() {
 		return
 	}
 	tipGTX := gtx
@@ -2622,17 +2653,17 @@ func (ui *UI) deferFileViewerFindModeHint(th *material.Theme, gtx layout.Context
 		})
 	})
 	tipCall := recorded.Stop()
-	x := barPos.X + gtx.Dp(unit.Dp(8))
-	if alignRight {
-		x = barPos.X + barSize.X - tipDims.Size.X - gtx.Dp(unit.Dp(8))
-	}
-	pos := image.Pt(x, barPos.Y+barSize.Y+gtx.Dp(unit.Dp(2)))
-	pos = clampFilePaneMenuPoint(pos, tipDims.Size, gtx.Constraints.Max)
+	pos := viewerFindHintPoint(anchor, tipDims.Size, gtx.Constraints.Max, gtx.Dp(unit.Dp(2)))
 	deferred := op.Record(gtx.Ops)
 	offset := op.Offset(pos).Push(gtx.Ops)
 	tipCall.Add(gtx.Ops)
 	offset.Pop()
 	op.Defer(gtx.Ops, deferred.Stop())
+}
+
+func viewerFindHintPoint(anchor image.Rectangle, tipSize, viewport image.Point, gap int) image.Point {
+	pos := image.Pt(anchor.Min.X+(anchor.Dx()-tipSize.X)/2, anchor.Max.Y+gap)
+	return clampFilePaneMenuPoint(pos, tipSize, viewport)
 }
 
 func fileViewerFindResultCount(st *fileViewerState) int {
