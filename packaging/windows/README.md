@@ -15,9 +15,8 @@ the latest reachable `v*` Git tag, and also injects the current copyright year:
 - If `HEAD` is ahead of `v0.1.0`, Explorer still gets `0.1.0.0`.
 - The 4th component is reserved and currently fixed to `0`.
 
-The normal `make build`, `make build-windows`, packaging, and GoReleaser paths
-regenerate the compiled resource automatically. To regenerate it on its own,
-use:
+The normal `make build`, `make build-windows`, and packaging paths regenerate
+the compiled resource automatically. To regenerate it on its own, use:
 
 ```powershell
 make windows-resource
@@ -78,3 +77,27 @@ would leave Windows unable to select the intended shell icons.
 
 Install the local package by double-clicking `hexone_windows_amd64_dev.msix` or
 with `Add-AppxPackage`. Do not use the `_dev.msix` package for Store submission.
+
+## Publish Store updates from GitHub
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`. The workflow builds the
+Store MSIX on Windows, attaches it to the GitHub release, and submits the same
+package to Partner Center when Store credentials are configured.
+
+Add these four repository secrets under **Settings → Secrets and variables →
+Actions**:
+
+- `AZURE_AD_APPLICATION_CLIENT_ID`
+- `AZURE_AD_APPLICATION_SECRET`
+- `AZURE_AD_TENANT_ID`
+- `SELLER_ID`
+
+The Entra application must be associated with Partner Center and have the
+**Manager** role. If none of the secrets exist, Store submission is skipped
+without affecting the GitHub release. A partial configuration fails the Store
+job so a missing credential cannot go unnoticed.
+
+The workflow defaults to Hexone's Store product ID, `9NRFGTN6VGQK`. Override it
+with the `HEXONE_MS_STORE_PRODUCT_ID` repository variable if the product changes.
+The package identity and publisher can likewise be overridden with
+`HEXONE_MSIX_IDENTITY_NAME` and `HEXONE_MSIX_PUBLISHER`.

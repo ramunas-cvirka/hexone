@@ -27,57 +27,51 @@ let image = NSImage(size: size)
 image.lockFocus()
 
 let gradient = NSGradient(colors: [
-    NSColor(calibratedRed: 0.08, green: 0.09, blue: 0.12, alpha: 1),
-    NSColor(calibratedRed: 0.05, green: 0.06, blue: 0.08, alpha: 1),
+    NSColor(calibratedRed: 0.97, green: 0.98, blue: 1.00, alpha: 1),
+    NSColor(calibratedRed: 0.89, green: 0.92, blue: 0.97, alpha: 1),
 ])!
 gradient.draw(in: NSRect(origin: .zero, size: size), angle: -90)
 
-let topGlow = NSBezierPath(ovalIn: NSRect(x: -40, y: 250, width: 720, height: 230))
-NSColor(calibratedRed: 0.16, green: 0.19, blue: 0.28, alpha: 0.35).setFill()
+let topGlow = NSBezierPath(ovalIn: NSRect(x: -80, y: 270, width: 800, height: 210))
+NSColor(calibratedRed: 0.72, green: 0.82, blue: 0.98, alpha: 0.22).setFill()
 topGlow.fill()
 
-let iconGlowLeft = NSBezierPath(ovalIn: NSRect(x: 70, y: 105, width: 190, height: 150))
-NSColor(calibratedRed: 0.18, green: 0.22, blue: 0.35, alpha: 0.22).setFill()
-iconGlowLeft.fill()
+let leftWell = NSBezierPath(roundedRect: NSRect(x: 76, y: 92, width: 188, height: 174), xRadius: 42, yRadius: 42)
+NSColor(calibratedWhite: 1.0, alpha: 0.58).setFill()
+leftWell.fill()
 
-let iconGlowRight = NSBezierPath(ovalIn: NSRect(x: 380, y: 105, width: 190, height: 150))
-NSColor(calibratedRed: 0.12, green: 0.18, blue: 0.28, alpha: 0.18).setFill()
-iconGlowRight.fill()
+let rightWell = NSBezierPath(roundedRect: NSRect(x: 376, y: 92, width: 188, height: 174), xRadius: 42, yRadius: 42)
+NSColor(calibratedWhite: 1.0, alpha: 0.58).setFill()
+rightWell.fill()
 
-let leftLabelPlate = NSBezierPath(roundedRect: NSRect(x: 106, y: 104, width: 136, height: 38), xRadius: 19, yRadius: 19)
-NSColor(calibratedRed: 0.90, green: 0.94, blue: 1.00, alpha: 0.26).setFill()
-leftLabelPlate.fill()
+let leftWellBorder = NSBezierPath(roundedRect: NSRect(x: 76.5, y: 92.5, width: 187, height: 173), xRadius: 41.5, yRadius: 41.5)
+leftWellBorder.lineWidth = 1
+NSColor(calibratedRed: 0.63, green: 0.70, blue: 0.82, alpha: 0.22).setStroke()
+leftWellBorder.stroke()
 
-let rightLabelPlate = NSBezierPath(roundedRect: NSRect(x: 392, y: 104, width: 176, height: 38), xRadius: 19, yRadius: 19)
-NSColor(calibratedRed: 0.90, green: 0.94, blue: 1.00, alpha: 0.26).setFill()
-rightLabelPlate.fill()
-
-let leftLabelGlow = NSBezierPath(ovalIn: NSRect(x: 84, y: 90, width: 182, height: 66))
-NSColor(calibratedRed: 0.74, green: 0.82, blue: 0.96, alpha: 0.14).setFill()
-leftLabelGlow.fill()
-
-let rightLabelGlow = NSBezierPath(ovalIn: NSRect(x: 374, y: 90, width: 212, height: 66))
-NSColor(calibratedRed: 0.74, green: 0.82, blue: 0.96, alpha: 0.14).setFill()
-rightLabelGlow.fill()
+let rightWellBorder = NSBezierPath(roundedRect: NSRect(x: 376.5, y: 92.5, width: 187, height: 173), xRadius: 41.5, yRadius: 41.5)
+rightWellBorder.lineWidth = 1
+NSColor(calibratedRed: 0.63, green: 0.70, blue: 0.82, alpha: 0.22).setStroke()
+rightWellBorder.stroke()
 
 let separator = NSBezierPath()
 separator.move(to: NSPoint(x: 56, y: 302))
 separator.line(to: NSPoint(x: size.width - 56, y: 302))
 separator.lineWidth = 1
-NSColor(calibratedRed: 0.62, green: 0.69, blue: 0.82, alpha: 0.22).setStroke()
+NSColor(calibratedRed: 0.36, green: 0.45, blue: 0.60, alpha: 0.16).setStroke()
 separator.stroke()
 
 let titleFont = NSFont.systemFont(ofSize: 38, weight: .medium)
 let footerFont = NSFont.systemFont(ofSize: 14, weight: .regular)
 let arrowFont = NSFont.systemFont(ofSize: 72, weight: .ultraLight)
 
-let titleAttr = makeParagraph(title, font: titleFont, color: NSColor(calibratedRed: 0.95, green: 0.96, blue: 0.99, alpha: 0.96))
+let titleAttr = makeParagraph(title, font: titleFont, color: NSColor(calibratedRed: 0.10, green: 0.14, blue: 0.22, alpha: 0.94))
 titleAttr.draw(in: NSRect(x: 60, y: 328, width: size.width - 120, height: 48))
 
-let arrowAttr = makeParagraph("→", font: arrowFont, color: NSColor(calibratedRed: 0.72, green: 0.76, blue: 0.84, alpha: 0.68))
+let arrowAttr = makeParagraph("→", font: arrowFont, color: NSColor(calibratedRed: 0.31, green: 0.40, blue: 0.56, alpha: 0.64))
 arrowAttr.draw(in: NSRect(x: 270, y: 126, width: 100, height: 84))
 
-let footerAttr = makeParagraph(subtitle, font: footerFont, color: NSColor(calibratedRed: 0.78, green: 0.81, blue: 0.87, alpha: 0.76))
+let footerAttr = makeParagraph(subtitle, font: footerFont, color: NSColor(calibratedRed: 0.20, green: 0.25, blue: 0.34, alpha: 0.74))
 footerAttr.draw(in: NSRect(x: 74, y: 34, width: size.width - 148, height: 22))
 
 image.unlockFocus()

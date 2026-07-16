@@ -5,7 +5,6 @@
 /hexone.session.yaml
 .DS_Store
 **/.DS_Store
-/.qodo/
 /.idea/
 /.vscode/
 /.vs/

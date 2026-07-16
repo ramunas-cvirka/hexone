@@ -385,7 +385,6 @@ package-macos: build-macos-pdfium
 	rm -rf "$(MACOS_DMG_STAGE)"
 	mkdir -p "$(MACOS_DMG_BACKGROUND_DIR)"
 	ditto "$(MACOS_APP)" "$(MACOS_DMG_STAGE)/$(APP).app"
-	cp LICENSE NOTICE "$(MACOS_DMG_STAGE)/"
 	ln -s /Applications "$(MACOS_DMG_STAGE)/Applications"
 	swift "$(MACOS_DMG_BG_SCRIPT)" "$(MACOS_DMG_BACKGROUND)" "$(APP)"
 	@set -e; \

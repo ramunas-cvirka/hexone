@@ -137,11 +137,54 @@ jobs:
           name: hexone-macos-arm64-dmg
           path: dist/hexone_macos_arm64.dmg
 
+  build-windows-store:
+    runs-on: windows-latest
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+
+      - name: Install Windows build dependencies
+        shell: pwsh
+        run: |
+          choco install make mingw --no-progress -y
+          $windres = @(
+            'C:\ProgramData\chocolatey\lib\mingw',
+            'C:\ProgramData\mingw64'
+          ) | Where-Object { Test-Path $_ } |
+            ForEach-Object { Get-ChildItem $_ -Filter windres.exe -Recurse -ErrorAction SilentlyContinue } |
+            Select-Object -First 1
+          if (-not $windres) {
+            throw "windres.exe was not installed"
+          }
+          $windres.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build Microsoft Store MSIX
+        env:
+          HEXONE_MSIX_IDENTITY_NAME: ${{ vars.HEXONE_MSIX_IDENTITY_NAME || 'RamnasCvirka.hexone' }}
+          HEXONE_MSIX_PUBLISHER: ${{ vars.HEXONE_MSIX_PUBLISHER || 'CN=F267E84A-8585-42BC-92A8-D98FDFEA2938' }}
+        run: make package-windows-msix MSIX_DEV_SIGN=false
+
+      - name: Upload Microsoft Store MSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: hexone-windows-amd64-msix
+          path: dist/hexone_windows_amd64.msix
+
   release:
     runs-on: ubuntu-latest
     needs:
       - build-linux-windows
       - build-macos
+      - build-windows-store
 
     steps:
       - name: Checkout
@@ -179,6 +222,75 @@ jobs:
           files: |
             dist/assets/hexone-linux-amd64-appimage/hexone_linux_amd64.AppImage
             dist/assets/hexone-macos-arm64-dmg/hexone_macos_arm64.dmg
+            dist/assets/hexone-windows-amd64-msix/hexone_windows_amd64.msix
             dist/assets/hexone-windows-amd64-portable-zip/hexone_windows_amd64_portable.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-microsoft-store:
+    runs-on: windows-latest
+    needs:
+      - build-windows-store
+      - release
+
+    steps:
+      - name: Check Microsoft Store publishing configuration
+        id: store-config
+        shell: pwsh
+        env:
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+        run: |
+          $values = @(
+            $env:AZURE_AD_APPLICATION_CLIENT_ID,
+            $env:AZURE_AD_APPLICATION_SECRET,
+            $env:AZURE_AD_TENANT_ID,
+            $env:SELLER_ID
+          )
+          $configured = @($values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
+          if ($configured -eq 0) {
+            "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "Microsoft Store publishing is not configured; the MSIX remains available on the GitHub release."
+            exit 0
+          }
+          if ($configured -ne $values.Count) {
+            throw "Microsoft Store publishing is only partially configured. Add all four Partner Center secrets or remove them all."
+          }
+          "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Download Microsoft Store MSIX
+        if: steps.store-config.outputs.enabled == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: hexone-windows-amd64-msix
+          path: dist/store
+
+      - name: Configure Microsoft Store CLI
+        if: steps.store-config.outputs.enabled == 'true'
+        uses: microsoft/microsoft-store-apppublisher@v1.2
+
+      - name: Authenticate with Partner Center
+        if: steps.store-config.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+        run: |
+          msstore reconfigure `
+            --tenantId "$env:AZURE_AD_TENANT_ID" `
+            --sellerId "$env:SELLER_ID" `
+            --clientId "$env:AZURE_AD_APPLICATION_CLIENT_ID" `
+            --clientSecret "$env:AZURE_AD_APPLICATION_SECRET"
+
+      - name: Submit update to Microsoft Store
+        if: steps.store-config.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          HEXONE_MS_STORE_PRODUCT_ID: ${{ vars.HEXONE_MS_STORE_PRODUCT_ID || '9NRFGTN6VGQK' }}
+        run: |
+          msstore publish "$env:GITHUB_WORKSPACE\dist\store\hexone_windows_amd64.msix" `
+            -id "$env:HEXONE_MS_STORE_PRODUCT_ID"
