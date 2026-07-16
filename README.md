@@ -1,16 +1,19 @@
 # Hexone
 
-A fast, keyboard-driven file manager with a built-in viewer — browse, inspect, and compare files without leaving the app.
+A fast dual-pane file manager for Windows, macOS, and Linux, with SSH/SFTP, an integrated terminal, and a built-in viewer.
 
 <p align="center">
   <img src="assets/win-screenshots/basic_file_panes.jpg" alt="Hexone dual-pane file manager on Windows" />
 </p>
 
-## What it does
+## Features
 
-Hexone keeps you in flow. Select a file and press `F3` — the viewer opens instantly on the right. Switch files, the viewer follows. Navigate with the keyboard. Copy, move, rename, delete — all without touching the mouse.
-
-The viewer handles text, syntax-highlighted code, hex dumps, images, PDFs, and binary files. It can also run a custom command and show the output, so you can pipe any tool's result into the same panel.
+- Dual file panes with tabs, sorting, favorites, and multi-file rename
+- Built-in text, code, hex, image, and PDF viewer with search
+- SSH/SFTP browsing with remote file viewing
+- Integrated terminal with multiple tabs
+- Large-file viewing for logs and binary data
+- Hex-to-ASCII and configurable protocol-analysis tools
 
 <p align="center">
   <img src="assets/win-screenshots/viewer_pdf.jpg" alt="Hexone PDF viewer with search" width="49%" />
@@ -22,38 +25,39 @@ The viewer handles text, syntax-highlighted code, hex dumps, images, PDFs, and b
   <img src="assets/win-screenshots/terminal_full.jpg" alt="Hexone maximized integrated terminal" width="49%" />
 </p>
 
-## Highlights
-
-**Browse**
-- Dual-pane layout — one pane for source, one for destination, or use both independently
-- Per-pane tabs, plus terminal tabs, with compact overflow controls
-- `brief` and `full` listing modes
-- Sort by name, date, extension, or size — flip direction with a single click
-- Favorites for instant access to frequent locations
-- Drive picker on Windows
-
-**View**
-- Text with syntax highlighting, hex dump, image preview, and PDF preview in one viewer
-- Large file friendly — opening a multi-GB log won't stall the app
-- Built-in search with `Ctrl+F`
-
-**Work remotely**
-- SSH / SFTP browsing — navigate a remote server the same way as local files
-- Viewer works over SSH too
-
-**Extras**
-- Hex-to-ASCII converter
-- Protocol analyzer driven by a `protocols.yaml` file you can customize
-
 ## Install
 
-Download a package from the [Releases](../../releases) page for macOS, Linux, or Windows — no installer needed, just run it.
+### Windows
 
-> [!NOTE]
-> **macOS** — if the first launch is blocked, go to `System Settings → Privacy & Security`, scroll to Security, and click **Open Anyway**. This is standard macOS gatekeeper behaviour for apps distributed outside the App Store.
+**Recommended — Microsoft Store:** [Get Hexone from Microsoft Store](https://apps.microsoft.com/detail/9NRFGTN6VGQK) or [open it directly in the Microsoft Store app](ms-windows-store://pdp/?productid=9NRFGTN6VGQK).
 
-> [!NOTE]
-> **Windows** — if SmartScreen shows a blue warning, click **More info → Run anyway**. This happens with new unsigned executables; it is not specific to Hexone.
+Store ID: `9NRFGTN6VGQK`
+
+The Store version provides the simplest installation and automatic updates.
+
+**Alternative — portable build:** Download it from [Releases](../../releases). When SmartScreen warns about the portable build, click **More info → Run anyway**.
+
+### macOS
+
+Download the macOS build from [Releases](../../releases) and move `hexone.app` to Applications. macOS will block the first launch because the app is not notarized. Use either option below to open it.
+
+**Option 1 — Terminal**
+
+Run:
+
+```sh
+xattr -cr /Applications/hexone.app
+```
+
+Open Hexone normally.
+
+**Option 2 — Open Anyway**
+
+Try opening Hexone once. In the warning that Apple cannot check it for malicious software, click **Done** — not **Move to Trash**. Then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. When the warning appears again, click **Open**.
+
+### Linux
+
+Download the Linux package from [Releases](../../releases), make it executable if needed, and run it.
 
 ## Keyboard quick-reference
 
@@ -62,23 +66,14 @@ Download a package from the [Releases](../../releases) page for macOS, Linux, or
 | `F1` | Help |
 | `F2` | Custom commands |
 | `F3` | Open viewer |
-| `F4` | Open with system default app |
-| `F5` | Copy |
-| `F6` | Move / Rename |
+| `F4` | Open with the system default app |
+| `F5` / `F6` | Copy / Move or rename |
 | `Ctrl+M` / `Cmd+M` | Multi-rename selected files |
-| `F7` | New folder |
-| `F8` | Delete |
-| `F12` | Toggle terminal drawer |
-| `Cmd+K` (macOS), `Ctrl+Shift+K` (Windows/Linux) | Clear active terminal tab |
+| `F7` / `F8` | New folder / Delete |
+| `F12` | Toggle terminal |
 | `Tab` | Switch pane |
-| `Shift+Tab` | Toggle terminal/file-pane focus when the terminal drawer is open |
-| `Ctrl+N` | New tab in the focused file pane or terminal |
-| `Ctrl+X` | Close the active tab in the focused file pane or terminal |
-| `Ctrl+Tab` | Next tab in the focused file pane or terminal |
-| `Ctrl+Shift+Tab` | Previous tab in the focused file pane or terminal |
-| `Enter` | Open file or directory |
-| `Ctrl+F` | Find in viewer |
-| `Esc` | Close popup / cancel |
+| `Ctrl+N` / `Ctrl+X` | Open / Close tab |
+| `Ctrl+F` / `Cmd+F` | Open SSH setup in file panes / Find in viewer |
 
 Full keyboard reference is in [HELP.md](HELP.md).
 
@@ -100,9 +95,7 @@ Hexone keeps its settings in:
 - **Windows portable** — same folder as the executable
 - **Windows MSIX** — the package's `LocalState` folder under `%LOCALAPPDATA%\Packages\`
 
-The main config file is `hexone.yaml`. It is created with defaults on first run.
-
-Saved SSH passwords and private-key passphrases are kept in the operating system's secure credential store rather than in `hexone.yaml`: Windows Credential Manager, macOS Keychain, or the Linux Secret Service. Existing plaintext values are migrated automatically.
+The main config file is `hexone.yaml`; Hexone creates it on first run. SSH passwords and key passphrases are stored in the operating system's secure credential store.
 
 ## License
 
