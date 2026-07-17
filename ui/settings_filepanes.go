@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"hexone/filesys"
 	"hexone/fm"
@@ -31,6 +32,11 @@ const (
 )
 
 var settingsPanePreviewTime = time.Date(2026, time.July, 11, 16, 47, 9, 0, time.Local)
+
+const (
+	settingsFullPaneWidthExplanation  = "Limits the filename width when the pane gets narrow enough to require shrinking or hiding other columns."
+	settingsBriefPaneWidthExplanation = "Only applies when the longest filename exceeds this value. Longer names are trimmed to this width."
+)
 
 func normalizeSettingsPaneMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
@@ -482,14 +488,22 @@ func (ui *UI) layoutSettingsPaneCharsStepper(th *material.Theme, gtx layout.Cont
 	})
 }
 
-func (ui *UI) layoutSettingsPaneWidthRow(th *material.Theme, gtx layout.Context, st *settingsModalState, label string, stepper *settingsNumberStepperState, value float32, focus settingsKeyboardFocus) layout.Dimensions {
+func (ui *UI) layoutSettingsPaneWidthRow(th *material.Theme, gtx layout.Context, st *settingsModalState, label, explanation string, stepper *settingsNumberStepperState, helpClick *widget.Clickable, value float32, focus settingsKeyboardFocus) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(ui.settingsPaneControlLabel(th, label)),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, gtx.Dp(unit.Dp(78)), func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutSettingsPaneCharsStepper(th, gtx, st, stepper, value, focus)
-			})
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, gtx.Dp(unit.Dp(78)), func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutSettingsPaneCharsStepper(th, gtx, st, stepper, value, focus)
+					})
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsHelpIcon(th, gtx, helpClick, explanation)
+				}),
+			)
 		}),
 	)
 }
@@ -504,7 +518,7 @@ func (ui *UI) layoutSettingsPaneFullTab(th *material.Theme, gtx layout.Context, 
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsPaneWidthRow(th, gtx, st, "Filename column width", &st.paneFullCharsStepper, st.paneFullChars, settingsKeyboardFocusFilePaneFullChars)
+			return ui.layoutSettingsPaneWidthRow(th, gtx, st, "Filename column width", settingsFullPaneWidthExplanation, &st.paneFullCharsStepper, &st.paneFullCharsHelpClick, st.paneFullChars, settingsKeyboardFocusFilePaneFullChars)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Rigid(ui.settingsPaneControlLabel(th, "Permissions column")),
@@ -524,17 +538,9 @@ func (ui *UI) layoutSettingsPaneFullTab(th *material.Theme, gtx layout.Context, 
 func (ui *UI) layoutSettingsPaneBriefTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutSettingsPaneWidthRow(th, gtx, st, "Filename column width", &st.paneBriefCharsStepper, st.paneBriefChars, settingsKeyboardFocusFilePaneBriefChars)
+			return ui.layoutSettingsPaneWidthRow(th, gtx, st, "Maximum filename width", settingsBriefPaneWidthExplanation, &st.paneBriefCharsStepper, &st.paneBriefCharsHelpClick, st.paneBriefChars, settingsKeyboardFocusFilePaneBriefChars)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			lbl := material.Caption(th, "Brief mode fills the pane top-to-bottom, then starts the next column.")
-			lbl.Font.Typeface = ui.interfaceTypeface()
-			lbl.TextSize = ui.scaleModalFontSize(8)
-			lbl.Color = hintColor
-			return lbl.Layout(gtx)
-		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return ui.layoutSettingsBriefPanePreview(th, gtx, st) }),
 	)
 }
@@ -639,7 +645,7 @@ type settingsPanePreviewRow struct {
 var settingsPanePreviewRows = []settingsPanePreviewRow{
 	{name: "..", kind: filesys.EntryParent},
 	{name: "Projects", kind: filesys.EntryDir},
-	{name: "release-notes.txt", kind: filesys.EntryFile, size: "12.4 KB"},
+	{name: "devonthink_index.applescript", kind: filesys.EntryFile, size: "12.4 KB"},
 	{name: "photos.rar", kind: filesys.EntryFile, size: "824 MB"},
 	{name: "hexone.exe", kind: filesys.EntryFile, size: "38.2 MB"},
 }
@@ -647,17 +653,17 @@ var settingsPanePreviewRows = []settingsPanePreviewRow{
 var settingsBriefPanePreviewRows = []settingsPanePreviewRow{
 	{name: "..", kind: filesys.EntryParent},
 	{name: "Projects", kind: filesys.EntryDir},
-	{name: "release-notes.txt", kind: filesys.EntryFile},
+	{name: "devonthink_index.applescript", kind: filesys.EntryFile},
 	{name: "photos.rar", kind: filesys.EntryFile},
 	{name: "hexone.exe", kind: filesys.EntryFile},
 	{name: "Documents", kind: filesys.EntryDir},
 	{name: "archive-part1.rar", kind: filesys.EntryFile},
-	{name: "holiday.png", kind: filesys.EntryFile},
+	{name: "quarterly-financial-report-2026-final.xlsx", kind: filesys.EntryFile},
 	{name: "music.flac", kind: filesys.EntryFile},
 	{name: "todo.md", kind: filesys.EntryFile},
 	{name: "Downloads", kind: filesys.EntryDir},
 	{name: "backup-2026.zip", kind: filesys.EntryFile},
-	{name: "invoice.pdf", kind: filesys.EntryFile},
+	{name: "customer-database-production-backup-2026-07-17.tar.zst", kind: filesys.EntryFile},
 	{name: "server.log", kind: filesys.EntryFile},
 	{name: "installer.msi", kind: filesys.EntryFile},
 	{name: "Source", kind: filesys.EntryDir},
@@ -665,6 +671,25 @@ var settingsBriefPanePreviewRows = []settingsPanePreviewRow{
 	{name: "README.md", kind: filesys.EntryFile},
 	{name: "sample.mp4", kind: filesys.EntryFile},
 	{name: "data.csv", kind: filesys.EntryFile},
+}
+
+func settingsBriefPreviewLongestNameChars() float32 {
+	longest := float32(1)
+	for _, row := range settingsBriefPanePreviewRows {
+		if chars := float32(utf8.RuneCountInString(row.name)); chars > longest {
+			longest = chars
+		}
+	}
+	return longest
+}
+
+func settingsBriefPreviewColumnChars(configured float32) float32 {
+	configured = settingsNormalizePaneChars(configured, 16)
+	longest := settingsBriefPreviewLongestNameChars()
+	if longest > configured {
+		return configured
+	}
+	return longest
 }
 
 func (ui *UI) settingsPanePreviewIcon(row settingsPanePreviewRow) table.LeadingIcon {
@@ -851,7 +876,7 @@ func (ui *UI) layoutSettingsBriefPanePreview(th *material.Theme, gtx layout.Cont
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(8), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					colW := gtx.Dp(unit.Dp(st.paneBriefChars*6 + 22))
+					colW := gtx.Dp(unit.Dp(settingsBriefPreviewColumnChars(st.paneBriefChars)*6 + 22))
 					count := gtx.Constraints.Max.X / max(1, colW)
 					if count < 1 {
 						count = 1

@@ -76,6 +76,13 @@ type WidthAwareModel interface {
 	CellWithWidth(row, col, widthPx int) (string, CellStyle)
 }
 
+// BriefColumnTextWidthModel reports the measured width of the widest
+// untruncated first-column label. Brief mode adds its own icon and inset
+// reserves, then caps the resulting column at BriefColumnWidth.
+type BriefColumnTextWidthModel interface {
+	BriefColumnTextWidthPx() int
+}
+
 type IconKind uint8
 
 const (
@@ -133,7 +140,7 @@ type Table struct {
 	MarkedSelFg *color.NRGBA
 	SelectedFg  *color.NRGBA
 
-	BriefColumnWidth unit.Dp
+	BriefColumnWidth unit.Dp // maximum width after measuring brief-mode content
 	BriefGap         unit.Dp
 
 	ScrollbarWidth      unit.Dp
@@ -1643,7 +1650,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 			t.viewRows = intersectingRows(listH, rowHpx)
 			t.briefRowsPerCol = t.viewRows
 			t.briefVisibleCols = 1
-			t.computeBriefLayout(gtx, n, briefViewportW)
+			t.computeBriefLayout(th, gtx, m, n, briefViewportW, rowHpx)
 			itemCount := t.listItemCount(n)
 			needScrollbar := itemCount > t.briefVisibleCols && scrollbarH > 0 && contentH > scrollbarH
 			if needScrollbar {
@@ -1654,7 +1661,7 @@ func (t *Table) Layout(th *material.Theme, gtx layout.Context, m Model) layout.D
 				listH = partialRowViewportHeight(contentH, rowHpx, minimumPartialH)
 				t.viewRows = intersectingRows(listH, rowHpx)
 				t.briefRowsPerCol = t.viewRows
-				t.computeBriefLayout(gtx, n, briefViewportW)
+				t.computeBriefLayout(th, gtx, m, n, briefViewportW, rowHpx)
 				itemCount = t.listItemCount(n)
 			}
 			t.hitSize = image.Pt(briefViewportW, listH)
@@ -1925,11 +1932,7 @@ func (t *Table) layoutBrief(th *material.Theme, gtx layout.Context, m Model, n, 
 	})
 }
 
-func (t *Table) computeBriefLayout(gtx layout.Context, n, viewportW int) {
-	colW := gtx.Dp(t.BriefColumnWidth)
-	if colW < 1 {
-		colW = 1
-	}
+func (t *Table) computeBriefLayout(th *material.Theme, gtx layout.Context, m Model, n, viewportW, rowHpx int) {
 	gapW := gtx.Dp(t.BriefGap)
 	if gapW < 0 {
 		gapW = 0
@@ -1950,20 +1953,13 @@ func (t *Table) computeBriefLayout(gtx layout.Context, n, viewportW int) {
 
 	visibleCols := 1
 	if totalCols > 0 {
-		visibleCols = totalCols
-		preferred := (viewportW + gapW) / maxInt(1, colW+gapW)
-		if preferred < 1 {
-			preferred = 1
+		targetColW := t.briefTargetColumnWidthPx(th, gtx, m, n, rowHpx)
+		visibleCols = (viewportW + gapW) / maxInt(1, targetColW+gapW)
+		if visibleCols < 1 {
+			visibleCols = 1
 		}
-		if visibleCols > preferred {
-			maxAtMin := (viewportW + gapW) / maxInt(1, t.briefMinColumnWidthPx(gtx)+gapW)
-			if maxAtMin < 1 {
-				maxAtMin = 1
-			}
-			if maxAtMin > totalCols {
-				maxAtMin = totalCols
-			}
-			visibleCols = maxAtMin
+		if visibleCols > totalCols {
+			visibleCols = totalCols
 		}
 	}
 
@@ -1991,12 +1987,69 @@ func (t *Table) computeBriefLayout(gtx layout.Context, n, viewportW int) {
 	t.briefLastColExtraPx = extra
 }
 
-func (t *Table) briefMinColumnWidthPx(gtx layout.Context) int {
-	base := gtx.Dp(t.BriefColumnWidth)
-	if base < 1 {
-		base = 1
+func (t *Table) briefTargetColumnWidthPx(th *material.Theme, gtx layout.Context, m Model, n, rowHpx int) int {
+	configuredMax := gtx.Dp(t.BriefColumnWidth)
+	if configuredMax < 1 {
+		configuredMax = 1
 	}
-	return base
+
+	minWidth := 1
+	padLeft := unit.Dp(0)
+	padRight := unit.Dp(0)
+	if len(t.Columns) > 0 {
+		if configured := gtx.Dp(t.Columns[0].MinWidth); configured > minWidth {
+			minWidth = configured
+		}
+		padLeft, padRight = adaptiveBriefCellInsets(gtx, t.Columns[0].PadX, configuredMax)
+	}
+	if minWidth > configuredMax {
+		minWidth = configuredMax
+	}
+
+	textWidth := t.briefModelTextWidthPx(th, gtx, m, n, rowHpx)
+	target := textWidth + gtx.Dp(padLeft) + gtx.Dp(padRight)
+	if _, hasIcons := m.(LeadingIconModel); hasIcons && n > 0 {
+		iconWidth, iconGap := leadingIconMetrics(IconParent, rowHpx-2*gtx.Dp(t.RowPadY))
+		target += iconWidth + iconGap
+	}
+	if target < minWidth {
+		target = minWidth
+	}
+	if target > configuredMax {
+		target = configuredMax
+	}
+	return target
+}
+
+func (t *Table) briefModelTextWidthPx(th *material.Theme, gtx layout.Context, m Model, n, rowHpx int) int {
+	if m == nil || n <= 0 {
+		return 0
+	}
+	if measured, ok := m.(BriefColumnTextWidthModel); ok {
+		if width := measured.BriefColumnTextWidthPx(); width > 0 {
+			return width
+		}
+	}
+	if th == nil || th.Shaper == nil {
+		return 0
+	}
+
+	face := t.textTypeface(th)
+	maxWidth := 0
+	for row := 0; row < n; row++ {
+		txt, st := m.Cell(row, 0)
+		var measureOps op.Ops
+		measureGtx := gtx
+		measureGtx.Ops = &measureOps
+		measureGtx.Constraints = layout.Constraints{
+			Max: image.Pt(1<<20, maxInt(1, rowHpx)),
+		}
+		width := layoutCellLabel(measureGtx, th, face, t.TextSize, txt, st, text.Start, false).Size.X
+		if width > maxWidth {
+			maxWidth = width
+		}
+	}
+	return maxWidth
 }
 
 func (t *Table) briefColumnWidthPx(col int) int {

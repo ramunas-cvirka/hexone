@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gioui.org/f32"
 	"gioui.org/io/input"
@@ -136,6 +137,33 @@ func TestSettingsBriefPreviewUsesDistinctEntries(t *testing.T) {
 			t.Fatalf("brief preview entry %d repeats filename %q", i, row.name)
 		}
 		seen[row.name] = true
+	}
+}
+
+func TestSettingsBriefPreviewWidthFollowsConfiguredMaximumUntilLongestSample(t *testing.T) {
+	for _, configured := range []float32{8, 24, 40} {
+		if got := settingsBriefPreviewColumnChars(configured); got != configured {
+			t.Fatalf("preview column characters=%v want configured maximum %v", got, configured)
+		}
+	}
+	longest := settingsBriefPreviewLongestNameChars()
+	if longest <= 40 {
+		t.Fatalf("longest preview filename=%v chars want more than 40", longest)
+	}
+	if got := settingsBriefPreviewColumnChars(settingsPaneCharsMax); got != longest {
+		t.Fatalf("preview column characters=%v want longest sample width %v", got, longest)
+	}
+}
+
+func TestSettingsBriefPreviewIncludesSeveralLongFilenameExamples(t *testing.T) {
+	longNames := 0
+	for _, row := range settingsBriefPanePreviewRows {
+		if utf8.RuneCountInString(row.name) > 30 {
+			longNames++
+		}
+	}
+	if longNames < 2 {
+		t.Fatalf("brief preview long filename examples=%d want at least 2", longNames)
 	}
 }
 
@@ -2579,7 +2607,7 @@ func TestSettingsConfigEditorUsesFullWidth(t *testing.T) {
 	}
 }
 
-func TestSettingsConfigPathPacksIntoTwoLinesAndKeepsFullText(t *testing.T) {
+func TestSettingsConfigPathFitsTwoLinesWithoutLosingSelectableText(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
 	st := &settingsModalState{}
@@ -2597,8 +2625,11 @@ func TestSettingsConfigPathPacksIntoTwoLinesAndKeepsFullText(t *testing.T) {
 
 	lbl := ui.settingsConfigPathLabel(th, st, path)
 	dims := lbl.Layout(gtx)
-	if dims.Size.Y > gtx.Sp(lbl.TextSize)*2+4 {
-		t.Fatalf("config path height=%d exceeds two compact lines", dims.Size.Y)
+	singleLineState := &settingsModalState{}
+	singleLineLabel := ui.settingsConfigPathLabel(th, singleLineState, `C:\hexone.yaml`)
+	singleLineDims := singleLineLabel.Layout(gtx)
+	if dims.Size.Y > singleLineDims.Size.Y*2 {
+		t.Fatalf("config path height=%d exceeds two line heights of %d", dims.Size.Y, singleLineDims.Size.Y)
 	}
 	if st.configPathSelect.Truncated() {
 		t.Fatal("representative MSIX config path should fit without truncation")

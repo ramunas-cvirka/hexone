@@ -13,9 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/font/gofont"
 	"gioui.org/gpu/headless"
 	"gioui.org/io/input"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/text"
@@ -101,10 +103,21 @@ func TestHeadlessSettingsConfig(t *testing.T) {
 		ui.settingsModal.paneFullChars++ // verify the dirty Save label.
 		router = new(input.Router)
 		writePNG("file-panes-"+mode, render("file-panes-"+mode))
+		if mode == "brief" {
+			router.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(294, 173)})
+			writePNG("file-panes-brief-help", render("file-panes-brief-help"))
+		}
 		if mode == "full" {
+			router.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(294, 173)})
+			writePNG("file-panes-full-help", render("file-panes-full-help"))
 			ui.settingsModal.focus = settingsKeyboardFocusFilePaneMode
 			router = new(input.Router)
 			writePNG("file-panes-full-focused", render("file-panes-full-focused"))
+		}
+		if mode == "brief" {
+			ui.settingsModal.paneBriefChars = 48
+			router = new(input.Router)
+			writePNG("file-panes-brief-wide", render("file-panes-brief-wide"))
 		}
 	}
 }

@@ -307,6 +307,46 @@ func TestBriefModeScrollbarReservesBottomSpaceAndRecomputesRows(t *testing.T) {
 	}
 }
 
+func TestBriefModeFitsColumnsUsingMeasuredContentBelowConfiguredMaximum(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(300), MinWidth: unit.Dp(20), PadX: unit.Dp(4), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(20)
+	tbl.BriefColumnWidth = unit.Dp(300)
+	tbl.BriefGap = 0
+	gtx := testTableLayoutContext(image.Pt(404, 104))
+	model := tableBriefWidthTestModel{
+		tableTestModel: tableTestModel{rows: 20},
+		textWidth:      180,
+	}
+
+	tbl.Layout(th, gtx, model)
+
+	if got, want := tbl.briefVisibleCols, 2; got != want {
+		t.Fatalf("visible brief columns=%d want %d from measured content width", got, want)
+	}
+}
+
+func TestBriefModeCapsMeasuredContentAtConfiguredMaximum(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(300), MinWidth: unit.Dp(20), PadX: unit.Dp(4), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(20)
+	tbl.BriefColumnWidth = unit.Dp(300)
+	tbl.BriefGap = 0
+	gtx := testTableLayoutContext(image.Pt(404, 104))
+	model := tableBriefWidthTestModel{
+		tableTestModel: tableTestModel{rows: 20},
+		textWidth:      420,
+	}
+
+	tbl.Layout(th, gtx, model)
+
+	if got, want := tbl.briefVisibleCols, 1; got != want {
+		t.Fatalf("visible brief columns=%d want %d when content exceeds configured maximum", got, want)
+	}
+}
+
 func TestBriefModeUsesRemainderAbovePartialMinimum(t *testing.T) {
 	th := material.NewTheme()
 	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
@@ -357,6 +397,15 @@ type tableTestModel struct {
 
 type tableIconTestModel struct {
 	tableTestModel
+}
+
+type tableBriefWidthTestModel struct {
+	tableTestModel
+	textWidth int
+}
+
+func (m tableBriefWidthTestModel) BriefColumnTextWidthPx() int {
+	return m.textWidth
 }
 
 func (tableIconTestModel) LeadingIcon(row, col int) (LeadingIcon, bool) {

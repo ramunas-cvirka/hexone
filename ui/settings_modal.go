@@ -251,6 +251,8 @@ type settingsModalState struct {
 	paneBriefChars               float32
 	paneFullCharsStepper         settingsNumberStepperState
 	paneBriefCharsStepper        settingsNumberStepperState
+	paneFullCharsHelpClick       widget.Clickable
+	paneBriefCharsHelpClick      widget.Clickable
 	paneShowPermissions          bool
 	panePermissionFormat         string
 	panePermissionFormatAnim     settingsChoiceAnim
@@ -4267,9 +4269,11 @@ func (ui *UI) layoutSettingsHelpIcon(th *material.Theme, gtx layout.Context, cli
 		ui.layoutSettingsHelpTooltip(th, tipGtx, helpText)
 		call := m.Stop()
 		offset := image.Pt(dims.Size.X+gtx.Dp(unit.Dp(6)), -gtx.Dp(unit.Dp(4)))
+		deferred := op.Record(gtx.Ops)
 		stack := op.Offset(offset).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		stack.Pop()
+		op.Defer(gtx.Ops, deferred.Stop())
 	}
 	return dims
 }

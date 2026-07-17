@@ -18,7 +18,6 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -379,8 +378,54 @@ func (ui *UI) functionBarTextSize() unit.Sp {
 	return ui.scaleInterfaceFontSize(11)
 }
 
-func (ui *UI) functionBarButtonText(spec functionBarButtonSpec) string {
-	return spec.keyLabel + " " + spec.label
+func functionBarKeyTextColor(labelColor color.NRGBA) color.NRGBA {
+	return color.NRGBA{R: 92, G: 214, B: 255, A: labelColor.A}
+}
+
+func (ui *UI) functionBarLabelStyle(th *material.Theme, label string, fg color.NRGBA, weight font.Weight) material.LabelStyle {
+	lbl := material.Body2(th, label)
+	lbl.Font.Typeface = ui.interfaceTypeface()
+	lbl.Font.Weight = weight
+	lbl.TextSize = ui.functionBarTextSize()
+	lbl.Color = fg
+	lbl.MaxLines = 1
+	lbl.Truncator = "…"
+	return lbl
+}
+
+func (ui *UI) functionBarShortcutLabelStyle(th *material.Theme, label string, labelColor color.NRGBA) material.LabelStyle {
+	return ui.functionBarLabelStyle(th, label, functionBarKeyTextColor(labelColor), font.Bold)
+}
+
+func (ui *UI) functionBarActionLabelStyle(th *material.Theme, label string, labelColor color.NRGBA) material.LabelStyle {
+	return ui.functionBarLabelStyle(th, label, labelColor, font.Normal)
+}
+
+func (ui *UI) functionBarSplitLabelStyles(th *material.Theme, shortcut, action string, labelColor color.NRGBA) (material.LabelStyle, material.LabelStyle, material.LabelStyle) {
+	shortcutLabel := ui.functionBarShortcutLabelStyle(th, strings.TrimSpace(shortcut), labelColor)
+	actionLabel := ui.functionBarActionLabelStyle(th, strings.TrimSpace(action), labelColor)
+	spaceLabel := ui.functionBarActionLabelStyle(th, " ", labelColor)
+	return shortcutLabel, spaceLabel, actionLabel
+}
+
+func (ui *UI) layoutFunctionBarSplitLabel(th *material.Theme, gtx layout.Context, shortcut, action string, labelColor color.NRGBA) layout.Dimensions {
+	shortcutLabel, spaceLabel, actionLabel := ui.functionBarSplitLabelStyles(th, shortcut, action, labelColor)
+
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(
+			gtx,
+			layout.Rigid(shortcutLabel.Layout),
+			layout.Rigid(spaceLabel.Layout),
+			layout.Rigid(actionLabel.Layout),
+		)
+	})
+}
+
+func (ui *UI) functionBarSplitLabelWidth(th *material.Theme, gtx layout.Context, shortcut, action string) int {
+	shortcutLabel, spaceLabel, actionLabel := ui.functionBarSplitLabelStyles(th, shortcut, action, color.NRGBA{})
+	return measureLabelUnconstrained(gtx, shortcutLabel).Size.X +
+		measureLabelUnconstrained(gtx, spaceLabel).Size.X +
+		measureLabelUnconstrained(gtx, actionLabel).Size.X
 }
 
 func (ui *UI) setFunctionBarHeldModifier(mod key.Modifiers, down bool) bool {
@@ -638,6 +683,15 @@ func (ui *UI) functionBarHintSlotLabelsForSpecs(hints []functionBarHintSpec, slo
 	return labels
 }
 
+func functionBarHintSlots(hints []functionBarHintSpec, slotCount int) []functionBarHintSpec {
+	if slotCount < 0 {
+		slotCount = 0
+	}
+	slots := make([]functionBarHintSpec, slotCount)
+	copy(slots, hints)
+	return slots
+}
+
 func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context, hints []functionBarHintSpec) layout.Dimensions {
 	stripH := gtx.Dp(unit.Dp(functionBarStripDp))
 	if stripH < 1 {
@@ -658,7 +712,8 @@ func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context,
 		}
 		specs := ui.functionBarButtonSpecs()
 		widths := ui.functionBarWidths(th, gtx, specs)
-		slotLabels := ui.functionBarHintSlotLabelsForSpecs(hints, len(widths))
+		slots := functionBarHintSlots(hints, len(widths))
+		labelColor := color.NRGBA{R: 228, G: 232, B: 240, A: 255}
 		return fixedWidth(gtx, outerW, func(gtx layout.Context) layout.Dimensions {
 			return fillRoundedBox(
 				gtx,
@@ -675,15 +730,7 @@ func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context,
 									children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 										return fixedWidth(gtx, widths[i], func(gtx layout.Context) layout.Dimensions {
 											return fillBgExact(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
-												lbl := material.Body2(th, slotLabels[i])
-												lbl.Font.Typeface = ui.interfaceTypeface()
-												lbl.Font.Weight = font.Medium
-												lbl.TextSize = ui.functionBarTextSize()
-												lbl.Color = color.NRGBA{R: 228, G: 232, B: 240, A: 255}
-												lbl.MaxLines = 1
-												lbl.Truncator = "…"
-												lbl.Alignment = text.Middle
-												return layoutVCenteredLabel(gtx, lbl)
+												return ui.layoutFunctionBarSplitLabel(th, gtx, slots[i].shortcut, slots[i].label, labelColor)
 											})
 										})
 									}))
@@ -712,12 +759,7 @@ func (ui *UI) functionBarWidths(th *material.Theme, gtx layout.Context, specs []
 	minWidth := gtx.Dp(unit.Dp(42))
 	padding := gtx.Dp(unit.Dp(16))
 	for i, spec := range specs {
-		lbl := material.Body2(th, ui.functionBarButtonText(spec))
-		lbl.Font.Typeface = ui.interfaceTypeface()
-		lbl.Font.Weight = font.Medium
-		lbl.TextSize = ui.functionBarTextSize()
-		lbl.MaxLines = 1
-		w := measureLabelUnconstrained(gtx, lbl).Size.X + padding
+		w := ui.functionBarSplitLabelWidth(th, gtx, spec.keyLabel, spec.label) + padding
 		if w < minWidth {
 			w = minWidth
 		}
@@ -1012,14 +1054,7 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 											}
 
 											dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-												lbl := material.Body2(th, ui.functionBarButtonText(spec))
-												lbl.Font.Typeface = ui.interfaceTypeface()
-												lbl.Font.Weight = font.Medium
-												lbl.TextSize = ui.functionBarTextSize()
-												lbl.Color = fg
-												lbl.MaxLines = 1
-												lbl.Alignment = text.Middle
-												return layoutVCenteredLabel(gtx, lbl)
+												return ui.layoutFunctionBarSplitLabel(th, gtx, spec.keyLabel, spec.label, fg)
 											})
 											if spec.enabled {
 												defer clip.Rect(image.Rectangle{Max: image.Pt(segW, stripH)}).Push(gtx.Ops).Pop()

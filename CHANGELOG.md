@@ -77,3 +77,11 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Saved SSH passwords and private-key passphrases in Windows Credential Manager, macOS Keychain, or the Linux Secret Service instead of `hexone.yaml`.
 - Changed Enter to open regular files with their system-associated application while continuing to open directories and archives inside Hexone.
 - Added a Microsoft Store MSIX distribution. Store installations keep configuration and session data in the package's `LocalState` folder, while Windows portable builds continue to keep configuration beside `hexone.exe`.
+
+## v1.1.0 - Unreleased
+
+- Added terminal snippets, available from the `☆` button or `Ctrl+Shift+P` / `Cmd+Shift+P`. Snippets can be global, limited to one directory, or shared across a local Git repository, and are inserted at the prompt for review without running automatically.
+- Improved Brief mode so filename columns follow the longest displayed name in the current directory up to the configured maximum. Shorter names now produce narrower columns, allowing more columns to fit without prematurely truncating filenames.
+- Restyled the function bar so `F1`–`F10` and held `Ctrl` / `Alt` shortcuts use a bold, high-contrast color while their action labels remain normal-weight.
+- Improved the File panes settings previews with representative long filenames, a responsive Brief-width preview, and `?` help tooltips that explain when the Full and Brief filename-width settings take effect.
+- Added a GitHub Actions workflow that runs the complete Go unit-test suite on every branch push and pull request.

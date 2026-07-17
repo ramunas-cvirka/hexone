@@ -37,6 +37,8 @@ type filePaneModel struct {
 	filenameVisuals []filePaneFilenameVisual
 	measureTextPx   func(string) int
 	measureCache    map[string]int
+	briefTextWidth  int
+	briefWidthValid bool
 }
 
 type fileSortKey uint8
@@ -57,6 +59,15 @@ func (m *filePaneModel) Len() int {
 		return 0
 	}
 	return len(m.entries)
+}
+
+func (m *filePaneModel) setEntries(entries []filesys.Entry) {
+	if m == nil {
+		return
+	}
+	m.entries = entries
+	m.briefTextWidth = 0
+	m.briefWidthValid = false
 }
 
 func (m *filePaneModel) Entry(row int) *filesys.Entry {
@@ -733,7 +744,7 @@ func (p *filePaneState) applyListingWithOptions(listing filesys.Listing, opts fi
 	if !opts.preserveMarks {
 		p.clearMarkedRows()
 	}
-	p.model.entries = listing.Entries
+	p.model.setEntries(listing.Entries)
 	p.applyConfiguredSortForCurrentDir()
 	p.applySort("")
 	p.table.Selected = 0
@@ -2285,6 +2296,38 @@ func (m *filePaneModel) measuredTextWidth(text string) (int, bool) {
 	width := m.measureTextPx(text)
 	m.measureCache[text] = width
 	return width, true
+}
+
+func (m *filePaneModel) BriefColumnTextWidthPx() int {
+	if m == nil {
+		return 0
+	}
+	if m.briefWidthValid {
+		return m.briefTextWidth
+	}
+
+	maxWidth := 0
+	for row := range m.entries {
+		txt, st := m.Cell(row, 0)
+		width := m.approxCharPx() * utf8.RuneCountInString(txt+st.Suffix)
+		if measured, ok := m.measuredTextWidth(txt); ok {
+			width = measured
+			if st.Suffix != "" {
+				if suffixWidth, suffixOK := m.measuredTextWidth(st.Suffix); suffixOK {
+					width += suffixWidth
+				}
+			}
+		}
+		if width > maxWidth {
+			maxWidth = width
+		}
+	}
+
+	m.briefTextWidth = maxWidth
+	// Exact shaped measurements are stable for the lifetime of a pane. Pane
+	// recreation handles font changes, while setEntries invalidates content.
+	m.briefWidthValid = m.measureTextPx != nil
+	return maxWidth
 }
 
 func (m *filePaneModel) approxChars(widthPx, reservePx int) int {

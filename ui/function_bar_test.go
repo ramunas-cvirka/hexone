@@ -4,13 +4,54 @@
 package ui
 
 import (
-	"hexone/fm"
+	"image/color"
 	"testing"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/io/key"
 	"gioui.org/widget"
+	"gioui.org/widget/material"
+
+	"hexone/fm"
 )
+
+func TestFunctionBarKeyTextUsesDistinctHighContrastColor(t *testing.T) {
+	barBackground := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
+	labelColor := color.NRGBA{R: 210, G: 210, B: 210, A: 255}
+	keyColor := functionBarKeyTextColor(labelColor)
+
+	if keyColor == labelColor {
+		t.Fatal("function-key and action labels should use different colors")
+	}
+	if got := contrastScore(barBackground, keyColor); got < 7 {
+		t.Fatalf("function-key contrast ratio=%0.2f want at least 7", got)
+	}
+	if keyColor.A != labelColor.A {
+		t.Fatalf("function-key alpha=%d want label alpha %d", keyColor.A, labelColor.A)
+	}
+}
+
+func TestFunctionBarSplitLabelUsesBoldShortcutAndNormalAction(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	labelColor := color.NRGBA{R: 210, G: 210, B: 210, A: 255}
+
+	shortcut, _, action := ui.functionBarSplitLabelStyles(th, "Ctrl+A", "Select All", labelColor)
+
+	if shortcut.Font.Weight != font.Bold {
+		t.Fatalf("shortcut weight=%v want bold", shortcut.Font.Weight)
+	}
+	if action.Font.Weight != font.Normal {
+		t.Fatalf("action weight=%v want normal", action.Font.Weight)
+	}
+	if shortcut.Color != functionBarKeyTextColor(labelColor) {
+		t.Fatalf("shortcut color=%v want accent %v", shortcut.Color, functionBarKeyTextColor(labelColor))
+	}
+	if action.Color != labelColor {
+		t.Fatalf("action color=%v want label color %v", action.Color, labelColor)
+	}
+}
 
 func TestFunctionBarToolSpecsFollowActiveWorkspace(t *testing.T) {
 	ui := &UI{}

@@ -97,6 +97,70 @@ func TestFilePaneFullOrEmptyUsesMeasuredWidth(t *testing.T) {
 	}
 }
 
+func TestFilePaneBriefTextWidthUsesLongestUntruncatedDisplayName(t *testing.T) {
+	model := &filePaneModel{
+		cfg: fm.DefaultConfig(),
+		entries: []filesys.Entry{
+			{Name: "mobilogix", DisplayName: "mobilogix", Kind: filesys.EntryDir},
+			{Name: "devonthink_index.applescript", DisplayName: "devonthink_index.applescript", Kind: filesys.EntryFile},
+			{Name: "README.md", DisplayName: "README.md", Kind: filesys.EntryFile},
+		},
+	}
+	model.setTextMeasurer(func(text string) int {
+		return len([]rune(text)) * 7
+	})
+
+	want := len([]rune("devonthink_index.applescript")) * 7
+	if got := model.BriefColumnTextWidthPx(); got != want {
+		t.Fatalf("brief text width=%d want longest display-name width %d", got, want)
+	}
+}
+
+func TestFilePaneBriefTextWidthIncludesSymlinkTarget(t *testing.T) {
+	model := &filePaneModel{
+		cfg: fm.DefaultConfig(),
+		entries: []filesys.Entry{{
+			Name:        "current",
+			DisplayName: "current",
+			IsSymlink:   true,
+			LinkTarget:  "releases/2026-07-17",
+			Kind:        filesys.EntryFile,
+		}},
+	}
+	model.setTextMeasurer(func(text string) int {
+		return len([]rune(text)) * 6
+	})
+
+	want := len([]rune("current -> releases/2026-07-17")) * 6
+	if got := model.BriefColumnTextWidthPx(); got != want {
+		t.Fatalf("brief text width=%d want name-and-target width %d", got, want)
+	}
+}
+
+func TestFilePaneBriefTextWidthRecomputesAfterEntriesChange(t *testing.T) {
+	model := &filePaneModel{cfg: fm.DefaultConfig()}
+	model.setTextMeasurer(func(text string) int {
+		return len([]rune(text)) * 5
+	})
+	model.setEntries([]filesys.Entry{{
+		Name:        "short.txt",
+		DisplayName: "short.txt",
+		Kind:        filesys.EntryFile,
+	}})
+	if got, want := model.BriefColumnTextWidthPx(), len([]rune("short.txt"))*5; got != want {
+		t.Fatalf("initial brief text width=%d want %d", got, want)
+	}
+
+	model.setEntries([]filesys.Entry{{
+		Name:        "devonthink_index.applescript",
+		DisplayName: "devonthink_index.applescript",
+		Kind:        filesys.EntryFile,
+	}})
+	if got, want := model.BriefColumnTextWidthPx(), len([]rune("devonthink_index.applescript"))*5; got != want {
+		t.Fatalf("updated brief text width=%d want %d", got, want)
+	}
+}
+
 func TestFilePaneModelDisplaysSymlinkTarget(t *testing.T) {
 	model := &filePaneModel{
 		entries: []filesys.Entry{{
