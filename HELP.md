@@ -126,6 +126,20 @@ Right-click opens the terminal context menu. It can:
 
 For local shells, Hexone can usually read the terminal process current directory directly.
 
+### Terminal Snippets
+
+Use the `☆` button at the right side of the terminal tab row, or `Ctrl+Shift+P` / `Cmd+Shift+P`, to save and insert terminal snippets. The keyboard shortcut opens the menu; use the arrow keys and Enter to choose an item.
+
+- `Save current command…` opens an editable draft taken from the current prompt line.
+- Terminal snippets are single-line prompt insertions; use the F2 custom commands feature for multi-line commands.
+- Every snippet has exactly one scope: `Global`, `Directory`, or `Git repository`.
+- Directory snippets match only the exact terminal folder.
+- Git repository snippets match anywhere below the saved repository root.
+- Selecting a snippet inserts it at the prompt for review; it is not executed automatically.
+- Use the `x` beside a snippet to remove it.
+
+When the current terminal is inside a local Git repository, new snippets default to repository scope. Outside a repository they default to directory scope when the terminal location is available, and otherwise to global scope. Repository scope is unavailable for remote terminals because Hexone cannot safely infer the remote repository root without running a command.
+
 For SSH shells, Hexone needs the remote shell to emit OSC 7 working-directory updates. Hexone can parse OSC 7 and use it to open the matching remote directory in a file pane, but it cannot infer the remote directory from a prompt alone.
 
 If your remote shell does not already emit OSC 7, add something like this to the remote `~/.bashrc`:
@@ -141,7 +155,7 @@ After reconnecting, `Set Left Pane to Terminal Dir` and `Set Right Pane to Termi
 
 ## Custom Commands
 
-`F2` is for saved shell snippets that are not tied to a single file. The editor stores up to 10 fixed slots, each with a short name and multi-line command body.
+`F2` is for saved commands that run in the command-only viewer and are not tied to a single file. The editor stores up to 10 fixed slots, each with a short name and multi-line command body.
 
 - `Run` saves the current command and shows its output in a command-only viewer.
 - Saving an empty command clears the selected slot.

@@ -50,16 +50,17 @@ type filePaneTabSet struct {
 }
 
 type terminalTabSet struct {
-	sessions    []*terminalSession
-	active      int
-	scroll      int
-	tabClicks   []widget.Clickable
-	closeClicks []widget.Clickable
-	remoteHover []*remoteIndicatorHover
-	prevClick   widget.Clickable
-	nextClick   widget.Clickable
-	addClick    widget.Clickable
-	maxClick    widget.Clickable
+	sessions     []*terminalSession
+	active       int
+	scroll       int
+	tabClicks    []widget.Clickable
+	closeClicks  []widget.Clickable
+	remoteHover  []*remoteIndicatorHover
+	prevClick    widget.Clickable
+	nextClick    widget.Clickable
+	addClick     widget.Clickable
+	snippetClick widget.Clickable
+	maxClick     widget.Clickable
 }
 
 type appTabItem struct {
@@ -502,6 +503,10 @@ func (ui *UI) layoutTerminalTabStrip(th *material.Theme, gtx layout.Context) lay
 			gtx.Execute(opInvalidate())
 		}
 	}
+	for ui.terminalTabs.snippetClick.Clicked(gtx) {
+		ui.toggleTerminalSnippetMenu(gtx.Now)
+		gtx.Execute(opInvalidate())
+	}
 	icon := uitheme.FullscreenIcon()
 	if ui.terminalMaximized() {
 		icon = uitheme.FullscreenExitIcon()
@@ -520,6 +525,12 @@ func (ui *UI) layoutTerminalTabStrip(th *material.Theme, gtx layout.Context) lay
 				gtx.Execute(opInvalidate())
 			}
 			return dims
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutTabStripSeparator(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutTabStripButton(th, gtx, &ui.terminalTabs.snippetClick, uitheme.FavoriteIcon(ui.terminalSnippetMenuOpen), true)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutTabStripSeparator(gtx)

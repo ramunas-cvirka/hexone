@@ -61,6 +61,10 @@ const (
 
 	FontWeightRegular = "regular"
 	FontWeightBold    = "bold"
+
+	TerminalSnippetScopeGlobal     = "global"
+	TerminalSnippetScopeDirectory  = "directory"
+	TerminalSnippetScopeRepository = "repository"
 )
 
 type NameCompact struct {
@@ -484,6 +488,13 @@ type CustomCommand struct {
 	Command string `yaml:"command"`
 }
 
+type TerminalSnippet struct {
+	Name    string `yaml:"name"`
+	Command string `yaml:"command"`
+	Scope   string `yaml:"scope"`
+	Context string `yaml:"context,omitempty"`
+}
+
 type AssociationProgram struct {
 	AppPath    string   `yaml:"app_path"`
 	Extensions []string `yaml:"extensions"`
@@ -592,6 +603,7 @@ type Config struct {
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
 	CustomCommands    []CustomCommand      `yaml:"custom_commands,omitempty"`
+	TerminalSnippets  []TerminalSnippet    `yaml:"terminal_snippets,omitempty"`
 	Viewer            ViewerConfig         `yaml:"viewer"`
 	SSH               SSHConfig            `yaml:"ssh"`
 
@@ -613,6 +625,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Colors            ColorsConfig         `yaml:"colors"`
 		Associations      []AssociationProgram `yaml:"associations,omitempty"`
 		CustomCommands    []CustomCommand      `yaml:"custom_commands,omitempty"`
+		TerminalSnippets  []TerminalSnippet    `yaml:"terminal_snippets,omitempty"`
 		Viewer            ViewerConfig         `yaml:"viewer"`
 		SSH               SSHConfig            `yaml:"ssh"`
 	}{
@@ -653,6 +666,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Colors:            raw.Colors,
 		Associations:      raw.Associations,
 		CustomCommands:    raw.CustomCommands,
+		TerminalSnippets:  raw.TerminalSnippets,
 		Viewer:            raw.Viewer,
 		SSH:               raw.SSH,
 	}
@@ -730,8 +744,9 @@ func DefaultConfig() *Config {
 				},
 			},
 		},
-		Associations:   nil,
-		CustomCommands: nil,
+		Associations:     nil,
+		CustomCommands:   nil,
+		TerminalSnippets: nil,
 		Viewer: ViewerConfig{
 			FileEncoding:            ViewerFileEncodingAuto,
 			Typeface:                resources.BundledFontFamilyFiraCodeNerdFontMono,
@@ -1114,6 +1129,7 @@ func (c *Config) normalize() {
 	c.Colors.Filenames.ExtensionRules = NormalizeFilenameExtensionRules(c.Colors.Filenames.ExtensionRules)
 	c.Colors.Filenames.SizeRules = NormalizeFilenameSizeRules(c.Colors.Filenames.SizeRules)
 	c.CustomCommands = NormalizeCustomCommands(c.CustomCommands)
+	c.TerminalSnippets = NormalizeTerminalSnippets(c.TerminalSnippets)
 
 	c.Viewer.FileEncoding = NormalizeViewerFileEncoding(c.Viewer.FileEncoding)
 	c.Viewer.Shell = NormalizeViewerShell(c.Viewer.Shell)
@@ -1428,6 +1444,61 @@ func NormalizeCustomCommands(raw []CustomCommand) []CustomCommand {
 		}
 		cmd.Slot = i + 1
 		out = append(out, cmd)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func NormalizeTerminalSnippet(raw TerminalSnippet) (TerminalSnippet, bool) {
+	command := strings.TrimSpace(raw.Command)
+	if command == "" || strings.ContainsAny(command, "\r\n") {
+		return TerminalSnippet{}, false
+	}
+	name := strings.TrimSpace(raw.Name)
+	if name == "" {
+		name = customCommandFallbackName(command)
+	}
+	scope := strings.ToLower(strings.TrimSpace(raw.Scope))
+	context := strings.TrimSpace(raw.Context)
+	switch scope {
+	case "", TerminalSnippetScopeGlobal:
+		scope = TerminalSnippetScopeGlobal
+		context = ""
+	case TerminalSnippetScopeDirectory, TerminalSnippetScopeRepository:
+		if context == "" {
+			return TerminalSnippet{}, false
+		}
+	default:
+		return TerminalSnippet{}, false
+	}
+	return TerminalSnippet{
+		Name:    name,
+		Command: command,
+		Scope:   scope,
+		Context: context,
+	}, true
+}
+
+func NormalizeTerminalSnippets(raw []TerminalSnippet) []TerminalSnippet {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]TerminalSnippet, 0, len(raw))
+	seen := make(map[string]int, len(raw))
+	for _, candidate := range raw {
+		snippet, ok := NormalizeTerminalSnippet(candidate)
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(snippet.Name) + "\x00" + snippet.Scope + "\x00" + snippet.Context
+		if index, exists := seen[key]; exists {
+			out[index] = snippet
+			continue
+		}
+		seen[key] = len(out)
+		out = append(out, snippet)
 	}
 	if len(out) == 0 {
 		return nil

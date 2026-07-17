@@ -715,6 +715,8 @@ func (ui *UI) toggleTerminal() bool {
 		ui.closeFunctionBarPopups()
 		ui.resetKeys()
 		st.focusKeyboard()
+	} else {
+		ui.closeTerminalSnippetMenu()
 	}
 	return true
 }

@@ -1583,6 +1583,25 @@ func TestFilenamePermissionAndSizeMatchesSupportPartialRules(t *testing.T) {
 	}
 }
 
+func TestNormalizeTerminalSnippetsUsesExplicitScopes(t *testing.T) {
+	got := NormalizeTerminalSnippets([]TerminalSnippet{
+		{Name: "Global", Command: "date", Scope: TerminalSnippetScopeGlobal, Context: "/ignored"},
+		{Name: "Repo", Command: "go test ./...", Scope: TerminalSnippetScopeRepository, Context: "/src/app"},
+		{Name: "Invalid", Command: "pwd", Scope: TerminalSnippetScopeDirectory},
+		{Name: "Multiline", Command: "echo one\necho two", Scope: TerminalSnippetScopeGlobal},
+		{Name: "Repo", Command: "go test -race ./...", Scope: TerminalSnippetScopeRepository, Context: "/src/app"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("snippet count=%d want 2", len(got))
+	}
+	if got[0].Scope != TerminalSnippetScopeGlobal || got[0].Context != "" {
+		t.Fatalf("global snippet=%+v", got[0])
+	}
+	if got[1].Command != "go test -race ./..." {
+		t.Fatalf("duplicate scoped snippet was not replaced: %+v", got[1])
+	}
+}
+
 func mustMarshalConfig(t *testing.T, cfg *Config) []byte {
 	t.Helper()
 	data, err := yaml.Marshal(cfg)

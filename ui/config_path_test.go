@@ -207,6 +207,38 @@ func TestCustomCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 	}
 }
 
+func TestTerminalSnippetRuntimeSavePreservesUnrelatedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	original.CustomCommands = []fm.CustomCommand{{Name: "Health", Command: "uptime"}}
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = path
+	ui.fmCfg.TerminalSnippets = []fm.TerminalSnippet{{
+		Name:    "Tests",
+		Command: "go test ./...",
+		Scope:   fm.TerminalSnippetScopeGlobal,
+	}}
+	if err := ui.saveFMConfigWithOptions("terminal-snippets", false); err != nil {
+		t.Fatalf("saveFMConfigWithOptions(terminal-snippets): %v", err)
+	}
+
+	saved := fm.LoadConfig(path)
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+	if got, want := len(saved.CustomCommands), 1; got != want {
+		t.Fatalf("custom command count=%d want %d", got, want)
+	}
+	if got, want := len(saved.TerminalSnippets), 1; got != want {
+		t.Fatalf("terminal snippet count=%d want %d", got, want)
+	}
+}
+
 func TestTerminalHeightRuntimeSavePreservesUnrelatedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
 	original := fm.DefaultConfig()
