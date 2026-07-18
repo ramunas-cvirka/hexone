@@ -194,13 +194,16 @@ The internal viewer has three explicit modes, plus automatic image-style preview
 - `hex` for raw bytes
 - `command` for shell output based on the selected file
 
-The active mode tab includes the complete filename, for example `File - photo.jpg`; switching modes moves the filename to `Hex` or `Cmd`.
+The centered filename rail stays visible while switching between `File`, `Hex`, and `Cmd`. Unsaved edits are marked after the filename, for example `[notes.txt *]`.
 
 New viewer opens default to `file`; exact target commands and filename command rules open in `command`, while files over the configured read limit open in `hex` when no target or rule command applies.
 
 Useful viewer keys:
 
-- `F3` refreshes the current file or reruns the current command
+- `F4` turns editing on in text and hex views
+- `F3` discards unsaved changes and turns editing off; outside edit mode it refreshes the current file or reruns the current command
+- `Esc` discards unsaved changes and closes the viewer
+- `F2`, `Ctrl+S`, or `Cmd+S` saves changes
 - `Tab` moves `file -> hex -> command`; `Shift+Tab` moves backward
 - `Ctrl+F` or `Cmd+F` opens Find in `file`, `hex`, and `command`
 - `Enter` jumps to the next find result; `Shift+Enter` jumps to the previous one
@@ -216,13 +219,24 @@ Useful viewer keys:
 - supported images open as an image preview inside `file` mode
 - supported PDFs open as a rendered page preview inside `file` mode
 - `hex` mode is better for binary files, mixed data, or damaged content
+- in hex edit mode, click the hex columns to enter hexadecimal nibbles or the text column to enter ASCII bytes; two hex digits complete a byte and advance, and held keys repeat across following bytes
+- drag in either Hex edit lane to select multiple bytes; Hex input applies its first digit to every selected high nibble and its second digit to every selected low nibble, while ASCII input applies the character to every selected byte
+- the active HEX byte uses a three-character background with the current nibble in cyan; ASCII entry highlights one character the same way, while unsaved modified bytes appear in red in both columns
+- arrow, paging, Home, and End keys move the active byte; saving clears all modified-byte markers
+- moving away after entering one hex digit keeps the changed high nibble and preserves the byte's original low nibble
+- the Hex context menu offers `Copy as Hex` and `Copy as Text`; text copy preserves printable ASCII and writes other bytes as `\xNN` escapes
+- text saves preserve the detected UTF-8, UTF-16, or CP437 encoding, BOM, and CRLF line endings
+- read-only File mode uses the same compact line spacing and visual font weight as File edit mode
+- File edit mode follows the Word Wrap setting; when wrapping is off, long lines stay intact and use a horizontal scrollbar
+- File edit mode provides `Copy` and `Paste` in its context menu
+- local and SFTP files can be edited; files inside archives and image/PDF/command previews remain read-only
 - on SSH panes, `hex` Find can use the configured remote search utility command for large files
 
 ### Command Mode
 
 `command` mode runs a shell command against the selected file and captures its output.
 It is not a terminal: there is no PTY, no interactive stdin, and no full-screen pager UI.
-Recent commands are kept in viewer command history for quick reuse.
+Recent commands are kept in viewer command history for quick reuse. The eye action in the active `Cmd` tab shows the current command; click it to open command history, where the action changes to a pen. Click the pen to return to the current command.
 These placeholders are available:
 
 - `{path}` or `{fullpath}` for the full selected path

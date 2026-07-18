@@ -101,6 +101,13 @@ func TestFormatHexSelectionCopyUsesContinuousHex(t *testing.T) {
 	}
 }
 
+func TestFormatHexSelectionTextCopyEscapesNonTextBytes(t *testing.T) {
+	data := []byte{'H', 'i', 0x00, '\\', '\n', 0xFF}
+	if got, want := formatHexSelectionTextCopy(data), `Hi\x00\\\x0A\xFF`; got != want {
+		t.Fatalf("formatHexSelectionTextCopy = %q, want %q", got, want)
+	}
+}
+
 func TestCopyFileViewerTextRejectsHexSelectionOverLimit(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	st := &fileViewerState{

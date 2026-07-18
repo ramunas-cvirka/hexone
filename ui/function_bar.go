@@ -210,14 +210,14 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 
 	switch action {
 	case functionBarActionCustom:
-		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
+		return !ui.hasBlockingFileDialog()
 	case functionBarActionView:
 		if ui.fileViewer != nil {
 			return true
 		}
 		return !ui.hasBlockingFileDialog()
 	case functionBarActionOpen:
-		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
+		return !ui.hasBlockingFileDialog()
 	case functionBarActionCopy, functionBarActionMove, functionBarActionCreate, functionBarActionDelete:
 		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
 	default:
@@ -241,6 +241,11 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		if !ui.functionBarActionEnabled(action) {
 			return false
 		}
+		if ui.fileViewer != nil {
+			ui.closeFunctionBarPopups()
+			ui.startFileViewerSave(now)
+			return true
+		}
 		if ui.customCommandMenuOpen {
 			ui.closeCustomCommandMenu()
 		} else {
@@ -259,6 +264,11 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		}
 		ui.closeFunctionBarPopups()
 		if ui.fileViewer != nil {
+			if ui.fileViewer.editMode {
+				ui.discardFileViewerChanges(ui.fileViewer)
+				ui.stopFileViewerEdit()
+				return true
+			}
 			ui.startFileViewerLoad(now)
 			return true
 		}
@@ -269,6 +279,10 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 			return false
 		}
 		ui.closeFunctionBarPopups()
+		if ui.fileViewer != nil {
+			ui.startFileViewerEdit(now)
+			return true
+		}
 		ui.startFileExternalOpenAction(ui.activeFilePane, now)
 		return true
 	case functionBarActionCopy:
@@ -327,11 +341,25 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 }
 
 func (ui *UI) functionBarButtonSpecs() []functionBarButtonSpec {
+	customLabel := "Custom"
+	viewLabel := "View"
+	openLabel := "Open"
+	customFill := ui.customCommandMenuFill()
+	openFill := float32(0)
+	if ui != nil && ui.fileViewer != nil {
+		customLabel = "Save"
+		openLabel = "Edit"
+		customFill = boolFill(ui.fileViewer.saving)
+		openFill = boolFill(ui.fileViewer.editMode)
+		if ui.fileViewer.editMode {
+			viewLabel = "Discard"
+		}
+	}
 	return []functionBarButtonSpec{
 		{action: functionBarActionHelp, keyLabel: "F1", label: "Help", click: &ui.functionBarClicks[0], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionHelp)},
-		{action: functionBarActionCustom, keyLabel: "F2", label: "Custom", click: &ui.functionBarClicks[1], activeFill: ui.customCommandMenuFill(), enabled: ui.functionBarActionEnabled(functionBarActionCustom)},
-		{action: functionBarActionView, keyLabel: "F3", label: "View", click: &ui.functionBarClicks[2], activeFill: boolFill(ui.fileViewer != nil), enabled: ui.functionBarActionEnabled(functionBarActionView)},
-		{action: functionBarActionOpen, keyLabel: "F4", label: "Open", click: &ui.functionBarClicks[3], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
+		{action: functionBarActionCustom, keyLabel: "F2", label: customLabel, click: &ui.functionBarClicks[1], activeFill: customFill, enabled: ui.functionBarActionEnabled(functionBarActionCustom)},
+		{action: functionBarActionView, keyLabel: "F3", label: viewLabel, click: &ui.functionBarClicks[2], activeFill: boolFill(ui.fileViewer != nil), enabled: ui.functionBarActionEnabled(functionBarActionView)},
+		{action: functionBarActionOpen, keyLabel: "F4", label: openLabel, click: &ui.functionBarClicks[3], activeFill: openFill, enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
 		{action: functionBarActionCopy, keyLabel: "F5", label: "Copy", click: &ui.functionBarClicks[4], activeFill: boolFill(ui.fileCopy != nil), enabled: ui.functionBarActionEnabled(functionBarActionCopy)},
 		{action: functionBarActionMove, keyLabel: "F6", label: "Move", click: &ui.functionBarClicks[5], activeFill: boolFill(ui.fileMove != nil), enabled: ui.functionBarActionEnabled(functionBarActionMove)},
 		{action: functionBarActionCreate, keyLabel: "F7", label: "New", click: &ui.functionBarClicks[6], activeFill: boolFill(ui.fileCreate != nil), enabled: ui.functionBarActionEnabled(functionBarActionCreate)},
@@ -607,7 +635,7 @@ func (ui *UI) functionBarModifierHintSpecsForContext(terminalFocused bool, goos 
 			}
 		}
 		if !ui.pathEditActive() {
-			add("S", "Settings")
+			add("S", "Save")
 		}
 		return hints
 	}

@@ -17,6 +17,8 @@ type fileViewerTheme struct {
 	PanelBorder        color.NRGBA
 	Text               color.NRGBA
 	HexText            color.NRGBA
+	ModifiedText       color.NRGBA
+	EditCursorBg       color.NRGBA
 	Muted              color.NRGBA
 	Hint               color.NRGBA
 	Error              color.NRGBA
@@ -163,6 +165,14 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 	hexText := baseText
 	asciiText := mixNRGBA(baseText, palette.CurrentDirFg, 0.22)
 	asciiText.A = 0xFF
+	modifiedText := color.NRGBA{R: 255, G: 158, B: 170, A: 255}
+	modifiedTextDark := color.NRGBA{R: 160, G: 24, B: 48, A: 255}
+	if contrastScore(baseBg, modifiedTextDark) > contrastScore(baseBg, modifiedText) {
+		modifiedText = modifiedTextDark
+	}
+	modifiedText.A = 0xFF
+	editCursorBg := mixNRGBA(baseBg, color.NRGBA{R: 92, G: 214, B: 255, A: 255}, 0.18)
+	editCursorBg.A = 0xFF
 	if cfg != nil {
 		if c, ok := fm.ParseHexColor(strings.TrimSpace(cfg.Viewer.HexOffsetText)); ok {
 			offsetText = c
@@ -220,6 +230,8 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 		PanelBorder:        panelBorder,
 		Text:               baseText,
 		HexText:            hexText,
+		ModifiedText:       modifiedText,
+		EditCursorBg:       editCursorBg,
 		Muted:              muted,
 		Hint:               hint,
 		Error:              errorText,

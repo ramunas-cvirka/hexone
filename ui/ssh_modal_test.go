@@ -396,6 +396,9 @@ func TestSSHModalDirtyDraftDefaultsToSaveAndEnterSaves(t *testing.T) {
 	if got := st.defaultAction(); got != sshModalActionConnect {
 		t.Fatalf("defaultAction=%v want %v before edit", got, sshModalActionConnect)
 	}
+	if got := st.saveLabel(); got != "Save" {
+		t.Fatalf("clean save label=%q want %q", got, "Save")
+	}
 
 	st.hostEdit.SetText("two.test")
 	if !st.hasUnsavedChanges() {
@@ -403,6 +406,9 @@ func TestSSHModalDirtyDraftDefaultsToSaveAndEnterSaves(t *testing.T) {
 	}
 	if got := st.defaultAction(); got != sshModalActionSave {
 		t.Fatalf("defaultAction=%v want %v after edit", got, sshModalActionSave)
+	}
+	if got := st.saveLabel(); got != "Save (*)" {
+		t.Fatalf("dirty save label=%q want %q", got, "Save (*)")
 	}
 
 	gtx.Execute(key.FocusCmd{Tag: &st.hostEdit})
@@ -424,11 +430,17 @@ func TestSSHModalDirtyDraftDefaultsToSaveAndEnterSaves(t *testing.T) {
 	if got := st.defaultAction(); got != sshModalActionConnect {
 		t.Fatalf("defaultAction=%v want %v after save", got, sshModalActionConnect)
 	}
+	if got := st.saveLabel(); got != "Save" {
+		t.Fatalf("saved label=%q want %q", got, "Save")
+	}
 
 	if !st.addSetup() {
 		t.Fatal("addSetup should append a new SSH draft row")
 	}
 	if got := st.defaultAction(); got != sshModalActionSave {
 		t.Fatalf("defaultAction=%v want %v after add", got, sshModalActionSave)
+	}
+	if got := st.saveLabel(); got != "Save (*)" {
+		t.Fatalf("added-draft save label=%q want %q", got, "Save (*)")
 	}
 }

@@ -62,6 +62,9 @@ func TestSaveCurrentCustomCommandKeepsEditorOpen(t *testing.T) {
 	}
 	st.nameEdit.SetText("Health")
 	st.commandEdit.SetText("uptime")
+	if got := st.saveLabel(); got != "Save (*)" {
+		t.Fatalf("dirty save label=%q want %q", got, "Save (*)")
+	}
 
 	if !ui.saveCurrentCustomCommand() {
 		t.Fatalf("saveCurrentCustomCommand failed: %s", st.lastErr)
@@ -88,6 +91,9 @@ func TestSaveCurrentCustomCommandKeepsEditorOpen(t *testing.T) {
 	}
 	if st.slotDirty(0) {
 		t.Fatal("slot dirty marker should clear after saving")
+	}
+	if got := st.saveLabel(); got != "Save" {
+		t.Fatalf("saved label=%q want %q", got, "Save")
 	}
 }
 
@@ -125,6 +131,28 @@ func TestSaveEmptyCustomCommandClearsSelectedSlot(t *testing.T) {
 	saved := fm.LoadConfig(path)
 	if got := len(saved.CustomCommands); got != 0 {
 		t.Fatalf("custom command count after clear=%d want 0", got)
+	}
+}
+
+func TestCustomCommandSaveLabelClearsWhenEditIsReverted(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.CustomCommands = []fm.CustomCommand{{Slot: 1, Name: "Health", Command: "uptime"}}
+	ui := NewUI(cfg)
+	ui.openCustomCommandEditor(0)
+	st := ui.customCommandEditor
+	if st == nil {
+		t.Fatal("custom command editor should open")
+	}
+	if got := st.saveLabel(); got != "Save" {
+		t.Fatalf("initial save label=%q want %q", got, "Save")
+	}
+	st.commandEdit.SetText("whoami")
+	if got := st.saveLabel(); got != "Save (*)" {
+		t.Fatalf("dirty save label=%q want %q", got, "Save (*)")
+	}
+	st.commandEdit.SetText("uptime")
+	if got := st.saveLabel(); got != "Save" {
+		t.Fatalf("reverted save label=%q want %q", got, "Save")
 	}
 }
 

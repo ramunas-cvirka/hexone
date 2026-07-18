@@ -18,6 +18,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -92,6 +93,11 @@ type hexViewerState struct {
 
 	groupBytes int
 	hexByteX   []int
+	edits      map[int64]byte
+	editCaret  int64
+	editNibble int
+	editASCII  bool
+	editKeyTag fileViewerEventTag
 
 	pointerTag fileViewerEventTag
 }
@@ -646,7 +652,9 @@ func (v *hexViewerState) needsPrefetch() bool {
 		margin = int64(hexViewerMinChunkBytes / 4)
 	}
 
-	return visibleStart < v.bufferStart+margin || visibleEnd > bufferEnd-margin
+	needsBefore := v.bufferStart > 0 && visibleStart < v.bufferStart+margin
+	needsAfter := (v.fileSize <= 0 || bufferEnd < v.fileSize) && visibleEnd > bufferEnd-margin
+	return needsBefore || needsAfter
 }
 
 func (v *hexViewerState) mergeBuffer(start int64, data []byte, maxBytes int64) {
@@ -735,7 +743,24 @@ func (v *hexViewerState) lineBytes(line int64) ([]byte, int64) {
 	if relStart < 0 || relEnd < relStart || relEnd > len(v.buffer) {
 		return nil, start
 	}
-	return v.buffer[relStart:relEnd], start
+	data := v.buffer[relStart:relEnd]
+	if len(v.edits) == 0 {
+		return data, start
+	}
+	var edited []byte
+	for off, value := range v.edits {
+		if off < start || off >= end {
+			continue
+		}
+		if edited == nil {
+			edited = append([]byte(nil), data...)
+		}
+		edited[off-start] = value
+	}
+	if edited != nil {
+		return edited, start
+	}
+	return data, start
 }
 
 // displayStartWithFallback keeps the last fully painted viewport visible
@@ -1220,6 +1245,28 @@ func formatHexSelectionCopy(data []byte) string {
 	return string(out)
 }
 
+func formatHexSelectionTextCopy(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	const digits = "0123456789ABCDEF"
+	var out strings.Builder
+	out.Grow(len(data))
+	for _, value := range data {
+		switch {
+		case value == '\\':
+			out.WriteString(`\\`)
+		case value >= 0x20 && value <= 0x7E:
+			out.WriteByte(value)
+		default:
+			out.WriteString(`\x`)
+			out.WriteByte(digits[value>>4])
+			out.WriteByte(digits[value&0x0F])
+		}
+	}
+	return out.String()
+}
+
 func hexByteAtPoint(v *hexViewerState, pos image.Point) (int64, bool) {
 	if v == nil || v.bytesPerLine <= 0 || v.lineH <= 0 || v.fileSize <= 0 {
 		return 0, false
@@ -1572,6 +1619,10 @@ func (ui *UI) layoutHexOutputView(th *material.Theme, gtx layout.Context, st *fi
 	v.prepareVisualScroll(gtx.Now, viewerSmoothScrolling(ui.fmCfg))
 	v.computeScrollbar()
 	ui.handleHexViewerEvents(gtx, st)
+	if st.editMode {
+		st.editFocus = false
+		gtx.Execute(key.FocusCmd{Tag: &v.editKeyTag})
+	}
 	if v.expireCancelGrace(gtx.Now) {
 		st.markUserBrowsing(gtx.Now)
 	}
@@ -1610,6 +1661,9 @@ func (ui *UI) layoutHexOutputView(th *material.Theme, gtx layout.Context, st *fi
 	pass := pointer.PassOp{}.Push(gtx.Ops)
 	event.Op(gtx.Ops, &v.pointerTag)
 	pass.Pop()
+	if st.editMode {
+		event.Op(gtx.Ops, &v.editKeyTag)
+	}
 	return layout.Dimensions{Size: size}
 }
 
@@ -1650,12 +1704,52 @@ func (ui *UI) drawHexOutput(gtx layout.Context, th *material.Theme, st *fileView
 		offset := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 		ui.drawHexLineFindMatch(gtx, th, st, line, len(lineBytes))
 		ui.drawHexLineSelections(gtx, th, st, line, len(lineBytes))
+		ui.drawHexEditCursorBackground(gtx, st, line, len(lineBytes))
 		ui.drawHexOffsetLine(th, gtx, v, offsetText, theme.OffsetText)
-		ui.drawHexBytesLine(th, gtx, v, lineBytes, theme.HexText)
-		ui.drawHexASCIIline(th, gtx, v, lineBytes, theme.ASCIIText)
+		ui.drawHexBytesLine(th, gtx, st, lineStart, lineBytes, theme.HexText, theme.ModifiedText)
+		ui.drawHexASCIIline(th, gtx, st, lineStart, lineBytes, theme.ASCIIText, theme.ModifiedText)
 		offset.Pop()
 		y += v.lineH
 	}
+}
+
+func (ui *UI) drawHexEditCursorBackground(gtx layout.Context, st *fileViewerState, line int64, lineLen int) {
+	if st == nil || !st.editMode || st.mode != "hex" || st.hex == nil || lineLen <= 0 {
+		return
+	}
+	v := st.hex
+	lineStart := line * int64(v.bytesPerLine)
+	if v.editCaret < lineStart || v.editCaret >= lineStart+int64(lineLen) {
+		return
+	}
+	idx := int(v.editCaret - lineStart)
+	x := v.hexRect.Min.X + v.hexByteLeft(idx)
+	width := 3 * v.charW
+	if v.editASCII {
+		x = v.textRect.Min.X + idx*v.charW
+		width = v.charW
+	}
+	maxX := v.hexRect.Max.X
+	if v.editASCII {
+		maxX = v.textRect.Max.X
+	}
+	if x+width > maxX {
+		width = maxX - x
+	}
+	if width <= 0 {
+		return
+	}
+	paint.FillShape(gtx.Ops, ui.fileViewerTheme().EditCursorBg, clip.Rect(image.Rect(x, 0, x+width, v.lineH)).Op())
+}
+
+func setHexViewerEditCaret(v *hexViewerState, byteOffset int64, ascii bool) {
+	if v == nil {
+		return
+	}
+	v.editCaret = v.clampByteOffset(byteOffset)
+	v.editNibble = 0
+	v.editASCII = ascii
+	v.setSelectionRange(v.editCaret, 1)
 }
 
 func hexSectionSeparatorRects(v *hexViewerState) [2]image.Rectangle {
@@ -1704,21 +1798,50 @@ func (ui *UI) drawHexOffsetLine(th *material.Theme, gtx layout.Context, v *hexVi
 	}
 }
 
-func (ui *UI) drawHexBytesLine(th *material.Theme, gtx layout.Context, v *hexViewerState, data []byte, fg color.NRGBA) {
-	if v == nil {
+func (ui *UI) drawHexBytesLine(th *material.Theme, gtx layout.Context, st *fileViewerState, lineStart int64, data []byte, fg, modified color.NRGBA) {
+	if st == nil || st.hex == nil {
 		return
 	}
+	v := st.hex
+	activeColor := functionBarKeyTextColor(ui.fileViewerTheme().HeaderText)
 	for i, b := range data {
 		txt := fmt.Sprintf("%02X", b)
 		x := v.hexRect.Min.X + v.hexByteLeft(i)
-		ui.drawMonoCell(th, gtx, image.Pt(x, 0), 2*v.charW, v.lineH, txt, fg)
+		byteOffset := lineStart + int64(i)
+		byteColor := fg
+		if _, changed := v.edits[byteOffset]; changed {
+			byteColor = modified
+		}
+		if st.editMode && hexEditNibbleActiveAt(v, byteOffset) {
+			for nibble, r := range txt {
+				nibbleColor := byteColor
+				if nibble == v.editNibble {
+					nibbleColor = activeColor
+				}
+				ui.drawMonoCell(th, gtx, image.Pt(x+nibble*v.charW, 0), v.charW, v.lineH, string(r), nibbleColor)
+			}
+			continue
+		}
+		ui.drawMonoCell(th, gtx, image.Pt(x, 0), 2*v.charW, v.lineH, txt, byteColor)
 	}
 }
 
-func (ui *UI) drawHexASCIIline(th *material.Theme, gtx layout.Context, v *hexViewerState, data []byte, fg color.NRGBA) {
-	if v == nil {
+func hexEditNibbleActiveAt(v *hexViewerState, byteOffset int64) bool {
+	if v == nil || v.editASCII {
+		return false
+	}
+	if v.selectionLen > 1 {
+		return byteOffset >= v.selectionStart && byteOffset < v.selectionEnd()
+	}
+	return v.editCaret == byteOffset
+}
+
+func (ui *UI) drawHexASCIIline(th *material.Theme, gtx layout.Context, st *fileViewerState, lineStart int64, data []byte, fg, modified color.NRGBA) {
+	if st == nil || st.hex == nil {
 		return
 	}
+	v := st.hex
+	activeColor := functionBarKeyTextColor(ui.fileViewerTheme().HeaderText)
 	for i, b := range data {
 		r := rune(b)
 		ch := "."
@@ -1726,13 +1849,24 @@ func (ui *UI) drawHexASCIIline(th *material.Theme, gtx layout.Context, v *hexVie
 			ch = string(b)
 		}
 		x := v.textRect.Min.X + i*v.charW
-		ui.drawMonoCell(th, gtx, image.Pt(x, 0), v.charW, v.lineH, ch, fg)
+		byteOffset := lineStart + int64(i)
+		byteColor := fg
+		if _, changed := v.edits[byteOffset]; changed {
+			byteColor = modified
+		}
+		if st.editMode && v.editASCII && v.editCaret == byteOffset {
+			byteColor = activeColor
+		}
+		ui.drawMonoCell(th, gtx, image.Pt(x, 0), v.charW, v.lineH, ch, byteColor)
 	}
 }
 
 func (ui *UI) drawHexLineSelections(gtx layout.Context, th *material.Theme, st *fileViewerState, line int64, lineLen int) {
 	v := st.hex
 	if v == nil || !v.hasSelection() || lineLen <= 0 {
+		return
+	}
+	if st.editMode && st.mode == "hex" && v.selectionLen <= 1 {
 		return
 	}
 	theme := ui.fileViewerTheme()
@@ -1972,6 +2106,11 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 					v.syncVisualTop()
 				}
 				if byteOff, ok := hexByteAtPoint(v, pos); ok {
+					if st.editMode {
+						setHexViewerEditCaret(v, byteOff, viewerPointInRect(pos, v.textRect))
+						st.editFocus = true
+						gtx.Execute(key.FocusCmd{Tag: &v.editKeyTag})
+					}
 					v.selecting = true
 					v.selectID = pe.PointerID
 					v.dragAnchor = byteOff
@@ -1983,6 +2122,11 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 					gtx.Execute(pointer.GrabCmd{Tag: &v.pointerTag, ID: pe.PointerID})
 				} else if viewerPointInRect(pos, v.hexRect) || viewerPointInRect(pos, v.textRect) {
 					// Keep nearest-byte behavior for awkward edge presses.
+					if st.editMode {
+						setHexViewerEditCaret(v, v.fileSize-1, viewerPointInRect(pos, v.textRect))
+						st.editFocus = true
+						gtx.Execute(key.FocusCmd{Tag: &v.editKeyTag})
+					}
 					v.selecting = true
 					v.selectID = pe.PointerID
 					last := v.fileSize - 1
@@ -2020,6 +2164,9 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 				v.selectPos = pos
 				if byteOff, ok := hexSelectionByteAtPoint(v, pos); ok {
 					v.setSelectionFromAnchor(v.dragAnchor, byteOff)
+					if st.editMode {
+						v.editCaret = v.clampByteOffset(byteOff)
+					}
 				}
 				v.updateAutoScroll(pos, gtx.Now)
 				st.markUserBrowsing(gtx.Now)

@@ -25,6 +25,8 @@ var (
 	favoriteIcon       *widget.Icon
 	favoriteBorderIcon *widget.Icon
 	disconnectIcon     *widget.Icon
+	viewModeIcon       *widget.Icon
+	editModeIcon       *widget.Icon
 )
 
 func CloseIcon() *widget.Icon {
@@ -90,6 +92,16 @@ func DisconnectIcon() *widget.Icon {
 	return disconnectIcon
 }
 
+func ViewModeIcon() *widget.Icon {
+	initIcons()
+	return viewModeIcon
+}
+
+func EditModeIcon() *widget.Icon {
+	initIcons()
+	return editModeIcon
+}
+
 func initIcons() {
 	iconsOnce.Do(func() {
 		closeIconRef = mustIcon(widget.NewIcon(mdicons.NavigationClose))
@@ -105,6 +117,8 @@ func initIcons() {
 		favoriteIcon = mustIcon(widget.NewIcon(mdicons.ToggleStar))
 		favoriteBorderIcon = mustIcon(widget.NewIcon(mdicons.ToggleStarBorder))
 		disconnectIcon = mustIcon(widget.NewIcon(mdicons.ActionPowerSettingsNew))
+		viewModeIcon = mustIcon(widget.NewIcon(mdicons.ActionVisibility))
+		editModeIcon = mustIcon(widget.NewIcon(mdicons.EditorModeEdit))
 	})
 }
 

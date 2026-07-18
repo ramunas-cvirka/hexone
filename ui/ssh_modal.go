@@ -362,6 +362,13 @@ func (st *sshModalState) hasUnsavedChanges() bool {
 	return !sshSetupSlicesEqualForState(st.draftSetups(), st.savedSetups)
 }
 
+func (st *sshModalState) saveLabel() string {
+	if st != nil && st.hasUnsavedChanges() {
+		return "Save (*)"
+	}
+	return "Save"
+}
+
 func (st *sshModalState) defaultAction() sshModalAction {
 	if st == nil {
 		return sshModalActionConnect
@@ -1365,6 +1372,7 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 	cancelVisual := st.actionVisualState(sshModalActionCancel)
 	saveVisual := st.actionVisualState(sshModalActionSave)
 	connectVisual := st.actionVisualState(sshModalActionConnect)
+	saveLabel := st.saveLabel()
 	if hoverAnimCancel || hoverAnimSave || hoverAnimConnect || pulseAnimCancel || pulseAnimSave || pulseAnimConnect {
 		gtx.Execute(op.InvalidateCmd{})
 	}
@@ -1395,7 +1403,7 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, ui.sshFooterActionWidthPx(th, gtx), func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, ui.sshFooterActionWidthPx(th, gtx, saveLabel), func(gtx layout.Context) layout.Dimensions {
 						return ui.layoutDialogActionTripleState(
 							th,
 							gtx,
@@ -1405,7 +1413,7 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 							pulseCancel,
 							false,
 							&st.saveClick,
-							"Save",
+							saveLabel,
 							hoverSave,
 							pulseSave,
 							false,
@@ -1425,9 +1433,9 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 	)
 }
 
-func (ui *UI) sshFooterActionWidthPx(th *material.Theme, gtx layout.Context) int {
+func (ui *UI) sshFooterActionWidthPx(th *material.Theme, gtx layout.Context, saveLabel string) int {
 	leftW, _ := ui.dialogActionSegmentMetricsPx(th, gtx, "Cancel")
-	middleW, _ := ui.dialogActionSegmentMetricsPx(th, gtx, "Save")
+	middleW, _ := ui.dialogActionSegmentMetricsPx(th, gtx, saveLabel)
 	rightW, _ := ui.dialogActionSegmentMetricsPx(th, gtx, "Connect")
 	gap := gtx.Dp(unit.Dp(4))
 	if gap < 1 {

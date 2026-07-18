@@ -701,6 +701,28 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 	})
 }
 
+func (ui *UI) drawTabStripActionSpot(gtx layout.Context, highlighted bool) {
+	size := gtx.Constraints.Max
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	palette := filePanePaletteFromConfig(ui.fmCfg)
+	bg := mixNRGBA(palette.PaneBg, color.NRGBA{R: 82, G: 88, B: 104, A: 255}, 0.52)
+	bg.A = 54
+	if highlighted {
+		bg = mixNRGBA(palette.PaneBg, color.NRGBA{R: 43, G: 129, B: 157, A: 255}, 0.76)
+		bg.A = 220
+	}
+	paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rectangle{Max: size}).Op())
+	separator := ui.tabStripSeparatorColor()
+	separator.A = 96
+	paint.FillShape(gtx.Ops, separator, clip.Rect(image.Rect(0, size.Y/4, 1, size.Y-size.Y/4)).Op())
+	if highlighted {
+		accent := color.NRGBA{R: 92, G: 214, B: 255, A: 232}
+		paint.FillShape(gtx.Ops, accent, clip.Rect(image.Rect(0, size.Y-1, size.X, size.Y)).Op())
+	}
+}
+
 func (ui *UI) drawTabStripCloseSpot(gtx layout.Context, highlighted bool) {
 	size := gtx.Constraints.Max
 	if size.X <= 0 || size.Y <= 0 {

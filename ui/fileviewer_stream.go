@@ -60,6 +60,7 @@ type streamOutputView struct {
 	metricsTextSp unit.Sp
 	metricsPxDp   float32
 	metricsPxSp   float32
+	metricsTight  bool
 
 	hoverTrack  bool
 	hoverThumb  bool
@@ -346,18 +347,22 @@ func (v *streamOutputView) prepareVisualScroll(now time.Time, smooth bool) bool 
 	return true
 }
 
-func (v *streamOutputView) ensureTextMetrics(ui *UI, th *material.Theme, gtx layout.Context) {
+func (v *streamOutputView) ensureTextMetrics(ui *UI, th *material.Theme, gtx layout.Context, tightLines bool) {
 	textSize := ui.viewerTextSize()
 	if v.metricsReady &&
 		v.metricsTextSp == textSize &&
 		v.metricsPxDp == gtx.Metric.PxPerDp &&
 		v.metricsPxSp == gtx.Metric.PxPerSp &&
+		v.metricsTight == tightLines &&
 		v.charAdvance > 0 &&
 		v.charW > 0 &&
 		v.lineH > 0 {
 		return
 	}
 	lineHeight := measureStreamLineHeight(ui, th, gtx)
+	if tightLines {
+		lineHeight = measureEditorEquivalentLineHeightAt(gtx, textSize)
+	}
 	if lineHeight < 1 {
 		lineHeight = 1
 	}
@@ -376,6 +381,7 @@ func (v *streamOutputView) ensureTextMetrics(ui *UI, th *material.Theme, gtx lay
 	v.metricsTextSp = textSize
 	v.metricsPxDp = gtx.Metric.PxPerDp
 	v.metricsPxSp = gtx.Metric.PxPerSp
+	v.metricsTight = tightLines
 }
 
 func (v *streamOutputView) Append(chunk string) {
@@ -1401,6 +1407,15 @@ func measureTypefaceLineHeightAt(th *material.Theme, gtx layout.Context, face fo
 	return h
 }
 
+func measureEditorEquivalentLineHeightAt(gtx layout.Context, size unit.Sp) int {
+	size = normalizeUIFontSize(size)
+	lineHeight := int(math.Ceil(float64(gtx.Sp(size)) * 1.2))
+	if lineHeight < 1 {
+		lineHeight = 1
+	}
+	return lineHeight
+}
+
 func measureStreamLineHeight(ui *UI, th *material.Theme, gtx layout.Context) int {
 	return measureTypefaceLineHeight(ui, th, gtx, ui.viewerTypeface())
 }
@@ -1781,7 +1796,7 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 	}
 	v.wrapEnabled = st.wrapEnabled
 
-	v.ensureTextMetrics(ui, th, gtx)
+	v.ensureTextMetrics(ui, th, gtx, st.mode == "file")
 	lineHeight := v.lineH
 
 	scrollbarW := viewerScrollbarThickness(gtx, size.X)
@@ -2090,6 +2105,10 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 	}
 	lineFace := ui.viewerTypeface()
 	lineSize := ui.viewerTextSize()
+	lineWeight := font.Normal
+	if st.mode == "file" {
+		lineWeight = font.Medium
+	}
 	textH := v.textRect.Dy()
 	if textH <= 0 {
 		return
@@ -2184,10 +2203,10 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 			if v.wrapEnabled {
 				rowTextW = v.textPad + v.colOffsetPx(visualRow.to-visualRow.from)
 			}
-			ui.drawStreamOutputSyntaxLine(th, lineGTX, v, line, lineDraw, spans, rowHCol, rowTextW, lineFace, lineSize, theme)
+			ui.drawStreamOutputSyntaxLine(th, lineGTX, v, line, lineDraw, spans, rowHCol, rowTextW, lineFace, lineSize, lineWeight, theme)
 		} else {
 			textOffset := op.Offset(image.Pt(textX, 0)).Push(gtx.Ops)
-			ui.drawStreamOutputPlainLine(th, lineGTX, lineDraw, lineFace, lineSize, theme.Text)
+			ui.drawStreamOutputPlainLine(th, lineGTX, lineDraw, lineFace, lineSize, lineWeight, theme.Text)
 			textOffset.Pop()
 		}
 		offset.Pop()
@@ -2198,11 +2217,11 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 	}
 }
 
-func (ui *UI) drawStreamOutputPlainLine(th *material.Theme, gtx layout.Context, text string, face font.Typeface, size unit.Sp, textColor color.NRGBA) {
+func (ui *UI) drawStreamOutputPlainLine(th *material.Theme, gtx layout.Context, text string, face font.Typeface, size unit.Sp, weight font.Weight, textColor color.NRGBA) {
 	_ = func(gtx layout.Context) layout.Dimensions {
 		lbl := material.Body2(th, text)
 		lbl.Font.Typeface = face
-		lbl.Font.Weight = font.Normal
+		lbl.Font.Weight = weight
 		lbl.TextSize = size
 		lbl.Color = textColor
 		lbl.MaxLines = 1
@@ -2211,10 +2230,10 @@ func (ui *UI) drawStreamOutputPlainLine(th *material.Theme, gtx layout.Context, 
 	}(gtx)
 }
 
-func (ui *UI) drawStreamOutputSyntaxLine(th *material.Theme, gtx layout.Context, v *streamOutputView, line, fallback string, spans []viewerSyntaxSpan, hCol, textW int, face font.Typeface, size unit.Sp, theme fileViewerTheme) {
+func (ui *UI) drawStreamOutputSyntaxLine(th *material.Theme, gtx layout.Context, v *streamOutputView, line, fallback string, spans []viewerSyntaxSpan, hCol, textW int, face font.Typeface, size unit.Sp, weight font.Weight, theme fileViewerTheme) {
 	drawFallback := func() {
 		offset := op.Offset(image.Pt(v.textPad, 0)).Push(gtx.Ops)
-		ui.drawStreamOutputPlainLine(th, gtx, fallback, face, size, theme.Text)
+		ui.drawStreamOutputPlainLine(th, gtx, fallback, face, size, weight, theme.Text)
 		offset.Pop()
 	}
 	if len(spans) == 0 {
@@ -2264,7 +2283,7 @@ func (ui *UI) drawStreamOutputSyntaxLine(th *material.Theme, gtx layout.Context,
 			break
 		}
 		offset := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
-		ui.drawStreamOutputPlainLine(th, gtx, segment, face, size, viewerSyntaxColor(theme, span.role))
+		ui.drawStreamOutputPlainLine(th, gtx, segment, face, size, weight, viewerSyntaxColor(theme, span.role))
 		offset.Pop()
 		drew = true
 	}

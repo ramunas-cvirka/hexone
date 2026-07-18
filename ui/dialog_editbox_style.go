@@ -335,10 +335,24 @@ func (ui *UI) layoutEditorContextMenu(th *material.Theme, gtx layout.Context, id
 	theme := ui.filePanePopupTheme()
 	copyHover, copyAnim := ui.editorMenuHoverAnim.hoverFill(gtx.Now, "copy")
 	pasteHover, pasteAnim := ui.editorMenuHoverAnim.hoverFill(gtx.Now, "paste")
-	if copyAnim || pasteAnim {
+	wrapHover, wrapAnim := ui.editorMenuHoverAnim.hoverFill(gtx.Now, "word-wrap")
+	if copyAnim || pasteAnim || wrapAnim {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
 	}
-	return fixedWidth(gtx, ui.editorContextMenuWidth(gtx), func(gtx layout.Context) layout.Dimensions {
+	menuWidth := ui.editorContextMenuWidth(gtx)
+	viewerFileEdit := id == "viewer-file-edit" && ui.fileViewer != nil
+	wrapLabel := ""
+	if viewerFileEdit {
+		wrapLabel = viewerWordWrapMenuLabel(ui.fileViewer.wrapEnabled)
+		lbl := material.Body2(th, wrapLabel)
+		lbl.Font.Typeface = ui.mainTypeface()
+		lbl.Font.Weight = font.Medium
+		lbl.TextSize = ui.functionBarTextSize()
+		if measured := measureLabelUnconstrained(gtx, lbl).Size.X + gtx.Dp(unit.Dp(20)); measured > menuWidth {
+			menuWidth = measured
+		}
+	}
+	return fixedWidth(gtx, menuWidth, func(gtx layout.Context) layout.Dimensions {
 		return fillRoundedClipBox(
 			gtx,
 			gtx.Dp(unit.Dp(filePaneOverlayCornerDp)),
@@ -346,10 +360,10 @@ func (ui *UI) layoutEditorContextMenu(th *material.Theme, gtx layout.Context, id
 			scaleColorAlpha(theme.Border, alpha),
 			func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+					children := []layout.FlexChild{
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return fixedHeight(gtx, ui.editorContextMenuRowHeight(gtx), func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutEditorContextMenuSegment(th, gtx, "Copy", copyHover, true, alpha)
+								return ui.layoutEditorContextMenuSegment(th, gtx, menuWidth, "Copy", copyHover, true, alpha)
 							})
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -367,19 +381,39 @@ func (ui *UI) layoutEditorContextMenu(th *material.Theme, gtx layout.Context, id
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return fixedHeight(gtx, ui.editorContextMenuRowHeight(gtx), func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutEditorContextMenuSegment(th, gtx, "Paste", pasteHover, pasteEnabled, alpha)
+								return ui.layoutEditorContextMenuSegment(th, gtx, menuWidth, "Paste", pasteHover, pasteEnabled, alpha)
 							})
 						}),
-					)
+					}
+					if viewerFileEdit {
+						children = append(children,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return fixedHeight(gtx, ui.fileContextMenuSeparatorHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+									return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										h := max(1, gtx.Dp(unit.Dp(1)))
+										return fillBgExact(gtx, scaleColorAlpha(theme.Divider, alpha), func(gtx layout.Context) layout.Dimensions {
+											return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, h)}
+										})
+									})
+								})
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return fixedHeight(gtx, ui.editorContextMenuRowHeight(gtx), func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutEditorContextMenuSegment(th, gtx, menuWidth, wrapLabel, wrapHover, true, alpha)
+								})
+							}),
+						)
+					}
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 				})
 			},
 		)
 	})
 }
 
-func (ui *UI) layoutEditorContextMenuSegment(th *material.Theme, gtx layout.Context, label string, hoverFill float32, enabled bool, alpha float32) layout.Dimensions {
+func (ui *UI) layoutEditorContextMenuSegment(th *material.Theme, gtx layout.Context, menuWidth int, label string, hoverFill float32, enabled bool, alpha float32) layout.Dimensions {
 	theme := ui.filePanePopupTheme()
-	return fixedWidth(gtx, ui.editorContextMenuWidth(gtx), func(gtx layout.Context) layout.Dimensions {
+	return fixedWidth(gtx, menuWidth, func(gtx layout.Context) layout.Dimensions {
 		bg := color.NRGBA{}
 		fg := scaleColorAlpha(theme.Text, alpha)
 		hoverT := smoothstep01(clamp01(hoverFill))
@@ -436,6 +470,10 @@ func (ui *UI) editorContextMenuActionAt(gtx layout.Context, pos image.Point) str
 		return "copy"
 	case localY >= rowH+divH && localY < rowH+divH+rowH:
 		return "paste"
+	case ui.editorMenuOpenID == "viewer-file-edit" &&
+		localY >= rowH+divH+rowH+divH &&
+		localY < rowH+divH+rowH+divH+rowH:
+		return "word-wrap"
 	default:
 		return ""
 	}

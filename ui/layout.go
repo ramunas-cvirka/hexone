@@ -936,6 +936,10 @@ func (ui *UI) handleEditorContextMenuGlobalPresses(gtx layout.Context) {
 				if ui.editorMenuCanPaste {
 					ui.pasteEditorText(gtx, ed, true)
 				}
+			case "word-wrap":
+				if ui.editorMenuOpenID == "viewer-file-edit" {
+					ui.toggleViewerWordWrap()
+				}
 			}
 			ui.closeEditorContextMenu()
 			gtx.Execute(op.InvalidateCmd{})
@@ -1050,7 +1054,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		ui.handleTabShortcuts(gtx)
 		ui.handleTerminalFocusToggleKey(gtx)
 	}
-	if ui != nil && ui.terminalFocused(gtx) {
+	if ui != nil && ui.fileViewer == nil && ui.terminalFocused(gtx) {
 		ui.handleTerminalFunctionBarToggleKey(gtx)
 		ui.handleTerminalToggleKey(gtx)
 		ui.handleGlobalSettingsShortcut(gtx)
@@ -1242,6 +1246,11 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				continue
 			}
 			if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
+				continue
+			}
+			if ui.fileViewer != nil {
+				ui.startFileViewerSave(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			if ui.pathEditActive() {

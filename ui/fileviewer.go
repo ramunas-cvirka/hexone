@@ -94,6 +94,7 @@ type fileViewerState struct {
 	modeFileClick        widget.Clickable
 	modeHexClick         widget.Clickable
 	modeCmdClick         widget.Clickable
+	editToggleClick      widget.Clickable
 	zoomMenuClick        widget.Clickable
 	tocMenuClick         widget.Clickable
 	encodingMenuClick    widget.Clickable
@@ -110,8 +111,32 @@ type fileViewerState struct {
 	commandClick         widget.Clickable
 	contentEditor        widget.Editor
 	commandEditor        widget.Editor
+	editMode             bool
+	editFocus            bool
+	editDirty            bool
+	editBaselineText     string
+	editRenderText       string
+	editSyntax           viewerSyntaxDocument
+	editSyntaxDue        time.Time
+	editSyntaxSeq        int
+	editSyntaxRunning    bool
+	editSyntaxCh         chan fileViewerEditSyntaxResult
+	editLineRunes        []int
+	editScrollbar        widget.Scrollbar
+	editHScrollbar       widget.Scrollbar
+	editHOffset          int
+	editMaxCols          int
+	editWrapInitialized  bool
+	editWrapValue        bool
+	editCaretStart       int
+	editScrollRatio      float32
+	editScrollPending    bool
+	saving               bool
+	saveCh               chan fileViewerSaveResult
+	modeSwitchPrompt     fileViewerModeSwitchState
 	wrapToggle           widget.Clickable
 	copyToggle           widget.Clickable
+	copyTextToggle       widget.Clickable
 	commandOnly          bool
 	commandEditOn        bool
 	commandFocus         bool
@@ -122,6 +147,7 @@ type fileViewerState struct {
 	tocList              widget.List
 
 	content              string
+	editableContent      string
 	status               string
 	err                  string
 	command              string
@@ -159,45 +185,46 @@ type fileViewerState struct {
 	seq        int
 	loadCancel context.CancelFunc
 
-	contentPointerTag     fileViewerEventTag
-	rootPointerTag        fileViewerEventTag
-	commandAreaTag        fileViewerEventTag
-	commandAreaPress      map[pointer.ID]struct{}
-	userBrowseUntil       time.Time
-	pendingUpdate         bool
-	pendingContent        string
-	pendingStatus         string
-	pendingErr            string
-	pendingEncoding       string
-	pendingEncodingBOM    bool
-	pendingImagePreview   bool
-	pendingImage          image.Image
-	pendingImageData      []byte
-	pendingImageFormat    string
-	pendingImageSize      image.Point
-	pendingImagePage      int
-	pendingImagePageCount int
-	pendingBinaryPreview  bool
-	pendingLineEnding     string
-	pendingBinaryData     []byte
-	pendingSyntax         viewerSyntaxDocument
-	pendingSyntaxReady    bool
-	wrapEnabled           bool
-	menuOpen              bool
-	menuPos               image.Point
-	menuRect              image.Rectangle
-	menuOpenedAt          time.Time
-	menuHoverID           string
-	menuPointerTag        fileViewerEventTag
-	scrollCarry           float32
-	scrollbarTrack        image.Rectangle
-	scrollbarThumb        image.Rectangle
-	scrollbarDragging     bool
-	scrollbarDragID       pointer.ID
-	scrollbarHover        bool
-	scrollbarVisible      bool
-	scrollbarLines        int
-	scrollbarVisibleN     int
+	contentPointerTag      fileViewerEventTag
+	rootPointerTag         fileViewerEventTag
+	commandAreaTag         fileViewerEventTag
+	commandAreaPress       map[pointer.ID]struct{}
+	userBrowseUntil        time.Time
+	pendingUpdate          bool
+	pendingContent         string
+	pendingEditableContent string
+	pendingStatus          string
+	pendingErr             string
+	pendingEncoding        string
+	pendingEncodingBOM     bool
+	pendingImagePreview    bool
+	pendingImage           image.Image
+	pendingImageData       []byte
+	pendingImageFormat     string
+	pendingImageSize       image.Point
+	pendingImagePage       int
+	pendingImagePageCount  int
+	pendingBinaryPreview   bool
+	pendingLineEnding      string
+	pendingBinaryData      []byte
+	pendingSyntax          viewerSyntaxDocument
+	pendingSyntaxReady     bool
+	wrapEnabled            bool
+	menuOpen               bool
+	menuPos                image.Point
+	menuRect               image.Rectangle
+	menuOpenedAt           time.Time
+	menuHoverID            string
+	menuPointerTag         fileViewerEventTag
+	scrollCarry            float32
+	scrollbarTrack         image.Rectangle
+	scrollbarThumb         image.Rectangle
+	scrollbarDragging      bool
+	scrollbarDragID        pointer.ID
+	scrollbarHover         bool
+	scrollbarVisible       bool
+	scrollbarLines         int
+	scrollbarVisibleN      int
 
 	nextWatchCheck   time.Time
 	watchExists      bool
@@ -222,26 +249,27 @@ type fileViewerState struct {
 }
 
 type fileViewerResult struct {
-	seq            int
-	content        string
-	status         string
-	err            string
-	encoding       string
-	encodingBOM    bool
-	imagePreview   bool
-	image          image.Image
-	imageData      []byte
-	imageFormat    string
-	imageSize      image.Point
-	imagePage      int
-	imagePageCount int
-	binaryPreview  bool
-	lineEnding     string
-	binaryData     []byte
-	syntax         viewerSyntaxDocument
-	syntaxReady    bool
-	partial        bool
-	final          bool
+	seq             int
+	content         string
+	editableContent string
+	status          string
+	err             string
+	encoding        string
+	encodingBOM     bool
+	imagePreview    bool
+	image           image.Image
+	imageData       []byte
+	imageFormat     string
+	imageSize       image.Point
+	imagePage       int
+	imagePageCount  int
+	binaryPreview   bool
+	lineEnding      string
+	binaryData      []byte
+	syntax          viewerSyntaxDocument
+	syntaxReady     bool
+	partial         bool
+	final           bool
 }
 
 type viewerReadInfo struct {
@@ -257,6 +285,7 @@ type viewerReadInfo struct {
 	binaryPreview  bool
 	lineEnding     string
 	binaryData     []byte
+	editableText   string
 }
 
 func (st *fileViewerState) openContextMenu(pos image.Point, now time.Time) {
@@ -395,8 +424,11 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 	if st == nil {
 		return
 	}
+	if st.modeSwitchPrompt.open {
+		return
+	}
 	findFocused := st.find.open && gtx.Focused(&st.find.editor)
-	editorFocused := st.commandEditOn || findFocused
+	editorFocused := st.commandEditOn || findFocused || st.editMode
 	filters := []event.Filter{
 		key.Filter{Name: key.NameEscape},
 		key.Filter{Name: "f", Required: key.ModCtrl, Optional: anyMods},
@@ -410,6 +442,16 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			key.Filter{Focus: &st.find.editor, Name: key.NameReturn, Optional: anyMods},
 			key.Filter{Focus: &st.find.editor, Name: key.NameTab, Optional: anyMods},
 		)
+	}
+	if st.editMode && st.mode == "hex" && st.hex != nil {
+		filters = append(filters, key.FocusFilter{Target: &st.hex.editKeyTag})
+		hexKeys := []key.Name{
+			key.NameLeftArrow, key.NameRightArrow, key.NameUpArrow, key.NameDownArrow,
+			key.NamePageUp, key.NamePageDown, key.NameHome, key.NameEnd,
+		}
+		for _, name := range hexKeys {
+			filters = append(filters, key.Filter{Name: name})
+		}
 	}
 	if !editorFocused {
 		filters = append(filters,
@@ -460,12 +502,24 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 		if !ok {
 			break
 		}
+		if edit, ok := ev.(key.EditEvent); ok {
+			if ui.handleFileViewerHexEditText(st, edit.Text) {
+				ui.startHexViewerLoad(st, false)
+				gtx.Execute(op.InvalidateCmd{})
+			}
+			continue
+		}
 		ke, ok := ev.(key.Event)
 		if !ok {
 			continue
 		}
 		if ke.Name == key.NameF3 && ke.State == key.Release {
 			ui.clearFileViewHotkeyHold()
+			continue
+		}
+		if ui.handleFileViewerHexEditKey(st, ke) {
+			ui.startHexViewerLoad(st, false)
+			gtx.Execute(op.InvalidateCmd{})
 			continue
 		}
 		if factor, ok := viewerImageZoomFactorForKey(ke.Name, ke.Modifiers); ok {
@@ -558,6 +612,9 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
+			if st.editMode {
+				ui.discardFileViewerChanges(st)
+			}
 			ui.closeFileViewer()
 		case key.NameF3:
 			if st.commandOnly {
@@ -635,36 +692,7 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 		return true
 	}
 	if st.mode == "hex" && st.hex != nil {
-		var data []byte
-		if st.hex.hasSelection() {
-			if st.hex.selectionLen > viewerHexCopyMaxBytes {
-				st.status = "hex copy is limited to 1 MiB"
-				return false
-			}
-			var ok bool
-			data, ok = st.hex.selectedBytes()
-			if !ok {
-				st.status = "selection is not loaded"
-				return false
-			}
-		} else if fallbackAll && len(st.hex.buffer) > 0 {
-			if len(st.hex.buffer) > viewerHexCopyMaxBytes {
-				st.status = "hex copy is limited to 1 MiB"
-				return false
-			}
-			data = append([]byte(nil), st.hex.buffer...)
-		}
-		if len(data) == 0 {
-			st.status = "nothing to copy"
-			return false
-		}
-		text := formatHexSelectionCopy(data)
-		gtx.Execute(clipboard.WriteCmd{
-			Type: "application/text",
-			Data: io.NopCloser(strings.NewReader(text)),
-		})
-		st.err = ""
-		return true
+		return ui.copyFileViewerHex(gtx, fallbackAll, false)
 	}
 	text := st.stream.selectedText()
 	if text == "" && fallbackAll {
@@ -675,6 +703,51 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 		return false
 	}
 	text = viewerClipboardContent(st, text)
+	gtx.Execute(clipboard.WriteCmd{
+		Type: "application/text",
+		Data: io.NopCloser(strings.NewReader(text)),
+	})
+	st.err = ""
+	return true
+}
+
+func (ui *UI) copyFileViewerHex(gtx layout.Context, fallbackAll, asText bool) bool {
+	st := ui.fileViewer
+	if st == nil || st.mode != "hex" || st.hex == nil {
+		return false
+	}
+	v := st.hex
+	var start, length int64
+	switch {
+	case v.hasSelection():
+		start, length = v.selectionStart, v.selectionLen
+	case fallbackAll && len(v.buffer) > 0:
+		start, length = v.bufferStart, int64(len(v.buffer))
+	default:
+		st.status = "nothing to copy"
+		return false
+	}
+	if length > viewerHexCopyMaxBytes {
+		st.status = "hex copy is limited to 1 MiB"
+		return false
+	}
+	data := make([]byte, length)
+	for i := int64(0); i < length; i++ {
+		value, ok := v.byteAt(start + i)
+		if !ok {
+			st.status = "selection is not loaded"
+			return false
+		}
+		data[i] = value
+	}
+	if len(data) == 0 {
+		st.status = "nothing to copy"
+		return false
+	}
+	text := formatHexSelectionCopy(data)
+	if asText {
+		text = formatHexSelectionTextCopy(data)
+	}
 	gtx.Execute(clipboard.WriteCmd{
 		Type: "application/text",
 		Data: io.NopCloser(strings.NewReader(text)),
@@ -772,6 +845,7 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.find.textList.Axis = layout.Vertical
 	st.find.hexList.Axis = layout.Vertical
 	st.find.index = -1
+	st.saveCh = make(chan fileViewerSaveResult, 1)
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.hex = newHexViewerState()
 	st.hex.offsetDigits = viewerHexOffsetDigits(st.watchSize)
@@ -893,6 +967,7 @@ func viewerUnsupportedFileNotice(path string, mode os.FileMode) string {
 
 func (ui *UI) closeFileViewer() {
 	if st := ui.fileViewer; st != nil {
+		ui.discardFileViewerChanges(st)
 		if st.loadCancel != nil {
 			st.loadCancel()
 			st.loadCancel = nil
@@ -1130,6 +1205,12 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 	if st == nil {
 		return
 	}
+	if st.editMode || st.editDirty || st.saving {
+		if st.editDirty {
+			st.status = "modified"
+		}
+		return
+	}
 	if force && st.loadCancel != nil {
 		st.loadCancel()
 		st.loadCancel = nil
@@ -1199,23 +1280,24 @@ func (ui *UI) startFileViewerLoadWithOptions(now time.Time, force bool) {
 		}
 		content, status, err, info := readViewerContent(ctx, path, cfg, mode, maxBytes, remote, progress)
 		res := fileViewerResult{
-			seq:            seq,
-			content:        content,
-			status:         status,
-			err:            err,
-			encoding:       info.encoding,
-			encodingBOM:    info.encodingBOM,
-			imagePreview:   info.imagePreview,
-			image:          info.image,
-			imageData:      info.imageData,
-			imageFormat:    info.imageFormat,
-			imageSize:      info.imageSize,
-			imagePage:      info.imagePage,
-			imagePageCount: info.imagePageCount,
-			binaryPreview:  info.binaryPreview,
-			lineEnding:     info.lineEnding,
-			binaryData:     info.binaryData,
-			final:          true,
+			seq:             seq,
+			content:         content,
+			editableContent: info.editableText,
+			status:          status,
+			err:             err,
+			encoding:        info.encoding,
+			encodingBOM:     info.encodingBOM,
+			imagePreview:    info.imagePreview,
+			image:           info.image,
+			imageData:       info.imageData,
+			imageFormat:     info.imageFormat,
+			imageSize:       info.imageSize,
+			imagePage:       info.imagePage,
+			imagePageCount:  info.imagePageCount,
+			binaryPreview:   info.binaryPreview,
+			lineEnding:      info.lineEnding,
+			binaryData:      info.binaryData,
+			final:           true,
 		}
 		sendViewerResult(ch, res)
 		if err == "" && viewerShouldBuildSyntax(mode, info, content) {
@@ -1268,6 +1350,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 	}
 	ui.pumpHexViewerState(gtx, st)
 	ui.pumpFileViewerFindState(gtx, st)
+	ui.pumpFileViewerSaveState(gtx, st)
 	if st.resultCh == nil {
 		return
 	}
@@ -1310,6 +1393,12 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 		st.pendingBinaryPreview = false
 		st.pendingLineEnding = ""
 		st.pendingBinaryData = nil
+		if st.mode == "file" && !st.editDirty {
+			st.editableContent = st.pendingEditableContent
+			st.editBaselineText = st.pendingEditableContent
+			st.contentEditor.SetText(st.pendingEditableContent)
+		}
+		st.pendingEditableContent = ""
 		if st.status == "" {
 			st.status = "ready"
 		}
@@ -1381,6 +1470,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			if updateAction == viewerUpdateReplace && (st.userIsBrowsing(gtx.Now) || st.stream.hasSelection()) {
 				st.pendingUpdate = true
 				st.pendingContent = contentToApply
+				st.pendingEditableContent = res.editableContent
 				st.pendingStatus = st.status
 				st.pendingErr = st.err
 				st.pendingEncoding = res.encoding
@@ -1415,6 +1505,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.pendingBinaryPreview = false
 			st.pendingLineEnding = ""
 			st.pendingBinaryData = nil
+			st.pendingEditableContent = ""
 			st.pendingSyntax = viewerSyntaxDocument{}
 			st.pendingSyntaxReady = false
 			st.detectedEncoding = res.encoding
@@ -1430,6 +1521,11 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 			st.detectedBinaryPreview = res.binaryPreview
 			st.detectedLineEnding = res.lineEnding
 			st.binaryPreviewData = append([]byte(nil), res.binaryData...)
+			if st.mode == "file" && !st.editDirty {
+				st.editableContent = res.editableContent
+				st.editBaselineText = res.editableContent
+				st.contentEditor.SetText(res.editableContent)
+			}
 			if updateAction != viewerUpdateSame {
 				st.pdfDoc.reset()
 			}
@@ -1467,7 +1563,7 @@ func (ui *UI) pumpFileViewerState(gtx layout.Context) {
 
 func (ui *UI) scheduleFileViewerWatch(gtx layout.Context) {
 	st := ui.fileViewer
-	if st == nil || st.loading {
+	if st == nil || st.loading || st.editMode || st.editDirty || st.saving {
 		return
 	}
 
@@ -2187,6 +2283,17 @@ func (ui *UI) setFileViewerMode(mode string, now time.Time) {
 	if mode == st.mode && !st.historyOpen {
 		return
 	}
+	if st.saving {
+		ui.openFileViewerModeSwitchPrompt(st, mode, true)
+		return
+	}
+	if st.editDirty {
+		ui.openFileViewerModeSwitchPrompt(st, mode, false)
+		return
+	}
+	if st.editMode {
+		ui.stopFileViewerEdit()
+	}
 	prevTab := st.activeTabKey()
 	st.prepareStreamSelectionForMode(mode)
 	st.mode = mode
@@ -2549,6 +2656,11 @@ func (ui *UI) setFileViewerEncoding(encoding string, now time.Time) {
 	if st == nil {
 		return
 	}
+	if st.editMode || st.editDirty || st.saving {
+		st.closeEncodingMenu()
+		st.status = "save changes before changing encoding"
+		return
+	}
 	encoding = fm.NormalizeViewerFileEncoding(encoding)
 	if st.fileEncoding == encoding {
 		st.closeEncodingMenu()
@@ -2700,6 +2812,7 @@ func readViewerFile(path, encoding string, maxBytes int, _ time.Time, remote *pa
 	if !info.binaryPreview {
 		info.lineEnding = detectViewerLineEnding(content)
 		content = normalizeViewerLineEndings(content)
+		info.editableText = content
 		content = sanitizeViewerContent(content)
 	} else {
 		info.binaryData = append([]byte(nil), data...)

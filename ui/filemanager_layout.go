@@ -115,11 +115,11 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 	if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
 		return
 	}
-	if ui.terminalFocused(gtx) {
-		return
-	}
 	if ui.fileViewer != nil {
 		ui.handleFileViewerKeys(gtx)
+		return
+	}
+	if ui.terminalFocused(gtx) {
 		return
 	}
 	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {

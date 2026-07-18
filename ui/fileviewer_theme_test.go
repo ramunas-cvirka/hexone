@@ -69,6 +69,29 @@ func TestFileViewerHexSeparatorContrastsWithDarkAndLightThemes(t *testing.T) {
 	}
 }
 
+func TestFileViewerModifiedByteColorContrastsWithDarkAndLightThemes(t *testing.T) {
+	for _, tc := range []struct {
+		background string
+		want       string
+	}{
+		{background: "#101820", want: "#FF9EAA"},
+		{background: "#F4F5F7", want: "#A01830"},
+	} {
+		cfg := fm.DefaultConfig()
+		cfg.Viewer.Background = tc.background
+		theme := (&UI{fmCfg: cfg}).fileViewerTheme()
+		if got := contrastScore(theme.PanelBg, theme.ModifiedText); got < 2.0 {
+			t.Fatalf("background %s modified-byte contrast=%0.2f want >= 2.0", tc.background, got)
+		}
+		if theme.ModifiedText == theme.HexText || theme.ModifiedText == theme.ASCIIText {
+			t.Fatalf("background %s modified-byte color is not distinct", tc.background)
+		}
+		if got := fm.FormatHexColor(theme.ModifiedText); got != tc.want {
+			t.Fatalf("background %s modified-byte color=%s want %s", tc.background, got, tc.want)
+		}
+	}
+}
+
 func TestFileViewerThemeUsesScrollbarOverrides(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.Viewer.Background = "#112233"

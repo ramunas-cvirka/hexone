@@ -434,7 +434,7 @@ func TestFunctionBarModifierHintTextShowsViewerTextShortcuts(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ctrl hints for the viewer")
 	}
-	want := "Ctrl+F Find | Ctrl+C Copy | Ctrl+A Select All | Ctrl+S Settings"
+	want := "Ctrl+F Find | Ctrl+C Copy | Ctrl+A Select All | Ctrl+S Save"
 	if got != want {
 		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
 	}
@@ -454,7 +454,7 @@ func TestFunctionBarModifierHintTextShowsViewerImageShortcuts(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ctrl hints for image previews")
 	}
-	want := "Ctrl+/- Zoom | Ctrl+S Settings"
+	want := "Ctrl+/- Zoom | Ctrl+S Save"
 	if got != want {
 		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
 	}
