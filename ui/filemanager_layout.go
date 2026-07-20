@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"hexone/fm"
 	"hexone/ui/platform"
 	uitheme "hexone/ui/theme"
 	"hexone/ui/widget/table"
@@ -210,6 +211,12 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 				continue
 			case fileActionDelete:
 				ui.startFileDeleteDialog(ui.activeFilePane, gtx.Now)
+				ui.rep.active = false
+				continue
+			case fileActionParent:
+				if ui.navigateFilePaneParent(ui.activeFilePane) {
+					gtx.Execute(op.InvalidateCmd{})
+				}
 				ui.rep.active = false
 				continue
 			case fileActionMarkSelectNext:
@@ -1338,7 +1345,11 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 				pane.stopPathEdit()
 				pathEditClosed = true
 			}
-			if pane.table.HandleScrollSelection(pe.Scroll.Y, total) {
+			if filePaneWheelMovesSelection(ui.fmCfg) {
+				if pane.table.HandleScrollSelection(pe.Scroll.Y, total) {
+					selectionChanged = true
+				}
+			} else if pane.table.HandleScrollViewport(pe.Scroll.Y, total) {
 				selectionChanged = true
 			}
 		case pointer.Press:
@@ -1449,6 +1460,10 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 	pass.Pop()
 	pane.table.ApplyScrollbarCursor(gtx)
 	return dims
+}
+
+func filePaneWheelMovesSelection(cfg *fm.Config) bool {
+	return cfg != nil && cfg.General.WheelMovesSelection
 }
 
 func (ui *UI) layoutFilePaneInlineNameEditor(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {

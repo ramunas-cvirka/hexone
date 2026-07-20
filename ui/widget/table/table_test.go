@@ -391,6 +391,40 @@ func TestScrollbarDragUpdatesListPositionImmediately(t *testing.T) {
 	}
 }
 
+func TestBriefWheelScrollMovesColumnsWithoutMovingSelection(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(20)
+	tbl.BriefColumnWidth = unit.Dp(80)
+	tbl.Selected = 7
+	gtx := testTableLayoutContext(image.Pt(120, 100))
+	tbl.Layout(th, gtx, tableTestModel{rows: 100})
+
+	if !tbl.HandleScrollViewport(120, 100) {
+		t.Fatal("vertical wheel should advance the brief-mode column viewport")
+	}
+	if got, want := tbl.List.Position.First, 1; got != want {
+		t.Fatalf("brief first column=%d want %d", got, want)
+	}
+	if got, want := tbl.Selected, 7; got != want {
+		t.Fatalf("brief active row=%d want unchanged %d", got, want)
+	}
+	if !tbl.HandleScrollViewport(-120, 100) || tbl.List.Position.First != 0 {
+		t.Fatalf("reverse wheel should return to the first brief column, got %d", tbl.List.Position.First)
+	}
+
+	tbl.SetMode(ModeFull)
+	tbl.Layout(th, gtx, tableTestModel{rows: 100})
+	fullFirst := tbl.List.Position.First
+	if !tbl.HandleScrollViewport(120, 100) || tbl.List.Position.First != fullFirst+1 {
+		t.Fatalf("full-mode wheel should advance one row from %d, got first=%d", fullFirst, tbl.List.Position.First)
+	}
+	if got, want := tbl.Selected, 7; got != want {
+		t.Fatalf("full active row=%d want unchanged %d", got, want)
+	}
+}
+
 type tableTestModel struct {
 	rows int
 }

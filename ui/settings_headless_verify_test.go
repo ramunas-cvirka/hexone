@@ -100,7 +100,11 @@ func TestHeadlessSettingsConfig(t *testing.T) {
 		ui.openSettingsModal()
 		ui.settingsModal.activeTab = "general"
 		ui.settingsModal.paneSettingsMode = mode
-		ui.settingsModal.paneFullChars++ // verify the dirty Save label.
+		if mode == "other" {
+			ui.settingsModal.generalUseTrash.Value = true
+		} else {
+			ui.settingsModal.paneFullChars++
+		}
 		router = new(input.Router)
 		writePNG("file-panes-"+mode, render("file-panes-"+mode))
 		if mode == "brief" {

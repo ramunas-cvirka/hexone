@@ -395,6 +395,9 @@ type GeneralConfig struct {
 	DateWeight            string  `yaml:"date_weight"`
 	DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 	OpenFavoritesInNewTab bool    `yaml:"open_favorites_in_new_tab"`
+	WheelMovesSelection   bool    `yaml:"wheel_moves_selection"`
+	UseTrash              bool    `yaml:"use_trash"`
+	DeleteWithoutConfirm  bool    `yaml:"delete_without_confirmation"`
 	CompletionSound       string  `yaml:"completion_sound"`
 }
 
@@ -409,6 +412,9 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 		DateWeight            string  `yaml:"date_weight"`
 		DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 		OpenFavoritesInNewTab *bool   `yaml:"open_favorites_in_new_tab"`
+		WheelMovesSelection   bool    `yaml:"wheel_moves_selection"`
+		UseTrash              bool    `yaml:"use_trash"`
+		DeleteWithoutConfirm  bool    `yaml:"delete_without_confirmation"`
 		CompletionSound       string  `yaml:"completion_sound"`
 	}
 	if err := node.Decode(&raw); err != nil {
@@ -426,6 +432,9 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	if raw.OpenFavoritesInNewTab != nil {
 		g.OpenFavoritesInNewTab = *raw.OpenFavoritesInNewTab
 	}
+	g.WheelMovesSelection = raw.WheelMovesSelection
+	g.UseTrash = raw.UseTrash
+	g.DeleteWithoutConfirm = raw.DeleteWithoutConfirm
 	g.CompletionSound = NormalizeCompletionSound(raw.CompletionSound)
 	return nil
 }

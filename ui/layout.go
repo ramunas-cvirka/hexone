@@ -1111,6 +1111,14 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		key.Filter{Name: "M", Required: key.ModShortcut, Optional: anyMods},
 		key.Filter{Name: "m", Required: key.ModShortcut, Optional: anyMods},
 	}
+	if ui != nil && ui.fileViewer != nil {
+		filters = append(filters,
+			key.Filter{Name: key.NameF5, Optional: anyMods},
+			key.Filter{Name: key.NameF6, Optional: anyMods},
+			key.Filter{Name: key.NameF7, Optional: anyMods},
+			key.Filter{Name: key.NameF8, Optional: anyMods},
+		)
+	}
 	filters = append(filters, customCommandShortcutKeyFilters(anyMods)...)
 	for {
 		ev, ok := gtx.Event(filters...)
@@ -1131,14 +1139,18 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionHelp, gtx.Now) {
+			if ui.performFunctionBarActionContext(gtx, functionBarActionHelp) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF2:
 			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionCustom, gtx.Now) {
+			action := functionBarActionCustom
+			if ui.fileViewer != nil {
+				action = functionBarActionViewerSave
+			}
+			if ui.performFunctionBarActionContext(gtx, action) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF3:
@@ -1153,7 +1165,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionView, gtx.Now) {
+			if ui.performFunctionBarActionContext(gtx, functionBarActionView) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF4:
@@ -1163,21 +1175,47 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionOpen, gtx.Now) {
+			if ui.performFunctionBarActionContext(gtx, functionBarActionOpen) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF5:
+			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {
+				continue
+			}
+		case key.NameF6:
+			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {
+				continue
+			}
+		case key.NameF7:
+			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {
+				continue
+			}
+			if ui.performFunctionBarActionContext(gtx, functionBarActionViewerFind) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF8:
+			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {
+				continue
+			}
+			if ui.performFunctionBarActionContext(gtx, functionBarActionViewerMode) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF9:
 			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionTools, gtx.Now) {
+			action := functionBarActionTools
+			if ui.fileViewer != nil {
+				action = functionBarActionViewerWrap
+			}
+			if ui.performFunctionBarActionContext(gtx, action) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF10:
 			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionExit, gtx.Now) {
+			if ui.performFunctionBarActionContext(gtx, functionBarActionExit) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF11:

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -178,6 +179,142 @@ func TestFormatFileDeleteErrorSimplifiesPermissionDenied(t *testing.T) {
 	}
 	if got, want := formatFileDeleteError(err, "/override"), "permission denied: /override"; got != want {
 		t.Fatalf("formatted target error = %q, want %q", got, want)
+	}
+}
+
+func TestFileDeleteTrashModeIsLocalOnly(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.UseTrash = true
+	if !fileDeleteShouldUseTrash(cfg, nil) {
+		t.Fatal("local deletion should use Trash when configured")
+	}
+	if fileDeleteShouldUseTrash(cfg, &paneSSHSession{}) {
+		t.Fatal("SSH deletion must remain permanent")
+	}
+	cfg.General.UseTrash = false
+	if fileDeleteShouldUseTrash(cfg, nil) {
+		t.Fatal("Trash should remain off by default")
+	}
+}
+
+func TestSubmitFileDeleteUsesSingleBatchedTrashOperation(t *testing.T) {
+	original := fileDeleteMovePathsToTrash
+	defer func() { fileDeleteMovePathsToTrash = original }()
+
+	called := make(chan []string, 1)
+	fileDeleteMovePathsToTrash = func(paths []string) error {
+		called <- append([]string(nil), paths...)
+		return nil
+	}
+	st := &fileDeleteState{
+		useTrash: true,
+		targets: []fileDeleteTarget{
+			{Path: "/tmp/alpha.txt", Name: "alpha.txt"},
+			{Path: "/tmp/beta", Name: "beta"},
+		},
+	}
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileDelete = st
+	ui.submitFileDeleteDialog(time.Now())
+
+	select {
+	case got := <-called:
+		want := []string{"/tmp/alpha.txt", "/tmp/beta"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Trash paths=%v want %v", got, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Trash operation was not called")
+	}
+	if res := <-st.doneCh; res.err != nil {
+		t.Fatalf("Trash operation result: %v", res.err)
+	}
+}
+
+func TestDeleteWithoutConfirmationSubmitsImmediately(t *testing.T) {
+	original := fileDeleteMovePathsToTrash
+	defer func() { fileDeleteMovePathsToTrash = original }()
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	fileDeleteMovePathsToTrash = func(paths []string) error {
+		started <- struct{}{}
+		<-release
+		return nil
+	}
+
+	root := t.TempDir()
+	target := filepath.Join(root, "alpha.txt")
+	if err := os.WriteFile(target, []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	cfg := fm.DefaultConfig()
+	cfg.General.UseTrash = true
+	cfg.General.DeleteWithoutConfirm = true
+	ui := NewUI(cfg)
+	pane := ui.filePanes[0]
+	waitForPaneLoads(t, ui, pane)
+	listing, err := filesys.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read target directory: %v", err)
+	}
+	pane.applyListing(listing, target, "", 0)
+	pane.table.Selected = pane.findEntryPathIndex(target)
+	if pane.table.Selected < 0 {
+		t.Fatal("target was not selected")
+	}
+
+	ui.startFileDeleteDialog(0, time.Now())
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delete-without-confirmation did not start the operation")
+	}
+	st := ui.fileDelete
+	if st == nil || !st.running || !st.useTrash {
+		t.Fatalf("immediate delete state=%#v", st)
+	}
+	close(release)
+	if res := <-st.doneCh; res.err != nil {
+		t.Fatalf("immediate Trash result: %v", res.err)
+	}
+}
+
+func TestDeleteConfirmationRemainsEnabledByDefault(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "alpha.txt")
+	if err := os.WriteFile(target, []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	waitForPaneLoads(t, ui, pane)
+	listing, err := filesys.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read target directory: %v", err)
+	}
+	pane.applyListing(listing, target, "", 0)
+	pane.table.Selected = pane.findEntryPathIndex(target)
+
+	ui.startFileDeleteDialog(0, time.Now())
+	if ui.fileDelete == nil {
+		t.Fatal("default delete should open a confirmation dialog")
+	}
+	if ui.fileDelete.running {
+		t.Fatal("default delete should not start before confirmation")
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("default confirmation should leave target untouched: %v", err)
+	}
+}
+
+func TestTrashSuccessAndErrorCopyIsRecoverable(t *testing.T) {
+	if got, _ := fileDeleteSuccessNotice(2, 0, true); got != "moved 2 items to Trash" {
+		t.Fatalf("Trash success notice=%q", got)
+	}
+	err := errors.New("volume does not support Trash")
+	if got := formatFileDeleteOperationError(err, "/tmp/a", true); got != "move to Trash failed: volume does not support Trash" {
+		t.Fatalf("Trash error=%q", got)
 	}
 }
 

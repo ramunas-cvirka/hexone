@@ -173,6 +173,21 @@ func TestHeadlessFileOperationDialogs(t *testing.T) {
 				return func() {}
 			},
 		},
+		{
+			name: "filedelete-trash",
+			setup: func(ui *UI) func() {
+				ui.fileDelete = &fileDeleteState{
+					pane:        0,
+					targets:     []fileDeleteTarget{{Path: "/srv/data/logs", Name: "logs"}, {Path: "/srv/data/archive", Name: "archive"}, {Path: "/srv/data/readme", Name: "readme"}},
+					targetPath:  "/srv/data/logs",
+					targetName:  "logs",
+					targetInfo:  fileCopyPathInfo{Path: "/srv/data/logs", Exists: true, IsDir: true},
+					useTrash:    true,
+					actionFocus: fileDeleteDialogActionConfirm,
+				}
+				return func() {}
+			},
+		},
 	}
 
 	for _, tt := range tests {

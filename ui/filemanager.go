@@ -3535,6 +3535,23 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 	return true
 }
 
+func (ui *UI) navigateFilePaneParent(idx int) bool {
+	if ui == nil || idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil || pane.loading || pane.model == nil {
+		return false
+	}
+	for row := 0; row < pane.model.Len(); row++ {
+		entry := pane.model.Entry(row)
+		if entry != nil && entry.Kind == filesys.EntryParent && entry.CanEnter {
+			return ui.activateFilePaneRow(idx, row)
+		}
+	}
+	return false
+}
+
 func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point, now time.Time) {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return

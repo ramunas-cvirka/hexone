@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hexone/filesys"
+	"hexone/fm"
 	"image"
 	"image/color"
 	"os"
@@ -29,6 +30,8 @@ import (
 
 const fileDeleteSuccessNoticeDur = 1200 * time.Millisecond
 
+var fileDeleteMovePathsToTrash = filesys.MovePathsToTrash
+
 type fileDeleteState struct {
 	pane int
 	row  int
@@ -38,6 +41,7 @@ type fileDeleteState struct {
 	targetName string
 	targetInfo fileCopyPathInfo
 	remote     *paneSSHSession
+	useTrash   bool
 
 	deletedNestedCount int
 	deletedCountKnown  bool
@@ -149,6 +153,7 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 		targetName:  entry.DisplayName,
 		targetInfo:  info,
 		remote:      remote,
+		useTrash:    fileDeleteShouldUseTrash(ui.fmCfg, remote),
 		focus:       fileDeleteDialogFocusActions,
 		actionFocus: fileDeleteDialogActionConfirm,
 		keyFocus:    dialogKeyboardFocusState{wantFocus: true},
@@ -156,6 +161,13 @@ func (ui *UI) startFileDeleteDialog(idx int, now time.Time) {
 	ui.rep.active = false
 	ui.rep.pane = -1
 	ui.clearFileDeleteHotkeyHold()
+	if ui.fmCfg != nil && ui.fmCfg.General.DeleteWithoutConfirm {
+		ui.submitFileDeleteDialog(now)
+	}
+}
+
+func fileDeleteShouldUseTrash(cfg *fm.Config, remote *paneSSHSession) bool {
+	return cfg != nil && cfg.General.UseTrash && remote == nil
 }
 
 func (ui *UI) clearFileDeleteHotkeyHold() {
@@ -311,6 +323,20 @@ func (ui *UI) submitFileDeleteDialog(now time.Time) {
 				return
 			}
 		}
+		if remote == nil && st.useTrash {
+			paths := make([]string, 0, len(targets))
+			for _, target := range targets {
+				paths = append(paths, target.Path)
+			}
+			if err := fileDeleteMovePathsToTrash(paths); err != nil {
+				res.err = err
+				if len(paths) > 0 {
+					res.failedPath = paths[0]
+				}
+			}
+			doneCh <- res
+			return
+		}
 		for _, target := range targets {
 			if remote != nil {
 				if err := deleteRemotePath(remote, target.Path); err != nil {
@@ -345,7 +371,7 @@ func (ui *UI) pumpFileDeleteState(gtx layout.Context) {
 		st.running = false
 		st.doneCh = nil
 		if res.err != nil {
-			st.lastErr = formatFileDeleteError(res.err, res.failedPath)
+			st.lastErr = formatFileDeleteOperationError(res.err, res.failedPath, st.useTrash)
 			gtx.Execute(op.InvalidateCmd{})
 			return
 		}
@@ -386,7 +412,7 @@ func (ui *UI) finishFileDelete(now time.Time) {
 	if st.deletedCountKnown {
 		nestedCount = st.deletedNestedCount
 	}
-	noticeText, noticeDur := fileDeleteSuccessNotice(len(targets), nestedCount)
+	noticeText, noticeDur := fileDeleteSuccessNotice(len(targets), nestedCount, st.useTrash)
 
 	ui.fileDelete = nil
 	ui.clearFileDeleteHotkeyHold()
@@ -469,7 +495,7 @@ func (ui *UI) finishFileDelete(now time.Time) {
 	}
 }
 
-func fileDeleteSuccessNotice(count, nestedCount int) (string, time.Duration) {
+func fileDeleteSuccessNotice(count, nestedCount int, trashed bool) (string, time.Duration) {
 	if count <= 0 {
 		return "", 0
 	}
@@ -478,6 +504,9 @@ func fileDeleteSuccessNotice(count, nestedCount int) (string, time.Duration) {
 		label = "item"
 	}
 	msg := fmt.Sprintf("deleted %d %s", count, label)
+	if trashed {
+		msg = fmt.Sprintf("moved %d %s to Trash", count, label)
+	}
 	if nestedCount > 0 {
 		nestedLabel := "nested items"
 		if nestedCount == 1 {
@@ -489,6 +518,10 @@ func fileDeleteSuccessNotice(count, nestedCount int) (string, time.Duration) {
 }
 
 func formatFileDeleteError(err error, targetPath string) string {
+	return formatFileDeleteOperationError(err, targetPath, false)
+}
+
+func formatFileDeleteOperationError(err error, targetPath string, trashed bool) string {
 	if err == nil {
 		return ""
 	}
@@ -510,7 +543,13 @@ func formatFileDeleteError(err error, targetPath string) string {
 		return "permission denied"
 	}
 	if errText == "" {
+		if trashed {
+			return "move to Trash failed"
+		}
 		return "delete failed"
+	}
+	if trashed {
+		return "move to Trash failed: " + errText
 	}
 	return "delete failed: " + errText
 }
@@ -780,18 +819,39 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 
 	metaText := formatCopyPathInfo(st.targetInfo)
 	if st.multiTarget() {
-		metaText = fmt.Sprintf("%d items will be deleted", st.targetCount())
+		if st.useTrash {
+			metaText = fmt.Sprintf("%d items will be moved to Trash", st.targetCount())
+		} else {
+			metaText = fmt.Sprintf("%d items will be deleted", st.targetCount())
+		}
 	}
 	targetLabel := "Delete"
+	titleText := "Delete"
+	confirmLabel := "Delete"
+	warningLabel := "Warning"
+	warningText := "This action cannot be undone."
+	statusText := "Deleting..."
+	if st.useTrash {
+		targetLabel = "Move"
+		titleText = "Move to Trash"
+		confirmLabel = "Move to Trash"
+		warningLabel = "Recovery"
+		warningText = "Items can be restored from Trash."
+		statusText = "Moving to Trash..."
+	}
 	if st.running {
-		targetLabel = "Deleting"
+		if st.useTrash {
+			targetLabel = "Moving"
+		} else {
+			targetLabel = "Deleting"
+		}
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					title := material.Body1(th, "Delete")
+					title := material.Body1(th, titleText)
 					title.Font.Typeface = ui.interfaceTypeface()
 					title.Font.Weight = font.Bold
 					title.TextSize = ui.scaleDialogFontSize(12)
@@ -815,7 +875,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutFileOpTextRow(th, gtx, "Warning", "This action cannot be undone.", color.NRGBA{R: 206, G: 186, B: 148, A: 255})
+			return ui.layoutFileOpTextRow(th, gtx, warningLabel, warningText, color.NRGBA{R: 206, G: 186, B: 148, A: 255})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -837,7 +897,7 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 				return layout.Dimensions{}
 			}
 			return layout.Inset{Top: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutFileOpTextRow(th, gtx, "Status", "Deleting...", hintColor)
+				return ui.layoutFileOpTextRow(th, gtx, "Status", statusText, hintColor)
 			})
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
@@ -845,9 +905,9 @@ func (ui *UI) layoutFileDeleteDialogBody(th *material.Theme, gtx layout.Context,
 		layout.Rigid(layout.Spacer{Height: unit.Dp(7)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				label := "Delete"
+				label := confirmLabel
 				if st.running {
-					label = "Deleting..."
+					label = statusText
 				}
 				return ui.layoutDialogActionPair(
 					th, gtx,

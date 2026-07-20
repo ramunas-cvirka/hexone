@@ -163,6 +163,7 @@ type Table struct {
 	lastClickRow        int
 	lastClickAt         time.Time
 	scrollCarry         float32
+	viewportScrollCarry float32
 	hitOffset           image.Point
 	hitSize             image.Point
 	fullModeWidths      []int
@@ -1083,6 +1084,52 @@ func (t *Table) HandleScrollSelection(deltaY float32, n int) bool {
 	t.ensureVisible(n)
 	t.notifySelect(prev)
 	return prev != t.Selected
+}
+
+// HandleScrollViewport scrolls rows in full mode or columns in brief mode
+// without changing the active row.
+func (t *Table) HandleScrollViewport(deltaY float32, n int) bool {
+	if t == nil || n <= 0 || deltaY == 0 {
+		if t != nil && n <= 0 {
+			t.viewportScrollCarry = 0
+		}
+		return false
+	}
+
+	if deltaY > 1 {
+		deltaY = 1
+	} else if deltaY < -1 {
+		deltaY = -1
+	}
+	if (deltaY > 0 && t.viewportScrollCarry < 0) || (deltaY < 0 && t.viewportScrollCarry > 0) {
+		t.viewportScrollCarry = 0
+	}
+	t.viewportScrollCarry += deltaY
+
+	steps := 0
+	for t.viewportScrollCarry >= 1 {
+		steps++
+		t.viewportScrollCarry--
+	}
+	for t.viewportScrollCarry <= -1 {
+		steps--
+		t.viewportScrollCarry++
+	}
+	if steps == 0 {
+		return false
+	}
+
+	_, _, maxFirst := t.scrollbarMetrics(n)
+	prev := t.List.Position.First
+	t.List.Position.First += steps
+	if t.List.Position.First < 0 {
+		t.List.Position.First = 0
+	}
+	if t.List.Position.First > maxFirst {
+		t.List.Position.First = maxFirst
+	}
+	t.List.Position.Offset = 0
+	return prev != t.List.Position.First
 }
 
 func (t *Table) HitRow(pos image.Point, n int) int {

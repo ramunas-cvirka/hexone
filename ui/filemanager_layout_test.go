@@ -4,12 +4,14 @@
 package ui
 
 import (
+	"fmt"
 	"hexone/filesys"
 	"hexone/fm"
 	"hexone/ui/platform"
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -519,6 +521,110 @@ func TestGioInsertPressAndReleaseControlsRepeat(t *testing.T) {
 	ui.handleFileManagerKeys(gtx)
 	if ui.rep.active || ui.held[fileActionKey(fileActionMarkSelectNext)] {
 		t.Fatal("Gio Insert release should stop repeat")
+	}
+}
+
+func TestBackspaceNavigatesActiveFilePaneToParent(t *testing.T) {
+	parent := t.TempDir()
+	child := filepath.Join(parent, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatalf("create child directory: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: child,
+		Entries: []filesys.Entry{
+			{Name: "..", DisplayName: "..", Path: parent, Kind: filesys.EntryParent, CanEnter: true},
+			{Name: "file.txt", Path: filepath.Join(child, "file.txt"), Kind: filesys.EntryFile},
+		},
+	}, "", "", 1)
+
+	gtx, router := testKeyContext()
+	gtx.Now = time.Now()
+	router.Event(key.Filter{Name: key.NameDeleteBackward})
+	router.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Press})
+	ui.handleFileManagerKeys(gtx)
+
+	if !pane.loading {
+		t.Fatal("Backspace should start loading the parent directory")
+	}
+	if got := pane.loadingDir; got != parent {
+		t.Fatalf("Backspace loading directory=%q want parent %q", got, parent)
+	}
+}
+
+func TestBackspaceAtFilesystemRootIsIgnored(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir:     string(filepath.Separator),
+		Entries: []filesys.Entry{{Name: "tmp", Path: "/tmp", Kind: filesys.EntryDir, CanEnter: true}},
+	}, "", "", 0)
+
+	if ui.navigateFilePaneParent(ui.activeFilePane) {
+		t.Fatal("parent navigation should be ignored when the pane has no parent entry")
+	}
+	if pane.loading {
+		t.Fatal("root pane should not start a load")
+	}
+}
+
+func TestFilePaneWheelSelectionBehaviorFollowsConfig(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	if filePaneWheelMovesSelection(cfg) {
+		t.Fatal("default mouse wheel behavior should preserve the active item")
+	}
+
+	cfg.General.WheelMovesSelection = true
+	if !filePaneWheelMovesSelection(cfg) {
+		t.Fatal("configured legacy mouse wheel behavior should move the active item")
+	}
+}
+
+func TestFilePaneWheelScrollsFullListWithoutMovingActiveItemByDefault(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	entries := make([]filesys.Entry, 40)
+	for i := range entries {
+		entries[i] = filesys.Entry{
+			Name:        fmt.Sprintf("file-%02d.txt", i),
+			DisplayName: fmt.Sprintf("file-%02d.txt", i),
+			Path:        filepath.Join(pane.dir, fmt.Sprintf("file-%02d.txt", i)),
+		}
+	}
+	pane.applyListing(filesys.Listing{Dir: pane.dir, Entries: entries}, "", "", 0)
+	ui := &UI{
+		fmCfg:          cfg,
+		filePanes:      []*filePaneState{pane},
+		activeFilePane: 0,
+		held:           make(map[string]bool),
+	}
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Source:      router.Source(),
+		Now:         time.Now(),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(420, 120)),
+	}
+	th := material.NewTheme()
+
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Scroll,
+		Position: f32.Pt(40, 40),
+		Scroll:   f32.Pt(0, 120),
+	})
+	gtx.Now = gtx.Now.Add(time.Millisecond)
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+
+	if got := pane.table.Selected; got != 0 {
+		t.Fatalf("default wheel moved active item to row %d", got)
+	}
+	if pos := pane.table.List.Position; pos.First == 0 && pos.Offset == 0 {
+		t.Fatalf("default wheel did not scroll the full file list: %#v", pos)
 	}
 }
 

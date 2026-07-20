@@ -102,6 +102,56 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	}
 }
 
+func TestMouseWheelSelectionMovementDefaultsOffAndRoundTrips(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.General.WheelMovesSelection {
+		t.Fatal("mouse wheel should scroll the pane without moving the active item by default")
+	}
+
+	cfg.General.WheelMovesSelection = true
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if !strings.Contains(string(data), "wheel_moves_selection: true") {
+		t.Fatalf("serialized config missing wheel behavior:\n%s", data)
+	}
+
+	loaded := DefaultConfig()
+	if err := yaml.Unmarshal(data, loaded); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if !loaded.General.WheelMovesSelection {
+		t.Fatal("mouse wheel selection behavior did not survive config round trip")
+	}
+}
+
+func TestDeleteSafetyOptionsDefaultOffAndRoundTrip(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.General.UseTrash || cfg.General.DeleteWithoutConfirm {
+		t.Fatalf("delete options should default off: useTrash=%v withoutConfirmation=%v", cfg.General.UseTrash, cfg.General.DeleteWithoutConfirm)
+	}
+
+	cfg.General.UseTrash = true
+	cfg.General.DeleteWithoutConfirm = true
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	out := string(data)
+	if !strings.Contains(out, "use_trash: true") || !strings.Contains(out, "delete_without_confirmation: true") {
+		t.Fatalf("serialized config missing delete options:\n%s", out)
+	}
+
+	loaded := DefaultConfig()
+	if err := yaml.Unmarshal(data, loaded); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if !loaded.General.UseTrash || !loaded.General.DeleteWithoutConfirm {
+		t.Fatalf("delete options did not round trip: %#v", loaded.General)
+	}
+}
+
 func TestNormalizeTerminalHeightRowsAllowsTallDynamicLayouts(t *testing.T) {
 	if got, want := NormalizeTerminalHeightRows(180), 180; got != want {
 		t.Fatalf("NormalizeTerminalHeightRows(180)=%d want %d", got, want)

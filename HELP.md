@@ -75,7 +75,7 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F5` copies.
 - `F6` moves or renames.
 - `F7` creates a file or folder.
-- `F8` deletes.
+- `F8` deletes selected items. In **Settings → File panes → Other**, deletion can use the local system Trash / Recycle Bin and can optionally skip confirmation. SSH deletions are always permanent.
 - `F9` opens the Tools menu (`Multi-Rename`, `Hex to ASCII`, `Protocol Analyzer`, `Settings`).
 - `Ctrl+M` / `Cmd+M` opens Multi-Rename for the current file-pane selection.
 - `F10` exits the app.

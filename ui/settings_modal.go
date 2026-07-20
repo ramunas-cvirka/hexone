@@ -293,6 +293,9 @@ type settingsModalState struct {
 	terminalAcceleratedKeysBool  widget.Bool
 	generalDimInactiveBool       widget.Bool
 	generalFavoritesNewTabBool   widget.Bool
+	generalWheelMovesSelection   widget.Bool
+	generalUseTrash              widget.Bool
+	generalDeleteWithoutConfirm  widget.Bool
 	generalCompletionSound       string
 	generalCompletionSoundAnim   settingsChoiceAnim
 	generalCompletionSoundClicks [3]widget.Clickable
@@ -712,6 +715,9 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.paneDateWeightAnim = settingsChoiceAnim{}
 	st.generalDimInactiveBool.Value = cfg.General.DimInactivePanes
 	st.generalFavoritesNewTabBool.Value = cfg.General.OpenFavoritesInNewTab
+	st.generalWheelMovesSelection.Value = cfg.General.WheelMovesSelection
+	st.generalUseTrash.Value = cfg.General.UseTrash
+	st.generalDeleteWithoutConfirm.Value = cfg.General.DeleteWithoutConfirm
 	st.generalCompletionSound = fm.NormalizeCompletionSound(cfg.General.CompletionSound)
 	st.generalCompletionSoundAnim = settingsChoiceAnim{}
 	st.viewSmoothScrollingBool.Value = cfg.Viewer.SmoothScrolling
@@ -3308,6 +3314,9 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.DateFormats = st.paneDateFormats()
 	ui.fmCfg.General.DimInactivePanes = st.generalDimInactiveBool.Value
 	ui.fmCfg.General.OpenFavoritesInNewTab = st.generalFavoritesNewTabBool.Value
+	ui.fmCfg.General.WheelMovesSelection = st.generalWheelMovesSelection.Value
+	ui.fmCfg.General.UseTrash = st.generalUseTrash.Value
+	ui.fmCfg.General.DeleteWithoutConfirm = st.generalDeleteWithoutConfirm.Value
 	ui.fmCfg.General.CompletionSound = fm.NormalizeCompletionSound(st.generalCompletionSound)
 	ui.fmCfg.Viewer.SmoothScrolling = st.viewSmoothScrollingBool.Value
 	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value

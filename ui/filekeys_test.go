@@ -24,6 +24,7 @@ func TestFileKeyMapUsesFixedNavigationAndFunctionKeys(t *testing.T) {
 		{name: "page down", ev: key.Event{Name: key.NamePageDown, State: key.Press}, want: fileActionPageDown},
 		{name: "home", ev: key.Event{Name: key.NameHome, State: key.Press}, want: fileActionHome},
 		{name: "activate", ev: key.Event{Name: key.NameEnter, State: key.Press}, want: fileActionActivate},
+		{name: "parent", ev: key.Event{Name: key.NameDeleteBackward, State: key.Press}, want: fileActionParent},
 		{name: "view", ev: key.Event{Name: key.NameF3, State: key.Press}, want: fileActionView},
 		{name: "copy", ev: key.Event{Name: key.NameF5, State: key.Press}, want: fileActionCopy},
 		{name: "move", ev: key.Event{Name: key.NameF6, State: key.Press}, want: fileActionRenameMove},

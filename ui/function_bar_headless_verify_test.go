@@ -44,7 +44,9 @@ func TestHeadlessFunctionBar(t *testing.T) {
 
 	th := material.NewTheme()
 	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
-	ui := NewUI(fm.DefaultConfig())
+	cfg := fm.DefaultConfig()
+	cfg.Viewer.HideFunctionBarWhenOpen = false
+	ui := NewUI(cfg)
 	router := new(input.Router)
 	render := func() *image.RGBA {
 		var img *image.RGBA
@@ -91,4 +93,35 @@ func TestHeadlessFunctionBar(t *testing.T) {
 	writePNG("function-bar-ctrl.png", render())
 	ui.functionBarHeldMods = key.ModAlt
 	writePNG("function-bar-alt.png", render())
+
+	viewerDir := t.TempDir()
+	viewerPath := filepath.Join(viewerDir, "viewer-function-bar.txt")
+	if err := os.WriteFile(viewerPath, []byte("HexOne viewer function bar verification\n"), 0o644); err != nil {
+		t.Fatalf("write viewer fixture: %v", err)
+	}
+	if !ui.requestPaneLoadWithSelection(0, viewerDir, viewerPath, "", 0) {
+		t.Fatal("request viewer fixture directory")
+	}
+	waitFor := func(label string, ready func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for !ready() && time.Now().Before(deadline) {
+			render()
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !ready() {
+			t.Fatalf("timed out waiting for %s", label)
+		}
+	}
+	waitFor("fixture selection", func() bool {
+		pane := ui.filePanes[0]
+		entry := pane.selectedEntry()
+		return !pane.loading && entry != nil && entry.Path == viewerPath
+	})
+	ui.startFileViewer(0, time.Now())
+	waitFor("viewer load", func() bool {
+		return ui.fileViewer != nil && !ui.fileViewer.loading
+	})
+	ui.functionBarHeldMods = 0
+	writePNG("function-bar-viewer.png", render())
 }

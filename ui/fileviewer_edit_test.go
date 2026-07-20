@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"hexone/fm"
 	"image"
 	"os"
@@ -226,6 +227,47 @@ func TestFileViewerTextSaveWritesAndClearsDirtyState(t *testing.T) {
 	}
 	if string(got) != "beta\r\n" {
 		t.Fatalf("saved bytes=%q want CRLF", got)
+	}
+}
+
+func TestViewerF2RoutesToSave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(path, []byte("alpha\n"), 0o640); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	st := &fileViewerState{
+		mode:             "file",
+		path:             path,
+		name:             "notes.txt",
+		detectedEncoding: fm.ViewerFileEncodingUTF8,
+		editBaselineText: "alpha\n",
+		editMode:         true,
+		editDirty:        true,
+		saveCh:           make(chan fileViewerSaveResult, 1),
+	}
+	st.contentEditor.SetText("beta\n")
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	ui.fileViewer = st
+
+	gtx, router := testKeyContext()
+	router.Event(key.Filter{Name: key.NameF2})
+	router.Queue(key.Event{Name: key.NameF2, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if !st.saving {
+		t.Fatal("viewer F2 should start saving a dirty edit")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for st.saving && time.Now().Before(deadline) {
+		ui.pumpFileViewerSaveState(layout.Context{Ops: new(op.Ops), Now: time.Now()}, st)
+		time.Sleep(time.Millisecond)
+	}
+	if st.saving || st.editDirty || st.err != "" {
+		t.Fatalf("F2 save state saving=%v dirty=%v err=%q", st.saving, st.editDirty, st.err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "beta\n" {
+		t.Fatalf("F2 saved content=%q err=%v", got, err)
 	}
 }
 
@@ -911,14 +953,40 @@ func TestFileViewerTextEditHonorsWordWrapSetting(t *testing.T) {
 	}
 }
 
-func TestViewerFunctionBarUsesEditAndSaveLabels(t *testing.T) {
+func TestViewerFunctionBarUsesViewerSpecificCommands(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	ui.Tabs = widget.Enum{Value: "tab0"}
-	ui.fileViewer = &fileViewerState{mode: "file", editMode: true}
+	ui.fileViewer = &fileViewerState{mode: "file"}
 
 	specs := ui.functionBarButtonSpecs()
-	if specs[1].label != "Save" || specs[2].label != "Discard" || specs[3].label != "Edit" {
-		t.Fatalf("viewer labels F2=%q F3=%q F4=%q", specs[1].label, specs[2].label, specs[3].label)
+	want := []string{"Help", "Save", "Close", "Edit", "", "", "Find", "Hex", "Wrap", "Exit"}
+	if len(specs) != len(want) {
+		t.Fatalf("viewer function count=%d want %d", len(specs), len(want))
+	}
+	for i, label := range want {
+		if specs[i].keyLabel != fmt.Sprintf("F%d", i+1) || specs[i].label != label {
+			t.Fatalf("viewer F%d=%q %q want %q", i+1, specs[i].keyLabel, specs[i].label, label)
+		}
+	}
+	if specs[1].action != functionBarActionViewerSave || specs[2].action != functionBarActionView {
+		t.Fatalf("viewer actions F2=%v F3=%v", specs[1].action, specs[2].action)
+	}
+	if specs[4].action != functionBarActionNone || specs[4].enabled ||
+		specs[5].action != functionBarActionNone || specs[5].enabled {
+		t.Fatalf("viewer F5/F6 should be empty and disabled: F5=%#v F6=%#v", specs[4], specs[5])
+	}
+
+	ui.fileViewer.mode = "hex"
+	ui.fileViewer.wrapEnabled = true
+	specs = ui.functionBarButtonSpecs()
+	if specs[7].label != "Text" || specs[8].label != "Unwrap" {
+		t.Fatalf("viewer toggle labels F8=%q F9=%q", specs[7].label, specs[8].label)
+	}
+
+	ui.fileViewer.editMode = true
+	specs = ui.functionBarButtonSpecs()
+	if specs[2].label != "View" {
+		t.Fatalf("viewer edit-mode F3 label=%q want View", specs[2].label)
 	}
 }
 
@@ -939,6 +1007,22 @@ func TestViewerFunctionActionsUseF4ForEditAndF3ForDiscard(t *testing.T) {
 	}
 	if st.editDirty || st.contentEditor.Text() != "alpha" || st.content != "alpha" {
 		t.Fatalf("F3 discard dirty=%v editor=%q content=%q", st.editDirty, st.contentEditor.Text(), st.content)
+	}
+}
+
+func TestViewerF3ClosesViewerFromViewOnlyMode(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs = widget.Enum{Value: "tab0"}
+	ui.fileViewer = &fileViewerState{mode: "file"}
+
+	if !ui.performFunctionBarAction(functionBarActionView, time.Now()) {
+		t.Fatal("F3 should be handled in view-only mode")
+	}
+	if ui.fileViewer != nil {
+		t.Fatal("F3 should close the viewer from view-only mode")
+	}
+	if ui.ConsumeWindowCloseRequest() {
+		t.Fatal("F3 should not exit the application")
 	}
 }
 

@@ -20,6 +20,9 @@ const (
 	settingsKeyboardFocusNav
 	settingsKeyboardFocusGeneralDimInactive
 	settingsKeyboardFocusGeneralFavoritesNewTab
+	settingsKeyboardFocusGeneralWheelMovesSelection
+	settingsKeyboardFocusGeneralUseTrash
+	settingsKeyboardFocusGeneralDeleteWithoutConfirm
 	settingsKeyboardFocusGeneralCompletionSound
 	settingsKeyboardFocusFilePaneMode
 	settingsKeyboardFocusFilePaneFileWeight
@@ -167,6 +170,9 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 	switch target {
 	case settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
+		settingsKeyboardFocusGeneralWheelMovesSelection,
+		settingsKeyboardFocusGeneralUseTrash,
+		settingsKeyboardFocusGeneralDeleteWithoutConfirm,
 		settingsKeyboardFocusTerminalShell,
 		settingsKeyboardFocusTerminalAcceleratedKeys,
 		settingsKeyboardFocusViewerRemoteSearch,
@@ -215,6 +221,12 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 		st.focus = settingsKeyboardFocusGeneralDimInactive
 	case gtx.Focused(&st.generalFavoritesNewTabBool):
 		st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
+	case gtx.Focused(&st.generalWheelMovesSelection):
+		st.focus = settingsKeyboardFocusGeneralWheelMovesSelection
+	case gtx.Focused(&st.generalUseTrash):
+		st.focus = settingsKeyboardFocusGeneralUseTrash
+	case gtx.Focused(&st.generalDeleteWithoutConfirm):
+		st.focus = settingsKeyboardFocusGeneralDeleteWithoutConfirm
 	case gtx.Focused(&st.terminalAcceleratedKeysBool):
 		st.focus = settingsKeyboardFocusTerminalAcceleratedKeys
 	case gtx.Focused(&st.viewShellEdit):
@@ -306,6 +318,9 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 			order = append(order,
 				settingsKeyboardFocusGeneralDimInactive,
 				settingsKeyboardFocusGeneralFavoritesNewTab,
+				settingsKeyboardFocusGeneralWheelMovesSelection,
+				settingsKeyboardFocusGeneralUseTrash,
+				settingsKeyboardFocusGeneralDeleteWithoutConfirm,
 				settingsKeyboardFocusGeneralCompletionSound,
 				settingsKeyboardFocusFilePaneFileWeight,
 				settingsKeyboardFocusFilePaneDirWeight,
@@ -532,6 +547,15 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 		return true
 	case settingsKeyboardFocusGeneralFavoritesNewTab:
 		st.generalFavoritesNewTabBool.Value = !st.generalFavoritesNewTabBool.Value
+		return true
+	case settingsKeyboardFocusGeneralWheelMovesSelection:
+		st.generalWheelMovesSelection.Value = !st.generalWheelMovesSelection.Value
+		return true
+	case settingsKeyboardFocusGeneralUseTrash:
+		st.generalUseTrash.Value = !st.generalUseTrash.Value
+		return true
+	case settingsKeyboardFocusGeneralDeleteWithoutConfirm:
+		st.generalDeleteWithoutConfirm.Value = !st.generalDeleteWithoutConfirm.Value
 		return true
 	case settingsKeyboardFocusViewerSmoothScrolling:
 		st.viewSmoothScrollingBool.Value = !st.viewSmoothScrollingBool.Value

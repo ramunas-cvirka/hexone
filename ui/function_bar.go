@@ -33,7 +33,8 @@ const (
 type functionBarAction uint8
 
 const (
-	functionBarActionHelp functionBarAction = iota
+	functionBarActionNone functionBarAction = iota
+	functionBarActionHelp
 	functionBarActionCustom
 	functionBarActionView
 	functionBarActionOpen
@@ -43,6 +44,10 @@ const (
 	functionBarActionDelete
 	functionBarActionTools
 	functionBarActionExit
+	functionBarActionViewerSave
+	functionBarActionViewerFind
+	functionBarActionViewerMode
+	functionBarActionViewerWrap
 )
 
 type functionBarButtonSpec struct {
@@ -202,6 +207,11 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 		return ui.helpModal == nil && ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
 	case functionBarActionTools:
 		return ui.helpModal == nil && ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
+	case functionBarActionViewerSave,
+		functionBarActionViewerFind,
+		functionBarActionViewerMode,
+		functionBarActionViewerWrap:
+		return ui.viewerFunctionBarActionEnabled(action)
 	}
 
 	if ui.Tabs.Value != "tab0" || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.pathEditActive() {
@@ -217,6 +227,10 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 		}
 		return !ui.hasBlockingFileDialog()
 	case functionBarActionOpen:
+		if ui.fileViewer != nil {
+			ok, _ := ui.fileViewerCanEdit(ui.fileViewer)
+			return ok
+		}
 		return !ui.hasBlockingFileDialog()
 	case functionBarActionCopy, functionBarActionMove, functionBarActionCreate, functionBarActionDelete:
 		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
@@ -225,10 +239,36 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 	}
 }
 
+func (ui *UI) viewerFunctionBarActionEnabled(action functionBarAction) bool {
+	if ui == nil || ui.fileViewer == nil || ui.Tabs.Value != "tab0" ||
+		ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil ||
+		ui.hasBlockingFileDialog() || ui.fileViewer.modeSwitchPrompt.open {
+		return false
+	}
+	st := ui.fileViewer
+	switch action {
+	case functionBarActionViewerSave:
+		return st.editMode && st.editDirty && !st.saving
+	case functionBarActionViewerFind:
+		return !st.editMode && !st.commandEditOn && viewerSupportsFind(st)
+	case functionBarActionViewerMode:
+		return !st.commandOnly && !st.editMode && !st.editDirty && !st.saving
+	case functionBarActionViewerWrap:
+		return !st.detectedImagePreview && st.mode != "hex" && !st.commandEditOn
+	default:
+		return false
+	}
+}
+
 func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) bool {
+	return ui.performFunctionBarActionContext(layout.Context{Now: now}, action)
+}
+
+func (ui *UI) performFunctionBarActionContext(gtx layout.Context, action functionBarAction) bool {
 	if ui == nil {
 		return false
 	}
+	now := gtx.Now
 	switch action {
 	case functionBarActionHelp:
 		if !ui.functionBarActionEnabled(action) {
@@ -269,7 +309,7 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 				ui.stopFileViewerEdit()
 				return true
 			}
-			ui.startFileViewerLoad(now)
+			ui.closeFileViewer()
 			return true
 		}
 		ui.startFileViewer(ui.activeFilePane, now)
@@ -334,27 +374,52 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 			return false
 		}
 		ui.closeFunctionBarPopups()
+		if st := ui.fileViewer; st != nil {
+			ui.discardFileViewerChanges(st)
+			ui.stopFileViewerEdit()
+		}
 		ui.requestWindowClose()
+		return true
+	case functionBarActionViewerSave:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		return ui.startFileViewerSave(now)
+	case functionBarActionViewerFind:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.openFileViewerFind(now)
+		return true
+	case functionBarActionViewerMode:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		next := "hex"
+		if ui.fileViewer.mode == "hex" {
+			next = "file"
+		}
+		ui.setFileViewerMode(next, now)
+		return true
+	case functionBarActionViewerWrap:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.toggleViewerWordWrap()
 		return true
 	}
 	return false
 }
 
 func (ui *UI) functionBarButtonSpecs() []functionBarButtonSpec {
+	if ui != nil && ui.fileViewer != nil {
+		return ui.viewerFunctionBarButtonSpecs()
+	}
 	customLabel := "Custom"
 	viewLabel := "View"
 	openLabel := "Open"
 	customFill := ui.customCommandMenuFill()
 	openFill := float32(0)
-	if ui != nil && ui.fileViewer != nil {
-		customLabel = "Save"
-		openLabel = "Edit"
-		customFill = boolFill(ui.fileViewer.saving)
-		openFill = boolFill(ui.fileViewer.editMode)
-		if ui.fileViewer.editMode {
-			viewLabel = "Discard"
-		}
-	}
 	return []functionBarButtonSpec{
 		{action: functionBarActionHelp, keyLabel: "F1", label: "Help", click: &ui.functionBarClicks[0], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionHelp)},
 		{action: functionBarActionCustom, keyLabel: "F2", label: customLabel, click: &ui.functionBarClicks[1], activeFill: customFill, enabled: ui.functionBarActionEnabled(functionBarActionCustom)},
@@ -366,6 +431,34 @@ func (ui *UI) functionBarButtonSpecs() []functionBarButtonSpec {
 		{action: functionBarActionDelete, keyLabel: "F8", label: "Delete", click: &ui.functionBarClicks[7], activeFill: boolFill(ui.fileDelete != nil), enabled: ui.functionBarActionEnabled(functionBarActionDelete)},
 		{action: functionBarActionTools, keyLabel: "F9", label: "Tools", click: &ui.functionBarClicks[8], activeFill: ui.functionBarToolsFill(), enabled: ui.functionBarActionEnabled(functionBarActionTools)},
 		{action: functionBarActionExit, keyLabel: "F10", label: "Exit", click: &ui.functionBarClicks[9], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionExit)},
+	}
+}
+
+func (ui *UI) viewerFunctionBarButtonSpecs() []functionBarButtonSpec {
+	st := ui.fileViewer
+	viewLabel := "Close"
+	if st.editMode {
+		viewLabel = "View"
+	}
+	modeLabel := "Hex"
+	if st.mode == "hex" {
+		modeLabel = "Text"
+	}
+	wrapLabel := "Wrap"
+	if st.wrapEnabled {
+		wrapLabel = "Unwrap"
+	}
+	return []functionBarButtonSpec{
+		{action: functionBarActionHelp, keyLabel: "F1", label: "Help", click: &ui.functionBarClicks[0], enabled: ui.functionBarActionEnabled(functionBarActionHelp)},
+		{action: functionBarActionViewerSave, keyLabel: "F2", label: "Save", click: &ui.functionBarClicks[1], activeFill: boolFill(st.saving || st.editDirty), enabled: ui.functionBarActionEnabled(functionBarActionViewerSave)},
+		{action: functionBarActionView, keyLabel: "F3", label: viewLabel, click: &ui.functionBarClicks[2], activeFill: boolFill(!st.editMode), enabled: ui.functionBarActionEnabled(functionBarActionView)},
+		{action: functionBarActionOpen, keyLabel: "F4", label: "Edit", click: &ui.functionBarClicks[3], activeFill: boolFill(st.editMode), enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
+		{action: functionBarActionNone, keyLabel: "F5", label: "", click: &ui.functionBarClicks[4], enabled: false},
+		{action: functionBarActionNone, keyLabel: "F6", label: "", click: &ui.functionBarClicks[5], enabled: false},
+		{action: functionBarActionViewerFind, keyLabel: "F7", label: "Find", click: &ui.functionBarClicks[6], activeFill: boolFill(st.find.open), enabled: ui.functionBarActionEnabled(functionBarActionViewerFind)},
+		{action: functionBarActionViewerMode, keyLabel: "F8", label: modeLabel, click: &ui.functionBarClicks[7], activeFill: boolFill(st.mode == "hex"), enabled: ui.functionBarActionEnabled(functionBarActionViewerMode)},
+		{action: functionBarActionViewerWrap, keyLabel: "F9", label: wrapLabel, click: &ui.functionBarClicks[8], activeFill: boolFill(st.wrapEnabled), enabled: ui.functionBarActionEnabled(functionBarActionViewerWrap)},
+		{action: functionBarActionExit, keyLabel: "F10", label: "Exit", click: &ui.functionBarClicks[9], enabled: ui.functionBarActionEnabled(functionBarActionExit)},
 	}
 }
 
@@ -844,6 +937,22 @@ func (ui *UI) functionBarActiveIndex(specs []functionBarButtonSpec) int {
 	if ui == nil {
 		return -1
 	}
+	if st := ui.fileViewer; st != nil {
+		switch {
+		case st.saving || st.editDirty:
+			return ui.functionBarIndexForAction(specs, functionBarActionViewerSave)
+		case st.find.open:
+			return ui.functionBarIndexForAction(specs, functionBarActionViewerFind)
+		case st.editMode:
+			return ui.functionBarIndexForAction(specs, functionBarActionOpen)
+		case st.mode == "hex":
+			return ui.functionBarIndexForAction(specs, functionBarActionViewerMode)
+		case st.wrapEnabled:
+			return ui.functionBarIndexForAction(specs, functionBarActionViewerWrap)
+		default:
+			return ui.functionBarIndexForAction(specs, functionBarActionView)
+		}
+	}
 	switch {
 	case ui.customCommandMenuOpen, ui.customCommandEditor != nil:
 		return ui.functionBarIndexForAction(specs, functionBarActionCustom)
@@ -857,8 +966,6 @@ func (ui *UI) functionBarActiveIndex(specs []functionBarButtonSpec) int {
 		return ui.functionBarIndexForAction(specs, functionBarActionMove)
 	case ui.fileCopy != nil:
 		return ui.functionBarIndexForAction(specs, functionBarActionCopy)
-	case ui.fileViewer != nil:
-		return ui.functionBarIndexForAction(specs, functionBarActionView)
 	default:
 		return -1
 	}
@@ -955,7 +1062,7 @@ func (ui *UI) layoutFunctionBarContent(th *material.Theme, gtx layout.Context) l
 		}
 		for spec.click.Clicked(gtx) {
 			ui.setToolbarPulse(spec.keyLabel, gtx.Now)
-			if !ui.performFunctionBarAction(spec.action, gtx.Now) {
+			if !ui.performFunctionBarActionContext(gtx, spec.action) {
 				continue
 			}
 			gtx.Execute(op.InvalidateCmd{})

@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +185,53 @@ func TestSettingsSaveLabelIndicatesDirtyDraft(t *testing.T) {
 	st.paneFullChars--
 	if st.dirty() || st.saveLabel() != "Save" {
 		t.Fatalf("reverted draft dirty=%v label=%q", st.dirty(), st.saveLabel())
+	}
+}
+
+func TestSettingsSaveLabelIndicatesDirtyGeneralFilePaneToggles(t *testing.T) {
+	tests := []struct {
+		name   string
+		toggle func(*settingsModalState)
+	}{
+		{
+			name: "mouse wheel moves selection",
+			toggle: func(st *settingsModalState) {
+				st.generalWheelMovesSelection.Value = !st.generalWheelMovesSelection.Value
+			},
+		},
+		{
+			name: "use trash",
+			toggle: func(st *settingsModalState) {
+				st.generalUseTrash.Value = !st.generalUseTrash.Value
+			},
+		},
+		{
+			name: "delete without confirmation",
+			toggle: func(st *settingsModalState) {
+				st.generalDeleteWithoutConfirm.Value = !st.generalDeleteWithoutConfirm.Value
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ui := NewUI(fm.DefaultConfig())
+			ui.openSettingsModal()
+			st := ui.settingsModal
+			if st == nil {
+				t.Fatal("settings modal did not open")
+			}
+
+			tt.toggle(st)
+			if !st.dirty() || st.saveLabel() != "Save (*)" {
+				t.Fatalf("toggled draft dirty=%v label=%q", st.dirty(), st.saveLabel())
+			}
+
+			tt.toggle(st)
+			if st.dirty() || st.saveLabel() != "Save" {
+				t.Fatalf("reverted draft dirty=%v label=%q", st.dirty(), st.saveLabel())
+			}
+		})
 	}
 }
 
@@ -416,6 +464,13 @@ func TestSettingsKeyboardFocusOrderTracksFilePaneInnerTab(t *testing.T) {
 	other := (&settingsModalState{activeTab: "general", paneSettingsMode: "other"}).focusOrder()
 	if len(other) < 5 || other[2] != settingsKeyboardFocusGeneralDimInactive || other[len(other)-1] != settingsKeyboardFocusFooter {
 		t.Fatalf("other focus order=%v", other)
+	}
+	if !slices.Contains(other, settingsKeyboardFocusGeneralWheelMovesSelection) {
+		t.Fatalf("other focus order missing mouse-wheel checkbox: %v", other)
+	}
+	if !slices.Contains(other, settingsKeyboardFocusGeneralUseTrash) ||
+		!slices.Contains(other, settingsKeyboardFocusGeneralDeleteWithoutConfirm) {
+		t.Fatalf("other focus order missing delete safety checkboxes: %v", other)
 	}
 }
 
@@ -805,6 +860,57 @@ func TestSettingsModalKeyboardSpaceTogglesFavoritesNewTab(t *testing.T) {
 
 	if st.generalFavoritesNewTabBool.Value {
 		t.Fatal("Space should toggle the focused favorites new-tab checkbox")
+	}
+}
+
+func TestSettingsModalLoadsTogglesAndSavesMouseWheelBehavior(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.WheelMovesSelection = true
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if st == nil || !st.generalWheelMovesSelection.Value {
+		t.Fatal("settings should load the configured mouse-wheel behavior")
+	}
+	st.focus = settingsKeyboardFocusGeneralWheelMovesSelection
+	if !st.toggleFocusedCheckbox() || st.generalWheelMovesSelection.Value {
+		t.Fatal("Space-toggle path should disable the mouse-wheel checkbox")
+	}
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("saveSettingsModal: %v", err)
+	}
+	if ui.fmCfg.General.WheelMovesSelection {
+		t.Fatal("settings should persist the disabled mouse-wheel behavior")
+	}
+}
+
+func TestSettingsModalLoadsTogglesAndSavesDeleteSafetyOptions(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.UseTrash = true
+	cfg.General.DeleteWithoutConfirm = true
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if st == nil || !st.generalUseTrash.Value || !st.generalDeleteWithoutConfirm.Value {
+		t.Fatal("settings should load configured delete safety options")
+	}
+	st.focus = settingsKeyboardFocusGeneralUseTrash
+	if !st.toggleFocusedCheckbox() || st.generalUseTrash.Value {
+		t.Fatal("Space-toggle path should disable Trash")
+	}
+	st.focus = settingsKeyboardFocusGeneralDeleteWithoutConfirm
+	if !st.toggleFocusedCheckbox() || st.generalDeleteWithoutConfirm.Value {
+		t.Fatal("Space-toggle path should enable delete confirmation")
+	}
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("saveSettingsModal: %v", err)
+	}
+	if ui.fmCfg.General.UseTrash || ui.fmCfg.General.DeleteWithoutConfirm {
+		t.Fatalf("settings did not save delete safety options: %#v", ui.fmCfg.General)
 	}
 }
 

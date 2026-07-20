@@ -574,6 +574,36 @@ func (ui *UI) layoutSettingsPaneOtherTab(th *material.Theme, gtx layout.Context,
 			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralFavoritesNewTab, &st.generalFavoritesNewTabBool)
 			return dims
 		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			before := st.generalWheelMovesSelection.Value
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalWheelMovesSelection, "Mouse wheel moves the active item", ui.scaleModalFontSize(10))
+			if before != st.generalWheelMovesSelection.Value {
+				st.focus = settingsKeyboardFocusGeneralWheelMovesSelection
+			}
+			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralWheelMovesSelection, &st.generalWheelMovesSelection)
+			return dims
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			before := st.generalUseTrash.Value
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalUseTrash, "Move deleted items to Trash / Recycle Bin", ui.scaleModalFontSize(10))
+			if before != st.generalUseTrash.Value {
+				st.focus = settingsKeyboardFocusGeneralUseTrash
+			}
+			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralUseTrash, &st.generalUseTrash)
+			return dims
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(5)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			before := st.generalDeleteWithoutConfirm.Value
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.generalDeleteWithoutConfirm, "Delete without confirmation", ui.scaleModalFontSize(10))
+			if before != st.generalDeleteWithoutConfirm.Value {
+				st.focus = settingsKeyboardFocusGeneralDeleteWithoutConfirm
+			}
+			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusGeneralDeleteWithoutConfirm, &st.generalDeleteWithoutConfirm)
+			return dims
+		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions { return ui.layoutSettingsCompletionSoundRow(th, gtx, st) }),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),

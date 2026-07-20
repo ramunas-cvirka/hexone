@@ -27,6 +27,7 @@ const (
 	fileActionHome
 	fileActionEnd
 	fileActionActivate
+	fileActionParent
 	fileActionMarkSelectNext
 	fileActionView
 	fileActionCopy
@@ -68,6 +69,7 @@ func newFileKeyMap(cfg *fm.Config) fileKeyMap {
 		{action: fileActionHome, raw: "", fallback: "home"},
 		{action: fileActionEnd, raw: "", fallback: "end"},
 		{action: fileActionActivate, raw: "", fallback: "enter"},
+		{action: fileActionParent, raw: "", fallback: "backspace"},
 		{action: fileActionMarkSelectNext, raw: "", fallback: "insert"},
 		{action: fileActionView, raw: "", fallback: "f3"},
 		{action: fileActionCopy, raw: "", fallback: "f5"},
@@ -191,6 +193,8 @@ func fileKeyName(part string) (key.Name, bool) {
 		return key.NameEnd, true
 	case "enter", "return":
 		return key.NameEnter, true
+	case "backspace":
+		return key.NameDeleteBackward, true
 	case "insert", "ins":
 		return keyNameInsert, true
 	case "tab":
@@ -248,6 +252,8 @@ func fileActionKey(action fileAction) string {
 		return "end"
 	case fileActionActivate:
 		return "activate"
+	case fileActionParent:
+		return "parent"
 	case fileActionMarkSelectNext:
 		return "mark-select-next"
 	case fileActionView:
@@ -303,6 +309,8 @@ func fileActionCommand(action fileAction) string {
 		return "⇲"
 	case fileActionActivate:
 		return "⏎"
+	case fileActionParent:
+		return "Backspace"
 	case fileActionMarkSelectNext:
 		return "Insert"
 	case fileActionCopy:

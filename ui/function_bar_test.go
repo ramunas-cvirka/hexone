@@ -275,6 +275,131 @@ func TestViewerFunctionBarAutoHideCanBeTemporarilyShown(t *testing.T) {
 	}
 }
 
+func TestViewerFunctionBarExitRequestsApplicationExit(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	ui.fileViewer = &fileViewerState{mode: "file"}
+
+	if !ui.performFunctionBarAction(functionBarActionExit, time.Now()) {
+		t.Fatal("viewer F10 Exit action should be handled")
+	}
+	if ui.fileViewer == nil {
+		t.Fatal("application Exit should leave viewer state intact until the window closes")
+	}
+	if !ui.ConsumeWindowCloseRequest() {
+		t.Fatal("viewer F10 Exit should request application exit")
+	}
+}
+
+func TestViewerFunctionBarExitDiscardsUnsavedTextChanges(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	st := &fileViewerState{
+		mode:             "file",
+		editMode:         true,
+		editDirty:        true,
+		editBaselineText: "original",
+		content:          "changed",
+	}
+	st.contentEditor.SetText("changed")
+	ui.fileViewer = st
+
+	if !ui.performFunctionBarAction(functionBarActionExit, time.Now()) {
+		t.Fatal("viewer F10 Exit action should be handled")
+	}
+	if st.editMode || st.editDirty || st.contentEditor.Text() != "original" || st.content != "original" {
+		t.Fatalf("F10 text discard edit=%v dirty=%v editor=%q content=%q", st.editMode, st.editDirty, st.contentEditor.Text(), st.content)
+	}
+	if !ui.ConsumeWindowCloseRequest() {
+		t.Fatal("viewer F10 should request application exit after discarding text changes")
+	}
+}
+
+func TestViewerFunctionBarExitDiscardsUnsavedHexChanges(t *testing.T) {
+	v := newHexViewerState()
+	v.edits = map[int64]byte{3: 0xFF}
+	st := &fileViewerState{mode: "hex", editMode: true, editDirty: true, hex: v}
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	ui.fileViewer = st
+
+	if !ui.performFunctionBarAction(functionBarActionExit, time.Now()) {
+		t.Fatal("viewer F10 Exit action should be handled")
+	}
+	if st.editMode || st.editDirty || v.edits != nil {
+		t.Fatalf("F10 HEX discard edit=%v dirty=%v edits=%v", st.editMode, st.editDirty, v.edits)
+	}
+	if !ui.ConsumeWindowCloseRequest() {
+		t.Fatal("viewer F10 should request application exit after discarding HEX changes")
+	}
+}
+
+func TestViewerFunctionBarEnablesSaveOnlyForDirtyEdit(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	st := &fileViewerState{mode: "file"}
+	ui.fileViewer = st
+
+	if ui.functionBarActionEnabled(functionBarActionViewerSave) {
+		t.Fatal("viewer Save should be disabled outside edit mode")
+	}
+	st.editMode = true
+	st.editDirty = true
+	if !ui.functionBarActionEnabled(functionBarActionViewerSave) {
+		t.Fatal("viewer Save should be enabled for dirty edits")
+	}
+	if ui.functionBarActionEnabled(functionBarActionViewerMode) {
+		t.Fatal("viewer mode switch should be disabled while editing")
+	}
+}
+
+func TestViewerFunctionKeysRouteToViewerCommands(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	ui.fileViewer = &fileViewerState{mode: "file"}
+	gtx, router := testKeyContext()
+	anyMods := ^key.Modifiers(0)
+
+	router.Event(key.Filter{Name: key.NameF7, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF7, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if !ui.fileViewer.find.open {
+		t.Fatal("viewer F7 should open Find")
+	}
+
+	router.Event(key.Filter{Name: key.NameF10, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF10, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if ui.fileViewer == nil {
+		t.Fatal("viewer F10 should preserve viewer state until application exit")
+	}
+	if !ui.ConsumeWindowCloseRequest() {
+		t.Fatal("viewer F10 should request application exit")
+	}
+}
+
+func TestViewerF5AndF6AreUnassigned(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	st := &fileViewerState{mode: "file", editMode: true, editDirty: true}
+	ui.fileViewer = st
+	gtx, router := testKeyContext()
+	anyMods := ^key.Modifiers(0)
+
+	for _, name := range []key.Name{key.NameF5, key.NameF6} {
+		router.Event(key.Filter{Name: name, Optional: anyMods})
+		router.Queue(key.Event{Name: name, State: key.Press})
+		ui.handleGlobalFunctionKeys(gtx)
+	}
+
+	if st.saving || !st.editMode || !st.editDirty {
+		t.Fatalf("unassigned F5/F6 changed viewer state saving=%v edit=%v dirty=%v", st.saving, st.editMode, st.editDirty)
+	}
+	if ui.ConsumeWindowCloseRequest() {
+		t.Fatal("unassigned F5/F6 should not request application exit")
+	}
+}
+
 func TestTerminalMaximizedFunctionBarAutoHideCanBeTemporarilyShown(t *testing.T) {
 	now := time.Date(2026, time.March, 8, 10, 5, 0, 0, time.UTC)
 	cfg := fm.DefaultConfig()
