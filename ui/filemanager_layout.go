@@ -86,7 +86,6 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 			return ui.layoutFileViewer(th, gtx)
 		}),
 	)
-	ui.applyFilePaneHeaderCursor(gtx)
 
 	ui.handleFileManagerKeys(gtx)
 	if ui.flushPendingFileOpen() {
@@ -94,21 +93,6 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 	}
 
 	return dims
-}
-
-func (ui *UI) applyFilePaneHeaderCursor(gtx layout.Context) {
-	if ui == nil || ui.fileViewer != nil || ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
-		return
-	}
-	for _, pane := range ui.filePanes {
-		if pane == nil {
-			continue
-		}
-		if pane.modeClick.Hovered() || pane.sortClick.Hovered() || pane.favoriteClick.Hovered() || pane.disconnectClick.Hovered() {
-			pointer.CursorPointer.Add(gtx.Ops)
-			return
-		}
-	}
 }
 
 func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
@@ -1546,6 +1530,12 @@ func (ui *UI) layoutFilePaneInlineNameEditor(th *material.Theme, gtx layout.Cont
 }
 
 func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
+	return layoutClippedToDimensions(gtx, func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFilePaneHeaderContent(th, gtx, idx, pane, active)
+	})
+}
+
+func (ui *UI) layoutFilePaneHeaderContent(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			if pane.pathEditing {

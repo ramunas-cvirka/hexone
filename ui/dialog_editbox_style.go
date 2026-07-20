@@ -27,6 +27,8 @@ import (
 	"gioui.org/widget/material"
 )
 
+const editorClipboardReadTimeout = 2 * time.Second
+
 var readEditorContextClipboardText = platform.ReadClipboardTextNow
 
 // Use a non-zero-sized tag type here. Zero-sized pointer allocations like
@@ -158,8 +160,7 @@ func (ui *UI) pasteEditorText(gtx layout.Context, ed *widget.Editor, enabled boo
 	if ed == nil || !enabled || ed.ReadOnly {
 		return false
 	}
-	ui.editorMenuClipboardTarget = nil
-	ui.editorMenuClipboardUseCaret = false
+	ui.clearEditorClipboardRead()
 	if text, err := readEditorContextClipboardText(); err == nil {
 		ui.prepareEditorPasteTarget(ed, ui.editorMenuUseExplicitCaret)
 		gtx.Execute(key.FocusCmd{Tag: ed})
@@ -170,9 +171,37 @@ func (ui *UI) pasteEditorText(gtx layout.Context, ed *widget.Editor, enabled boo
 	}
 	ui.editorMenuClipboardTarget = ed
 	ui.editorMenuClipboardUseCaret = ui.editorMenuUseExplicitCaret
+	ui.editorMenuClipboardPendingAt = gtx.Now
+	if ui.editorMenuClipboardPendingAt.IsZero() {
+		ui.editorMenuClipboardPendingAt = time.Now()
+	}
 	gtx.Execute(key.FocusCmd{Tag: ed})
 	gtx.Execute(clipboard.ReadCmd{Tag: &ui.editorMenuClipboardTag})
 	return true
+}
+
+func (ui *UI) clearEditorClipboardRead() {
+	if ui == nil {
+		return
+	}
+	ui.editorMenuClipboardTarget = nil
+	ui.editorMenuClipboardUseCaret = false
+	ui.editorMenuClipboardPendingAt = time.Time{}
+}
+
+func (ui *UI) editorClipboardReadState(now time.Time) (bool, time.Time) {
+	if ui == nil || ui.editorMenuClipboardTarget == nil {
+		return false, time.Time{}
+	}
+	deadline := time.Time{}
+	if !ui.editorMenuClipboardPendingAt.IsZero() {
+		deadline = ui.editorMenuClipboardPendingAt.Add(editorClipboardReadTimeout)
+	}
+	if !deadline.IsZero() && !now.IsZero() && !now.Before(deadline) {
+		ui.clearEditorClipboardRead()
+		return false, time.Time{}
+	}
+	return true, deadline
 }
 
 func (ui *UI) prepareEditorPasteTarget(ed *widget.Editor, useExplicitCaret bool) {
@@ -186,7 +215,8 @@ func (ui *UI) prepareEditorPasteTarget(ed *widget.Editor, useExplicitCaret bool)
 }
 
 func (ui *UI) handleEditorContextMenuClipboardEvents(gtx layout.Context) {
-	if ui == nil || ui.editorMenuClipboardTarget == nil {
+	pending, _ := ui.editorClipboardReadState(gtx.Now)
+	if !pending {
 		return
 	}
 	for {
@@ -197,9 +227,11 @@ func (ui *UI) handleEditorContextMenuClipboardEvents(gtx layout.Context) {
 		if !ok {
 			break
 		}
+		target := ui.editorMenuClipboardTarget
+		useExplicitCaret := ui.editorMenuClipboardUseCaret
+		ui.clearEditorClipboardRead()
 		de, ok := ev.(transfer.DataEvent)
 		if !ok {
-			ui.editorMenuClipboardTarget = nil
 			continue
 		}
 		data := de.Open()
@@ -208,10 +240,6 @@ func (ui *UI) handleEditorContextMenuClipboardEvents(gtx layout.Context) {
 		}
 		content, err := io.ReadAll(data)
 		_ = data.Close()
-		target := ui.editorMenuClipboardTarget
-		ui.editorMenuClipboardTarget = nil
-		useExplicitCaret := ui.editorMenuClipboardUseCaret
-		ui.editorMenuClipboardUseCaret = false
 		if err != nil || target == nil || target.ReadOnly {
 			continue
 		}
@@ -224,10 +252,14 @@ func (ui *UI) handleEditorContextMenuClipboardEvents(gtx layout.Context) {
 }
 
 func (ui *UI) registerEditorContextMenuClipboardTarget(gtx layout.Context) {
-	if ui == nil || ui.editorMenuClipboardTarget == nil {
+	pending, deadline := ui.editorClipboardReadState(gtx.Now)
+	if !pending {
 		return
 	}
-	event.Op(gtx.Ops, &ui.editorMenuClipboardTag)
+	registerPointerTransparentEventTarget(gtx, &ui.editorMenuClipboardTag)
+	if !deadline.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: deadline})
+	}
 }
 
 func (ui *UI) layoutEditorWithContextMenu(_ *material.Theme, gtx layout.Context, id string, ed *widget.Editor, enabled bool, host layout.Widget) layout.Dimensions {

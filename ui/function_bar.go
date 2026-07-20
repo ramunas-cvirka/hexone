@@ -935,6 +935,12 @@ func (ui *UI) functionBarSliderState(now time.Time) (float32, float32, bool) {
 }
 
 func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	return layoutClippedToDimensions(gtx, func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFunctionBarContent(th, gtx)
+	})
+}
+
+func (ui *UI) layoutFunctionBarContent(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	if ui == nil {
 		return layout.Dimensions{}
 	}
@@ -1104,21 +1110,6 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	return dims
-}
-
-func (ui *UI) applyFunctionBarCursor(gtx layout.Context) {
-	if ui == nil || !ui.functionBarVisible() {
-		return
-	}
-	if hints := ui.functionBarModifierHintSpecsForContext(ui.terminalFocused(gtx), runtime.GOOS); len(hints) > 0 {
-		return
-	}
-	for i := range ui.functionBarClicks {
-		if ui.functionBarClicks[i].Hovered() {
-			pointer.CursorPointer.Add(gtx.Ops)
-			return
-		}
-	}
 }
 
 func (ui *UI) ensureFunctionBarToolClicks(n int) {

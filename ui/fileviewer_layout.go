@@ -420,7 +420,6 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		)
 		ui.handleFileViewerRootPointerEvents(gtx, st)
 		ui.layoutFileViewerContextMenu(th, gtx, st)
-		ui.applyFileViewerHeaderCursor(gtx, st)
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		pass := pointer.PassOp{}.Push(gtx.Ops)
 		event.Op(gtx.Ops, &st.rootPointerTag)
@@ -711,21 +710,6 @@ func (ui *UI) applyFileViewerScrollCursor(gtx layout.Context, st *fileViewerStat
 	}
 }
 
-func (ui *UI) applyFileViewerHeaderCursor(gtx layout.Context, st *fileViewerState) {
-	if st == nil {
-		return
-	}
-	if st.modeFileClick.Hovered() ||
-		st.modeHexClick.Hovered() ||
-		st.modeCmdClick.Hovered() ||
-		st.historyClick.Hovered() ||
-		st.commandClick.Hovered() ||
-		st.autoRefreshClick.Hovered() ||
-		st.closeClick.Hovered() {
-		pointer.CursorPointer.Add(gtx.Ops)
-	}
-}
-
 func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
 	if st == nil || !st.menuOpen {
 		return layout.Dimensions{}
@@ -896,6 +880,12 @@ func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Con
 }
 
 func (ui *UI) layoutFileViewerHeader(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
+	return layoutClippedToDimensions(gtx, func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFileViewerHeaderContent(th, gtx, st)
+	})
+}
+
+func (ui *UI) layoutFileViewerHeaderContent(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
 	history := ui.viewerHistoryCommands(st.command)
 	stripH := ui.viewerHeaderStripHeight(gtx)
 	row := layout.Rigid(func(gtx layout.Context) layout.Dimensions {

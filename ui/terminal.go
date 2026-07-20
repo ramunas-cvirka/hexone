@@ -2125,10 +2125,17 @@ func (ui *UI) handleTerminalClipboardEvents(gtx layout.Context) {
 }
 
 func (ui *UI) registerTerminalClipboardTarget(gtx layout.Context) {
-	if ui == nil || ui.terminal == nil || !ui.terminal.pasteReadPending(gtx.Now) {
+	if ui == nil || ui.terminal == nil {
 		return
 	}
-	event.Op(gtx.Ops, &ui.terminal.pasteTag)
+	pending, deadline := ui.terminal.pasteReadState(gtx.Now)
+	if !pending {
+		return
+	}
+	registerPointerTransparentEventTarget(gtx, &ui.terminal.pasteTag)
+	if !deadline.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: deadline})
+	}
 }
 
 func (s *terminalSession) beginPasteRead(now time.Time) {
@@ -2157,16 +2164,26 @@ func (s *terminalSession) setPastePending(pending bool) {
 }
 
 func (s *terminalSession) pasteReadPending(now time.Time) bool {
+	pending, _ := s.pasteReadState(now)
+	return pending
+}
+
+func (s *terminalSession) pasteReadState(now time.Time) (bool, time.Time) {
 	if s == nil {
-		return false
+		return false, time.Time{}
 	}
 	s.viewMu.Lock()
 	defer s.viewMu.Unlock()
-	if s.pastePending && !s.pastePendingAt.IsZero() && !now.IsZero() && now.Sub(s.pastePendingAt) > terminalPasteReadTimeout {
+	deadline := time.Time{}
+	if !s.pastePendingAt.IsZero() {
+		deadline = s.pastePendingAt.Add(terminalPasteReadTimeout)
+	}
+	if s.pastePending && !deadline.IsZero() && !now.IsZero() && !now.Before(deadline) {
 		s.pastePending = false
 		s.pastePendingAt = time.Time{}
+		deadline = time.Time{}
 	}
-	return s.pastePending
+	return s.pastePending, deadline
 }
 
 func (s *terminalSession) writePastedText(text string) bool {

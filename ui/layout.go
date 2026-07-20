@@ -115,6 +115,15 @@ type uiEventTag struct {
 	_ byte
 }
 
+func registerPointerTransparentEventTarget(gtx layout.Context, tag event.Tag) {
+	if tag == nil {
+		return
+	}
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, tag)
+	pass.Pop()
+}
+
 type UI struct {
 	Tabs widget.Enum // selected tab key: "tab0" / "tab1" / "tab2"
 
@@ -227,6 +236,7 @@ type UI struct {
 	editorMenuUseExplicitCaret   bool
 	editorMenuClipboardTarget    *widget.Editor
 	editorMenuClipboardUseCaret  bool
+	editorMenuClipboardPendingAt time.Time
 	editorMenuClipboardTag       uiEventTag
 	editorMenuGlobalPointerTag   uiEventTag
 
@@ -488,6 +498,23 @@ func fixedHeight(gtx layout.Context, h int, w layout.Widget) layout.Dimensions {
 	gtx2.Constraints.Min.Y = h
 	gtx2.Constraints.Max.Y = h
 	return w(gtx2)
+}
+
+func layoutClippedToDimensions(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	if w == nil {
+		return layout.Dimensions{}
+	}
+	macro := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := macro.Stop()
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		call.Add(gtx.Ops)
+		return dims
+	}
+	stack := clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	stack.Pop()
+	return dims
 }
 
 func (ui *UI) toolbarLabelSize(th *material.Theme) unit.Sp {
@@ -812,7 +839,6 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 					return ui.layoutTerminalPane(th, gtx)
 				}),
 			)
-			ui.applyFunctionBarCursor(gtx)
 			return dims
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
