@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"gioui.org/font"
 	"gioui.org/io/event"
@@ -330,6 +332,23 @@ func (s *terminalSession) currentCommandDraft() string {
 	if selected := strings.TrimSpace(s.selectedText(false)); selected != "" && !strings.Contains(selected, "\n") {
 		return selected
 	}
+	draft, last, reliable := s.trackedCommand()
+	if reliable {
+		if draft != "" {
+			return draft
+		}
+		if last != "" {
+			return last
+		}
+	}
+	screen := s.commandFromScreen()
+	if screen != "" {
+		return screen
+	}
+	return last
+}
+
+func (s *terminalSession) commandFromScreen() string {
 	s.parserMu.Lock()
 	defer s.parserMu.Unlock()
 	if s.term.IsAlternateScreen() {
@@ -355,6 +374,159 @@ func (s *terminalSession) currentCommandDraft() string {
 		parts = append([]string{line}, parts...)
 	}
 	return stripTerminalPrompt(strings.Join(parts, ""))
+}
+
+func (s *terminalSession) trackedCommand() (draft, last string, reliable bool) {
+	if s == nil {
+		return "", "", false
+	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return strings.TrimSpace(string(s.commandDraft)), s.lastCommand, s.commandReliable
+}
+
+func (s *terminalSession) trackCommandInput(data []byte) {
+	if s == nil || len(data) == 0 {
+		return
+	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	for len(data) > 0 {
+		if data[0] == '\x1b' {
+			sequence, rest := terminalInputEscapeSequence(data)
+			s.trackCommandEscape(sequence)
+			data = rest
+			continue
+		}
+		switch data[0] {
+		case '\r', '\n':
+			if s.commandReliable {
+				command := strings.TrimSpace(string(s.commandDraft))
+				if command != "" && !strings.ContainsAny(command, "\r\n") {
+					s.lastCommand = command
+				}
+			} else if command := s.commandFromScreen(); command != "" && !strings.ContainsAny(command, "\r\n") {
+				s.lastCommand = command
+			}
+			s.commandDraft = s.commandDraft[:0]
+			s.commandCursor = 0
+			s.commandReliable = true
+			data = data[1:]
+			continue
+		case 0x03: // Ctrl+C
+			s.commandDraft = s.commandDraft[:0]
+			s.commandCursor = 0
+			s.commandReliable = true
+		case 0x01: // Ctrl+A
+			s.commandCursor = 0
+		case 0x05: // Ctrl+E
+			s.commandCursor = len(s.commandDraft)
+		case 0x0b: // Ctrl+K
+			s.commandDraft = s.commandDraft[:s.commandCursor]
+		case 0x15: // Ctrl+U
+			s.commandDraft = append([]rune(nil), s.commandDraft[s.commandCursor:]...)
+			s.commandCursor = 0
+		case 0x17: // Ctrl+W
+			s.trackCommandDeleteWord()
+		case 0x7f, 0x08:
+			s.trackCommandBackspace()
+		case '\t':
+			// Completion can replace much more than the tab itself; use the
+			// rendered prompt line if the user saves before pressing Enter.
+			s.commandReliable = false
+		default:
+			r, size := utf8.DecodeRune(data)
+			if r != utf8.RuneError || size > 1 {
+				if unicode.IsControl(r) {
+					// Readline/fish/zsh bind many control bytes to history and
+					// editing actions that are not portable to emulate here.
+					s.commandReliable = false
+				} else {
+					s.trackCommandInsert(r)
+				}
+				data = data[size:]
+				continue
+			}
+		}
+		data = data[1:]
+	}
+}
+
+func terminalInputEscapeSequence(data []byte) (sequence, rest []byte) {
+	if len(data) <= 1 {
+		return data, nil
+	}
+	if data[1] == '[' {
+		for i := 2; i < len(data); i++ {
+			if data[i] >= 0x40 && data[i] <= 0x7e {
+				return data[:i+1], data[i+1:]
+			}
+		}
+		return data, nil
+	}
+	if data[1] == 'O' && len(data) >= 3 {
+		return data[:3], data[3:]
+	}
+	return data[:2], data[2:]
+}
+
+func (s *terminalSession) trackCommandEscape(sequence []byte) {
+	if len(sequence) < 2 {
+		s.commandReliable = false
+		return
+	}
+	switch string(sequence) {
+	case "\x1b[D", "\x1bOD":
+		if s.commandCursor > 0 {
+			s.commandCursor--
+		}
+	case "\x1b[C", "\x1bOC":
+		if s.commandCursor < len(s.commandDraft) {
+			s.commandCursor++
+		}
+	case "\x1b[H", "\x1b[1~", "\x1bOH":
+		s.commandCursor = 0
+	case "\x1b[F", "\x1b[4~", "\x1bOF":
+		s.commandCursor = len(s.commandDraft)
+	case "\x1b[3~":
+		if s.commandCursor < len(s.commandDraft) {
+			s.commandDraft = append(s.commandDraft[:s.commandCursor], s.commandDraft[s.commandCursor+1:]...)
+		}
+	case "\x1b[200~", "\x1b[201~":
+		// Bracketed-paste delimiters are not part of the command.
+	default:
+		// History navigation, word movement, completion menus, and application
+		// key modes can all replace text in ways that cannot be reconstructed
+		// from the bytes alone.
+		s.commandReliable = false
+	}
+}
+
+func (s *terminalSession) trackCommandInsert(r rune) {
+	if s.commandCursor < 0 || s.commandCursor > len(s.commandDraft) {
+		s.commandCursor = len(s.commandDraft)
+	}
+	s.commandDraft = append(s.commandDraft, 0)
+	copy(s.commandDraft[s.commandCursor+1:], s.commandDraft[s.commandCursor:])
+	s.commandDraft[s.commandCursor] = r
+	s.commandCursor++
+}
+
+func (s *terminalSession) trackCommandBackspace() {
+	if s.commandCursor <= 0 || s.commandCursor > len(s.commandDraft) {
+		return
+	}
+	s.commandDraft = append(s.commandDraft[:s.commandCursor-1], s.commandDraft[s.commandCursor:]...)
+	s.commandCursor--
+}
+
+func (s *terminalSession) trackCommandDeleteWord() {
+	for s.commandCursor > 0 && unicode.IsSpace(s.commandDraft[s.commandCursor-1]) {
+		s.trackCommandBackspace()
+	}
+	for s.commandCursor > 0 && !unicode.IsSpace(s.commandDraft[s.commandCursor-1]) {
+		s.trackCommandBackspace()
+	}
 }
 
 func terminalScreenLineText(term *headlessterm.Terminal, row, end int) string {
@@ -393,7 +565,7 @@ func stripTerminalPrompt(line string) string {
 		return ""
 	}
 	best := -1
-	for _, marker := range []string{"❯ ", "➜ ", "λ ", "$ ", "# ", "% ", "> "} {
+	for _, marker := range []string{"❯ ", "❮", "➜ ", "λ ", "$ ", "# ", "% ", "> "} {
 		if index := terminalPromptMarkerIndex(line, marker); index >= 0 {
 			end := index + len(marker)
 			if best < 0 || end < best {
@@ -412,7 +584,7 @@ func terminalPromptMarkerIndex(line, marker string) int {
 	if index < 0 || index > 96 {
 		return -1
 	}
-	if marker == "❯ " || marker == "➜ " || marker == "λ " || index == 0 {
+	if marker == "❯ " || marker == "❮" || marker == "➜ " || marker == "λ " || index == 0 {
 		return index
 	}
 	prefix := line[:index]

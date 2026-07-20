@@ -132,6 +132,7 @@ Use the `☆` button at the right side of the terminal tab row, or `Ctrl+Shift+P
 
 - `Save current command…` opens an editable draft taken from the current prompt line.
 - Terminal snippets are single-line prompt insertions; use the F2 custom commands feature for multi-line commands.
+- The snippet editor prefills the command currently being typed, or the last command submitted in that terminal when the prompt is empty.
 - Every snippet has exactly one scope: `Global`, `Directory`, or `Git repository`.
 - Directory snippets match only the exact terminal folder.
 - Git repository snippets match anywhere below the saved repository root.

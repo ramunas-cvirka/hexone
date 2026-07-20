@@ -17,8 +17,9 @@ func TestStripTerminalPrompt(t *testing.T) {
 		"user@host:/work$ go test ./...": "go test ./...",
 		"PS C:\\src\\app> git status":    "git status",
 		"❯ make release":                 "make release",
-		"plain command":                  "plain command",
-		"echo hello > output.txt":        "echo hello > output.txt",
+		"~/go/src/gpstrack-go gp-521-onboard-naviset *4 ❮git checkout master": "git checkout master",
+		"plain command":           "plain command",
+		"echo hello > output.txt": "echo hello > output.txt",
 	}
 	for input, want := range tests {
 		if got := stripTerminalPrompt(input); got != want {
@@ -33,6 +34,45 @@ func TestTerminalCurrentCommandDraftUsesPromptLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, want := st.currentCommandDraft(), "go test ./..."; got != want {
+		t.Fatalf("currentCommandDraft()=%q want %q", got, want)
+	}
+}
+
+func TestTerminalCurrentCommandDraftTracksTypedAndExecutedCommand(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	st.writeString("git checkout mastXer")
+	st.write([]byte("\x1b[D\x1b[D"))
+	st.write([]byte{0x7f})
+	if got, want := st.currentCommandDraft(), "git checkout master"; got != want {
+		t.Fatalf("typed currentCommandDraft()=%q want %q", got, want)
+	}
+
+	st.write([]byte("\r"))
+	if got, want := st.currentCommandDraft(), "git checkout master"; got != want {
+		t.Fatalf("executed currentCommandDraft()=%q want %q", got, want)
+	}
+}
+
+func TestTerminalCurrentCommandDraftUsesTrackedCommandBeforeCustomPrompt(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	st.writeString("git checkout master")
+	st.write([]byte("\r"))
+	if _, err := st.term.Write([]byte("~/go/src/gpstrack-go gp-521-onboard-naviset *4 ❮")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := st.currentCommandDraft(), "git checkout master"; got != want {
 		t.Fatalf("currentCommandDraft()=%q want %q", got, want)
 	}
 }

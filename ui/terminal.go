@@ -200,6 +200,10 @@ type terminalSession struct {
 	pastePendingAt      time.Time
 
 	inputMu          sync.Mutex
+	commandDraft     []rune
+	commandCursor    int
+	lastCommand      string
+	commandReliable  bool
 	keyRepeatActive  bool
 	keyRepeatKey     key.Name
 	keyRepeatStarted time.Time
@@ -232,8 +236,9 @@ func newTerminalSession(invalidate func(), preferredRows ...int) *terminalSessio
 		rows = fm.NormalizeTerminalHeightRows(preferredRows[0])
 	}
 	st := &terminalSession{
-		rows: rows,
-		cols: terminalDefaultCols,
+		rows:            rows,
+		cols:            terminalDefaultCols,
+		commandReliable: true,
 		modes: terminalModes{
 			eraseTemplate: headlessterm.NewCellTemplate(),
 		},
@@ -1286,6 +1291,7 @@ func (s *terminalSession) write(data []byte) {
 	if proc == nil || !running {
 		return
 	}
+	s.trackCommandInput(data)
 	s.writeMu.Lock()
 	_, err := proc.Write(data)
 	s.writeMu.Unlock()

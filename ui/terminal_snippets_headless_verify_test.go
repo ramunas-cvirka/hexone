@@ -49,11 +49,11 @@ func TestHeadlessTerminalSnippets(t *testing.T) {
 	}
 	ui := NewUI(cfg)
 	ui.terminal = newTerminalSession(nil)
-	ui.terminal.startAttempted = true
 	ui.terminal.startDir = dir
 	ui.terminal.setActive(true)
+	ui.terminal.startAttempted = true
 	ui.terminalTabs.sessions = []*terminalSession{ui.terminal}
-	if _, err := ui.terminal.term.Write([]byte("hexone ❯ go test ./...")); err != nil {
+	if _, err := ui.terminal.term.Write([]byte("~/go/src/gpstrack-go gp-521-onboard-naviset *4 ❮git checkout master")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,6 +109,9 @@ func TestHeadlessTerminalSnippets(t *testing.T) {
 	router.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(850, 282)})
 	render("terminal-snippets-hover")
 	ui.openTerminalSnippetEditor()
+	if got, want := ui.terminalSnippetEditor.commandEdit.Text(), "git checkout master"; got != want {
+		t.Fatalf("snippet editor command=%q want %q", got, want)
+	}
 	router = new(input.Router)
 	render("terminal-snippets-editor")
 }
