@@ -1465,26 +1465,39 @@ const (
 )
 
 func estimatedFilePathSegmentsWidth(segments []filePathSegment) int {
+	return filePathSegmentsWidth(segments, func(segment filePathSegment, _ bool) int {
+		return utf8.RuneCountInString(segment.label) * filePathEstimatedCharPx
+	}, filePathSeparatorPx)
+}
+
+func filePathSegmentsWidth(segments []filePathSegment, segmentWidth func(filePathSegment, bool) int, separatorWidth int) int {
 	width := 0
 	for i := range segments {
 		if i > 0 {
-			width += filePathSeparatorPx
+			width += separatorWidth
 		}
-		width += utf8.RuneCountInString(segments[i].label) * filePathEstimatedCharPx
+		width += segmentWidth(segments[i], i == len(segments)-1)
 	}
 	return width
 }
 
 func compactFilePathSegments(segments []filePathSegment, maxWidth int) []filePathSegment {
-	if len(segments) <= 2 || maxWidth <= 0 || estimatedFilePathSegmentsWidth(segments) <= maxWidth {
+	return compactFilePathSegmentsMeasured(segments, maxWidth, func(segment filePathSegment, _ bool) int {
+		return utf8.RuneCountInString(segment.label) * filePathEstimatedCharPx
+	}, filePathSeparatorPx)
+}
+
+func compactFilePathSegmentsMeasured(segments []filePathSegment, maxWidth int, segmentWidth func(filePathSegment, bool) int, separatorWidth int) []filePathSegment {
+	if len(segments) <= 2 || maxWidth <= 0 || filePathSegmentsWidth(segments, segmentWidth, separatorWidth) <= maxWidth {
 		return segments
 	}
 
 	ellipsis := filePathSegment{label: "…"}
 	tail := []filePathSegment{segments[len(segments)-1]}
-	used := estimatedFilePathSegmentsWidth([]filePathSegment{segments[0], ellipsis, tail[0]})
+	used := segmentWidth(segments[0], false) + separatorWidth +
+		segmentWidth(ellipsis, false) + separatorWidth + segmentWidth(tail[0], true)
 	for i := len(segments) - 2; i > 0; i-- {
-		cost := filePathSeparatorPx + utf8.RuneCountInString(segments[i].label)*filePathEstimatedCharPx
+		cost := separatorWidth + segmentWidth(segments[i], false)
 		if used+cost > maxWidth {
 			break
 		}

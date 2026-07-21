@@ -85,7 +85,7 @@ func TestHeadlessPathHeader(t *testing.T) {
 	}
 
 	render("path-header-default.png", image.Pt(1100, 620))
-	for _, variant := range []struct {
+	fontVariants := []struct {
 		name   string
 		family string
 	}{
@@ -93,7 +93,8 @@ func TestHeadlessPathHeader(t *testing.T) {
 		{name: "jetbrains", family: resources.BundledFontFamilyJetBrainsMonoNerdFontMono},
 		{name: "hack", family: resources.BundledFontFamilyHackNerdFontMono},
 		{name: "iosevka", family: resources.BundledFontFamilyIosevkaNerdFontMono},
-	} {
+	}
+	for _, variant := range fontVariants {
 		ui.fmCfg.CurrentDir.Typeface = variant.family
 		render("path-header-"+variant.name+".png", image.Pt(1100, 620))
 	}
@@ -102,6 +103,14 @@ func TestHeadlessPathHeader(t *testing.T) {
 	render("path-header-iosevka-descending.png", image.Pt(1100, 620))
 	left.sortDesc = false
 	render("path-header-compact.png", image.Pt(760, 520))
+	dotPrefixedDir := filepath.Join(string(filepath.Separator), "Games", "Diablo II Resurrected", ".battle.net", "ecache")
+	left.applyListing(pathHeaderVerifyListing(dotPrefixedDir), "", "", 0)
+	for _, variant := range fontVariants {
+		ui.fmCfg.CurrentDir.Typeface = variant.family
+		render("path-header-ellipsis-"+variant.name+".png", image.Pt(760, 520))
+	}
+	ui.fmCfg.CurrentDir.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	left.applyListing(pathHeaderVerifyListing("/Users/ramunas/go/src/hexone/ui"), "", "", 0)
 	if err := left.setFilter("*.go;*.md"); err != nil {
 		t.Fatal(err)
 	}

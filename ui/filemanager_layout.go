@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"gioui.org/f32"
 	"gioui.org/font"
@@ -24,27 +23,32 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+	"golang.org/x/image/math/fixed"
 )
 
 const (
-	filePaneWheelRange                 = 1 << 30
-	filePanePathDoubleClickWindow      = 450 * time.Millisecond
-	filePaneFavoriteRevealDelay        = 350 * time.Millisecond
-	filePaneFavoriteRevealFadeDur      = 220 * time.Millisecond
-	filePaneFavoriteRevealHotspotPadDp = 8
-	filePaneFavoriteMenuWidthDp        = 163
-	filePaneCornerDp                   = 8
-	filePaneControlCornerDp            = 6
-	filePaneOverlayCornerDp            = 6
-	filePaneNoticeVisibleDur           = 3 * time.Second
-	filePaneNoticeFadeInDur            = 180 * time.Millisecond
-	filePaneNoticeFadeOutDur           = 220 * time.Millisecond
-	filePaneNoticeSlideDp              = unit.Dp(6)
-	filePaneTableDoubleClickWindow     = 400 * time.Millisecond
-	filePaneLoadingHintDelay           = 350 * time.Millisecond
+	filePaneWheelRange                      = 1 << 30
+	filePanePathDoubleClickWindow           = 450 * time.Millisecond
+	filePaneFavoriteRevealDelay             = 350 * time.Millisecond
+	filePaneFavoriteRevealFadeDur           = 220 * time.Millisecond
+	filePaneFavoriteRevealHotspotPadDp      = 8
+	filePaneFavoriteMenuWidthDp             = 163
+	filePaneBreadcrumbSeparatorLeftInsetDp  = 1
+	filePaneBreadcrumbSeparatorRightInsetDp = 2
+	filePaneBreadcrumbDesiredInkGapDp       = 2
+	filePaneCornerDp                        = 8
+	filePaneControlCornerDp                 = 6
+	filePaneOverlayCornerDp                 = 6
+	filePaneNoticeVisibleDur                = 3 * time.Second
+	filePaneNoticeFadeInDur                 = 180 * time.Millisecond
+	filePaneNoticeFadeOutDur                = 220 * time.Millisecond
+	filePaneNoticeSlideDp                   = unit.Dp(6)
+	filePaneTableDoubleClickWindow          = 400 * time.Millisecond
+	filePaneLoadingHintDelay                = 350 * time.Millisecond
 )
 
 type visiblePane struct {
@@ -1821,7 +1825,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 			}
 		}
 		segments := remotePathDisplaySegments(address, pane.dir)
-		segments = compactFilePathSegments(segments, ui.filePaneBreadcrumbSegmentBudget(gtx, pane))
+		segments = ui.compactFilePaneBreadcrumb(th, gtx, pane, segments)
 		pane.ensurePathClicks(len(segments))
 		for i := range segments {
 			click := &pane.pathSegClicks[i]
@@ -1857,7 +1861,9 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 			}
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				if segments[i].path == "" {
-					return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, segments[i].label, color.NRGBA{}, filePanePathMutedColor(palette), color.NRGBA{}, font.Normal)
+					return layoutRightInsetPx(gtx, ui.filePaneBreadcrumbEllipsisGapWidth(th, gtx, pane), func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, segments[i].label, color.NRGBA{}, filePanePathMutedColor(palette), color.NRGBA{}, font.Normal)
+					})
 				}
 				click := &pane.pathSegClicks[i]
 				return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1883,7 +1889,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 	}
 
 	segments := splitFilePathSegments(pane.displayDir())
-	segments = compactFilePathSegments(segments, ui.filePaneBreadcrumbSegmentBudget(gtx, pane))
+	segments = ui.compactFilePaneBreadcrumb(th, gtx, pane, segments)
 	ui.processFilePaneDriveSegmentInput(gtx, idx, pane)
 	showLoadingHint := pane.loadingHintVisible(gtx.Now)
 	if pane.loading && !showLoadingHint && !pane.loadingStartedAt.IsZero() {
@@ -1924,7 +1930,9 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if segments[i].path == "" {
-				return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, segments[i].label, color.NRGBA{}, filePanePathMutedColor(palette), color.NRGBA{}, font.Normal)
+				return layoutRightInsetPx(gtx, ui.filePaneBreadcrumbEllipsisGapWidth(th, gtx, pane), func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, segments[i].label, color.NRGBA{}, filePanePathMutedColor(palette), color.NRGBA{}, font.Normal)
+				})
 			}
 			click := &pane.pathSegClicks[i]
 			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1971,29 +1979,91 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 }
 
-func (ui *UI) filePaneBreadcrumbSegmentBudget(gtx layout.Context, pane *filePaneState) int {
-	charPx := filePathEstimatedCharPx
-	if pane != nil && pane.model != nil {
-		charPx = pane.model.approxCharPx()
+func (ui *UI) compactFilePaneBreadcrumb(th *material.Theme, gtx layout.Context, pane *filePaneState, segments []filePathSegment) []filePathSegment {
+	separatorWidth := ui.filePaneBreadcrumbSeparatorWidth(th, gtx, pane, "›")
+	return compactFilePathSegmentsMeasured(segments, ui.filePaneBreadcrumbSegmentBudget(th, gtx, pane), func(segment filePathSegment, last bool) int {
+		return ui.filePaneBreadcrumbSegmentWidth(th, gtx, pane, segment, last)
+	}, separatorWidth)
+}
+
+func (ui *UI) filePaneBreadcrumbSegmentWidth(th *material.Theme, gtx layout.Context, pane *filePaneState, segment filePathSegment, last bool) int {
+	weight := font.Normal
+	if last {
+		weight = font.Medium
 	}
-	if charPx < 1 {
-		charPx = filePathEstimatedCharPx
+	width := ui.filePaneBreadcrumbTextWidth(th, gtx, pane, segment.label, weight)
+	if segment.path == "" && segment.label == "…" {
+		width += ui.filePaneBreadcrumbEllipsisGapWidth(th, gtx, pane)
 	}
-	// Reserve the ASCII frame, filter separator, and mask.
-	fixed := gtx.Dp(unit.Dp(82 * charPx / filePathEstimatedCharPx))
-	filterW := utf8.RuneCountInString(filePaneDefaultFilter)*gtx.Dp(unit.Dp(charPx)) + ui.filePaneFilterLeadingInset(gtx, pane)
+	return width
+}
+
+func (ui *UI) filePaneBreadcrumbEllipsisGapWidth(th *material.Theme, gtx layout.Context, pane *filePaneState) int {
+	_, ellipsisRight := ui.filePaneBreadcrumbGlyphOverhangs(th, gtx, pane, "…", font.Normal)
+	chevronLeft, _ := ui.filePaneBreadcrumbGlyphOverhangs(th, gtx, pane, "›", font.Medium)
+	existingGap := gtx.Dp(unit.Dp(filePaneBreadcrumbSeparatorLeftInsetDp))
+	needed := gtx.Dp(unit.Dp(filePaneBreadcrumbDesiredInkGapDp)) + ellipsisRight + chevronLeft - existingGap
+	return max(0, needed)
+}
+
+func (ui *UI) filePaneBreadcrumbGlyphOverhangs(th *material.Theme, gtx layout.Context, pane *filePaneState, value string, weight font.Weight) (left, right int) {
+	if th == nil || th.Shaper == nil || value == "" {
+		return 0, 0
+	}
+	typeface, textSize := ui.filePaneHeaderTextStyle(pane)
+	th.Shaper.LayoutString(text.Parameters{
+		Font:     font.Font{Typeface: typeface, Weight: weight},
+		PxPerEm:  fixed.I(gtx.Sp(textSize)),
+		MaxLines: 1,
+		MaxWidth: 1 << 20,
+		Locale:   gtx.Locale,
+	}, value)
+	for glyph, ok := th.Shaper.NextGlyph(); ok; glyph, ok = th.Shaper.NextGlyph() {
+		left = max(left, max(0, -glyph.Bounds.Min.X.Floor()))
+		right = max(right, max(0, (glyph.Bounds.Max.X-glyph.Advance).Ceil()))
+	}
+	return left, right
+}
+
+func (ui *UI) filePaneBreadcrumbSeparatorWidth(th *material.Theme, gtx layout.Context, pane *filePaneState, value string) int {
+	return ui.filePaneBreadcrumbTextWidth(th, gtx, pane, value, font.Medium) +
+		gtx.Dp(unit.Dp(filePaneBreadcrumbSeparatorLeftInsetDp+filePaneBreadcrumbSeparatorRightInsetDp))
+}
+
+func (ui *UI) filePaneBreadcrumbTextWidth(th *material.Theme, gtx layout.Context, pane *filePaneState, value string, weight font.Weight) int {
+	typeface, textSize := ui.filePaneHeaderTextStyle(pane)
+	label := material.Body2(th, value)
+	label.Font.Typeface = typeface
+	label.Font.Weight = weight
+	label.TextSize = textSize
+	label.MaxLines = 1
+	return measureLabelUnconstrained(gtx, label).Size.X
+}
+
+func (ui *UI) filePaneBreadcrumbSegmentBudget(th *material.Theme, gtx layout.Context, pane *filePaneState) int {
+	filter := filePaneDefaultFilter
 	if pane != nil {
-		filterW = utf8.RuneCountInString(pane.displayFilter())*gtx.Dp(unit.Dp(charPx)) + ui.filePaneFilterLeadingInset(gtx, pane)
+		filter = pane.displayFilter()
 	}
-	maxFilterW := gtx.Dp(unit.Dp(80 * charPx / filePathEstimatedCharPx))
-	if filterW > maxFilterW {
+	filterWeight := font.Normal
+	if filter != filePaneDefaultFilter {
+		filterWeight = font.Medium
+	}
+	filterW := ui.filePaneFilterLeadingInset(gtx, pane) + ui.filePaneBreadcrumbTextWidth(th, gtx, pane, filter, filterWeight)
+	if maxFilterW := gtx.Dp(unit.Dp(80)); filterW > maxFilterW {
 		filterW = maxFilterW
 	}
-	budget := gtx.Constraints.Max.X - fixed - filterW
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	bracketW := filePaneFrameBracketWidth(gtx, textSize)
+	endSeparatorW := ui.filePaneBreadcrumbSeparatorWidth(th, gtx, pane, ">")
+	frameEdgeW := ui.filePaneFrameEdgeWidth(th, gtx, pane)
+	// Keep one visible frame character between the path and the trailing glyph group.
+	fixed := 2*frameEdgeW + 2*bracketW + endSeparatorW + filterW
+	budget := gtx.Constraints.Max.X - fixed
 	if budget < 1 {
 		budget = 1
 	}
-	return budget * filePathEstimatedCharPx / charPx
+	return budget
 }
 
 func (ui *UI) filePaneBreadcrumbStart(th *material.Theme, pane *filePaneState, palette filePanePalette, capacity int) []layout.FlexChild {
@@ -2008,7 +2078,10 @@ func (ui *UI) filePaneBreadcrumbStart(th *material.Theme, pane *filePaneState, p
 
 func (ui *UI) filePaneBreadcrumbSeparator(th *material.Theme, pane *filePaneState, palette filePanePalette, label string) layout.FlexChild {
 	return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{
+			Left:  unit.Dp(filePaneBreadcrumbSeparatorLeftInsetDp),
+			Right: unit.Dp(filePaneBreadcrumbSeparatorRightInsetDp),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, label, color.NRGBA{}, filePanePathIndicatorColor(palette), color.NRGBA{}, font.Medium)
 		})
 	})
@@ -2075,6 +2148,25 @@ func layoutLeftInsetPx(gtx layout.Context, left int, child layout.Widget) layout
 	dims := child(gtx)
 	offset.Pop()
 	dims.Size.X += left
+	return dims
+}
+
+func layoutRightInsetPx(gtx layout.Context, right int, child layout.Widget) layout.Dimensions {
+	if right <= 0 {
+		return child(gtx)
+	}
+	constraints := gtx.Constraints
+	constraints.Max.X -= right
+	if constraints.Max.X < 0 {
+		right = 0
+		constraints.Max.X = 0
+	}
+	if constraints.Min.X > constraints.Max.X {
+		constraints.Min.X = constraints.Max.X
+	}
+	gtx.Constraints = constraints
+	dims := child(gtx)
+	dims.Size.X += right
 	return dims
 }
 
@@ -2498,19 +2590,7 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 					bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
 					iconColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
 				}
-				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						iconSize := ui.filePaneHeaderIconSize(gtx, pane)
-						height := iconSize * 9 / 13
-						if height < 8 {
-							height = 8
-						}
-						size := image.Pt(iconSize, height)
-						iconGtx := gtx
-						iconGtx.Constraints = layout.Exact(size)
-						return layoutFilePaneModeGlyph(iconGtx, pane.table.Mode, iconColor)
-					})
-				})
+				return ui.layoutFilePaneModeBadge(gtx, pane, stripH, bg, iconColor)
 			})
 		}))
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2645,14 +2725,37 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 	})
 }
 
+func (ui *UI) layoutFilePaneModeBadge(gtx layout.Context, pane *filePaneState, stripH int, bg, iconColor color.NRGBA) layout.Dimensions {
+	return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+		return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				iconSize := ui.filePaneHeaderIconSize(gtx, pane)
+				height := iconSize * 9 / 13
+				if height < 8 {
+					height = 8
+				}
+				size := image.Pt(iconSize, height)
+				iconGtx := gtx
+				iconGtx.Constraints = layout.Exact(size)
+				return layoutFilePaneModeGlyph(iconGtx, pane.table.Mode, iconColor)
+			})
+		})
+	})
+}
+
 func (ui *UI) layoutFilePaneFrameBracket(gtx layout.Context, pane *filePaneState, opening bool, fg color.NRGBA) layout.Dimensions {
 	_, textSize := ui.filePaneHeaderTextStyle(pane)
 	return layoutFilePaneFrameBracket(gtx, textSize, opening, fg)
 }
 
+func filePaneFrameBracketWidth(gtx layout.Context, textSize unit.Sp) int {
+	em := max(1, gtx.Sp(textSize))
+	return max(4, em*5/11)
+}
+
 func layoutFilePaneFrameBracket(gtx layout.Context, textSize unit.Sp, opening bool, fg color.NRGBA) layout.Dimensions {
 	em := max(1, gtx.Sp(textSize))
-	w := max(4, em*5/11)
+	w := filePaneFrameBracketWidth(gtx, textSize)
 	h := max(9, em*12/11)
 	if maxW := gtx.Constraints.Max.X; maxW > 0 && w > maxW {
 		w = maxW
