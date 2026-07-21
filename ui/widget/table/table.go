@@ -1814,6 +1814,8 @@ func applyRowForeground(st CellStyle, fg *color.NRGBA) CellStyle {
 
 func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, rowHpx int) layout.Dimensions {
 	face := t.textTypeface(th)
+	cachedWidth := -1
+	var cachedColumnWidths []int
 	return t.List.Layout(gtx, n, func(gtx layout.Context, row int) layout.Dimensions {
 		if row < 0 || row >= len(t.rowClicks) {
 			return layout.Dimensions{}
@@ -1857,8 +1859,12 @@ func (t *Table) layoutFull(th *material.Theme, gtx layout.Context, m Model, n, r
 					cellH = 1
 				}
 
-				widths := t.computeColumnWidths(gtx, maxW)
-				t.fullModeWidths = append(t.fullModeWidths[:0], widths...)
+				if maxW != cachedWidth {
+					cachedWidth = maxW
+					cachedColumnWidths = t.computeColumnWidths(gtx, maxW)
+					t.fullModeWidths = append(t.fullModeWidths[:0], cachedColumnWidths...)
+				}
+				widths := cachedColumnWidths
 				aware, awareOK := m.(WidthAwareModel)
 				iconModel, iconOK := m.(LeadingIconModel)
 				x := 0

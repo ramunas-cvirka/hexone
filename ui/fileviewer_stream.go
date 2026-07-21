@@ -16,6 +16,7 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -51,6 +52,7 @@ type streamOutputView struct {
 	hTrackRect  image.Rectangle
 	hThumbRect  image.Rectangle
 	textRect    image.Rectangle
+	lineNumRect image.Rectangle
 	charAdvance float32
 	charW       int
 	lineH       int
@@ -589,35 +591,7 @@ func (v *streamOutputView) prepareWrapRows(cols int) {
 	}
 	rows := make([]streamWrapRow, 0, len(v.lines))
 	for lineIndex, line := range v.lines {
-		runes := []rune(line)
-		if len(runes) == 0 {
-			rows = append(rows, streamWrapRow{line: lineIndex})
-			continue
-		}
-		for from := 0; from < len(runes); {
-			to := from + cols
-			if to >= len(runes) {
-				rows = append(rows, streamWrapRow{line: lineIndex, from: from, to: len(runes)})
-				break
-			}
-			next := to
-			for i := to; i > from; i-- {
-				if runes[i-1] == ' ' || runes[i-1] == '\t' {
-					to = i - 1
-					next = i
-					break
-				}
-			}
-			if to <= from {
-				to = from + cols
-				next = to
-			}
-			rows = append(rows, streamWrapRow{line: lineIndex, from: from, to: to})
-			for next < len(runes) && (runes[next] == ' ' || runes[next] == '\t') {
-				next++
-			}
-			from = next
-		}
+		rows = append(rows, streamWrapRowsForLine(lineIndex, line, cols)...)
 	}
 	if len(rows) == 0 {
 		rows = append(rows, streamWrapRow{})
@@ -625,6 +599,42 @@ func (v *streamOutputView) prepareWrapRows(cols int) {
 	v.wrapRows = rows
 	v.wrapCols = cols
 	v.clampTop()
+}
+
+func streamWrapRowsForLine(lineIndex int, line string, cols int) []streamWrapRow {
+	if cols < 1 {
+		cols = 1
+	}
+	runes := []rune(line)
+	if len(runes) == 0 {
+		return []streamWrapRow{{line: lineIndex}}
+	}
+	rows := make([]streamWrapRow, 0, (len(runes)+cols-1)/cols)
+	for from := 0; from < len(runes); {
+		to := from + cols
+		if to >= len(runes) {
+			rows = append(rows, streamWrapRow{line: lineIndex, from: from, to: len(runes)})
+			break
+		}
+		next := to
+		for i := to; i > from; i-- {
+			if runes[i-1] == ' ' || runes[i-1] == '\t' {
+				to = i - 1
+				next = i
+				break
+			}
+		}
+		if to <= from {
+			to = from + cols
+			next = to
+		}
+		rows = append(rows, streamWrapRow{line: lineIndex, from: from, to: to})
+		for next < len(runes) && (runes[next] == ' ' || runes[next] == '\t') {
+			next++
+		}
+		from = next
+	}
+	return rows
 }
 
 func (v *streamOutputView) rowAt(row int) streamWrapRow {
@@ -638,15 +648,17 @@ func (v *streamOutputView) rowForLineCol(line, col int) int {
 	if v == nil || !v.wrapEnabled || len(v.wrapRows) == 0 {
 		return line
 	}
-	for i, row := range v.wrapRows {
-		if row.line == line && col >= row.from && col <= row.to {
+	first := sort.Search(len(v.wrapRows), func(i int) bool {
+		return v.wrapRows[i].line >= line
+	})
+	for i := first; i < len(v.wrapRows) && v.wrapRows[i].line == line; i++ {
+		row := v.wrapRows[i]
+		if col >= row.from && col <= row.to {
 			return i
 		}
 	}
-	for i, row := range v.wrapRows {
-		if row.line == line {
-			return i
-		}
+	if first < len(v.wrapRows) && v.wrapRows[first].line == line {
+		return first
 	}
 	return 0
 }
@@ -1709,7 +1721,7 @@ func (v *streamOutputView) computeHorizontalScrollbar(size image.Point, barH int
 	if y1 <= y0 {
 		return
 	}
-	v.hTrackRect = image.Rect(0, y0, textW, y1)
+	v.hTrackRect = image.Rect(v.textRect.Min.X, y0, v.textRect.Max.X, y1)
 	visible := v.visibleCols(textW)
 	total := v.maxCols
 	if total < 1 {
@@ -1782,6 +1794,18 @@ func splitStreamLines(raw string) []string {
 	return strings.Split(raw, "\n")
 }
 
+func streamLineNumberDigits(lines int) int {
+	if lines < 1 {
+		return 1
+	}
+	digits := 1
+	for lines >= 10 {
+		lines /= 10
+		digits++
+	}
+	return digits
+}
+
 func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
 	if st == nil {
 		return layout.Dimensions{}
@@ -1800,9 +1824,20 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 	lineHeight := v.lineH
 
 	scrollbarW := viewerScrollbarThickness(gtx, size.X)
-	textW := size.X - scrollbarW
+	lineNumW := 0
+	if viewerShowLineNumbers(ui.fmCfg) {
+		lineNumPad := gtx.Dp(unit.Dp(5))
+		lineNumW = streamLineNumberDigits(len(v.lines))*v.charW + lineNumPad*2 + max(1, gtx.Dp(unit.Dp(1)))
+		if lineNumW > size.X/2 {
+			lineNumW = size.X / 2
+		}
+	}
+	textW := size.X - scrollbarW - lineNumW
 	if textW < 1 {
-		textW = size.X
+		textW = size.X - lineNumW
+		if textW < 1 {
+			textW = 1
+		}
 		scrollbarW = 0
 	}
 	v.textPad = gtx.Dp(unit.Dp(2))
@@ -1822,7 +1857,8 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 		textH = 1
 		hbarH = 0
 	}
-	v.textRect = image.Rect(0, 0, textW, textH)
+	v.lineNumRect = image.Rect(0, 0, lineNumW, textH)
+	v.textRect = image.Rect(lineNumW, 0, lineNumW+textW, textH)
 	v.visibleLines = textH / lineHeight
 	if v.visibleLines < 1 {
 		v.visibleLines = 1
@@ -1864,6 +1900,7 @@ func (ui *UI) layoutStreamOutputView(th *material.Theme, gtx layout.Context, st 
 		gtx.Execute(op.InvalidateCmd{At: v.cancelUntil})
 	}
 
+	ui.drawStreamOutputLineNumbers(th, gtx, st, lineHeight)
 	ui.drawStreamOutputText(th, gtx, st, v.textRect.Dx(), lineHeight)
 	ui.drawStreamOutputScrollbar(gtx, st)
 	ui.drawStreamOutputTooltip(th, gtx, st)
@@ -1925,6 +1962,9 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 		case pointer.Press:
 			v.pointerOutside = false
 			if pe.Buttons.Contain(pointer.ButtonSecondary) {
+				if st.editMode && st.mode == "file" {
+					continue
+				}
 				st.openContextMenu(pos, gtx.Now)
 				continue
 			}
@@ -1953,6 +1993,9 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 				continue
 			}
 			if pe.Buttons.Contain(pointer.ButtonPrimary) {
+				if st.editMode && st.mode == "file" {
+					gtx.Execute(key.FocusCmd{Tag: &st.editKeyTag})
+				}
 				if st.menuOpen {
 					st.closeContextMenu()
 				}
@@ -2093,6 +2136,79 @@ func (ui *UI) handleStreamOutputEvents(gtx layout.Context, st *fileViewerState) 
 	}
 }
 
+func (ui *UI) drawStreamOutputLineNumbers(th *material.Theme, gtx layout.Context, st *fileViewerState, lineHeight int) {
+	if st == nil || lineHeight <= 0 {
+		return
+	}
+	v := &st.stream
+	gutter := v.lineNumRect
+	if gutter.Empty() {
+		return
+	}
+	theme := ui.fileViewerTheme()
+	background := mixNRGBA(theme.PanelBg, theme.HeaderBg, 0.22)
+	background.A = 0xff
+	paint.FillShape(gtx.Ops, background, clip.Rect(gutter).Op())
+	dividerW := max(1, gtx.Dp(unit.Dp(1)))
+	divider := image.Rect(gutter.Max.X-dividerW, gutter.Min.Y, gutter.Max.X, gutter.Max.Y)
+	paint.FillShape(gtx.Ops, theme.Divider, clip.Rect(divider).Op())
+
+	currentLine := -1
+	if st.editVirtualReady {
+		if line, _, ok := v.lineForOffset(v.selHead); ok {
+			currentLine = line
+		}
+	}
+	start := max(0, v.displayTop)
+	end := min(v.totalRows(), start+v.renderedLineCount())
+	y := v.displayY
+	pad := gtx.Dp(unit.Dp(5))
+	face := ui.viewerTypeface()
+	size := ui.viewerTextSize()
+	defer clip.Rect(gutter).Push(gtx.Ops).Pop()
+	for rowIndex := start; rowIndex < end; rowIndex++ {
+		row := v.rowAt(rowIndex)
+		if row.line < 0 || row.line >= len(v.lines) {
+			y += lineHeight
+			continue
+		}
+		if row.line == currentLine {
+			highlight := mixNRGBA(background, theme.Selection, 0.32)
+			highlight.A = 0xff
+			paint.FillShape(gtx.Ops, highlight, clip.Rect(image.Rect(gutter.Min.X, y, gutter.Max.X-dividerW, y+lineHeight)).Op())
+		}
+		if !v.wrapEnabled || row.from == 0 {
+			number := fmt.Sprintf("%d", row.line+1)
+			x := gutter.Max.X - dividerW - pad - len(number)*v.charW
+			if x < gutter.Min.X {
+				x = gutter.Min.X
+			}
+			lineGTX := gtx
+			lineGTX.Constraints = layout.Constraints{
+				Min: image.Pt(0, lineHeight),
+				Max: image.Pt(max(1, gutter.Max.X-x-dividerW), lineHeight),
+			}
+			label := material.Body2(th, number)
+			label.Font.Typeface = face
+			label.Font.Weight = font.Normal
+			label.TextSize = size
+			label.Color = theme.Muted
+			if row.line == currentLine {
+				label.Color = theme.Text
+			}
+			label.MaxLines = 1
+			label.Truncator = ""
+			offset := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
+			_ = layoutVCenteredLabel(lineGTX, label)
+			offset.Pop()
+		}
+		y += lineHeight
+		if y >= gutter.Max.Y {
+			break
+		}
+	}
+}
+
 func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *fileViewerState, textW, lineHeight int) {
 	if st == nil {
 		return
@@ -2113,6 +2229,8 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 	if textH <= 0 {
 		return
 	}
+	textOrigin := op.Offset(v.textRect.Min).Push(gtx.Ops)
+	defer textOrigin.Pop()
 	textClip := clip.Rect(image.Rect(0, 0, textW, textH)).Push(gtx.Ops)
 	defer textClip.Pop()
 

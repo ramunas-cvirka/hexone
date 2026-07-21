@@ -48,6 +48,7 @@ const (
 	functionBarActionViewerFind
 	functionBarActionViewerMode
 	functionBarActionViewerWrap
+	functionBarActionViewerLineNumbers
 )
 
 type functionBarButtonSpec struct {
@@ -210,7 +211,8 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 	case functionBarActionViewerSave,
 		functionBarActionViewerFind,
 		functionBarActionViewerMode,
-		functionBarActionViewerWrap:
+		functionBarActionViewerWrap,
+		functionBarActionViewerLineNumbers:
 		return ui.viewerFunctionBarActionEnabled(action)
 	}
 
@@ -250,10 +252,12 @@ func (ui *UI) viewerFunctionBarActionEnabled(action functionBarAction) bool {
 	case functionBarActionViewerSave:
 		return st.editMode && st.editDirty && !st.saving
 	case functionBarActionViewerFind:
-		return !st.editMode && !st.commandEditOn && viewerSupportsFind(st)
+		return !st.commandEditOn && viewerSupportsFind(st)
 	case functionBarActionViewerMode:
-		return !st.commandOnly && !st.editMode && !st.editDirty && !st.saving
+		return !st.commandOnly
 	case functionBarActionViewerWrap:
+		return !st.detectedImagePreview && st.mode != "hex" && !st.commandEditOn
+	case functionBarActionViewerLineNumbers:
 		return !st.detectedImagePreview && st.mode != "hex" && !st.commandEditOn
 	default:
 		return false
@@ -407,6 +411,12 @@ func (ui *UI) performFunctionBarActionContext(gtx layout.Context, action functio
 		}
 		ui.toggleViewerWordWrap()
 		return true
+	case functionBarActionViewerLineNumbers:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.toggleViewerLineNumbers()
+		return true
 	}
 	return false
 }
@@ -450,14 +460,14 @@ func (ui *UI) viewerFunctionBarButtonSpecs() []functionBarButtonSpec {
 	}
 	return []functionBarButtonSpec{
 		{action: functionBarActionHelp, keyLabel: "F1", label: "Help", click: &ui.functionBarClicks[0], enabled: ui.functionBarActionEnabled(functionBarActionHelp)},
-		{action: functionBarActionViewerSave, keyLabel: "F2", label: "Save", click: &ui.functionBarClicks[1], activeFill: boolFill(st.saving || st.editDirty), enabled: ui.functionBarActionEnabled(functionBarActionViewerSave)},
-		{action: functionBarActionView, keyLabel: "F3", label: viewLabel, click: &ui.functionBarClicks[2], activeFill: boolFill(!st.editMode), enabled: ui.functionBarActionEnabled(functionBarActionView)},
-		{action: functionBarActionOpen, keyLabel: "F4", label: "Edit", click: &ui.functionBarClicks[3], activeFill: boolFill(st.editMode), enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
-		{action: functionBarActionNone, keyLabel: "F5", label: "", click: &ui.functionBarClicks[4], enabled: false},
+		{action: functionBarActionViewerSave, keyLabel: "F2", label: "Save", click: &ui.functionBarClicks[1], enabled: ui.functionBarActionEnabled(functionBarActionViewerSave)},
+		{action: functionBarActionView, keyLabel: "F3", label: viewLabel, click: &ui.functionBarClicks[2], enabled: ui.functionBarActionEnabled(functionBarActionView)},
+		{action: functionBarActionOpen, keyLabel: "F4", label: "Edit", click: &ui.functionBarClicks[3], enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
+		{action: functionBarActionViewerLineNumbers, keyLabel: "F5", label: "Lines", click: &ui.functionBarClicks[4], enabled: ui.functionBarActionEnabled(functionBarActionViewerLineNumbers)},
 		{action: functionBarActionNone, keyLabel: "F6", label: "", click: &ui.functionBarClicks[5], enabled: false},
-		{action: functionBarActionViewerFind, keyLabel: "F7", label: "Find", click: &ui.functionBarClicks[6], activeFill: boolFill(st.find.open), enabled: ui.functionBarActionEnabled(functionBarActionViewerFind)},
-		{action: functionBarActionViewerMode, keyLabel: "F8", label: modeLabel, click: &ui.functionBarClicks[7], activeFill: boolFill(st.mode == "hex"), enabled: ui.functionBarActionEnabled(functionBarActionViewerMode)},
-		{action: functionBarActionViewerWrap, keyLabel: "F9", label: wrapLabel, click: &ui.functionBarClicks[8], activeFill: boolFill(st.wrapEnabled), enabled: ui.functionBarActionEnabled(functionBarActionViewerWrap)},
+		{action: functionBarActionViewerFind, keyLabel: "F7", label: "Find", click: &ui.functionBarClicks[6], enabled: ui.functionBarActionEnabled(functionBarActionViewerFind)},
+		{action: functionBarActionViewerMode, keyLabel: "F8", label: modeLabel, click: &ui.functionBarClicks[7], enabled: ui.functionBarActionEnabled(functionBarActionViewerMode)},
+		{action: functionBarActionViewerWrap, keyLabel: "F9", label: wrapLabel, click: &ui.functionBarClicks[8], enabled: ui.functionBarActionEnabled(functionBarActionViewerWrap)},
 		{action: functionBarActionExit, keyLabel: "F10", label: "Exit", click: &ui.functionBarClicks[9], enabled: ui.functionBarActionEnabled(functionBarActionExit)},
 	}
 }
@@ -540,13 +550,6 @@ func (ui *UI) layoutFunctionBarSplitLabel(th *material.Theme, gtx layout.Context
 			layout.Rigid(actionLabel.Layout),
 		)
 	})
-}
-
-func (ui *UI) functionBarSplitLabelWidth(th *material.Theme, gtx layout.Context, shortcut, action string) int {
-	shortcutLabel, spaceLabel, actionLabel := ui.functionBarSplitLabelStyles(th, shortcut, action, color.NRGBA{})
-	return measureLabelUnconstrained(gtx, shortcutLabel).Size.X +
-		measureLabelUnconstrained(gtx, spaceLabel).Size.X +
-		measureLabelUnconstrained(gtx, actionLabel).Size.X
 }
 
 func (ui *UI) setFunctionBarHeldModifier(mod key.Modifiers, down bool) bool {
@@ -871,52 +874,19 @@ func dimColor(c color.NRGBA, alpha uint8) color.NRGBA {
 	return c
 }
 
-func (ui *UI) functionBarWidths(th *material.Theme, gtx layout.Context, specs []functionBarButtonSpec) []int {
+func (ui *UI) functionBarWidths(_ *material.Theme, gtx layout.Context, specs []functionBarButtonSpec) []int {
 	widths := make([]int, len(specs))
 	if len(specs) == 0 {
 		return widths
 	}
-	total := 0
-	minWidth := gtx.Dp(unit.Dp(42))
-	padding := gtx.Dp(unit.Dp(16))
-	for i, spec := range specs {
-		w := ui.functionBarSplitLabelWidth(th, gtx, spec.keyLabel, spec.label) + padding
-		if w < minWidth {
-			w = minWidth
-		}
-		widths[i] = w
-		total += w
-	}
-
 	avail := gtx.Constraints.Max.X
 	if avail < len(widths) {
 		avail = len(widths)
 	}
-	if total > avail {
-		scaled := 0
-		for i := range widths {
-			w := widths[i] * avail / total
-			if w < 1 {
-				w = 1
-			}
-			widths[i] = w
-			scaled += w
-		}
-		for i := len(widths) - 1; i >= 0 && scaled < avail; i-- {
-			widths[i]++
-			scaled++
-		}
-		return widths
-	}
-
-	extra := avail - total
-	if extra <= 0 {
-		return widths
-	}
-	add := extra / len(widths)
-	rem := extra % len(widths)
+	base := avail / len(widths)
+	rem := avail % len(widths)
 	for i := range widths {
-		widths[i] += add
+		widths[i] = base
 		if i < rem {
 			widths[i]++
 		}
@@ -937,21 +907,8 @@ func (ui *UI) functionBarActiveIndex(specs []functionBarButtonSpec) int {
 	if ui == nil {
 		return -1
 	}
-	if st := ui.fileViewer; st != nil {
-		switch {
-		case st.saving || st.editDirty:
-			return ui.functionBarIndexForAction(specs, functionBarActionViewerSave)
-		case st.find.open:
-			return ui.functionBarIndexForAction(specs, functionBarActionViewerFind)
-		case st.editMode:
-			return ui.functionBarIndexForAction(specs, functionBarActionOpen)
-		case st.mode == "hex":
-			return ui.functionBarIndexForAction(specs, functionBarActionViewerMode)
-		case st.wrapEnabled:
-			return ui.functionBarIndexForAction(specs, functionBarActionViewerWrap)
-		default:
-			return ui.functionBarIndexForAction(specs, functionBarActionView)
-		}
+	if ui.fileViewer != nil {
+		return -1
 	}
 	switch {
 	case ui.customCommandMenuOpen, ui.customCommandEditor != nil:

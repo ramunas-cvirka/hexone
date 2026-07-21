@@ -4,12 +4,18 @@
 package ui
 
 import (
+	"image"
 	"image/color"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	"gioui.org/font"
 	"gioui.org/io/key"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
@@ -50,6 +56,39 @@ func TestFunctionBarSplitLabelUsesBoldShortcutAndNormalAction(t *testing.T) {
 	}
 	if action.Color != labelColor {
 		t.Fatalf("action color=%v want label color %v", action.Color, labelColor)
+	}
+	if action.MaxLines != 1 || action.Truncator != "…" {
+		t.Fatalf("action truncation MaxLines=%d Truncator=%q want one-line ellipsis", action.MaxLines, action.Truncator)
+	}
+}
+
+func TestFunctionBarWidthsAreFixedByWindowWidth(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = &fileViewerState{mode: "file"}
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(1003, 24)),
+	}
+	short := ui.viewerFunctionBarButtonSpecs()
+	long := append([]functionBarButtonSpec(nil), short...)
+	long[2].label = "very-long-descriptive-text-bla-blabla"
+
+	shortWidths := ui.functionBarWidths(th, gtx, short)
+	longWidths := ui.functionBarWidths(th, gtx, long)
+	if !reflect.DeepEqual(shortWidths, longWidths) {
+		t.Fatalf("label changed slot widths: short=%v long=%v", shortWidths, longWidths)
+	}
+	total := 0
+	for i, width := range shortWidths {
+		total += width
+		if width < 100 || width > 101 {
+			t.Fatalf("slot %d width=%d want equal 100/101px partition", i, width)
+		}
+	}
+	if total != 1003 {
+		t.Fatalf("slot widths total=%d want window width 1003", total)
 	}
 }
 
@@ -334,7 +373,7 @@ func TestViewerFunctionBarExitDiscardsUnsavedHexChanges(t *testing.T) {
 	}
 }
 
-func TestViewerFunctionBarEnablesSaveOnlyForDirtyEdit(t *testing.T) {
+func TestViewerFunctionBarEnablesEditorActions(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	ui.Tabs.Value = "tab0"
 	st := &fileViewerState{mode: "file"}
@@ -348,8 +387,42 @@ func TestViewerFunctionBarEnablesSaveOnlyForDirtyEdit(t *testing.T) {
 	if !ui.functionBarActionEnabled(functionBarActionViewerSave) {
 		t.Fatal("viewer Save should be enabled for dirty edits")
 	}
-	if ui.functionBarActionEnabled(functionBarActionViewerMode) {
-		t.Fatal("viewer mode switch should be disabled while editing")
+	if !ui.functionBarActionEnabled(functionBarActionViewerFind) {
+		t.Fatal("viewer Find should remain enabled while editing")
+	}
+	if !ui.functionBarActionEnabled(functionBarActionViewerMode) {
+		t.Fatal("viewer mode switch should remain enabled while editing")
+	}
+}
+
+func TestViewerEditorFunctionKeysRouteFindAndModeSwitch(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	st := &fileViewerState{
+		mode:             "file",
+		path:             "notes.txt",
+		content:          "committed needle",
+		editMode:         true,
+		editDirty:        true,
+		editBaselineText: "committed needle",
+	}
+	st.stream.SetContent(st.content)
+	ui.fileViewer = st
+	gtx, router := testKeyContext()
+	anyMods := ^key.Modifiers(0)
+
+	router.Event(key.Filter{Name: key.NameF7, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF7, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if !st.find.open {
+		t.Fatal("viewer F7 should open Find while editing")
+	}
+
+	router.Event(key.Filter{Name: key.NameF8, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF8, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if !st.modeSwitchPrompt.open || st.modeSwitchPrompt.targetMode != "hex" {
+		t.Fatalf("viewer F8 prompt=%v target=%q want dirty-edit switch to hex", st.modeSwitchPrompt.open, st.modeSwitchPrompt.targetMode)
 	}
 }
 
@@ -378,25 +451,30 @@ func TestViewerFunctionKeysRouteToViewerCommands(t *testing.T) {
 	}
 }
 
-func TestViewerF5AndF6AreUnassigned(t *testing.T) {
+func TestViewerF5TogglesLineNumbersAndF6IsUnassigned(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
 	ui.Tabs.Value = "tab0"
 	st := &fileViewerState{mode: "file", editMode: true, editDirty: true}
 	ui.fileViewer = st
 	gtx, router := testKeyContext()
 	anyMods := ^key.Modifiers(0)
 
-	for _, name := range []key.Name{key.NameF5, key.NameF6} {
-		router.Event(key.Filter{Name: name, Optional: anyMods})
-		router.Queue(key.Event{Name: name, State: key.Press})
-		ui.handleGlobalFunctionKeys(gtx)
+	router.Event(key.Filter{Name: key.NameF5, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF5, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if ui.fmCfg.Viewer.ShowLineNumbers {
+		t.Fatal("viewer F5 should disable line numbers")
 	}
 
+	router.Event(key.Filter{Name: key.NameF6, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF6, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
 	if st.saving || !st.editMode || !st.editDirty {
-		t.Fatalf("unassigned F5/F6 changed viewer state saving=%v edit=%v dirty=%v", st.saving, st.editMode, st.editDirty)
+		t.Fatalf("F5/F6 changed edit state saving=%v edit=%v dirty=%v", st.saving, st.editMode, st.editDirty)
 	}
 	if ui.ConsumeWindowCloseRequest() {
-		t.Fatal("unassigned F5/F6 should not request application exit")
+		t.Fatal("F5/F6 should not request application exit")
 	}
 }
 

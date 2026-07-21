@@ -63,6 +63,7 @@ viewer:
     text: '#D2D2D2'
     selection: '#3C3C50'
     smooth_scrolling: true
+    show_line_numbers: true
     shell: auto
     command: cat {path} | grep 1234
     remote_search_mode: remote

@@ -545,6 +545,7 @@ type ViewerConfig struct {
 	HexBytesText            string              `yaml:"hex_bytes_text,omitempty"`
 	HexASCIIText            string              `yaml:"hex_ascii_text,omitempty"`
 	SmoothScrolling         bool                `yaml:"smooth_scrolling"`
+	ShowLineNumbers         bool                `yaml:"show_line_numbers"`
 	Shell                   string              `yaml:"shell"`
 	Command                 string              `yaml:"command"`
 	RemoteSearchMode        string              `yaml:"remote_search_mode"`
@@ -647,6 +648,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		},
 		Viewer: ViewerConfig{
 			SmoothScrolling: true,
+			ShowLineNumbers: true,
 		},
 	}
 	if err := node.Decode(&raw); err != nil {
@@ -763,6 +765,7 @@ func DefaultConfig() *Config {
 			Text:                    DefaultViewerTextHex,
 			Selection:               DefaultViewerSelectionHex,
 			SmoothScrolling:         true,
+			ShowLineNumbers:         true,
 			Shell:                   "auto",
 			Command:                 "cat {path}",
 			RemoteSearchMode:        ViewerRemoteSearchModeRemote,

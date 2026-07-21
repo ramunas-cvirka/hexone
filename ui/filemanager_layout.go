@@ -63,6 +63,12 @@ func (ui *UI) layoutTab1(th *material.Theme, gtx layout.Context) layout.Dimensio
 
 	dims := layout.Stack{}.Layout(gtx,
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			// The viewer is an opaque, full-window surface. Laying out every
+			// pane behind it needlessly reshapes all visible filenames on each
+			// viewer frame, and is especially costly during native resizing.
+			if ui.fileViewer != nil {
+				return layout.Dimensions{Size: gtx.Constraints.Max}
+			}
 			return ui.layoutFilePanes(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -1285,7 +1291,13 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 		return layout.Dimensions{}
 	}
 	if th != nil && th.Shaper != nil {
-		pane.model.setTextMeasurer(func(text string) int {
+		measureKey := filePaneTextMeasureKey{
+			typeface: pane.table.Typeface,
+			textSize: pane.table.TextSize,
+			pxPerDp:  gtx.Metric.PxPerDp,
+			pxPerSp:  gtx.Metric.PxPerSp,
+		}
+		pane.model.setTextMeasurerForStyle(measureKey, func(text string) int {
 			lbl := material.Body2(th, text)
 			lbl.Font.Typeface = pane.table.Typeface
 			lbl.Font.Weight = font.Medium
@@ -1294,7 +1306,7 @@ func (ui *UI) layoutFilePaneTable(th *material.Theme, gtx layout.Context, idx in
 			lbl.Truncator = ""
 			return measureLabelUnconstrained(gtx, lbl).Size.X
 		})
-		defer pane.model.setTextMeasurer(nil)
+		defer pane.model.setTextMeasurerForStyle(measureKey, nil)
 	}
 
 	total := pane.model.Len()

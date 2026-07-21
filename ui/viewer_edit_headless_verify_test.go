@@ -186,25 +186,20 @@ func TestHeadlessViewerEditModes(t *testing.T) {
 	textImage := frame(func(gtx layout.Context) {
 		textUI.layoutFileViewerTextEditor(th, gtx, textState)
 	})
-	if _, scrollable := editorVerticalScrollMetrics(&textState.contentEditor); !scrollable {
+	if textState.stream.totalRows() <= textState.stream.visibleLines || textState.stream.trackRect.Empty() {
 		t.Fatal("text edit visual fixture did not produce a scrollbar")
 	}
-	if metrics, ok := editorVerticalScrollMetrics(&textState.contentEditor); ok {
-		lineCount := len(splitStreamLines(source.String()))
-		editorLineHeight := float64(metrics.Content) / float64(lineCount)
-		t.Logf("read line height=%d; editor average line height=%.2f", readLineHeight, editorLineHeight)
-		delta := editorLineHeight - float64(readLineHeight)
-		if delta < 0 {
-			delta = -delta
-		}
-		if delta > 1 {
-			t.Fatalf("read/editor line-height delta=%.2f want <= 1", delta)
-		}
+	editorLineHeight := textState.stream.lineH
+	t.Logf("read line height=%d; virtual editor line height=%d", readLineHeight, editorLineHeight)
+	delta := editorLineHeight - readLineHeight
+	if delta < 0 {
+		delta = -delta
+	}
+	if delta > 1 {
+		t.Fatalf("read/editor line-height delta=%d want <= 1", delta)
 	}
 	shoot("viewer-text-edit.png", textImage)
-	if metrics, scrollable := editorVerticalScrollMetrics(&textState.contentEditor); scrollable {
-		editorScrollToVerticalOffset(&textState.contentEditor, metrics.MaxOffset)
-	}
+	textState.stream.scrollToBottom()
 	textBottomImage := frame(func(gtx layout.Context) {
 		textUI.layoutFileViewerTextEditor(th, gtx, textState)
 	})

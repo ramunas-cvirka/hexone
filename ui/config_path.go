@@ -175,6 +175,8 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 		rebased.Viewer.CommandAutoRefresh = next.Viewer.CommandAutoRefresh
 	case "viewer-word-wrap":
 		rebased.Viewer.WordWrap = next.Viewer.WordWrap
+	case "viewer-line-numbers":
+		rebased.Viewer.ShowLineNumbers = next.Viewer.ShowLineNumbers
 	case "viewer-encoding":
 		rebased.Viewer.FileEncoding = next.Viewer.FileEncoding
 	case "terminal-height":

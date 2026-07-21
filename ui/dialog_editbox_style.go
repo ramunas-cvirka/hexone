@@ -289,6 +289,9 @@ func (ui *UI) layoutEditorWithContextMenu(_ *material.Theme, gtx layout.Context,
 			ui.editorMenuHoverAnim = segmentedAnimState{}
 			ui.editorMenuCanPaste = enabled && !ed.ReadOnly
 			ui.editorMenuUseExplicitCaret = gtx.Focused(ed)
+			if id == "viewer-file-edit" && ui.fileViewer != nil && ui.fileViewer.editVirtualReady {
+				ui.editorMenuUseExplicitCaret = gtx.Focused(&ui.fileViewer.editKeyTag)
+			}
 			if ui.editorMenuPressPos != (image.Point{}) {
 				ui.editorMenuPos = ui.editorMenuPressPos
 			} else {

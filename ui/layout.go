@@ -949,6 +949,21 @@ func (ui *UI) handleEditorContextMenuGlobalPresses(gtx layout.Context) {
 			if !pe.Buttons.Contain(pointer.ButtonPrimary) {
 				continue
 			}
+			if ui.editorMenuOpenID == "viewer-file-edit" && ui.fileViewer != nil && ui.fileViewer.editVirtualReady {
+				switch action {
+				case "copy":
+					ui.copyFileViewerVirtualEditText(gtx, ui.fileViewer)
+				case "paste":
+					if ui.editorMenuCanPaste {
+						ui.pasteFileViewerVirtualEditText(gtx, ui.fileViewer)
+					}
+				case "word-wrap":
+					ui.toggleViewerWordWrap()
+				}
+				ui.closeEditorContextMenu()
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
 			ed := ui.editorMenuTarget
 			if ed == nil {
 				ui.closeEditorContextMenu()
@@ -1181,6 +1196,9 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		case key.NameF5:
 			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {
 				continue
+			}
+			if ui.performFunctionBarActionContext(gtx, functionBarActionViewerLineNumbers) {
+				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF6:
 			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {

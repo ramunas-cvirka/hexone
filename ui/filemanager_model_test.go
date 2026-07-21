@@ -161,6 +161,44 @@ func TestFilePaneBriefTextWidthRecomputesAfterEntriesChange(t *testing.T) {
 	}
 }
 
+func TestFilePaneStyledTextMeasureCachePersistsAcrossFrames(t *testing.T) {
+	model := &filePaneModel{cfg: fm.DefaultConfig()}
+	key := filePaneTextMeasureKey{
+		typeface: font.Typeface("test"),
+		textSize: unit.Sp(15),
+		pxPerDp:  1,
+		pxPerSp:  1,
+	}
+	measures := 0
+	measure := func(text string) int {
+		measures++
+		return len(text) * 7
+	}
+
+	model.setTextMeasurerForStyle(key, measure)
+	if got, ok := model.measuredTextWidth("cached.txt"); !ok || got != 70 {
+		t.Fatalf("first width=(%d,%v) want (70,true)", got, ok)
+	}
+	model.setTextMeasurerForStyle(key, nil)
+	model.setTextMeasurerForStyle(key, measure)
+	if got, ok := model.measuredTextWidth("cached.txt"); !ok || got != 70 {
+		t.Fatalf("cached width=(%d,%v) want (70,true)", got, ok)
+	}
+	if measures != 1 {
+		t.Fatalf("same-style frame measured %d times want 1", measures)
+	}
+
+	changedKey := key
+	changedKey.pxPerSp = 2
+	model.setTextMeasurerForStyle(changedKey, measure)
+	if _, ok := model.measuredTextWidth("cached.txt"); !ok {
+		t.Fatal("changed-style width was not measured")
+	}
+	if measures != 2 {
+		t.Fatalf("style change measured %d times want 2", measures)
+	}
+}
+
 func TestFilePaneModelDisplaysSymlinkTarget(t *testing.T) {
 	model := &filePaneModel{
 		entries: []filesys.Entry{{

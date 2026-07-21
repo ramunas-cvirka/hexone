@@ -300,6 +300,7 @@ type settingsModalState struct {
 	generalCompletionSoundAnim   settingsChoiceAnim
 	generalCompletionSoundClicks [3]widget.Clickable
 	viewSmoothScrollingBool      widget.Bool
+	viewShowLineNumbersBool      widget.Bool
 	viewHideFunctionBarBool      widget.Bool
 	generalTabList               widget.List
 	viewerTabList                widget.List
@@ -721,6 +722,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.generalCompletionSound = fm.NormalizeCompletionSound(cfg.General.CompletionSound)
 	st.generalCompletionSoundAnim = settingsChoiceAnim{}
 	st.viewSmoothScrollingBool.Value = cfg.Viewer.SmoothScrolling
+	st.viewShowLineNumbersBool.Value = cfg.Viewer.ShowLineNumbers
 	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
 	st.generalTabList.Position.First = 0
 	st.generalTabList.Position.Offset = 0
@@ -3319,6 +3321,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.General.DeleteWithoutConfirm = st.generalDeleteWithoutConfirm.Value
 	ui.fmCfg.General.CompletionSound = fm.NormalizeCompletionSound(st.generalCompletionSound)
 	ui.fmCfg.Viewer.SmoothScrolling = st.viewSmoothScrollingBool.Value
+	ui.fmCfg.Viewer.ShowLineNumbers = st.viewShowLineNumbersBool.Value
 	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value
 	ui.fmCfg.Viewer.CommandByTarget = viewerCommandTargetMap(st.viewTargetEntries)
 	ui.fmCfg.Viewer.CommandRules = fm.NormalizeViewerCommandRules(st.viewRuleEntries)
@@ -5025,6 +5028,15 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 				st.focus = settingsKeyboardFocusViewerSmoothScrolling
 			}
 			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusViewerSmoothScrolling, &st.viewSmoothScrollingBool)
+			return dims
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			before := st.viewShowLineNumbersBool.Value
+			dims := ui.layoutThemeCheckbox(th, gtx, &st.viewShowLineNumbersBool, "Show line numbers in text viewer (F5 toggles it)", ui.scaleModalFontSize(10))
+			if st.viewShowLineNumbersBool.Value != before {
+				st.focus = settingsKeyboardFocusViewerShowLineNumbers
+			}
+			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusViewerShowLineNumbers, &st.viewShowLineNumbersBool)
 			return dims
 		},
 		func(gtx layout.Context) layout.Dimensions {

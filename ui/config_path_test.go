@@ -176,6 +176,31 @@ func TestToggleViewerWordWrapPersistsOnlyViewerSetting(t *testing.T) {
 	}
 }
 
+func TestToggleViewerLineNumbersPersistsOnlyViewerSetting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(original)
+	ui.configPath = path
+	ui.fileViewer = &fileViewerState{mode: "file"}
+	ui.toggleViewerLineNumbers()
+
+	if ui.fmCfg.Viewer.ShowLineNumbers {
+		t.Fatal("line-number toggle did not disable viewer setting")
+	}
+	saved := fm.LoadConfig(path)
+	if saved.Viewer.ShowLineNumbers {
+		t.Fatal("viewer.show_line_numbers was not persisted")
+	}
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+}
+
 func TestCustomCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
 	original := fm.DefaultConfig()

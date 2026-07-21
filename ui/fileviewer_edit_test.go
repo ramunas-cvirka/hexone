@@ -12,9 +12,11 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
@@ -23,7 +25,6 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -704,6 +705,151 @@ func TestFileViewerHexEditConsumesFocusedEditEvents(t *testing.T) {
 	}
 }
 
+func TestFileViewerVirtualTextEditConsumesFocusedEvents(t *testing.T) {
+	content := "alpha\nbeta"
+	st := &fileViewerState{
+		mode:             "file",
+		path:             "events.txt",
+		content:          content,
+		editBaselineText: content,
+	}
+	st.contentEditor.SetText(content)
+	st.stream.SetContent(content)
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	if !ui.startFileViewerEdit(time.Now()) {
+		t.Fatalf("start edit: %s", st.status)
+	}
+	th := material.NewTheme()
+	router := new(input.Router)
+	frame := func() {
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(320, 120)),
+			Now:         time.Now(),
+		}
+		ui.layoutFileViewerTextEditor(th, gtx, st)
+		router.Frame(&ops)
+	}
+
+	frame()
+	router.Event(key.FocusFilter{Target: &st.editKeyTag})
+	router.Queue(key.EditEvent{Range: key.Range{Start: 5, End: 5}, Text: "!"})
+	frame()
+	if got := st.virtualEditText(); got != "alpha!\nbeta" {
+		t.Fatalf("focused edit text=%q", got)
+	}
+	router.Event(key.Filter{Focus: &st.editKeyTag, Name: key.NameDeleteBackward, Optional: ^key.Modifiers(0)})
+	router.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Press})
+	frame()
+	if got := st.virtualEditText(); got != content {
+		t.Fatalf("focused backspace text=%q want %q", got, content)
+	}
+}
+
+func TestFileViewerVirtualTextEditMouseScrollAndSelection(t *testing.T) {
+	content := strings.Repeat("0123456789 selection target\n", 80)
+	st := &fileViewerState{
+		mode:             "file",
+		path:             "pointer.txt",
+		content:          content,
+		editBaselineText: content,
+	}
+	st.contentEditor.SetText(content)
+	st.stream.SetContent(content)
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	if !ui.startFileViewerEdit(time.Now()) {
+		t.Fatalf("start edit: %s", st.status)
+	}
+	th := material.NewTheme()
+	router := new(input.Router)
+	now := time.Now()
+	frame := func() {
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(360, 130)),
+			Now:         now,
+		}
+		ui.layoutFileViewerTextEditor(th, gtx, st)
+		router.Frame(&ops)
+		now = now.Add(16 * time.Millisecond)
+	}
+
+	frame()
+	if st.stream.lineNumRect.Empty() || st.stream.textRect.Min.X <= 0 {
+		t.Fatalf("line-number gutter=%v text rect=%v", st.stream.lineNumRect, st.stream.textRect)
+	}
+	inside := f32.Pt(float32(st.stream.textRect.Min.X+20), float32(st.stream.lineH/2))
+	router.Queue(pointer.Event{
+		Kind:     pointer.Scroll,
+		Source:   pointer.Mouse,
+		Position: inside,
+		Scroll:   f32.Pt(0, 3),
+	})
+	frame()
+	if st.stream.topLine <= 0 {
+		t.Fatal("mouse wheel did not scroll the virtual editor")
+	}
+	beforeDrag := st.stream.topLine
+	scrollbar := f32.Pt(float32(st.stream.trackRect.Min.X+1), float32(st.stream.trackRect.Min.Y+st.stream.trackRect.Dy()*3/4))
+	router.Queue(pointer.Event{
+		Kind:      pointer.Press,
+		Source:    pointer.Mouse,
+		PointerID: 2,
+		Buttons:   pointer.ButtonPrimary,
+		Position:  scrollbar,
+	})
+	frame()
+	if !st.stream.dragging || st.stream.topLine <= beforeDrag {
+		t.Fatalf("vertical scrollbar drag start dragging=%v top=%d before=%d", st.stream.dragging, st.stream.topLine, beforeDrag)
+	}
+	router.Queue(pointer.Event{
+		Kind:      pointer.Release,
+		Source:    pointer.Mouse,
+		PointerID: 2,
+		Position:  scrollbar,
+	})
+	frame()
+
+	st.stream.topLine = 0
+	st.stream.syncVisualTop()
+	start := f32.Pt(float32(st.stream.textRect.Min.X+st.stream.textPad+st.stream.colOffsetPx(1)), float32(st.stream.lineH/2))
+	end := f32.Pt(float32(st.stream.textRect.Min.X+st.stream.textPad+st.stream.colOffsetPx(8)), float32(st.stream.lineH*2+st.stream.lineH/2))
+	router.Queue(pointer.Event{
+		Kind:      pointer.Press,
+		Source:    pointer.Mouse,
+		PointerID: 1,
+		Buttons:   pointer.ButtonPrimary,
+		Position:  start,
+	})
+	frame()
+	router.Queue(pointer.Event{
+		Kind:      pointer.Move,
+		Source:    pointer.Mouse,
+		PointerID: 1,
+		Buttons:   pointer.ButtonPrimary,
+		Position:  end,
+	})
+	frame()
+	router.Queue(pointer.Event{
+		Kind:      pointer.Release,
+		Source:    pointer.Mouse,
+		PointerID: 1,
+		Position:  end,
+	})
+	frame()
+	if st.stream.selLen <= 0 || st.stream.selAnchor == st.stream.selHead {
+		t.Fatalf("mouse drag selection=(anchor=%d head=%d len=%d)", st.stream.selAnchor, st.stream.selHead, st.stream.selLen)
+	}
+}
+
 func TestFileViewerHexNavigationCommitsPartialByteAndMoves(t *testing.T) {
 	v := newHexViewerState()
 	v.fileSize = 6
@@ -882,17 +1028,14 @@ func TestFileViewerTextEditKeepsSyntaxAndExposesScrollbar(t *testing.T) {
 	}
 	ui.layoutFileViewerTextEditor(material.NewTheme(), gtx, st)
 
-	metrics, scrollable := editorVerticalScrollMetrics(&st.contentEditor)
-	if !scrollable || metrics.Content <= metrics.Viewport {
-		t.Fatalf("edit scrollbar metrics content=%d viewport=%d scrollable=%v", metrics.Content, metrics.Viewport, scrollable)
+	if st.stream.totalRows() <= st.stream.visibleLines || st.stream.trackRect.Empty() {
+		t.Fatalf("virtual edit scrollbar rows=%d visible=%d track=%v", st.stream.totalRows(), st.stream.visibleLines, st.stream.trackRect)
 	}
-	editorScrollToVerticalOffset(&st.contentEditor, metrics.MaxOffset)
-	_, visibleEnd, ok := editorVisibleRuneRange(&st.contentEditor)
-	if !ok {
-		t.Fatal("visible editor rune range unavailable")
-	}
-	if lastVisibleLine := viewerEditLineAtRune(st.editLineRunes, visibleEnd); lastVisibleLine < len(st.editLineRunes)-3 {
-		t.Fatalf("bottom visible syntax line=%d want near %d", lastVisibleLine, len(st.editLineRunes)-1)
+	st.stream.scrollToBottom()
+	ui.layoutFileViewerTextEditor(material.NewTheme(), gtx, st)
+	lastVisibleRow := st.stream.displayTop + st.stream.renderedLineCount() - 1
+	if lastVisibleRow < st.stream.totalRows()-3 {
+		t.Fatalf("bottom visible row=%d want near %d", lastVisibleRow, st.stream.totalRows()-1)
 	}
 	if !st.editSyntax.ready() {
 		t.Fatal("edit mode should retain the viewer syntax document")
@@ -927,39 +1070,172 @@ func TestFileViewerTextEditHonorsWordWrapSetting(t *testing.T) {
 	}
 
 	layoutEditor()
-	textView, ok := editorTextView(&st.contentEditor)
-	if !ok {
-		t.Fatal("editor text view unavailable")
+	noWrapRows := st.stream.totalRows()
+	if noWrapRows != 1 || st.stream.hTrackRect.Empty() {
+		t.Fatalf("word wrap off rows=%d horizontal track=%v", noWrapRows, st.stream.hTrackRect)
 	}
-	noWrapHeight := textView.FullDimensions().Size.Y
-	if noWrapHeight > measureEditorEquivalentLineHeightAt(layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}, ui.viewerTextSize())*2 {
-		t.Fatalf("word wrap off produced content height=%d for one logical line", noWrapHeight)
-	}
-	st.contentEditor.SetCaret(st.contentEditor.Len(), st.contentEditor.Len())
+	virtualEditSetCaret(&st.stream, st.stream.totalBytes, false)
+	st.revealVirtualEditCaret()
 	layoutEditor()
-	layoutEditor()
-	if st.editHOffset <= 0 {
+	if st.stream.hCol <= 0 {
 		t.Fatal("word wrap off should reveal the end of a long line horizontally")
 	}
 
 	st.wrapEnabled = true
 	layoutEditor()
-	wrapHeight := textView.FullDimensions().Size.Y
-	if wrapHeight <= noWrapHeight*2 {
-		t.Fatalf("word wrap on content height=%d want substantially above no-wrap height=%d", wrapHeight, noWrapHeight)
+	wrapRows := st.stream.totalRows()
+	if wrapRows <= noWrapRows*2 {
+		t.Fatalf("word wrap on rows=%d want substantially above no-wrap rows=%d", wrapRows, noWrapRows)
 	}
-	if st.editHOffset != 0 || st.contentEditor.WrapPolicy != text.WrapHeuristically {
-		t.Fatalf("word wrap on horizontal offset=%d policy=%v", st.editHOffset, st.contentEditor.WrapPolicy)
+	if st.stream.hCol != 0 || !st.stream.hTrackRect.Empty() {
+		t.Fatalf("word wrap on horizontal column=%d track=%v", st.stream.hCol, st.stream.hTrackRect)
+	}
+}
+
+func TestFileViewerVirtualTextEditReplaceUndoRedo(t *testing.T) {
+	content := "alpha\nŽeta\nomega"
+	st := &fileViewerState{
+		mode:             "file",
+		path:             "unicode.txt",
+		editBaselineText: content,
+		content:          content,
+	}
+	st.contentEditor.SetText(content)
+	st.stream.SetContent(content)
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	if !ui.startFileViewerEdit(time.Now()) {
+		t.Fatalf("start edit: %s", st.status)
+	}
+
+	start := st.stream.lineByteStart(1)
+	end := st.stream.lineByteEnd(1)
+	if !ui.replaceFileViewerVirtualText(st, start, end, "delta\nextra", time.Now()) {
+		t.Fatal("virtual replacement was not applied")
+	}
+	if got, want := st.virtualEditText(), "alpha\ndelta\nextra\nomega"; got != want {
+		t.Fatalf("replaced text=%q want %q", got, want)
+	}
+	if !st.editDirty || st.editUndoIndex != 1 {
+		t.Fatalf("replacement dirty=%v undo-index=%d", st.editDirty, st.editUndoIndex)
+	}
+	if !ui.undoFileViewerVirtualText(st, time.Now()) || st.virtualEditText() != content || st.editDirty {
+		t.Fatalf("undo text=%q dirty=%v", st.virtualEditText(), st.editDirty)
+	}
+	if !ui.redoFileViewerVirtualText(st, time.Now()) || st.virtualEditText() != "alpha\ndelta\nextra\nomega" || !st.editDirty {
+		t.Fatalf("redo text=%q dirty=%v", st.virtualEditText(), st.editDirty)
+	}
+}
+
+func TestFileViewerVirtualTextEditRuneByteMapping(t *testing.T) {
+	content := "aŽ🙂\nβeta"
+	st := &fileViewerState{}
+	st.contentEditor.SetText(content)
+	st.initializeVirtualEditText(content)
+	for runeOffset := 0; runeOffset <= utf8.RuneCountInString(content); runeOffset++ {
+		byteOffset := st.virtualEditByteAtRune(runeOffset)
+		if got := st.virtualEditRuneAtByte(byteOffset); got != runeOffset {
+			t.Fatalf("rune %d -> byte %d -> rune %d", runeOffset, byteOffset, got)
+		}
+	}
+}
+
+func TestFileViewerVirtualTextEditMaintainsIncrementalMetadata(t *testing.T) {
+	content := "zero\nalpha beta gamma\nŽeta🙂\nlast"
+	st := &fileViewerState{}
+	st.initializeVirtualEditText(content)
+	st.stream.wrapEnabled = true
+	st.stream.prepareWrapRows(6)
+
+	applyAndCompare := func(start, end int, replacement string) {
+		t.Helper()
+		before := st.virtualEditText()
+		replacement = normalizeViewerLineEndings(replacement)
+		wantText := before[:start] + replacement + before[end:]
+		st.applyVirtualEditReplacement(start, end, replacement)
+		if got := st.virtualEditText(); got != wantText {
+			t.Fatalf("text=%q want %q", got, wantText)
+		}
+
+		var rebuilt streamOutputView
+		rebuilt.SetContent(wantText)
+		rebuilt.wrapEnabled = true
+		rebuilt.prepareWrapRows(6)
+		if !reflect.DeepEqual(st.stream.lineOffsets, rebuilt.lineOffsets) {
+			t.Fatalf("line offsets=%v want %v", st.stream.lineOffsets, rebuilt.lineOffsets)
+		}
+		if !reflect.DeepEqual(st.stream.lineRunes, rebuilt.lineRunes) {
+			t.Fatalf("line runes=%v want %v", st.stream.lineRunes, rebuilt.lineRunes)
+		}
+		if st.stream.totalBytes != rebuilt.totalBytes || st.stream.maxCols != rebuilt.maxCols {
+			t.Fatalf("totals=(%d,%d) want (%d,%d)", st.stream.totalBytes, st.stream.maxCols, rebuilt.totalBytes, rebuilt.maxCols)
+		}
+		if !reflect.DeepEqual(st.stream.wrapRows, rebuilt.wrapRows) {
+			t.Fatalf("wrap rows=%v want %v", st.stream.wrapRows, rebuilt.wrapRows)
+		}
+		wantRuneOffsets := viewerEditLineRuneOffsetsFromView(&rebuilt)
+		if !reflect.DeepEqual(st.editLineRunes, wantRuneOffsets) {
+			t.Fatalf("edit rune offsets=%v want %v", st.editLineRunes, wantRuneOffsets)
+		}
+	}
+
+	// Exercise the allocation-free, same-line typing path.
+	insert := st.stream.lineByteStart(1) + len("alpha")
+	applyAndCompare(insert, insert, "-typed-")
+	// Exercise line insertion/removal and Unicode offset adjustment.
+	current := st.virtualEditText()
+	start := strings.Index(current, "beta")
+	end := strings.Index(current, "🙂") + len("🙂")
+	applyAndCompare(start, end, "new\nwrapped replacement\nrows")
+	current = st.virtualEditText()
+	newline := strings.Index(current, "\nwrapped")
+	applyAndCompare(newline, newline+1, "")
+}
+
+func TestFileViewerTextEditCoalescesWindowResizeReflow(t *testing.T) {
+	st := &fileViewerState{}
+	now := time.Now()
+	gtx := layout.Context{
+		Ops: new(op.Ops),
+		Now: now,
+	}
+	initialViewport := image.Pt(640, 400)
+	initialLayout := image.Pt(640, 400)
+	if got := st.fileViewerEditLayoutSize(gtx, initialViewport, initialLayout); got != initialLayout {
+		t.Fatalf("initial layout size=%v want %v", got, initialLayout)
+	}
+
+	resizedViewport := image.Pt(520, 400)
+	resizedLayout := image.Pt(520, 400)
+	gtx.Now = now.Add(10 * time.Millisecond)
+	if got := st.fileViewerEditLayoutSize(gtx, resizedViewport, resizedLayout); got != initialLayout {
+		t.Fatalf("active resize layout size=%v want stable %v", got, initialLayout)
+	}
+	if st.editLayoutDue.IsZero() {
+		t.Fatal("active resize did not schedule a settled reflow")
+	}
+
+	gtx.Now = st.editLayoutDue.Add(-time.Millisecond)
+	if got := st.fileViewerEditLayoutSize(gtx, resizedViewport, resizedLayout); got != initialLayout {
+		t.Fatalf("pre-settle layout size=%v want stable %v", got, initialLayout)
+	}
+	gtx.Now = st.editLayoutDue
+	if got := st.fileViewerEditLayoutSize(gtx, resizedViewport, resizedLayout); got != resizedLayout {
+		t.Fatalf("settled layout size=%v want %v", got, resizedLayout)
+	}
+	if !st.editLayoutDue.IsZero() {
+		t.Fatal("settled reflow deadline was not cleared")
 	}
 }
 
 func TestViewerFunctionBarUsesViewerSpecificCommands(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
 	ui.Tabs = widget.Enum{Value: "tab0"}
 	ui.fileViewer = &fileViewerState{mode: "file"}
 
 	specs := ui.functionBarButtonSpecs()
-	want := []string{"Help", "Save", "Close", "Edit", "", "", "Find", "Hex", "Wrap", "Exit"}
+	want := []string{"Help", "Save", "Close", "Edit", "Lines", "", "Find", "Hex", "Wrap", "Exit"}
 	if len(specs) != len(want) {
 		t.Fatalf("viewer function count=%d want %d", len(specs), len(want))
 	}
@@ -967,13 +1243,19 @@ func TestViewerFunctionBarUsesViewerSpecificCommands(t *testing.T) {
 		if specs[i].keyLabel != fmt.Sprintf("F%d", i+1) || specs[i].label != label {
 			t.Fatalf("viewer F%d=%q %q want %q", i+1, specs[i].keyLabel, specs[i].label, label)
 		}
+		if specs[i].activeFill != 0 {
+			t.Fatalf("viewer F%d active fill=%v want no highlighted key", i+1, specs[i].activeFill)
+		}
 	}
 	if specs[1].action != functionBarActionViewerSave || specs[2].action != functionBarActionView {
 		t.Fatalf("viewer actions F2=%v F3=%v", specs[1].action, specs[2].action)
 	}
-	if specs[4].action != functionBarActionNone || specs[4].enabled ||
+	if specs[4].action != functionBarActionViewerLineNumbers || !specs[4].enabled ||
 		specs[5].action != functionBarActionNone || specs[5].enabled {
-		t.Fatalf("viewer F5/F6 should be empty and disabled: F5=%#v F6=%#v", specs[4], specs[5])
+		t.Fatalf("viewer F5 should toggle lines and F6 should be empty: F5=%#v F6=%#v", specs[4], specs[5])
+	}
+	if got := ui.functionBarActiveIndex(specs); got != -1 {
+		t.Fatalf("viewer function bar active index=%d want no highlighted key", got)
 	}
 
 	ui.fileViewer.mode = "hex"

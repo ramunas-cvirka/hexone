@@ -126,11 +126,26 @@ type fileViewerState struct {
 	editHScrollbar       widget.Scrollbar
 	editHOffset          int
 	editMaxCols          int
+	editLayoutViewport   image.Point
+	editLayoutSize       image.Point
+	editLayoutDue        time.Time
 	editWrapInitialized  bool
 	editWrapValue        bool
 	editCaretStart       int
 	editScrollRatio      float32
 	editScrollPending    bool
+	editVirtualReady     bool
+	editWidgetMirrorText string
+	editKeyTag           fileViewerEventTag
+	editClipboardTag     fileViewerEventTag
+	editDesiredCol       int
+	editDesiredColSet    bool
+	editCaretBlinkAt     time.Time
+	editUndo             []fileViewerTextUndoRecord
+	editUndoIndex        int
+	editRevision         int64
+	editSavedRevision    int64
+	editNextRevision     int64
 	saving               bool
 	saveCh               chan fileViewerSaveResult
 	modeSwitchPrompt     fileViewerModeSwitchState
@@ -1784,6 +1799,20 @@ func viewerScrollToLine(st *fileViewerState, line int) {
 	if st == nil {
 		return
 	}
+	if st.editMode && st.mode == "file" && st.editVirtualReady {
+		if line < 0 {
+			line = 0
+		}
+		if line >= len(st.stream.lines) {
+			line = len(st.stream.lines) - 1
+		}
+		if line < 0 {
+			line = 0
+		}
+		virtualEditSetCaret(&st.stream, st.stream.lineByteStart(line), false)
+		st.revealVirtualEditCaret()
+		return
+	}
 	total := viewerTotalLines(st.content)
 	if line < 0 {
 		line = 0
@@ -2094,6 +2123,13 @@ func viewerSmoothScrolling(cfg *fm.Config) bool {
 		return true
 	}
 	return cfg.Viewer.SmoothScrolling
+}
+
+func viewerShowLineNumbers(cfg *fm.Config) bool {
+	if cfg == nil {
+		return true
+	}
+	return cfg.Viewer.ShowLineNumbers
 }
 
 func viewerCommandRefreshInterval(cfg *fm.Config) time.Duration {
@@ -2642,6 +2678,14 @@ func (ui *UI) toggleViewerWordWrap() {
 		ui.fmCfg.Viewer.WordWrap = st.wrapEnabled
 		_ = ui.saveFMConfigWithOptions("viewer-word-wrap", false)
 	}
+}
+
+func (ui *UI) toggleViewerLineNumbers() {
+	if ui == nil || ui.fileViewer == nil || ui.fmCfg == nil {
+		return
+	}
+	ui.fmCfg.Viewer.ShowLineNumbers = !ui.fmCfg.Viewer.ShowLineNumbers
+	_ = ui.saveFMConfigWithOptions("viewer-line-numbers", false)
 }
 
 func viewerWordWrapMenuLabel(enabled bool) string {

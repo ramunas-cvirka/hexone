@@ -188,6 +188,27 @@ func TestSettingsSaveLabelIndicatesDirtyDraft(t *testing.T) {
 	}
 }
 
+func TestSettingsSaveLabelTracksViewerLineNumbers(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	if !st.viewShowLineNumbersBool.Value {
+		t.Fatal("line-number draft should load enabled by default")
+	}
+
+	st.viewShowLineNumbersBool.Value = false
+	if !st.dirty() || st.saveLabel() != "Save (*)" {
+		t.Fatalf("disabled line numbers dirty=%v label=%q", st.dirty(), st.saveLabel())
+	}
+	st.viewShowLineNumbersBool.Value = true
+	if st.dirty() || st.saveLabel() != "Save" {
+		t.Fatalf("reverted line numbers dirty=%v label=%q", st.dirty(), st.saveLabel())
+	}
+}
+
 func TestSettingsSaveLabelIndicatesDirtyGeneralFilePaneToggles(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -685,6 +706,7 @@ func TestSettingsKeyboardFocusOrderIncludesViewerControls(t *testing.T) {
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusViewerRemoteSearch,
 		settingsKeyboardFocusViewerSmoothScrolling,
+		settingsKeyboardFocusViewerShowLineNumbers,
 		settingsKeyboardFocusViewerHideFunctionBar,
 		settingsKeyboardFocusViewerTargetKey,
 		settingsKeyboardFocusViewerTargetBrowse,
@@ -1029,6 +1051,39 @@ func TestSettingsModalKeyboardSpaceTogglesViewerSmoothScrolling(t *testing.T) {
 
 	if st.viewSmoothScrollingBool.Value {
 		t.Fatal("Space should toggle the focused viewer smooth scrolling checkbox")
+	}
+}
+
+func TestSettingsModalKeyboardSpaceTogglesViewerLineNumbers(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "viewer"
+	st.focus = settingsKeyboardFocusViewerShowLineNumbers
+	st.keyFocus.wantFocus = true
+	st.viewShowLineNumbersBool.Value = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameSpace, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if st.viewShowLineNumbersBool.Value {
+		t.Fatal("Space should toggle the focused viewer line-number checkbox")
 	}
 }
 

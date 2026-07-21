@@ -198,9 +198,6 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 	if st.commandAreaPress != nil {
 		clear(st.commandAreaPress)
 	}
-	if st.editMode && st.mode == "file" {
-		ui.syncFileViewerTextEdit(st)
-	}
 	if st.commandEditOn {
 		for {
 			ev, ok := st.commandEditor.Update(gtx)
@@ -328,7 +325,8 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 	}
 	if st.closeClick.Clicked(gtx) {
 		ui.closeFileViewer()
-		return layout.Dimensions{}
+		gtx.Execute(op.InvalidateCmd{})
+		return ui.layoutFilePanes(th, gtx)
 	}
 	if st.loading {
 		// Keep frames ticking while background load is running, otherwise

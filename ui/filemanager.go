@@ -36,9 +36,18 @@ type filePaneModel struct {
 	filenameTheme   filePaneFilenameTheme
 	filenameVisuals []filePaneFilenameVisual
 	measureTextPx   func(string) int
+	measureTextKey  filePaneTextMeasureKey
+	measureKeyValid bool
 	measureCache    map[string]int
 	briefTextWidth  int
 	briefWidthValid bool
+}
+
+type filePaneTextMeasureKey struct {
+	typeface font.Typeface
+	textSize unit.Sp
+	pxPerDp  float32
+	pxPerSp  float32
 }
 
 type fileSortKey uint8
@@ -68,6 +77,7 @@ func (m *filePaneModel) setEntries(entries []filesys.Entry) {
 	m.entries = entries
 	m.briefTextWidth = 0
 	m.briefWidthValid = false
+	clear(m.measureCache)
 }
 
 func (m *filePaneModel) Entry(row int) *filesys.Entry {
@@ -2283,6 +2293,25 @@ func (m *filePaneModel) setTextMeasurer(measure func(string) int) {
 	}
 	for key := range m.measureCache {
 		delete(m.measureCache, key)
+	}
+}
+
+func (m *filePaneModel) setTextMeasurerForStyle(key filePaneTextMeasureKey, measure func(string) int) {
+	if m == nil {
+		return
+	}
+	m.measureTextPx = measure
+	if measure == nil {
+		return
+	}
+	if !m.measureKeyValid || m.measureTextKey != key {
+		clear(m.measureCache)
+		m.briefWidthValid = false
+		m.measureTextKey = key
+		m.measureKeyValid = true
+	}
+	if m.measureCache == nil {
+		m.measureCache = make(map[string]int)
 	}
 }
 

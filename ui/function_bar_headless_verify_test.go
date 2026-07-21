@@ -124,4 +124,8 @@ func TestHeadlessFunctionBar(t *testing.T) {
 	})
 	ui.functionBarHeldMods = 0
 	writePNG("function-bar-viewer.png", render())
+	if !ui.startFileViewerEdit(time.Now()) {
+		t.Fatalf("start viewer edit: %s", ui.fileViewer.status)
+	}
+	writePNG("function-bar-viewer-edit.png", render())
 }

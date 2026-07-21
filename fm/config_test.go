@@ -950,6 +950,36 @@ func TestDefaultConfigEnablesViewerSmoothScrolling(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigShowsViewerLineNumbers(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if !cfg.Viewer.ShowLineNumbers {
+		t.Fatal("viewer show_line_numbers should default to true")
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "show_line_numbers: true") {
+		t.Fatalf("serialized config missing viewer show_line_numbers:\n%s", out)
+	}
+}
+
+func TestLoadConfigDefaultsViewerLineNumbersWhenFieldMissing(t *testing.T) {
+	raw := `
+viewer:
+  shell: auto
+  command: cat {path}
+`
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if !cfg.Viewer.ShowLineNumbers {
+		t.Fatal("viewer show_line_numbers should stay enabled when yaml omits the field")
+	}
+}
+
 func TestLoadConfigDefaultsViewerSmoothScrollingWhenFieldMissing(t *testing.T) {
 	raw := `
 viewer:

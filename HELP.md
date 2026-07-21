@@ -204,6 +204,7 @@ Useful viewer keys:
 - `F4` turns editing on in text and hex views
 - `F3` discards unsaved changes and turns editing off; outside edit mode it refreshes the current file or reruns the current command
 - `Esc` discards unsaved changes and closes the viewer
+- `F5` toggles line numbers in File and Cmd text views
 - `F2`, `Ctrl+S`, or `Cmd+S` saves changes
 - `Tab` moves `file -> hex -> command`; `Shift+Tab` moves backward
 - `Ctrl+F` or `Cmd+F` opens Find in `file`, `hex`, and `command`
@@ -344,6 +345,7 @@ Useful things to adjust:
 - shell selection for viewer commands and the terminal drawer
 - remote search utility command for SSH hex find
 - viewer smooth scrolling
+- viewer line numbers (shown by default)
 - viewer word wrapping for File and Cmd text
 - file encoding defaults
 - auto-refresh interval for non-streaming command mode
@@ -358,6 +360,7 @@ viewer:
   shell: auto
   command: cat {path}
   smooth_scrolling: true
+  show_line_numbers: true
   word_wrap: false
   command_by_target:
     local:/Users/me/logs/app.log: tail -n 200 -f {path}
@@ -390,9 +393,10 @@ Notes:
 - `command_rules` switch the viewer into command mode automatically when a filename matches
 - `command_by_target` overrides the chosen command and opens that target in command mode by default
 - `remote_search_command` is used by SSH hex Find; set it to `off` to disable the remote utility path
+- `show_line_numbers` controls the File and Cmd text gutter and can also be toggled with `F5`
 - `word_wrap` controls File and Cmd text and can also be toggled from their right-click menu
 - `command_auto_refresh` matters most for non-streaming command mode
-- Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling and viewer auto-hide
+- Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling, line numbers, and viewer auto-hide
 
 ## Protocol Analyzer
 

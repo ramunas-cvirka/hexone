@@ -34,11 +34,15 @@ import (
 	"golang.org/x/text/encoding/charmap"
 )
 
-const fileViewerEditSyntaxDelay = 160 * time.Millisecond
+const (
+	fileViewerEditSyntaxDelay       = 160 * time.Millisecond
+	fileViewerEditResizeSettleDelay = 140 * time.Millisecond
+)
 
 type fileViewerSaveResult struct {
 	mode       string
 	text       string
+	revision   int64
 	hexChanges map[int64]byte
 	err        error
 }
@@ -125,19 +129,33 @@ func (ui *UI) startFileViewerEdit(now time.Time) bool {
 		if !st.editDirty {
 			st.contentEditor.SetText(st.editBaselineText)
 		}
-		st.editSyntax = st.stream.syntax
-		st.editRenderText = ""
+		syntax := st.stream.syntax
+		current := st.contentEditor.Text()
+		st.initializeVirtualEditText(current)
+		st.editSyntax = syntax
+		st.stream.setSyntax(st.editSyntax)
+		st.editSyntaxDue = time.Time{}
+		st.editRenderText = current
 		if st.editSyntaxCh == nil {
 			st.editSyntaxCh = make(chan fileViewerEditSyntaxResult, 1)
 		}
-		ui.updateFileViewerEditRender(st, now)
-		caret := 0
-		if initialLine >= 0 && initialLine < len(st.editLineRunes) {
-			caret = st.editLineRunes[initialLine]
+		st.editUndo = nil
+		st.editUndoIndex = 0
+		st.editRevision = 0
+		st.editSavedRevision = 0
+		st.editNextRevision = 0
+		if current != st.editBaselineText {
+			st.editRevision = 1
+			st.editNextRevision = 1
 		}
-		st.contentEditor.SetCaret(caret, caret)
+		caret := st.stream.lineByteStart(initialLine)
+		if caret < 0 {
+			caret = 0
+		}
+		st.stream.beginSelection(caret)
 		st.editCaretStart = -1
-		st.editScrollPending = true
+		st.editScrollPending = false
+		st.editCaretBlinkAt = now
 	} else if st.hex != nil {
 		v := st.hex
 		if v.edits == nil {
@@ -166,7 +184,9 @@ func (ui *UI) stopFileViewerEdit() bool {
 	if st.mode == "file" {
 		ui.syncFileViewerTextEdit(st)
 		st.contentEditor.ReadOnly = true
-		st.editableContent = st.contentEditor.Text()
+		st.editableContent = st.virtualEditText()
+		st.contentEditor.SetText(st.editableContent)
+		st.editWidgetMirrorText = st.editableContent
 		st.content = sanitizeViewerContent(st.editableContent)
 		st.stream.SetContent(st.content)
 		st.stream.setSyntax(st.editSyntax)
@@ -200,19 +220,24 @@ func (ui *UI) discardFileViewerChanges(st *fileViewerState) bool {
 	hadChanges := st.editDirty
 	switch st.mode {
 	case "file":
-		if st.contentEditor.Text() != st.editBaselineText {
+		if st.virtualEditText() != st.editBaselineText {
 			hadChanges = true
 		}
 		st.contentEditor.SetText(st.editBaselineText)
+		st.initializeVirtualEditText(st.editBaselineText)
 		st.editableContent = st.editBaselineText
 		st.content = sanitizeViewerContent(st.editBaselineText)
-		st.stream.SetContent(st.content)
-		st.editSyntax = viewerBuildSyntaxDocument(context.Background(), st.path, st.content)
+		st.editSyntax = viewerBuildSyntaxDocument(context.Background(), st.path, st.editBaselineText)
 		st.stream.setSyntax(st.editSyntax)
 		st.editRenderText = st.editBaselineText
-		st.editLineRunes = viewerEditLineRuneOffsets(st.editBaselineText)
+		st.editLineRunes = viewerEditLineRuneOffsetsFromLines(st.stream.lines)
 		st.editSyntaxSeq++
 		st.editSyntaxDue = time.Time{}
+		st.editUndo = nil
+		st.editUndoIndex = 0
+		st.editRevision = 0
+		st.editSavedRevision = 0
+		st.editNextRevision = 0
 	case "hex":
 		if st.hex != nil {
 			if len(st.hex.edits) > 0 {
@@ -238,7 +263,22 @@ func (ui *UI) syncFileViewerTextEdit(st *fileViewerState) {
 	if st == nil || st.mode != "file" {
 		return
 	}
-	current := st.contentEditor.Text()
+	widgetText := st.contentEditor.Text()
+	if !st.editVirtualReady || widgetText != st.editWidgetMirrorText {
+		st.initializeVirtualEditText(widgetText)
+		st.editRevision++
+		if st.editRevision <= 0 {
+			st.editRevision = 1
+		}
+		st.editNextRevision = max(st.editNextRevision, st.editRevision)
+	}
+	ui.syncFileViewerTextEditContent(st, st.virtualEditText())
+}
+
+func (ui *UI) syncFileViewerTextEditContent(st *fileViewerState, current string) {
+	if st == nil || st.mode != "file" {
+		return
+	}
 	st.editDirty = current != st.editBaselineText
 	if st.editDirty && !st.saving {
 		st.status = "modified"
@@ -250,18 +290,26 @@ func (ui *UI) layoutFileViewerTextEditor(th *material.Theme, gtx layout.Context,
 		return layout.Dimensions{}
 	}
 	return ui.layoutEditorWithContextMenu(th, gtx, "viewer-file-edit", &st.contentEditor, true, func(gtx layout.Context) layout.Dimensions {
-		return ui.layoutFileViewerTextEditorBody(th, gtx, st)
+		return ui.layoutFileViewerVirtualTextEditor(th, gtx, st)
 	})
 }
 
 func (ui *UI) layoutFileViewerTextEditorBody(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
+	contentChanged := false
 	for {
-		if _, ok := st.contentEditor.Update(gtx); !ok {
+		ev, ok := st.contentEditor.Update(gtx)
+		if !ok {
 			break
 		}
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			contentChanged = true
+		}
 	}
-	ui.syncFileViewerTextEdit(st)
-	ui.updateFileViewerEditRender(st, gtx.Now)
+	if contentChanged {
+		current := st.contentEditor.Text()
+		ui.syncFileViewerTextEditContent(st, current)
+		ui.updateFileViewerEditRenderContent(st, current, gtx.Now)
+	}
 	ui.pumpFileViewerEditSyntax(st)
 	ui.startFileViewerEditSyntaxIfDue(st, gtx)
 	if st.editFocus {
@@ -279,6 +327,9 @@ func (ui *UI) layoutFileViewerTextEditorBody(th *material.Theme, gtx layout.Cont
 		st.editWrapValue = st.wrapEnabled
 		st.editHOffset = 0
 		st.editCaretStart = -1
+		st.editLayoutViewport = image.Point{}
+		st.editLayoutSize = image.Point{}
+		st.editLayoutDue = time.Time{}
 	}
 	theme := ui.fileViewerTheme()
 	ed := material.Editor(th, &st.contentEditor, "")
@@ -308,8 +359,13 @@ func (ui *UI) layoutFileViewerTextEditorBody(th *material.Theme, gtx layout.Cont
 			textHeight = 1
 			hbarHeight = 0
 		}
+		editorSize := st.fileViewerEditLayoutSize(
+			gtx,
+			image.Pt(size.X, textHeight),
+			image.Pt(layoutWidth, textHeight),
+		)
 		editorGTX := gtx
-		editorGTX.Constraints = layout.Exact(image.Pt(layoutWidth, textHeight))
+		editorGTX.Constraints = layout.Exact(editorSize)
 		editorClip := clip.Rect(image.Rect(0, 0, size.X, textHeight)).Push(gtx.Ops)
 		editorOffset := op.Offset(image.Pt(-st.editHOffset, 0)).Push(gtx.Ops)
 		ed.Layout(editorGTX)
@@ -381,8 +437,8 @@ func (ui *UI) layoutFileViewerTextEditorBody(th *material.Theme, gtx layout.Cont
 		syntaxClip := clip.Rect(image.Rect(0, 0, horizontalViewport, textHeight)).Push(gtx.Ops)
 		syntaxOffset := op.Offset(image.Pt(-st.editHOffset, 0)).Push(gtx.Ops)
 		syntaxGTX := gtx
-		syntaxGTX.Constraints = layout.Exact(image.Pt(layoutWidth, textHeight))
-		ui.drawFileViewerEditSyntax(th, syntaxGTX, st, metrics, layoutWidth)
+		syntaxGTX.Constraints = layout.Exact(editorSize)
+		ui.drawFileViewerEditSyntax(th, syntaxGTX, st, metrics, editorSize.X)
 		syntaxOffset.Pop()
 		syntaxClip.Pop()
 
@@ -416,11 +472,59 @@ func (ui *UI) layoutFileViewerTextEditorBody(th *material.Theme, gtx layout.Cont
 	})
 }
 
+// fileViewerEditLayoutSize keeps Gio's editor viewport stable while native
+// window-resize events are arriving. Gio v0.10 reshapes and re-indexes the
+// entire document whenever either viewport dimension changes; for wrapped
+// files that can allocate hundreds of megabytes for every resize frame. The
+// outer clip still follows the window immediately, then one exact reflow is
+// performed after the resize stream settles.
+func (st *fileViewerState) fileViewerEditLayoutSize(gtx layout.Context, viewport, desired image.Point) image.Point {
+	if viewport.X < 1 {
+		viewport.X = 1
+	}
+	if viewport.Y < 1 {
+		viewport.Y = 1
+	}
+	if desired.X < 1 {
+		desired.X = 1
+	}
+	if desired.Y < 1 {
+		desired.Y = 1
+	}
+	if st.editLayoutSize.X <= 0 || st.editLayoutSize.Y <= 0 {
+		st.editLayoutViewport = viewport
+		st.editLayoutSize = desired
+		st.editLayoutDue = time.Time{}
+		return desired
+	}
+	if viewport != st.editLayoutViewport {
+		st.editLayoutViewport = viewport
+		st.editLayoutDue = gtx.Now.Add(fileViewerEditResizeSettleDelay)
+		gtx.Execute(op.InvalidateCmd{At: st.editLayoutDue})
+		return st.editLayoutSize
+	}
+	if !st.editLayoutDue.IsZero() {
+		if gtx.Now.Before(st.editLayoutDue) {
+			gtx.Execute(op.InvalidateCmd{At: st.editLayoutDue})
+			return st.editLayoutSize
+		}
+		st.editLayoutDue = time.Time{}
+	}
+	st.editLayoutSize = desired
+	return desired
+}
+
 func (ui *UI) updateFileViewerEditRender(st *fileViewerState, now time.Time) {
 	if st == nil || st.mode != "file" {
 		return
 	}
-	current := st.contentEditor.Text()
+	ui.updateFileViewerEditRenderContent(st, st.contentEditor.Text(), now)
+}
+
+func (ui *UI) updateFileViewerEditRenderContent(st *fileViewerState, current string, now time.Time) {
+	if st == nil || st.mode != "file" {
+		return
+	}
 	if current == st.editRenderText {
 		return
 	}
@@ -429,9 +533,8 @@ func (ui *UI) updateFileViewerEditRender(st *fileViewerState, now time.Time) {
 		st.editSyntaxCh = make(chan fileViewerEditSyntaxResult, 1)
 	}
 	syntax := st.editSyntax
-	st.stream.SetContent(current)
+	st.initializeVirtualEditText(current)
 	st.stream.setSyntax(syntax)
-	st.editLineRunes = viewerEditLineRuneOffsets(current)
 	st.editMaxCols = viewerEditMaxColumns(current)
 	st.editSyntaxSeq++
 	st.editSyntaxDue = now.Add(fileViewerEditSyntaxDelay)
@@ -476,7 +579,7 @@ func (ui *UI) startFileViewerEditSyntaxIfDue(st *fileViewerState, gtx layout.Con
 	st.editSyntaxRunning = true
 	seq := st.editSyntaxSeq
 	path := st.path
-	content := st.contentEditor.Text()
+	content := st.virtualEditText()
 	ch := st.editSyntaxCh
 	go func() {
 		res := fileViewerEditSyntaxResult{
@@ -505,7 +608,7 @@ func (ui *UI) pumpFileViewerEditSyntax(st *fileViewerState) {
 		select {
 		case res := <-st.editSyntaxCh:
 			st.editSyntaxRunning = false
-			if res.seq == st.editSyntaxSeq && res.text == st.contentEditor.Text() {
+			if res.seq == st.editSyntaxSeq {
 				st.editSyntax = res.doc
 				st.stream.setSyntax(res.doc)
 			} else if st.editSyntaxDue.IsZero() {
@@ -652,7 +755,8 @@ func (ui *UI) startFileViewerSave(now time.Time) bool {
 	ch := st.saveCh
 	mode := st.mode
 	if mode == "file" {
-		textSnapshot := st.contentEditor.Text()
+		textSnapshot := st.virtualEditText()
+		revision := st.editRevision
 		encoding := st.detectedEncoding
 		if encoding == "" {
 			encoding = fm.NormalizeViewerFileEncoding(st.fileEncoding)
@@ -664,7 +768,7 @@ func (ui *UI) startFileViewerSave(now time.Time) bool {
 			if err == nil {
 				err = writeViewerFile(path, remote, data)
 			}
-			ch <- fileViewerSaveResult{mode: "file", text: textSnapshot, err: err}
+			ch <- fileViewerSaveResult{mode: "file", text: textSnapshot, revision: revision, err: err}
 			ui.invalidateFromWorker()
 		}()
 	} else if mode == "hex" && st.hex != nil {
@@ -695,7 +799,7 @@ func (ui *UI) pumpFileViewerSaveState(gtx layout.Context, st *fileViewerState) {
 				st.err = "save failed: " + res.err.Error()
 				switch res.mode {
 				case "file":
-					st.editDirty = st.contentEditor.Text() != st.editBaselineText
+					st.editDirty = st.editRevision != st.editSavedRevision
 				case "hex":
 					st.editDirty = st.hex != nil && len(st.hex.edits) > 0
 				}
@@ -715,9 +819,10 @@ func (ui *UI) pumpFileViewerSaveState(gtx layout.Context, st *fileViewerState) {
 			case "file":
 				st.editBaselineText = res.text
 				st.editableContent = res.text
-				st.editDirty = st.contentEditor.Text() != st.editBaselineText
+				st.editSavedRevision = res.revision
+				st.editDirty = st.editRevision != st.editSavedRevision
 				if !st.editMode {
-					st.content = sanitizeViewerContent(st.contentEditor.Text())
+					st.content = sanitizeViewerContent(st.virtualEditText())
 					st.stream.SetContent(st.content)
 				}
 			case "hex":
