@@ -33,6 +33,8 @@ const (
 	hexViewerMaxBytesPerLine = 64
 	hexViewerMinChunkBytes   = 4096
 	hexViewerSectionPadDp    = 8
+	hexViewerWheelAccel      = 2.25
+	hexViewerWheelMaxLines   = 3
 )
 
 type hexViewerState struct {
@@ -816,23 +818,28 @@ func (v *hexViewerState) scrollByDelta(delta float32) {
 	if v == nil || delta == 0 {
 		return
 	}
+	// Gio's wheel delta varies significantly by input device. Accelerate fine
+	// trackpad deltas so slow gestures respond promptly, while capping coarse
+	// mouse-wheel events to avoid large jumps.
+	delta *= hexViewerWheelAccel
+	if delta > hexViewerWheelMaxLines {
+		delta = hexViewerWheelMaxLines
+	} else if delta < -hexViewerWheelMaxLines {
+		delta = -hexViewerWheelMaxLines
+	}
 	if (delta > 0 && v.scrollCarry < 0) || (delta < 0 && v.scrollCarry > 0) {
 		v.scrollCarry = 0
 	}
 	v.scrollCarry += delta
 
-	// Gio wheel delta is device-dependent and can be much larger than 1 per notch.
-	// Normalize it so one wheel notch advances roughly one line instead of a page.
-	const wheelStep float32 = 80
-
 	steps := int64(0)
-	for v.scrollCarry >= wheelStep {
+	for v.scrollCarry >= 1 {
 		steps++
-		v.scrollCarry -= wheelStep
+		v.scrollCarry -= 1
 	}
-	for v.scrollCarry <= -wheelStep {
+	for v.scrollCarry <= -1 {
 		steps--
-		v.scrollCarry += wheelStep
+		v.scrollCarry += 1
 	}
 	if steps == 0 {
 		return

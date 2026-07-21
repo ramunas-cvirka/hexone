@@ -182,6 +182,50 @@ func TestHexDisplayStartFallsBackUntilJumpTargetIsBuffered(t *testing.T) {
 	}
 }
 
+func TestHexScrollByDeltaRespondsToFineWheelInput(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     16 * 100,
+		bytesPerLine: 16,
+		visibleLines: 8,
+	}
+
+	v.scrollByDelta(0.5)
+
+	if got, want := v.topLine, int64(1); got != want {
+		t.Fatalf("topLine=%d want %d after fine wheel delta", got, want)
+	}
+}
+
+func TestHexScrollByDeltaCapsCoarseWheelInput(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     16 * 100,
+		bytesPerLine: 16,
+		visibleLines: 8,
+	}
+
+	v.scrollByDelta(120)
+
+	if got, want := v.topLine, int64(hexViewerWheelMaxLines); got != want {
+		t.Fatalf("topLine=%d want capped coarse-wheel step %d", got, want)
+	}
+}
+
+func TestHexScrollByDeltaDropsCarryWhenDirectionChanges(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     16 * 100,
+		bytesPerLine: 16,
+		visibleLines: 8,
+		topLine:      10,
+	}
+
+	v.scrollByDelta(0.25)
+	v.scrollByDelta(-0.5)
+
+	if got, want := v.topLine, int64(9); got != want {
+		t.Fatalf("topLine=%d want %d after reversing a fine wheel gesture", got, want)
+	}
+}
+
 func TestHexScrollTooltipMeasurementExpandsPastOldFixedWidth(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()

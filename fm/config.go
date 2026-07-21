@@ -182,6 +182,11 @@ type InterfaceConfig struct {
 	FontSizeSp float32 `yaml:"font_size_sp"`
 }
 
+type CurrentDirConfig struct {
+	Typeface   string  `yaml:"typeface"`
+	FontSizeSp float32 `yaml:"font_size_sp"`
+}
+
 func NormalizeViewerShell(raw string) string {
 	shell, ok := NormalizeKnownViewerShell(raw)
 	if !ok {
@@ -609,6 +614,7 @@ type Config struct {
 	Terminal          TerminalConfig       `yaml:"terminal"`
 	Tabs              TabsConfig           `yaml:"tabs"`
 	Interface         InterfaceConfig      `yaml:"interface"`
+	CurrentDir        CurrentDirConfig     `yaml:"current_dir"`
 	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
@@ -630,6 +636,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Terminal          TerminalConfig       `yaml:"terminal"`
 		Tabs              TabsConfig           `yaml:"tabs"`
 		Interface         InterfaceConfig      `yaml:"interface"`
+		CurrentDir        CurrentDirConfig     `yaml:"current_dir"`
 		Font              legacyFontConfig     `yaml:"font"`
 		General           GeneralConfig        `yaml:"general"`
 		Colors            ColorsConfig         `yaml:"colors"`
@@ -673,6 +680,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Terminal:          raw.Terminal,
 		Tabs:              raw.Tabs,
 		Interface:         raw.Interface,
+		CurrentDir:        raw.CurrentDir,
 		General:           raw.General,
 		Colors:            raw.Colors,
 		Associations:      raw.Associations,
@@ -721,6 +729,10 @@ func DefaultConfig() *Config {
 		Interface: InterfaceConfig{
 			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp: 14,
+		},
+		CurrentDir: CurrentDirConfig{
+			Typeface:   resources.BundledFontFamilyIosevkaNerdFontMono,
+			FontSizeSp: 11,
 		},
 		General: GeneralConfig{
 			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
@@ -1079,6 +1091,12 @@ func (c *Config) normalize() {
 	}
 	if c.Interface.FontSizeSp < 6 {
 		c.Interface.FontSizeSp = 14
+	}
+	if c.CurrentDir.Typeface == "" || !resources.IsBundledFontFamily(c.CurrentDir.Typeface) {
+		c.CurrentDir.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	}
+	if c.CurrentDir.FontSizeSp < 6 {
+		c.CurrentDir.FontSizeSp = 11
 	}
 	if c.Tabs.Typeface == "" {
 		c.Tabs.Typeface = c.General.Typeface

@@ -122,25 +122,16 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 	divider.A = 36
 
 	selectionText := bestContrastColor(selectionBase, popup.ActiveText, popup.HoverText, baseText)
-	selection := mixNRGBA(baseBg, selectionBase, 0.88)
-	selection = mixNRGBA(selection, selectionText, 0.08)
-	selection.A = 168
-	strongSelection := mixNRGBA(baseBg, selectionBase, 0.95)
-	strongSelection = mixNRGBA(strongSelection, selectionText, 0.14)
-	strongSelection.A = 214
+	selection := viewerSelectionFill(baseBg, baseText, selectionBase, 224, 2.2, 4.0)
+	strongSelection := viewerSelectionFill(baseBg, baseText, selectionBase, 244, 3.0, 3.0)
 	hexSelectionBase := selectionBase
 	if cfg != nil {
 		if c, ok := fm.ParseHexColor(strings.TrimSpace(cfg.Viewer.HexSelection)); ok {
 			hexSelectionBase = c
 		}
 	}
-	hexSelectionText := bestContrastColor(hexSelectionBase, popup.ActiveText, popup.HoverText, baseText)
-	hexSelection := mixNRGBA(baseBg, hexSelectionBase, 0.88)
-	hexSelection = mixNRGBA(hexSelection, hexSelectionText, 0.08)
-	hexSelection.A = 168
-	hexStrongSelection := mixNRGBA(baseBg, hexSelectionBase, 0.95)
-	hexStrongSelection = mixNRGBA(hexStrongSelection, hexSelectionText, 0.14)
-	hexStrongSelection.A = 214
+	hexSelection := viewerSelectionFill(baseBg, baseText, hexSelectionBase, 224, 2.2, 4.0)
+	hexStrongSelection := viewerSelectionFill(baseBg, baseText, hexSelectionBase, 244, 3.0, 3.0)
 
 	scrollThumbOverride := ""
 	scrollTrackOverride := ""
@@ -270,6 +261,65 @@ func fileViewerThemeFromConfig(cfg *fm.Config) fileViewerTheme {
 		HistoryChipBorder:  historyChipBorder,
 		HistoryChipBorderH: historyChipBorderH,
 		HistoryChipText:    historyChipText,
+	}
+}
+
+// viewerSelectionFill keeps a configured selection hue where possible, then
+// moves it toward black or white only as far as needed for the composited fill
+// to stand apart from the panel while retaining readable selected text.
+func viewerSelectionFill(bg, textColor, base color.NRGBA, alpha uint8, minBGContrast, minTextContrast float64) color.NRGBA {
+	bg.A = 0xFF
+	textColor.A = 0xFF
+	base.A = 0xFF
+	targets := [...]color.NRGBA{
+		{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF},
+		{A: 0xFF},
+	}
+
+	fallback := base
+	fallback.A = alpha
+	chosen := fallback
+	bestDistance := float32(2)
+	bestBalance := -1.0
+	found := false
+	for _, target := range targets {
+		const searchSteps = 20
+		for step := 0; step <= searchSteps; step++ {
+			distance := float32(step) / searchSteps
+			candidate := mixNRGBA(base, target, distance)
+			candidate.A = alpha
+			rendered := compositeNRGBAOverOpaque(bg, candidate)
+			bgContrast := contrastScore(bg, rendered)
+			textContrast := contrastScore(rendered, textColor)
+			balance := min(bgContrast/minBGContrast, textContrast/minTextContrast)
+			if balance > bestBalance {
+				fallback = candidate
+				bestBalance = balance
+			}
+			if bgContrast >= minBGContrast && textContrast >= minTextContrast && distance < bestDistance {
+				chosen = candidate
+				bestDistance = distance
+				found = true
+			}
+		}
+	}
+	if found {
+		return chosen
+	}
+	return fallback
+}
+
+func compositeNRGBAOverOpaque(bg, overlay color.NRGBA) color.NRGBA {
+	a := uint32(overlay.A)
+	inv := uint32(0xFF) - a
+	blend := func(back, front uint8) uint8 {
+		return uint8((uint32(front)*a + uint32(back)*inv + 127) / 255)
+	}
+	return color.NRGBA{
+		R: blend(bg.R, overlay.R),
+		G: blend(bg.G, overlay.G),
+		B: blend(bg.B, overlay.B),
+		A: 0xFF,
 	}
 }
 

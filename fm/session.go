@@ -27,6 +27,7 @@ type SessionPane struct {
 	SortKey        string `yaml:"sort_key"`
 	SortDescending bool   `yaml:"sort_desc"`
 	Mode           string `yaml:"mode"`
+	Filter         string `yaml:"filter,omitempty"`
 }
 
 type SessionPaneTabs struct {
@@ -154,7 +155,16 @@ func normalizeSessionPane(p SessionPane) SessionPane {
 		SortKey:        normalizeSessionPaneSortKey(p.SortKey),
 		SortDescending: p.SortDescending,
 		Mode:           normalizeSessionPaneMode(p.Mode),
+		Filter:         normalizeSessionPaneFilter(p.Filter),
 	}
+}
+
+func normalizeSessionPaneFilter(raw string) string {
+	filter := strings.TrimSpace(raw)
+	if filter == "" {
+		return "*.*"
+	}
+	return filter
 }
 
 func normalizeSessionPaneSortKey(raw string) string {

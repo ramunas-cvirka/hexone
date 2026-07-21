@@ -2217,14 +2217,18 @@ func (ui *UI) layoutFileViewerModeTabs(th *material.Theme, gtx layout.Context, s
 }
 
 func (ui *UI) layoutFileViewerASCIIRail(th *material.Theme, gtx layout.Context, railColor color.NRGBA, align layout.Direction) layout.Dimensions {
+	return layoutASCIIRail(th, gtx, railColor, align, ui.tabStripTypeface(), ui.tabStripTextSize())
+}
+
+func layoutASCIIRail(th *material.Theme, gtx layout.Context, railColor color.NRGBA, align layout.Direction, typeface font.Typeface, textSize unit.Sp) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	if w <= 0 {
 		return layout.Dimensions{}
 	}
 	probe := material.Body2(th, "-")
-	probe.Font.Typeface = ui.tabStripTypeface()
+	probe.Font.Typeface = typeface
 	probe.Font.Weight = font.Normal
-	probe.TextSize = ui.tabStripTextSize()
+	probe.TextSize = textSize
 	probe.Color = railColor
 	probe.MaxLines = 1
 	charW := measureLabelUnconstrained(gtx, probe).Size.X

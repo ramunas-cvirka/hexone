@@ -39,10 +39,10 @@ func (st *settingsModalState) draftSignature() string {
 			st.viewSmoothScrollingBool.Value, st.viewShowLineNumbersBool.Value, st.viewHideFunctionBarBool.Value),
 		ViewerEntries: fmt.Sprintf("%#v|%#v|%#v", st.viewTargetEntries, st.viewRuleEntries, st.viewAssocEntries),
 		Fonts: fmt.Sprintf("%q|%v", []string{
-			st.interfaceFontFamily, st.paneFontFamily, st.tabsFontFamily,
+			st.interfaceFontFamily, st.currentDirFontFamily, st.paneFontFamily, st.tabsFontFamily,
 			st.viewFontFamily, st.terminalFontFamily,
 		}, []float32{
-			st.interfaceFontSizeSp, st.paneFontSizeSp, st.tabsFontSizeSp,
+			st.interfaceFontSizeSp, st.currentDirFontSizeSp, st.paneFontSizeSp, st.tabsFontSizeSp,
 			st.viewFontSizeSp, st.terminalFontSizeSp,
 		}),
 		PaneAppearance: fmt.Sprintf("%q", []string{

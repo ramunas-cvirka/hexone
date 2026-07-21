@@ -228,11 +228,13 @@ type settingsModalState struct {
 	viewShellAnim                settingsChoiceAnim
 	viewRemoteSearchCommandEdit  widget.Editor
 	interfaceFontFamily          string
+	currentDirFontFamily         string
 	paneFontFamily               string
 	tabsFontFamily               string
 	viewFontFamily               string
 	terminalFontFamily           string
 	interfaceFontSizeSp          float32
+	currentDirFontSizeSp         float32
 	paneFontSizeSp               float32
 	tabsFontSizeSp               float32
 	viewFontSizeSp               float32
@@ -266,16 +268,19 @@ type settingsModalState struct {
 	paneDateFormatEdit           widget.Editor
 	paneDateFallbackFormats      []string
 	interfaceFontSizeStepper     settingsNumberStepperState
+	currentDirFontSizeStepper    settingsNumberStepperState
 	paneFontSizeStepper          settingsNumberStepperState
 	tabsFontSizeStepper          settingsNumberStepperState
 	viewFontSizeStepper          settingsNumberStepperState
 	terminalFontSizeStepper      settingsNumberStepperState
 	interfaceFontFamilyClicks    []widget.Clickable
+	currentDirFontFamilyClicks   []widget.Clickable
 	paneFontFamilyClicks         []widget.Clickable
 	tabsFontFamilyClicks         []widget.Clickable
 	viewFontFamilyClicks         []widget.Clickable
 	terminalFontFamilyClicks     []widget.Clickable
 	interfaceFontPickerAnim      settingsChoiceAnim
+	currentDirFontPickerAnim     settingsChoiceAnim
 	paneFontPickerAnim           settingsChoiceAnim
 	tabsFontPickerAnim           settingsChoiceAnim
 	viewFontPickerAnim           settingsChoiceAnim
@@ -681,11 +686,13 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.viewShellAnim = settingsChoiceAnim{}
 	st.viewRemoteSearchCommandEdit.SetText(fm.NormalizeViewerRemoteSearchCommand(cfg.Viewer.RemoteSearchCommand))
 	st.interfaceFontFamily = cfg.Interface.Typeface
+	st.currentDirFontFamily = cfg.CurrentDir.Typeface
 	st.paneFontFamily = cfg.General.Typeface
 	st.tabsFontFamily = cfg.Tabs.Typeface
 	st.viewFontFamily = cfg.Viewer.Typeface
 	st.terminalFontFamily = cfg.Terminal.Typeface
 	st.interfaceFontSizeSp = settingsNormalizedFontSize(cfg.Interface.FontSizeSp, 14)
+	st.currentDirFontSizeSp = settingsNormalizedFontSize(cfg.CurrentDir.FontSizeSp, 11)
 	st.paneFontSizeSp = settingsNormalizedFontSize(cfg.General.FontSizeSp, 14)
 	st.tabsFontSizeSp = settingsNormalizedFontSize(cfg.Tabs.FontSizeSp, 10)
 	st.viewFontSizeSp = settingsNormalizedFontSize(cfg.Viewer.FontSizeSp, 13)
@@ -3268,8 +3275,15 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	if interfaceFontSize < settingsFontSizeMin {
 		return fmt.Errorf("interface font size must be at least 6")
 	}
+	currentDirFontSize := st.currentDirFontSizeSp
+	if currentDirFontSize < settingsFontSizeMin {
+		return fmt.Errorf("current-dir font size must be at least 6")
+	}
 	if !resources.IsBundledFontFamily(st.interfaceFontFamily) && st.interfaceFontFamily != ui.fmCfg.Interface.Typeface {
 		return fmt.Errorf("interface font family is invalid")
+	}
+	if !resources.IsBundledFontFamily(st.currentDirFontFamily) && st.currentDirFontFamily != ui.fmCfg.CurrentDir.Typeface {
+		return fmt.Errorf("current-dir font family is invalid")
 	}
 	if !resources.IsBundledFontFamily(st.paneFontFamily) && st.paneFontFamily != ui.fmCfg.General.Typeface {
 		return fmt.Errorf("pane font family is invalid")
@@ -3285,6 +3299,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	}
 	ui.fmCfg.Interface.Typeface = st.interfaceFontFamily
 	ui.fmCfg.Interface.FontSizeSp = interfaceFontSize
+	ui.fmCfg.CurrentDir.Typeface = st.currentDirFontFamily
+	ui.fmCfg.CurrentDir.FontSizeSp = currentDirFontSize
 	ui.fmCfg.General.Typeface = st.paneFontFamily
 	ui.fmCfg.General.FontSizeSp = paneFontSize
 	ui.fmCfg.Tabs.Typeface = st.tabsFontFamily
@@ -4337,6 +4353,7 @@ func (ui *UI) layoutSettingsCompletionSoundRow(th *material.Theme, gtx layout.Co
 func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st *settingsModalState) layout.Dimensions {
 	bundledFamilies := resources.BundledFontFamilies()
 	st.ensureInterfaceFontFamilyClicks(len(bundledFamilies))
+	st.ensureCurrentDirFontFamilyClicks(len(bundledFamilies))
 	st.ensurePaneFontFamilyClicks(len(bundledFamilies))
 	st.ensureTabsFontFamilyClicks(len(bundledFamilies))
 	st.ensureViewFontFamilyClicks(len(bundledFamilies))
@@ -4346,6 +4363,12 @@ func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st 
 			st.setKeyboardFocus(settingsKeyboardFocusFontsInterfaceFont)
 			st.interfaceFontPickerAnim.setValue(&st.interfaceFontFamily, family.Name, gtx.Now)
 			st.interfaceFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
+			st.errText = ""
+		}
+		if st.currentDirFontFamilyClicks[i].Clicked(gtx) {
+			st.setKeyboardFocus(settingsKeyboardFocusFontsCurrentDirFont)
+			st.currentDirFontPickerAnim.setValue(&st.currentDirFontFamily, family.Name, gtx.Now)
+			st.currentDirFontPickerAnim.anim.setPulse(family.Name, gtx.Now)
 			st.errText = ""
 		}
 		if st.paneFontFamilyClicks[i].Clicked(gtx) {
@@ -4380,6 +4403,10 @@ func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st 
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutSettingsFontRow(th, gtx, st, "Current dir", bundledFamilies, st.currentDirFontFamilyClicks, st.currentDirFontFamily, &st.currentDirFontPickerAnim, st.focus == settingsKeyboardFocusFontsCurrentDirFont, &st.currentDirFontSizeStepper, st.currentDirFontSizeSp, settingsKeyboardFocusFontsCurrentDirFontSize)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutSettingsFontRow(th, gtx, st, "Pane", bundledFamilies, st.paneFontFamilyClicks, st.paneFontFamily, &st.paneFontPickerAnim, st.focus == settingsKeyboardFocusGeneralPaneFont, &st.paneFontSizeStepper, st.paneFontSizeSp, settingsKeyboardFocusGeneralPaneFontSize)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
@@ -4398,10 +4425,7 @@ func (ui *UI) layoutSettingsFontsTab(th *material.Theme, gtx layout.Context, st 
 }
 
 func (ui *UI) layoutSettingsFontRow(th *material.Theme, gtx layout.Context, st *settingsModalState, label string, families []resources.BundledFontFamily, clicks []widget.Clickable, active string, anim *settingsChoiceAnim, pickerFocused bool, stepper *settingsNumberStepperState, value float32, sizeFocus settingsKeyboardFocus) layout.Dimensions {
-	labelW := gtx.Dp(unit.Dp(66))
-	if labelW < 48 {
-		labelW = 48
-	}
+	labelW := ui.settingsFontRowLabelWidth(th, gtx)
 	sizeW := gtx.Dp(unit.Dp(74))
 	if sizeW < 62 {
 		sizeW = 62
@@ -4429,6 +4453,20 @@ func (ui *UI) layoutSettingsFontRow(th *material.Theme, gtx layout.Context, st *
 			})
 		}),
 	)
+}
+
+func (ui *UI) settingsFontRowLabelWidth(th *material.Theme, gtx layout.Context) int {
+	probe := material.Body2(th, "Current dir")
+	probe.Font.Typeface = ui.interfaceTypeface()
+	probe.Font.Weight = font.Medium
+	probe.TextSize = ui.scaleModalFontSize(10)
+	probe.MaxLines = 1
+	width := measureLabelUnconstrained(gtx, probe).Size.X + gtx.Dp(unit.Dp(4))
+	minWidth := gtx.Dp(unit.Dp(96))
+	if width < minWidth {
+		width = minWidth
+	}
+	return width
 }
 
 func (ui *UI) layoutSettingsFontSizeStepper(th *material.Theme, gtx layout.Context, st *settingsModalState, stepper *settingsNumberStepperState, value float32, focus settingsKeyboardFocus) layout.Dimensions {
@@ -6595,17 +6633,50 @@ func (ui *UI) layoutSettingsColorTransparentCheckbox(th *material.Theme, gtx lay
 	if st == nil {
 		return layout.Dimensions{}
 	}
-	return layout.Inset{Top: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		before := st.colorTextTransparentBool.Value
-		dims := ui.layoutThemeCheckbox(th, gtx, &st.colorTextTransparentBool, "Transparent", ui.scaleModalFontSize(10))
-		if st.colorTextTransparentBool.Value != before {
-			st.focus = settingsKeyboardFocusColorsTextTransparent
-			st.setColorTextTransparent(st.colorTextTransparentBool.Value)
-			st.closeSettingsPopupsExcept("")
-		}
-		st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusColorsTextTransparent, &st.colorTextTransparentBool)
-		return dims
-	})
+	captionH := settingsColorValueCaptionHeight(th, gtx, ui.fmCfg, ui.interfaceTypeface())
+	controlH := settingsColorValueControlHeight(th, gtx, ui.fmCfg, ui.interfaceTypeface())
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Dimensions{Size: image.Pt(0, captionH)}
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedHeight(gtx, controlH, func(gtx layout.Context) layout.Dimensions {
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					before := st.colorTextTransparentBool.Value
+					dims := ui.layoutThemeCheckbox(th, gtx, &st.colorTextTransparentBool, "Transparent", ui.scaleModalFontSize(10))
+					if st.colorTextTransparentBool.Value != before {
+						st.focus = settingsKeyboardFocusColorsTextTransparent
+						st.setColorTextTransparent(st.colorTextTransparentBool.Value)
+						st.closeSettingsPopupsExcept("")
+					}
+					st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusColorsTextTransparent, &st.colorTextTransparentBool)
+					return dims
+				})
+			})
+		}),
+	)
+}
+
+func settingsColorValueCaptionHeight(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface) int {
+	lbl := material.Caption(th, "Text")
+	lbl.Font.Typeface = face
+	lbl.TextSize = scaleModalConfigFontSize(cfg, 9)
+	lbl.MaxLines = 1
+	return measureLabelUnconstrained(gtx, lbl).Size.Y
+}
+
+func settingsColorValueControlHeight(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface) int {
+	lbl := material.Body2(th, "Pick  ▾")
+	lbl.Font.Typeface = face
+	lbl.TextSize = scaleModalConfigFontSize(cfg, 10)
+	lbl.MaxLines = 1
+	contentH := measureLabelUnconstrained(gtx, lbl).Size.Y
+	swatchH := gtx.Dp(unit.Dp(14))
+	if contentH < swatchH {
+		contentH = swatchH
+	}
+	return contentH + gtx.Dp(unit.Dp(8))
 }
 
 func settingsColorPickerButtonWidth(th *material.Theme, gtx layout.Context, cfg *fm.Config, face font.Typeface) int {
@@ -7077,16 +7148,12 @@ func (ui *UI) settingsColorPreviewRowHeight(gtx layout.Context) int {
 	return rowH
 }
 
-func settingsColorPreviewPathStripHeight(gtx layout.Context) int {
-	stripH := gtx.Dp(unit.Dp(22))
-	if stripH < 1 {
-		stripH = 1
-	}
-	return stripH
+func (ui *UI) settingsColorPreviewPathStripHeight(gtx layout.Context) int {
+	return ui.filePaneHeaderStripHeight(gtx, nil)
 }
 
-func settingsColorPreviewPathContainerHeight(gtx layout.Context) int {
-	height := settingsColorPreviewPathStripHeight(gtx) + gtx.Dp(unit.Dp(1))*2
+func (ui *UI) settingsColorPreviewPathContainerHeight(gtx layout.Context) int {
+	height := ui.settingsColorPreviewPathStripHeight(gtx) + gtx.Dp(unit.Dp(1))*2
 	if height < 1 {
 		height = 1
 	}
@@ -7095,7 +7162,7 @@ func settingsColorPreviewPathContainerHeight(gtx layout.Context) int {
 
 func (ui *UI) settingsColorPreviewCurrentDirHeight(gtx layout.Context) int {
 	rowH := ui.settingsColorPreviewRowHeight(gtx)
-	if pathH := settingsColorPreviewPathContainerHeight(gtx); pathH > rowH {
+	if pathH := ui.settingsColorPreviewPathContainerHeight(gtx); pathH > rowH {
 		rowH = pathH
 	}
 	return rowH
@@ -7103,8 +7170,8 @@ func (ui *UI) settingsColorPreviewCurrentDirHeight(gtx layout.Context) int {
 
 func (ui *UI) layoutSettingsColorPreviewCurrentDir(th *material.Theme, gtx layout.Context, palette filePanePalette) layout.Dimensions {
 	rowH := ui.settingsColorPreviewCurrentDirHeight(gtx)
-	pathStripH := settingsColorPreviewPathStripHeight(gtx)
-	pathContainerH := settingsColorPreviewPathContainerHeight(gtx)
+	pathStripH := ui.settingsColorPreviewPathStripHeight(gtx)
+	pathContainerH := ui.settingsColorPreviewPathContainerHeight(gtx)
 	stateW := settingsColorPreviewStateWidth(th, gtx, ui.fmCfg, ui.mainTypeface())
 	stateColor := settingsColorPreviewStateColor(palette.PaneBg)
 	rowBg, rowBorder := filePanePathRowColors(palette)
@@ -7136,10 +7203,28 @@ func (ui *UI) layoutSettingsColorPreviewCurrentDir(th *material.Theme, gtx layou
 													return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 														return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 															layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-																return ui.layoutFilePanePathSegmentLabel(th, gtx, `C:\AsmSource\`, color.NRGBA{}, pathColor, color.NRGBA{}, font.Normal)
+																return layoutFilePaneFrameLine(gtx, ui.filePaneFrameEdgeWidth(th, gtx, nil), filePanePathFrameColor(palette))
 															}),
 															layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-																return ui.layoutFilePanePathSegmentLabel(th, gtx, "tests", color.NRGBA{}, pathColor, color.NRGBA{}, font.Medium)
+																return ui.layoutFilePaneFrameBracket(gtx, nil, true, filePanePathFrameColor(palette))
+															}),
+															layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+																return ui.layoutFilePanePathSegmentLabel(th, gtx, nil, "C:", color.NRGBA{}, pathColor, color.NRGBA{}, font.Normal)
+															}),
+															ui.filePaneBreadcrumbSeparator(th, nil, palette, "›"),
+															layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+																return ui.layoutFilePanePathSegmentLabel(th, gtx, nil, "AsmSource", color.NRGBA{}, pathColor, color.NRGBA{}, font.Normal)
+															}),
+															ui.filePaneBreadcrumbSeparator(th, nil, palette, "›"),
+															layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+																return ui.layoutFilePanePathSegmentLabel(th, gtx, nil, "tests", color.NRGBA{}, pathColor, color.NRGBA{}, font.Medium)
+															}),
+															ui.filePaneBreadcrumbSeparator(th, nil, palette, ">"),
+															layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+																return ui.layoutFilePanePathSegmentLabel(th, gtx, nil, "*.*", color.NRGBA{}, pathColor, color.NRGBA{}, font.Normal)
+															}),
+															layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+																return ui.layoutFilePaneFrameBracket(gtx, nil, false, filePanePathFrameColor(palette))
 															}),
 														)
 													})
@@ -7839,6 +7924,16 @@ func (st *settingsModalState) ensureInterfaceFontFamilyClicks(n int) {
 	old := st.interfaceFontFamilyClicks
 	st.interfaceFontFamilyClicks = make([]widget.Clickable, n)
 	copy(st.interfaceFontFamilyClicks, old)
+}
+
+func (st *settingsModalState) ensureCurrentDirFontFamilyClicks(n int) {
+	if n <= cap(st.currentDirFontFamilyClicks) {
+		st.currentDirFontFamilyClicks = st.currentDirFontFamilyClicks[:n]
+		return
+	}
+	old := st.currentDirFontFamilyClicks
+	st.currentDirFontFamilyClicks = make([]widget.Clickable, n)
+	copy(st.currentDirFontFamilyClicks, old)
 }
 
 func (st *settingsModalState) ensureViewFontFamilyClicks(n int) {

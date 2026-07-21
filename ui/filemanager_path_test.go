@@ -29,7 +29,7 @@ func TestSplitFilePathSegmentsCompactLabels(t *testing.T) {
 		t.Fatalf("segment count = %d, want 4", len(segments))
 	}
 
-	wantLabels := []string{root, "opt", root + "gpstrack", root + "log"}
+	wantLabels := []string{root, "opt", "gpstrack", "log"}
 	wantPaths := []string{
 		root,
 		filepath.Join(root, "opt"),
@@ -46,13 +46,42 @@ func TestSplitFilePathSegmentsCompactLabels(t *testing.T) {
 	}
 }
 
+func TestCompactFilePathSegmentsKeepsRootAndUsefulTail(t *testing.T) {
+	segments := []filePathSegment{
+		{label: "/", path: "/"},
+		{label: "Users", path: "/Users"},
+		{label: "ramunas", path: "/Users/ramunas"},
+		{label: "go", path: "/Users/ramunas/go"},
+		{label: "src", path: "/Users/ramunas/go/src"},
+		{label: "hexone", path: "/Users/ramunas/go/src/hexone"},
+		{label: "ui", path: "/Users/ramunas/go/src/hexone/ui"},
+	}
+
+	got := compactFilePathSegments(segments, 125)
+	wantLabels := []string{"/", "…", "hexone", "ui"}
+	if len(got) != len(wantLabels) {
+		t.Fatalf("segments=%#v want labels %v", got, wantLabels)
+	}
+	for i, label := range wantLabels {
+		if got[i].label != label {
+			t.Fatalf("segment %d label=%q want %q", i, got[i].label, label)
+		}
+	}
+	if got[1].path != "" {
+		t.Fatalf("ellipsis should not navigate: path=%q", got[1].path)
+	}
+	if got[len(got)-1].path != segments[len(segments)-1].path {
+		t.Fatal("current directory target should be preserved")
+	}
+}
+
 func TestRemotePathDisplaySegmentsMergesHostIntoRoot(t *testing.T) {
 	segments := remotePathDisplaySegments("root@157.180.68.247", "/opt/gpstrack/log")
 	if len(segments) != 4 {
 		t.Fatalf("segment count = %d, want 4", len(segments))
 	}
 
-	wantLabels := []string{"root@157.180.68.247/", "opt", "/gpstrack", "/log"}
+	wantLabels := []string{"root@157.180.68.247", "opt", "gpstrack", "log"}
 	wantPaths := []string{"/", "/opt", "/opt/gpstrack", "/opt/gpstrack/log"}
 	for i := range wantLabels {
 		if segments[i].label != wantLabels[i] {
@@ -69,8 +98,8 @@ func TestRemotePathDisplaySegmentsDefaultsAddress(t *testing.T) {
 	if len(segments) != 1 {
 		t.Fatalf("segment count = %d, want 1", len(segments))
 	}
-	if segments[0].label != "ssh/" {
-		t.Fatalf("root label = %q, want %q", segments[0].label, "ssh/")
+	if segments[0].label != "ssh" {
+		t.Fatalf("root label = %q, want %q", segments[0].label, "ssh")
 	}
 	if segments[0].path != "/" {
 		t.Fatalf("root path = %q, want /", segments[0].path)

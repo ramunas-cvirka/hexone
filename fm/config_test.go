@@ -100,6 +100,9 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	if !strings.Contains(out, "interface:\n") || !strings.Contains(out, "font_size_sp: 14") {
 		t.Fatalf("serialized config missing interface font settings:\n%s", out)
 	}
+	if !strings.Contains(out, "current_dir:\n") || !strings.Contains(out, "typeface: Iosevka Nerd Font Mono") {
+		t.Fatalf("serialized config missing current-dir font settings:\n%s", out)
+	}
 }
 
 func TestMouseWheelSelectionMovementDefaultsOffAndRoundTrips(t *testing.T) {
@@ -208,6 +211,29 @@ general:
 	}
 }
 
+func TestCurrentDirFontDefaultsIndependentlyFromInterfaceFont(t *testing.T) {
+	raw := `
+interface:
+  typeface: Hack Nerd Font Mono
+  font_size_sp: 18
+`
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.Interface.Typeface, resources.BundledFontFamilyHackNerdFontMono; got != want {
+		t.Fatalf("interface typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.CurrentDir.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("current-dir typeface=%q want independent default %q", got, want)
+	}
+	if got, want := cfg.CurrentDir.FontSizeSp, float32(11); got != want {
+		t.Fatalf("current-dir font size=%v want independent default %v", got, want)
+	}
+}
+
 func TestDefaultConfigUsesShippedVisualStyle(t *testing.T) {
 	cfg := DefaultConfig()
 
@@ -219,6 +245,12 @@ func TestDefaultConfigUsesShippedVisualStyle(t *testing.T) {
 	}
 	if got, want := cfg.Interface.FontSizeSp, float32(14); got != want {
 		t.Fatalf("interface font size=%v want %v", got, want)
+	}
+	if got, want := cfg.CurrentDir.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("current-dir typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.CurrentDir.FontSizeSp, float32(11); got != want {
+		t.Fatalf("current-dir font size=%v want %v", got, want)
 	}
 	if got, want := cfg.Tabs.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
 		t.Fatalf("tabs typeface=%q want %q", got, want)

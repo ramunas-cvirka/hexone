@@ -5,6 +5,7 @@ package ui
 
 import (
 	"fmt"
+	resources "hexone"
 	"hexone/filesys"
 	"hexone/fm"
 	"hexone/ui/platform"
@@ -27,6 +28,64 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 )
+
+func TestFilePaneHeaderTextStyleUsesCurrentDirFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Interface.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
+	cfg.Interface.FontSizeSp = 18
+	cfg.CurrentDir.Typeface = resources.BundledFontFamilyHackNerdFontMono
+	cfg.CurrentDir.FontSizeSp = 12.5
+	ui := NewUI(cfg)
+
+	face, size := ui.filePaneHeaderTextStyle(ui.filePanes[0])
+	if got, want := string(face), cfg.CurrentDir.Typeface; got != want {
+		t.Fatalf("header typeface=%q want current-dir typeface %q", got, want)
+	}
+	if got, want := float32(size), cfg.CurrentDir.FontSizeSp; got != want {
+		t.Fatalf("header text size=%v want current-dir size %v", got, want)
+	}
+}
+
+func TestFilePaneFilterLeadingInsetScalesWithCurrentDirFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.CurrentDir.FontSizeSp = 11
+	ui := NewUI(cfg)
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	if got, want := ui.filePaneFilterLeadingInset(gtx, ui.filePanes[0]), 2; got != want {
+		t.Fatalf("11sp filter inset=%d want %d", got, want)
+	}
+
+	ui.fmCfg.CurrentDir.FontSizeSp = 22
+	if got, want := ui.filePaneFilterLeadingInset(gtx, ui.filePanes[0]), 4; got != want {
+		t.Fatalf("22sp filter inset=%d want %d", got, want)
+	}
+
+	ui.fmCfg.CurrentDir.FontSizeSp = 11
+	gtx.Metric.PxPerSp = 2
+	if got, want := ui.filePaneFilterLeadingInset(gtx, ui.filePanes[0]), 4; got != want {
+		t.Fatalf("2x-density filter inset=%d want %d", got, want)
+	}
+}
+
+func TestFilePaneSortDirectionArrowKeepsStableSize(t *testing.T) {
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(20, 20)},
+	}
+	fg := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	up := layoutFilePaneSortDirectionArrow(gtx, unit.Sp(11), false, fg)
+	gtx.Ops = new(op.Ops)
+	down := layoutFilePaneSortDirectionArrow(gtx, unit.Sp(11), true, fg)
+	if up.Size != down.Size || up.Size.X <= 0 || up.Size.Y <= 0 {
+		t.Fatalf("sort arrow sizes up=%v down=%v", up.Size, down.Size)
+	}
+	gtx.Ops = new(op.Ops)
+	large := layoutFilePaneSortDirectionArrow(gtx, unit.Sp(18), false, fg)
+	if large.Size.X <= up.Size.X || large.Size.Y <= up.Size.Y {
+		t.Fatalf("large sort arrow=%v want larger than default %v", large.Size, up.Size)
+	}
+}
 
 func TestLayoutFilePaneModeGlyphKeepsSameCanvasAcrossModes(t *testing.T) {
 	gtx := layout.Context{
@@ -189,6 +248,39 @@ func TestFavoriteOrderMenuDisablesBoundaryActions(t *testing.T) {
 	bottom := filePaneFavoriteOrderItems(2, 3)
 	if bottom[0].Disabled || !bottom[1].Disabled {
 		t.Fatalf("bottom favorite actions=%+v", bottom)
+	}
+}
+
+func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := newFilePaneState(".", ui.fmCfg)
+	pane.headerHeight = 20
+	pane.sortControlWidth = 18
+	pane.sortControlRightInset = 28
+	pane.favoriteControlWidth = 12
+	pane.favoriteControlRightInset = 5
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(640, 360)},
+	}
+
+	sortSize := image.Pt(96, 89)
+	sortRect := filePaneSortMenuBaseRect(gtx, pane, sortSize, 0)
+	if got, want := sortRect.Max.X, 640-pane.sortControlRightInset; got != want {
+		t.Fatalf("sort menu right edge=%d want control right edge %d", got, want)
+	}
+	if got, want := sortRect.Min.Y, tabStripHeightDp+pane.headerHeight+2; got != want {
+		t.Fatalf("sort menu top=%d want below header at %d", got, want)
+	}
+
+	items := []fileFavoriteItem{{label: "Add current dir", addCurrent: true}}
+	favoriteRect := ui.filePaneFavoriteMenuBaseRect(gtx, pane, items, 0)
+	if got, want := favoriteRect.Max.X, 640-pane.favoriteControlRightInset; got != want {
+		t.Fatalf("favorite menu right edge=%d want control right edge %d", got, want)
+	}
+	if got, want := favoriteRect.Min.Y, tabStripHeightDp+pane.headerHeight+2; got != want {
+		t.Fatalf("favorite menu top=%d want below header at %d", got, want)
 	}
 }
 

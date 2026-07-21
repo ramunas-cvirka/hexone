@@ -13,7 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -1563,17 +1565,21 @@ func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx i
 }
 
 func (ui *UI) layoutFilePaneHeaderContent(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			if pane.pathEditing {
-				return ui.layoutFilePanePathEditor(th, gtx, idx, pane, active)
-			}
-			return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutFilePaneControlStrip(th, gtx, idx, pane)
-		}),
-	)
+	palette := filePanePaletteFromConfig(ui.fmCfg)
+	rowBg, rowBorder := filePanePathRowColors(palette)
+	return fillFlatBox(gtx, rowBg, rowBorder, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				if pane.pathEditing {
+					return ui.layoutFilePanePathEditor(th, gtx, idx, pane, active)
+				}
+				return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFilePaneControlStrip(th, gtx, idx, pane)
+			}),
+		)
+	})
 }
 
 func (ui *UI) layoutFilePanePathArea(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
@@ -1589,37 +1595,30 @@ func (ui *UI) layoutFilePanePathArea(th *material.Theme, gtx layout.Context, idx
 	}
 
 	return pane.pathRowClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		palette := filePanePaletteFromConfig(ui.fmCfg)
-		rowBg, rowBorder := filePanePathRowColors(palette)
-		stripH := gtx.Dp(unit.Dp(22))
-		if stripH < 1 {
-			stripH = 1
-		}
-		return fillFlatBox(gtx, rowBg, rowBorder, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						gtx.Constraints.Min.X = gtx.Constraints.Max.X
-						return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								m := op.Record(gtx.Ops)
-								pathDims := ui.layoutFilePanePath(th, gtx, idx, pane, active)
-								pathCall := m.Stop()
-								fillH := pathDims.Size.Y
-								if fillH < 1 {
-									fillH = stripH
-								}
+		stripH := ui.filePaneHeaderStripHeight(gtx, pane)
+		return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					return layout.W.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							m := op.Record(gtx.Ops)
+							pathDims := ui.layoutFilePanePath(th, gtx, idx, pane, active)
+							pathCall := m.Stop()
+							fillH := pathDims.Size.Y
+							if fillH < 1 {
+								fillH = stripH
+							}
 
-								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										pathCall.Add(gtx.Ops)
-										return pathDims
-									}),
-									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-										return ui.layoutFilePanePathFill(gtx, fillH)
-									}),
-								)
-							})
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									pathCall.Add(gtx.Ops)
+									return pathDims
+								}),
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutFilePanePathFill(th, gtx, pane, fillH)
+								}),
+							)
 						})
 					})
 				})
@@ -1688,8 +1687,15 @@ func (ui *UI) processFilePaneDriveSegmentInput(gtx layout.Context, idx int, pane
 	}
 }
 
-func (ui *UI) layoutFilePanePathFill(gtx layout.Context, fillH int) layout.Dimensions {
-	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, fillH)}
+func (ui *UI) layoutFilePanePathFill(th *material.Theme, gtx layout.Context, pane *filePaneState, fillH int) layout.Dimensions {
+	w := gtx.Constraints.Max.X
+	if w <= 0 || fillH <= 0 {
+		return layout.Dimensions{Size: image.Pt(w, fillH)}
+	}
+	palette := filePanePaletteFromConfig(ui.fmCfg)
+	return fixedHeight(gtx, fillH, func(gtx layout.Context) layout.Dimensions {
+		return layoutFilePaneFrameLine(gtx, w, filePanePathFrameColor(palette))
+	})
 }
 
 func filePanePathBaseColor(palette filePanePalette) color.NRGBA {
@@ -1698,6 +1704,20 @@ func filePanePathBaseColor(palette filePanePalette) color.NRGBA {
 
 func filePanePathMutedColor(palette filePanePalette) color.NRGBA {
 	return mixNRGBA(palette.CurrentDirFg, hintColor, 0.38)
+}
+
+func filePanePathFrameColor(palette filePanePalette) color.NRGBA {
+	out := mixNRGBA(palette.CurrentDirFg, palette.CurrentDirBg, 0.48)
+	out.A = 170
+	return out
+}
+
+func filePanePathIndicatorColor(palette filePanePalette) color.NRGBA {
+	luma := 0.2126*float64(palette.CurrentDirBg.R) + 0.7152*float64(palette.CurrentDirBg.G) + 0.0722*float64(palette.CurrentDirBg.B)
+	if luma >= 150 {
+		return color.NRGBA{R: 0, G: 102, B: 138, A: 255}
+	}
+	return color.NRGBA{R: 92, G: 214, B: 255, A: 255}
 }
 
 func filePanePathRowColors(palette filePanePalette) (bg, border color.NRGBA) {
@@ -1716,7 +1736,30 @@ func filePanePathHoverColors(palette filePanePalette) (bg, fg, border color.NRGB
 	return bg, fg, border
 }
 
-func (ui *UI) layoutFilePanePathSegmentLabel(th *material.Theme, gtx layout.Context, label string, bg, fg, border color.NRGBA, weight font.Weight) layout.Dimensions {
+func (ui *UI) filePaneHeaderTextStyle(pane *filePaneState) (font.Typeface, unit.Sp) {
+	return ui.currentDirTypeface(), ui.currentDirTextSize()
+}
+
+func (ui *UI) filePaneHeaderStripHeight(gtx layout.Context, pane *filePaneState) int {
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	h := gtx.Sp(textSize) + gtx.Dp(unit.Dp(7))
+	minH := gtx.Dp(unit.Dp(22))
+	if h < minH {
+		h = minH
+	}
+	return h
+}
+
+func (ui *UI) filePaneHeaderIconSize(gtx layout.Context, pane *filePaneState) int {
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	size := gtx.Sp(textSize)
+	if size < gtx.Dp(unit.Dp(12)) {
+		size = gtx.Dp(unit.Dp(12))
+	}
+	return size
+}
+
+func (ui *UI) layoutFilePanePathSegmentLabel(th *material.Theme, gtx layout.Context, pane *filePaneState, label string, bg, fg, border color.NRGBA, weight font.Weight) layout.Dimensions {
 	segH := gtx.Constraints.Min.Y
 	if gtx.Constraints.Max.Y > segH {
 		segH = gtx.Constraints.Max.Y
@@ -1727,10 +1770,11 @@ func (ui *UI) layoutFilePanePathSegmentLabel(th *material.Theme, gtx layout.Cont
 	content := func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, segH, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				typeface, textSize := ui.filePaneHeaderTextStyle(pane)
 				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = ui.mainTypeface()
+				lbl.Font.Typeface = typeface
 				lbl.Font.Weight = weight
-				lbl.TextSize = scaleThemeFontSize(th, 11)
+				lbl.TextSize = textSize
 				lbl.Color = fg
 				lbl.MaxLines = 1
 				return layoutVCenteredLabel(gtx, lbl)
@@ -1748,6 +1792,15 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 		return layout.Dimensions{}
 	}
 	palette := filePanePaletteFromConfig(ui.fmCfg)
+	if pane.filterClick.Clicked(gtx) {
+		ui.setActiveFilePane(idx)
+		pane.closeSortMenu()
+		pane.closeDriveMenu()
+		pane.closeFavoriteMenu()
+		pane.closeContextMenu()
+		pane.beginPathEdit()
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	if pane.pendingPathNav != "" {
 		if gtx.Now.Before(pane.pendingPathAt) {
 			gtx.Execute(op.InvalidateCmd{At: pane.pendingPathAt})
@@ -1768,6 +1821,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 			}
 		}
 		segments := remotePathDisplaySegments(address, pane.dir)
+		segments = compactFilePathSegments(segments, ui.filePaneBreadcrumbSegmentBudget(gtx, pane))
 		pane.ensurePathClicks(len(segments))
 		for i := range segments {
 			click := &pane.pathSegClicks[i]
@@ -1781,7 +1835,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 				pane.closeDriveMenu()
 				pane.closeFavoriteMenu()
 				pane.closeContextMenu()
-				if i != len(segments)-1 {
+				if segments[i].path != "" && i != len(segments)-1 {
 					if ui.activateFilePanePathSegment(idx, pane, segments[i].path) {
 						gtx.Execute(op.InvalidateCmd{})
 						return ui.layoutFilePanePath(th, gtx, idx, pane, active)
@@ -1795,12 +1849,19 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 
 		pathBaseColor := filePanePathBaseColor(palette)
 		pathHoverBg, pathHoverColor, pathHoverBorder := filePanePathHoverColors(palette)
-		children := make([]layout.FlexChild, 0, len(segments))
+		children := ui.filePaneBreadcrumbStart(th, pane, palette, len(segments)*2+3)
 		for i := range segments {
 			i := i
+			if i > 0 {
+				children = append(children, ui.filePaneBreadcrumbSeparator(th, pane, palette, "›"))
+			}
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if segments[i].path == "" {
+					return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, segments[i].label, color.NRGBA{}, filePanePathMutedColor(palette), color.NRGBA{}, font.Normal)
+				}
 				click := &pane.pathSegClicks[i]
 				return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					pointer.CursorPointer.Add(gtx.Ops)
 					bg := color.NRGBA{}
 					lblColor := pathBaseColor
 					border := color.NRGBA{}
@@ -1813,14 +1874,16 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 					if i == len(segments)-1 {
 						weight = font.Medium
 					}
-					return ui.layoutFilePanePathSegmentLabel(th, gtx, segments[i].label, bg, lblColor, border, weight)
+					return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, segments[i].label, bg, lblColor, border, weight)
 				})
 			}))
 		}
+		children = ui.filePaneBreadcrumbEnd(th, palette, idx, pane, children)
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 	}
 
 	segments := splitFilePathSegments(pane.displayDir())
+	segments = compactFilePathSegments(segments, ui.filePaneBreadcrumbSegmentBudget(gtx, pane))
 	ui.processFilePaneDriveSegmentInput(gtx, idx, pane)
 	showLoadingHint := pane.loadingHintVisible(gtx.Now)
 	if pane.loading && !showLoadingHint && !pane.loadingStartedAt.IsZero() {
@@ -1839,7 +1902,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 			pane.closeDriveMenu()
 			pane.closeFavoriteMenu()
 			pane.closeContextMenu()
-			if i != len(segments)-1 {
+			if segments[i].path != "" && i != len(segments)-1 {
 				if ui.activateFilePanePathSegment(idx, pane, segments[i].path) {
 					gtx.Execute(op.InvalidateCmd{})
 					return ui.layoutFilePanePath(th, gtx, idx, pane, active)
@@ -1851,14 +1914,21 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 		}
 	}
 
-	children := make([]layout.FlexChild, 0, len(segments))
+	children := ui.filePaneBreadcrumbStart(th, pane, palette, len(segments)*2+3)
 	baseColor := filePanePathBaseColor(palette)
 	hoverBg, hoverColor, hoverBorder := filePanePathHoverColors(palette)
 	for i := range segments {
 		i := i
+		if i > 0 {
+			children = append(children, ui.filePaneBreadcrumbSeparator(th, pane, palette, "›"))
+		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			if segments[i].path == "" {
+				return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, segments[i].label, color.NRGBA{}, filePanePathMutedColor(palette), color.NRGBA{}, font.Normal)
+			}
 			click := &pane.pathSegClicks[i]
 			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				pointer.CursorPointer.Add(gtx.Ops)
 				bg := color.NRGBA{}
 				lblColor := baseColor
 				border := color.NRGBA{}
@@ -1871,7 +1941,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 				if i == len(segments)-1 {
 					weight = font.Medium
 				}
-				dims := ui.layoutFilePanePathSegmentLabel(th, gtx, segments[i].label, bg, lblColor, border, weight)
+				dims := ui.layoutFilePanePathSegmentLabel(th, gtx, pane, segments[i].label, bg, lblColor, border, weight)
 				if i == 0 && localDriveRoot(pane.displayDir()) != "" {
 					pane.driveSegmentRect = image.Rectangle{Max: dims.Size}
 					defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
@@ -1887,16 +1957,125 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				lbl := material.Body2(th, " [loading...]")
-				lbl.Font.Typeface = ui.mainTypeface()
+				typeface, textSize := ui.filePaneHeaderTextStyle(pane)
+				lbl.Font.Typeface = typeface
 				lbl.Font.Weight = font.Medium
-				lbl.TextSize = scaleThemeFontSize(th, 10)
+				lbl.TextSize = textSize
 				lbl.Color = filePanePathMutedColor(palette)
 				lbl.MaxLines = 1
 				return lbl.Layout(gtx)
 			})
 		}))
 	}
+	children = ui.filePaneBreadcrumbEnd(th, palette, idx, pane, children)
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
+func (ui *UI) filePaneBreadcrumbSegmentBudget(gtx layout.Context, pane *filePaneState) int {
+	charPx := filePathEstimatedCharPx
+	if pane != nil && pane.model != nil {
+		charPx = pane.model.approxCharPx()
+	}
+	if charPx < 1 {
+		charPx = filePathEstimatedCharPx
+	}
+	// Reserve the ASCII frame, filter separator, and mask.
+	fixed := gtx.Dp(unit.Dp(82 * charPx / filePathEstimatedCharPx))
+	filterW := utf8.RuneCountInString(filePaneDefaultFilter)*gtx.Dp(unit.Dp(charPx)) + ui.filePaneFilterLeadingInset(gtx, pane)
+	if pane != nil {
+		filterW = utf8.RuneCountInString(pane.displayFilter())*gtx.Dp(unit.Dp(charPx)) + ui.filePaneFilterLeadingInset(gtx, pane)
+	}
+	maxFilterW := gtx.Dp(unit.Dp(80 * charPx / filePathEstimatedCharPx))
+	if filterW > maxFilterW {
+		filterW = maxFilterW
+	}
+	budget := gtx.Constraints.Max.X - fixed - filterW
+	if budget < 1 {
+		budget = 1
+	}
+	return budget * filePathEstimatedCharPx / charPx
+}
+
+func (ui *UI) filePaneBreadcrumbStart(th *material.Theme, pane *filePaneState, palette filePanePalette, capacity int) []layout.FlexChild {
+	children := make([]layout.FlexChild, 0, capacity+1)
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return layoutFilePaneFrameLine(gtx, ui.filePaneFrameEdgeWidth(th, gtx, pane), filePanePathFrameColor(palette))
+	}))
+	return append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFilePaneFrameBracket(gtx, pane, true, filePanePathFrameColor(palette))
+	}))
+}
+
+func (ui *UI) filePaneBreadcrumbSeparator(th *material.Theme, pane *filePaneState, palette filePanePalette, label string) layout.FlexChild {
+	return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, label, color.NRGBA{}, filePanePathIndicatorColor(palette), color.NRGBA{}, font.Medium)
+		})
+	})
+}
+
+func (ui *UI) filePaneBreadcrumbEnd(th *material.Theme, palette filePanePalette, idx int, pane *filePaneState, children []layout.FlexChild) []layout.FlexChild {
+	children = append(children, ui.filePaneBreadcrumbSeparator(th, pane, palette, ">"))
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFilePaneFilter(th, gtx, idx, pane, palette)
+	}))
+	children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFilePaneFrameBracket(gtx, pane, false, filePanePathFrameColor(palette))
+	}))
+	return children
+}
+
+func (ui *UI) layoutFilePaneFilter(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, palette filePanePalette) layout.Dimensions {
+	if pane == nil {
+		return layout.Dimensions{}
+	}
+	return pane.filterClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorText.Add(gtx.Ops)
+		maxW := gtx.Dp(unit.Dp(80))
+		if gtx.Constraints.Max.X > maxW {
+			gtx.Constraints.Max.X = maxW
+		}
+		bg := color.NRGBA{}
+		fg := filePanePathBaseColor(palette)
+		border := color.NRGBA{}
+		if pane.filterClick.Hovered() {
+			bg, fg, border = filePanePathHoverColors(palette)
+		}
+		weight := font.Normal
+		if pane.displayFilter() != filePaneDefaultFilter {
+			weight = font.Medium
+		}
+		return layoutLeftInsetPx(gtx, ui.filePaneFilterLeadingInset(gtx, pane), func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePanePathSegmentLabel(th, gtx, pane, pane.displayFilter(), bg, fg, border, weight)
+		})
+	})
+}
+
+func (ui *UI) filePaneFilterLeadingInset(gtx layout.Context, pane *filePaneState) int {
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	em := max(1, gtx.Sp(textSize))
+	return max(1, (em*2+5)/11)
+}
+
+func layoutLeftInsetPx(gtx layout.Context, left int, child layout.Widget) layout.Dimensions {
+	if left <= 0 {
+		return child(gtx)
+	}
+	constraints := gtx.Constraints
+	constraints.Max.X -= left
+	if constraints.Max.X < 0 {
+		left = 0
+		constraints.Max.X = 0
+	}
+	if constraints.Min.X > constraints.Max.X {
+		constraints.Min.X = constraints.Max.X
+	}
+	gtx.Constraints = constraints
+	offset := op.Offset(image.Pt(left, 0)).Push(gtx.Ops)
+	dims := child(gtx)
+	offset.Pop()
+	dims.Size.X += left
+	return dims
 }
 
 func (ui *UI) layoutFilePanePathEditor(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
@@ -1938,8 +2117,7 @@ func (ui *UI) layoutFilePanePathEditor(th *material.Theme, gtx layout.Context, i
 	}
 
 	ed := material.Editor(th, &pane.pathEdit, "")
-	ed.Font.Typeface = ui.mainTypeface()
-	ed.TextSize = scaleThemeFontSize(th, 12)
+	ed.Font.Typeface, ed.TextSize = ui.filePaneHeaderTextStyle(pane)
 	palette := filePanePaletteFromConfig(ui.fmCfg)
 	ed.Color = palette.PaneFg
 	ed.HintColor = filePanePathMutedColor(palette)
@@ -1999,13 +2177,14 @@ func filePaneSortMenuCardSize(gtx layout.Context, nOpts int) image.Point {
 }
 
 func filePaneSortMenuBaseRect(gtx layout.Context, pane *filePaneState, size image.Point, slideY int) image.Rectangle {
-	// Position the popup below the sort badge. The sort badge sits in the control
-	// strip just to the left of the favorites badge (right-aligned). We approximate
-	// the favorites badge area to land the menu directly under the sort badge.
-	const favoriteBadgeAreaDp = 30
+	right := gtx.Constraints.Max.X - pane.sortControlRightInset
+	if pane.sortControlWidth <= 0 {
+		const favoriteBadgeAreaDp = 30
+		right = gtx.Constraints.Max.X - gtx.Dp(unit.Dp(favoriteBadgeAreaDp))
+	}
 	anchor := image.Point{
-		X: gtx.Constraints.Max.X - gtx.Dp(unit.Dp(favoriteBadgeAreaDp)) - size.X,
-		Y: pane.headerHeight + gtx.Dp(unit.Dp(4)) + slideY,
+		X: right - size.X,
+		Y: gtx.Dp(unit.Dp(tabStripHeightDp)) + pane.headerHeight + gtx.Dp(unit.Dp(2)) + slideY,
 	}
 	anchor = clampFilePaneMenuPoint(anchor, size, gtx.Constraints.Max)
 	return image.Rectangle{Min: anchor, Max: anchor.Add(size)}
@@ -2190,24 +2369,6 @@ func (ui *UI) layoutFilePaneSortMenuCard(th *material.Theme, gtx layout.Context,
 	})
 }
 
-func layoutFilePaneControlDivider(gtx layout.Context, h int) layout.Dimensions {
-	return layoutFilePaneControlDividerColor(gtx, h, color.NRGBA{R: 255, G: 255, B: 255, A: 22})
-}
-
-func layoutFilePaneControlDividerColor(gtx layout.Context, h int, fill color.NRGBA) layout.Dimensions {
-	w := gtx.Dp(unit.Dp(1))
-	if w < 1 {
-		w = 1
-	}
-	if h < 1 {
-		h = 1
-	}
-	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		paint.FillShape(gtx.Ops, fill, clip.Rect(image.Rect(0, 0, w, h)).Op())
-		return layout.Dimensions{Size: image.Pt(w, h)}
-	})
-}
-
 func (ui *UI) processFileModeBadgeInput(gtx layout.Context, idx int, pane *filePaneState) {
 	if pane == nil {
 		return
@@ -2320,130 +2481,329 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 		}
 	}
 
-	stripH := gtx.Dp(unit.Dp(22))
-	if stripH < 1 {
-		stripH = 1
-	}
-	return fillFlatBox(
-		gtx,
-		color.NRGBA{R: 18, G: 22, B: 30, A: 255},
-		color.NRGBA{R: 255, G: 255, B: 255, A: 22},
-		func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-					children := make([]layout.FlexChild, 0, 10)
-					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return pane.modeClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							pointer.CursorPointer.Add(gtx.Ops)
-							bg := color.NRGBA{}
-							iconColor := color.NRGBA{R: 210, G: 210, B: 210, A: 255}
-							if pane.modeClick.Hovered() {
-								bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-								iconColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
-							}
-							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									return ui.layoutFilePaneModeIcon(gtx, pane.table.Mode, iconColor)
-								})
-							})
-						})
-					}))
-					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutFilePaneControlDivider(gtx, stripH)
-					}))
-					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return pane.sortClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							pointer.CursorPointer.Add(gtx.Ops)
-							bg := color.NRGBA{}
-							fg := txtColor
-							if pane.sortMenuOpen {
-								bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
-								fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
-							} else if pane.sortClick.Hovered() {
-								bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-								fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
-							}
-							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body2(th, pane.sortBadgeText())
-									lbl.Font.Typeface = ui.mainTypeface()
-									lbl.Font.Weight = font.Medium
-									lbl.TextSize = scaleThemeFontSize(th, 11)
-									lbl.Color = fg
-									lbl.MaxLines = 1
-									return layoutVCenteredLabel(gtx, lbl)
-								})
-							})
-						})
-					}))
-					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layoutFilePaneControlDivider(gtx, stripH)
-					}))
-					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return pane.favoriteClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							pointer.CursorPointer.Add(gtx.Ops)
-							bg := color.NRGBA{}
-							fg := txtColor
-							if pane.favoriteMenuOpen {
-								bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
-								fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
-							} else if pane.favoriteClick.Hovered() {
-								bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-								fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
-							}
-							return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									size := gtx.Dp(unit.Dp(14))
-									if size < 1 {
-										size = 1
-									}
-									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										if ic := uitheme.FavoriteIcon(pane.favoriteMenuOpen); ic != nil {
-											iconGtx := gtx
-											iconGtx.Constraints = layout.Exact(image.Pt(size, size))
-											ic.Layout(iconGtx, fg)
-										}
-										return layout.Dimensions{Size: image.Pt(size, size)}
-									})
-								})
-							})
-						})
-					}))
-					if pane.remoteConnected() {
-						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layoutFilePaneControlDivider(gtx, stripH)
-						}))
-						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return pane.disconnectClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								pointer.CursorPointer.Add(gtx.Ops)
-								bg := color.NRGBA{}
-								iconColor := txtColor
-								if pane.disconnectClick.Hovered() {
-									bg = color.NRGBA{R: 56, G: 38, B: 38, A: 255}
-									iconColor = color.NRGBA{R: 255, G: 208, B: 208, A: 255}
-								}
-								return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-									return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										size := gtx.Dp(unit.Dp(13))
-										if size < 1 {
-											size = 1
-										}
-										if ic := uitheme.DisconnectIcon(); ic != nil {
-											iconGtx := gtx
-											iconGtx.Constraints = layout.Exact(image.Pt(size, size))
-											ic.Layout(iconGtx, iconColor)
-										}
-										return layout.Dimensions{Size: image.Pt(size, size)}
-									})
-								})
-							})
-						}))
-					}
-					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+	stripH := ui.filePaneHeaderStripHeight(gtx, pane)
+	palette := filePanePaletteFromConfig(ui.fmCfg)
+	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		var sortW, separatorAfterSortW, favoriteW, remoteSeparatorW, disconnectW, closeW int
+		children := make([]layout.FlexChild, 0, 12)
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePaneFrameBracket(gtx, pane, true, filePanePathFrameColor(palette))
+		}))
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return pane.modeClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				pointer.CursorPointer.Add(gtx.Ops)
+				bg := color.NRGBA{}
+				iconColor := color.NRGBA{R: 210, G: 210, B: 210, A: 255}
+				if pane.modeClick.Hovered() {
+					bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
+					iconColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+				}
+				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						iconSize := ui.filePaneHeaderIconSize(gtx, pane)
+						height := iconSize * 9 / 13
+						if height < 8 {
+							height = 8
+						}
+						size := image.Pt(iconSize, height)
+						iconGtx := gtx
+						iconGtx.Constraints = layout.Exact(size)
+						return layoutFilePaneModeGlyph(iconGtx, pane.table.Mode, iconColor)
+					})
 				})
 			})
-		},
-	)
+		}))
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePaneFrameSeparator(gtx, pane, filePanePathIndicatorColor(palette))
+		}))
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			dims := pane.sortClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				pointer.CursorPointer.Add(gtx.Ops)
+				bg := color.NRGBA{}
+				fg := txtColor
+				if pane.sortMenuOpen {
+					bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
+					fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
+				} else if pane.sortClick.Hovered() {
+					bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
+					fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+				}
+				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								typeface, textSize := ui.filePaneHeaderTextStyle(pane)
+								lbl := material.Body2(th, pane.sortKey.badgeLabel())
+								lbl.Font.Typeface = typeface
+								lbl.Font.Weight = font.Medium
+								lbl.TextSize = textSize
+								lbl.Color = fg
+								lbl.MaxLines = 1
+								return layoutInkVCenteredLabel(gtx, lbl)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								_, textSize := ui.filePaneHeaderTextStyle(pane)
+								return layoutFilePaneSortDirectionArrow(gtx, textSize, pane.sortDesc, fg)
+							}),
+						)
+					})
+				})
+			})
+			sortW = dims.Size.X
+			return dims
+		}))
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			dims := ui.layoutFilePaneFrameSeparator(gtx, pane, filePanePathIndicatorColor(palette))
+			separatorAfterSortW = dims.Size.X
+			return dims
+		}))
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			dims := pane.favoriteClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				pointer.CursorPointer.Add(gtx.Ops)
+				bg := color.NRGBA{}
+				fg := txtColor
+				if pane.favoriteMenuOpen {
+					bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
+					fg = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
+				} else if pane.favoriteClick.Hovered() {
+					bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
+					fg = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
+				}
+				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						size := ui.filePaneHeaderIconSize(gtx, pane) - 1
+						if size < 1 {
+							size = 1
+						}
+						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							if ic := uitheme.FavoriteIcon(pane.favoriteMenuOpen); ic != nil {
+								iconGtx := gtx
+								iconGtx.Constraints = layout.Exact(image.Pt(size, size))
+								ic.Layout(iconGtx, fg)
+							}
+							return layout.Dimensions{Size: image.Pt(size, size)}
+						})
+					})
+				})
+			})
+			favoriteW = dims.Size.X
+			return dims
+		}))
+		if pane.remoteConnected() {
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				dims := ui.layoutFilePaneFrameSeparator(gtx, pane, filePanePathIndicatorColor(palette))
+				remoteSeparatorW = dims.Size.X
+				return dims
+			}))
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				dims := pane.disconnectClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					pointer.CursorPointer.Add(gtx.Ops)
+					bg := color.NRGBA{}
+					iconColor := txtColor
+					if pane.disconnectClick.Hovered() {
+						bg = color.NRGBA{R: 56, G: 38, B: 38, A: 255}
+						iconColor = color.NRGBA{R: 255, G: 208, B: 208, A: 255}
+					}
+					return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							size := ui.filePaneHeaderIconSize(gtx, pane) - 1
+							if size < 1 {
+								size = 1
+							}
+							if ic := uitheme.DisconnectIcon(); ic != nil {
+								iconGtx := gtx
+								iconGtx.Constraints = layout.Exact(image.Pt(size, size))
+								ic.Layout(iconGtx, iconColor)
+							}
+							return layout.Dimensions{Size: image.Pt(size, size)}
+						})
+					})
+				})
+				disconnectW = dims.Size.X
+				return dims
+			}))
+		}
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutFilePaneFrameBracket(gtx, pane, false, filePanePathFrameColor(palette))
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layoutFilePaneFrameLine(gtx, ui.filePaneFrameEdgeWidth(th, gtx, pane), filePanePathFrameColor(palette))
+				}),
+			)
+			closeW = dims.Size.X
+			return dims
+		}))
+		dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+		trailingW := remoteSeparatorW + disconnectW + closeW
+		pane.favoriteControlWidth = favoriteW
+		pane.favoriteControlRightInset = trailingW
+		pane.sortControlWidth = sortW
+		pane.sortControlRightInset = separatorAfterSortW + favoriteW + trailingW
+		return dims
+	})
+}
+
+func (ui *UI) layoutFilePaneFrameBracket(gtx layout.Context, pane *filePaneState, opening bool, fg color.NRGBA) layout.Dimensions {
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	return layoutFilePaneFrameBracket(gtx, textSize, opening, fg)
+}
+
+func layoutFilePaneFrameBracket(gtx layout.Context, textSize unit.Sp, opening bool, fg color.NRGBA) layout.Dimensions {
+	em := max(1, gtx.Sp(textSize))
+	w := max(4, em*5/11)
+	h := max(9, em*12/11)
+	if maxW := gtx.Constraints.Max.X; maxW > 0 && w > maxW {
+		w = maxW
+	}
+	if maxH := gtx.Constraints.Max.Y; maxH > 0 && h > maxH {
+		h = maxH
+	}
+	if w < 1 || h < 1 {
+		return layout.Dimensions{}
+	}
+
+	size := image.Pt(w, h)
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		stroke := max(float32(1), float32(em)/12)
+		inset := stroke / 2
+		top := inset
+		bottom := float32(h-1) - inset
+		left := inset
+		right := float32(w-1) - inset
+		verticalX := left
+		armX := right
+		if !opening {
+			verticalX, armX = right, left
+		}
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(f32.Pt(verticalX, top))
+		p.LineTo(f32.Pt(verticalX, bottom))
+		p.MoveTo(f32.Pt(verticalX, top))
+		p.LineTo(f32.Pt(armX, top))
+		p.MoveTo(f32.Pt(verticalX, bottom))
+		p.LineTo(f32.Pt(armX, bottom))
+		paint.FillShape(gtx.Ops, fg, clip.Stroke{Path: p.End(), Width: stroke}.Op())
+		return layout.Dimensions{Size: size}
+	})
+}
+
+func (ui *UI) layoutFilePaneFrameSeparator(gtx layout.Context, pane *filePaneState, fg color.NRGBA) layout.Dimensions {
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	em := max(1, gtx.Sp(textSize))
+	w := max(5, (em*6+10)/11)
+	h := max(8, em)
+	if maxW := gtx.Constraints.Max.X; maxW > 0 && w > maxW {
+		w = maxW
+	}
+	if maxH := gtx.Constraints.Max.Y; maxH > 0 && h > maxH {
+		h = maxH
+	}
+	if w < 1 || h < 1 {
+		return layout.Dimensions{}
+	}
+
+	size := image.Pt(w, h)
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		stroke := max(float32(1), float32(em)/12)
+		x := float32(w-1) / 2
+		inset := stroke / 2
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(f32.Pt(x, inset))
+		p.LineTo(f32.Pt(x, float32(h-1)-inset))
+		paint.FillShape(gtx.Ops, fg, clip.Stroke{Path: p.End(), Width: stroke}.Op())
+		return layout.Dimensions{Size: size}
+	})
+}
+
+func (ui *UI) filePaneFrameEdgeWidth(th *material.Theme, gtx layout.Context, pane *filePaneState) int {
+	typeface, textSize := ui.filePaneHeaderTextStyle(pane)
+	probe := material.Body2(th, "-")
+	probe.Font.Typeface = typeface
+	probe.Font.Weight = font.Normal
+	probe.TextSize = textSize
+	probe.MaxLines = 1
+	w := measureLabelUnconstrained(gtx, probe).Size.X
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+func layoutFilePaneFrameLine(gtx layout.Context, width int, fg color.NRGBA) layout.Dimensions {
+	if width < 1 {
+		return layout.Dimensions{}
+	}
+	if maxW := gtx.Constraints.Max.X; maxW > 0 && width > maxW {
+		width = maxW
+	}
+	height := gtx.Constraints.Max.Y
+	if height < gtx.Constraints.Min.Y {
+		height = gtx.Constraints.Min.Y
+	}
+	if height < 1 {
+		height = 1
+	}
+	stroke := gtx.Dp(unit.Dp(1))
+	if stroke < 1 {
+		stroke = 1
+	}
+	y := (height - stroke) / 2
+	paint.FillShape(gtx.Ops, fg, clip.Rect(image.Rect(0, y, width, y+stroke)).Op())
+	return layout.Dimensions{Size: image.Pt(width, height)}
+}
+
+func layoutFilePaneSortDirectionArrow(gtx layout.Context, textSize unit.Sp, descending bool, fg color.NRGBA) layout.Dimensions {
+	em := gtx.Sp(textSize)
+	if em < 1 {
+		em = 1
+	}
+	h := em * 9 / 11
+	w := h * 2 / 3
+	if w < 5 {
+		w = 5
+	}
+	if h < 7 {
+		h = 7
+	}
+	if maxW := gtx.Constraints.Max.X; maxW > 0 && w > maxW {
+		w = maxW
+	}
+	if maxH := gtx.Constraints.Max.Y; maxH > 0 && h > maxH {
+		h = maxH
+	}
+	if w < 1 || h < 1 {
+		return layout.Dimensions{}
+	}
+
+	size := image.Pt(w, h)
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		centerX := float32(w-1) / 2
+		tipY := float32(1)
+		tailY := float32(h - 1)
+		armY := min(float32(h-1), tipY+float32(max(2, h/3)))
+		if descending {
+			tipY, tailY = tailY, tipY
+			armY = max(float32(0), tipY-float32(max(2, h/3)))
+		}
+		armX := float32(max(2, w/3))
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(f32.Pt(centerX, tailY))
+		p.LineTo(f32.Pt(centerX, tipY))
+		p.MoveTo(f32.Pt(centerX-armX, armY))
+		p.LineTo(f32.Pt(centerX, tipY))
+		p.LineTo(f32.Pt(centerX+armX, armY))
+		stroke := float32(em) / 9
+		if stroke < 1 {
+			stroke = 1
+		}
+		paint.FillShape(gtx.Ops, fg, clip.Stroke{Path: p.End(), Width: stroke}.Op())
+		return layout.Dimensions{Size: size}
+	})
 }
 
 func (ui *UI) layoutFileModeBadge(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
@@ -3385,9 +3745,13 @@ func (ui *UI) filePaneFavoriteRemoveButtonWidth(gtx layout.Context) int {
 
 func (ui *UI) filePaneFavoriteMenuBaseRect(gtx layout.Context, pane *filePaneState, items []fileFavoriteItem, slideY int) image.Rectangle {
 	size := ui.filePaneFavoriteMenuCardSize(gtx, items)
+	right := gtx.Constraints.Max.X - pane.favoriteControlRightInset
+	if pane.favoriteControlWidth <= 0 {
+		right = gtx.Constraints.Max.X
+	}
 	anchor := image.Point{
-		X: gtx.Constraints.Max.X - size.X,
-		Y: pane.headerHeight + gtx.Dp(unit.Dp(4)) + slideY,
+		X: right - size.X,
+		Y: gtx.Dp(unit.Dp(tabStripHeightDp)) + pane.headerHeight + gtx.Dp(unit.Dp(2)) + slideY,
 	}
 	anchor = clampFilePaneMenuPoint(anchor, size, gtx.Constraints.Max)
 	return image.Rectangle{Min: anchor, Max: anchor.Add(size)}

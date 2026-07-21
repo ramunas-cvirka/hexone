@@ -315,6 +315,20 @@ func (ui *UI) interfaceTypeface() font.Typeface {
 	return font.Typeface(ui.fmCfg.Interface.Typeface)
 }
 
+func (ui *UI) currentDirTypeface() font.Typeface {
+	if ui == nil || ui.fmCfg == nil || ui.fmCfg.CurrentDir.Typeface == "" {
+		return font.Typeface(resources.BundledFontFamilyIosevkaNerdFontMono)
+	}
+	return font.Typeface(ui.fmCfg.CurrentDir.Typeface)
+}
+
+func (ui *UI) currentDirTextSize() unit.Sp {
+	if ui == nil || ui.fmCfg == nil || ui.fmCfg.CurrentDir.FontSizeSp < 6 {
+		return 11
+	}
+	return normalizeUIFontSize(unit.Sp(ui.fmCfg.CurrentDir.FontSizeSp))
+}
+
 func (ui *UI) interfaceBaseTextSize() unit.Sp {
 	if ui == nil || ui.fmCfg == nil {
 		return defaultUIFontSp

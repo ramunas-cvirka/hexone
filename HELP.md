@@ -44,14 +44,21 @@ Tab titles use the current directory and trim to fit. Their font family and size
 
 The current-dir line at the top of each pane is interactive.
 
+Its font family and size are independent from the rest of the interface. Change the `Current dir` row in Fonts settings, or set `current_dir.typeface` and `current_dir.font_size_sp` in `hexone.yaml`. The default is Iosevka Nerd Font Mono at 11sp. The ASCII-shaped frame and sort-direction arrow are painted independently, so the frame remains continuous and the arrow scales cleanly with every selected font and size.
+
 - Click a path segment to jump to that level.
 - Double-click the current-dir line to edit the path directly.
 - Press `Enter` in the path editor to go there.
 - Press `Esc` to cancel path editing.
+- Click the `*.*` mask after `>` to edit the combined OS-style path and mask for that pane tab (for example `/work/src/*.go` or `C:\work\src\*.go`).
+- Press `Enter` to apply both values. Press `Esc` or click outside the editor to cancel the draft.
+- Wildcard masks accept `*` and `?`; separate alternatives with `;` or `,` (for example `*.go;*.md`).
+- Prefix a filter with `re:` to use a regular expression (for example `re:^test_.*\.go$`).
+- Directories and the `..` row remain visible while a filter is active. Submit an empty mask to restore `*.*`.
 
 On Windows:
 
-- the drive part of the current-dir line can open the drive picker
+- right-click the drive segment of the current-dir line to open the drive picker
 - `Alt+1` opens the drive picker for the left pane
 - `Alt+2` opens the drive picker for the right pane
 - in the drive picker, use `Up`/`Down` to move, `Enter` to select, and `Esc` to close

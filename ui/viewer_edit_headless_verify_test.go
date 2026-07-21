@@ -199,6 +199,13 @@ func TestHeadlessViewerEditModes(t *testing.T) {
 		t.Fatalf("read/editor line-height delta=%d want <= 1", delta)
 	}
 	shoot("viewer-text-edit.png", textImage)
+	textState.stream.beginSelection(18)
+	textState.stream.updateSelection(170)
+	textSelectionImage := frame(func(gtx layout.Context) {
+		textUI.layoutFileViewerTextEditor(th, gtx, textState)
+	})
+	shoot("viewer-text-edit-selection.png", textSelectionImage)
+	textState.stream.clearSelection()
 	textState.stream.scrollToBottom()
 	textBottomImage := frame(func(gtx layout.Context) {
 		textUI.layoutFileViewerTextEditor(th, gtx, textState)
@@ -272,4 +279,36 @@ func TestHeadlessViewerEditModes(t *testing.T) {
 		hexUI.layoutHexOutputView(th, gtx, viewState)
 	})
 	shoot("viewer-ascii-edit.png", asciiImage)
+
+	wheelUI := NewUI(fm.DefaultConfig())
+	wheelHex := newHexViewerState()
+	wheelHex.fileSize = 4096
+	wheelHex.buffer = make([]byte, wheelHex.fileSize)
+	for i := range wheelHex.buffer {
+		wheelHex.buffer[i] = byte(i)
+	}
+	wheelState := &fileViewerState{
+		mode:     "hex",
+		name:     "fine-wheel.bin",
+		editMode: true,
+		hex:      wheelHex,
+	}
+	wheelUI.fileViewer = wheelState
+	frame(func(gtx layout.Context) {
+		wheelUI.layoutHexOutputView(th, gtx, wheelState)
+	})
+	wheelPos := f32.Pt(float32(wheelHex.hexRect.Min.X+8), float32(wheelHex.hexRect.Min.Y+8))
+	router.Queue(pointer.Event{
+		Kind:     pointer.Scroll,
+		Source:   pointer.Mouse,
+		Position: wheelPos,
+		Scroll:   f32.Pt(0, 0.5),
+	})
+	wheelImage := frame(func(gtx layout.Context) {
+		wheelUI.layoutHexOutputView(th, gtx, wheelState)
+	})
+	if wheelHex.topLine != 1 {
+		t.Fatalf("fine wheel event top line=%d want 1", wheelHex.topLine)
+	}
+	shoot("viewer-hex-edit-fine-wheel.png", wheelImage)
 }

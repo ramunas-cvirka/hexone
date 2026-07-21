@@ -195,6 +195,7 @@ func TestSnapshotSessionIncludesFilePaneTabs(t *testing.T) {
 	leftA := newFilePaneState(filepath.Join(t.TempDir(), "alpha"), cfg)
 	leftB := newFilePaneState(filepath.Join(t.TempDir(), "beta"), cfg)
 	right := newFilePaneState(filepath.Join(t.TempDir(), "gamma"), cfg)
+	leftA.filterText = "*.go"
 	ui := &UI{
 		Tabs:           widget.Enum{Value: "tab0"},
 		fmCfg:          cfg,
@@ -217,6 +218,9 @@ func TestSnapshotSessionIncludesFilePaneTabs(t *testing.T) {
 	if got, want := s.FilePaneTabs[0].Tabs[0].Dir, leftA.dir; got != want {
 		t.Fatalf("saved hidden tab dir=%q want %q", got, want)
 	}
+	if got, want := s.FilePaneTabs[0].Tabs[0].Filter, "*.go"; got != want {
+		t.Fatalf("saved hidden tab filter=%q want %q", got, want)
+	}
 }
 
 func TestApplySessionRestoresFilePaneTabs(t *testing.T) {
@@ -233,7 +237,7 @@ func TestApplySessionRestoresFilePaneTabs(t *testing.T) {
 				Active: 1,
 				Tabs: []fm.SessionPane{
 					{Dir: leftA, SortKey: "date", Mode: "brief"},
-					{Dir: leftB, SortKey: "size", SortDescending: true, Mode: "full"},
+					{Dir: leftB, SortKey: "size", SortDescending: true, Mode: "full", Filter: "*.go"},
 				},
 			},
 		},
@@ -254,6 +258,9 @@ func TestApplySessionRestoresFilePaneTabs(t *testing.T) {
 	}
 	if !active.sortDesc {
 		t.Fatal("active tab sort direction should be restored")
+	}
+	if got, want := active.displayFilter(), "*.go"; got != want {
+		t.Fatalf("active tab filter=%q want %q", got, want)
 	}
 }
 

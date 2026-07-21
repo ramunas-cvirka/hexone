@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -206,6 +207,56 @@ func TestSettingsSaveLabelTracksViewerLineNumbers(t *testing.T) {
 	st.viewShowLineNumbersBool.Value = true
 	if st.dirty() || st.saveLabel() != "Save" {
 		t.Fatalf("reverted line numbers dirty=%v label=%q", st.dirty(), st.saveLabel())
+	}
+}
+
+func TestSettingsSaveLabelTracksCurrentDirFont(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*settingsModalState)
+		revert func(*settingsModalState)
+	}{
+		{
+			name: "family",
+			change: func(st *settingsModalState) {
+				st.currentDirFontFamily = "changed current-dir family"
+			},
+			revert: func(st *settingsModalState) {
+				st.currentDirFontFamily = st.interfaceFontFamily
+			},
+		},
+		{
+			name: "size",
+			change: func(st *settingsModalState) {
+				st.currentDirFontSizeSp++
+			},
+			revert: func(st *settingsModalState) {
+				st.currentDirFontSizeSp--
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := fm.DefaultConfig()
+			cfg.CurrentDir.Typeface = cfg.Interface.Typeface
+			ui := NewUI(cfg)
+			ui.openSettingsModal()
+			st := ui.settingsModal
+			if st == nil {
+				t.Fatal("settings modal did not open")
+			}
+
+			tt.change(st)
+			if !st.dirty() || st.saveLabel() != "Save (*)" {
+				t.Fatalf("changed current-dir font dirty=%v label=%q", st.dirty(), st.saveLabel())
+			}
+
+			tt.revert(st)
+			if st.dirty() || st.saveLabel() != "Save" {
+				t.Fatalf("reverted current-dir font dirty=%v label=%q", st.dirty(), st.saveLabel())
+			}
+		})
 	}
 }
 
@@ -518,6 +569,8 @@ func TestSettingsKeyboardFocusOrderIncludesFontControls(t *testing.T) {
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusFontsInterfaceFont,
 		settingsKeyboardFocusFontsInterfaceFontSize,
+		settingsKeyboardFocusFontsCurrentDirFont,
+		settingsKeyboardFocusFontsCurrentDirFontSize,
 		settingsKeyboardFocusGeneralPaneFont,
 		settingsKeyboardFocusGeneralPaneFontSize,
 		settingsKeyboardFocusFontsTabsFont,
@@ -582,6 +635,72 @@ func TestSettingsModalLoadsAndSavesInterfaceFontControls(t *testing.T) {
 	}
 }
 
+func TestSettingsModalLoadsAndSavesCurrentDirFontControls(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.CurrentDir.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.CurrentDir.FontSizeSp = 11
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if got, want := st.currentDirFontFamily, cfg.CurrentDir.Typeface; got != want {
+		t.Fatalf("current-dir font family=%q want %q", got, want)
+	}
+	if got, want := st.currentDirFontSizeSp, cfg.CurrentDir.FontSizeSp; got != want {
+		t.Fatalf("current-dir font size=%v want %v", got, want)
+	}
+
+	st.currentDirFontFamily = resources.BundledFontFamilyHackNerdFontMono
+	st.currentDirFontSizeSp = 12.5
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+	saved := fm.LoadConfig(ui.configPath)
+	if got, want := saved.CurrentDir.Typeface, st.currentDirFontFamily; got != want {
+		t.Fatalf("saved current-dir font family=%q want %q", got, want)
+	}
+	if got, want := saved.CurrentDir.FontSizeSp, st.currentDirFontSizeSp; got != want {
+		t.Fatalf("saved current-dir font size=%v want %v", got, want)
+	}
+}
+
+func TestSettingsFontRowLabelWidthFitsLongestLabel(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Interface.FontSizeSp = 18
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	gtx := testLabelLayoutContext(image.Pt(640, 40))
+
+	probe := material.Body2(th, "Current dir")
+	probe.Font.Typeface = ui.interfaceTypeface()
+	probe.Font.Weight = font.Medium
+	probe.TextSize = ui.scaleModalFontSize(10)
+	probe.MaxLines = 1
+	measured := measureLabelUnconstrained(gtx, probe).Size.X
+	if got := ui.settingsFontRowLabelWidth(th, gtx); got < measured {
+		t.Fatalf("font row label width=%d shorter than longest label=%d", got, measured)
+	}
+}
+
+func TestSettingsColorTransparentCheckboxMatchesValueFieldRows(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Interface.FontSizeSp = 18
+	ui := NewUI(cfg)
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	gtx := testLabelLayoutContext(image.Pt(400, 100))
+	gtx.Constraints.Min = image.Point{}
+
+	dims := ui.layoutSettingsColorTransparentCheckbox(th, gtx, ui.settingsModal)
+	captionH := settingsColorValueCaptionHeight(th, gtx, ui.fmCfg, ui.interfaceTypeface())
+	controlH := settingsColorValueControlHeight(th, gtx, ui.fmCfg, ui.interfaceTypeface())
+	wantH := captionH + gtx.Dp(unit.Dp(2)) + controlH
+	if dims.Size.Y != wantH {
+		t.Fatalf("transparent checkbox column height=%d want value-field height=%d", dims.Size.Y, wantH)
+	}
+}
+
 func TestSettingsPanePreviewHeightTracksPaneFont(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	ui := NewUI(cfg)
@@ -607,7 +726,7 @@ func TestSettingsColorPreviewPathHeightMatchesPanePathBar(t *testing.T) {
 	pathGtx := testPathLayoutContext()
 	pathDims := ui.layoutFilePanePathArea(th, pathGtx, 0, pane, true)
 
-	previewPathH := settingsColorPreviewPathContainerHeight(pathGtx)
+	previewPathH := ui.settingsColorPreviewPathContainerHeight(pathGtx)
 	if previewPathH != pathDims.Size.Y {
 		t.Fatalf("preview path height=%d want real path bar height %d", previewPathH, pathDims.Size.Y)
 	}
