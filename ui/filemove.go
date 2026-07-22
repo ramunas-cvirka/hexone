@@ -524,8 +524,7 @@ func (ui *UI) finishFileMove(now time.Time) {
 	destPaths := make(map[string]struct{}, len(sources))
 	sourceDirs := make(map[string]struct{}, len(sources))
 	destDirs := make(map[string]struct{}, 1)
-	primaryDestPath := ""
-	for i, src := range sources {
+	for _, src := range sources {
 		srcPath := cleanPath(src.Path)
 		sourcePaths[srcPath] = struct{}{}
 		sourceDirs[dirName(srcPath)] = struct{}{}
@@ -536,9 +535,6 @@ func (ui *UI) finishFileMove(now time.Time) {
 		}
 		destPaths[dstPath] = struct{}{}
 		destDirs[dirName(dstPath)] = struct{}{}
-		if i == 0 {
-			primaryDestPath = dstPath
-		}
 	}
 
 	if st.remote != nil {
@@ -593,10 +589,6 @@ func (ui *UI) finishFileMove(now time.Time) {
 		if remoteMove {
 			paneDir = path.Clean(pane.dir)
 		}
-		primaryPath := ""
-		if _, ok := destDirs[paneDir]; ok {
-			primaryPath = primaryDestPath
-		}
 		secondaryPath := ""
 		if selectedPath != "" {
 			skip := false
@@ -634,7 +626,7 @@ func (ui *UI) finishFileMove(now time.Time) {
 			reloadNoticeText = noticeText
 			reloadNoticeDur = noticeDur
 		}
-		if ui.requestPaneLoadWithSelectionAndScroll(i, pane.dir, primaryPath, secondaryPath, row, restorePos, true, restoreAnchor, reloadNoticeText, reloadNoticeDur) && i == st.pane {
+		if ui.requestPaneRefreshWithSelectionAndScroll(i, pane.dir, "", secondaryPath, row, restorePos, restoreAnchor, reloadNoticeText, reloadNoticeDur) && i == st.pane {
 			noticeShown = true
 		}
 	}

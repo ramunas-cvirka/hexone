@@ -434,6 +434,34 @@ func (t *Table) listItemCount(n int) int {
 	return (n + step - 1) / step
 }
 
+// FirstVisibleRow returns the first model row in the visible list item.
+// In Brief mode a list item is a column containing multiple model rows.
+func (t *Table) FirstVisibleRow() int {
+	if t == nil {
+		return 0
+	}
+	first := t.List.Position.First
+	if first < 0 {
+		first = 0
+	}
+	if t.Mode == ModeBrief {
+		first *= t.columnStep()
+	}
+	return first
+}
+
+// ListItemForRow converts a model row to its containing list item.
+// In Brief mode the returned item is a column; in other modes it is the row.
+func (t *Table) ListItemForRow(row int) int {
+	if row < 0 {
+		return 0
+	}
+	if t != nil && t.Mode == ModeBrief {
+		return row / t.columnStep()
+	}
+	return row
+}
+
 func (t *Table) ensureVisible(n int) {
 	if n <= 0 || t.Selected < 0 {
 		return

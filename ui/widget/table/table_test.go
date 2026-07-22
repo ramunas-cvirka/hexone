@@ -425,6 +425,27 @@ func TestBriefWheelScrollMovesColumnsWithoutMovingSelection(t *testing.T) {
 	}
 }
 
+func TestBriefModeMapsVisibleColumnsToModelRows(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(20)
+	tbl.BriefColumnWidth = unit.Dp(80)
+	tbl.Layout(th, testTableLayoutContext(image.Pt(240, 100)), tableTestModel{rows: 100})
+
+	tbl.List.Position.First = 3
+	rowsPerCol := tbl.briefRowsPerCol
+	if rowsPerCol < 2 {
+		t.Fatalf("brief rows per column = %d, want at least 2", rowsPerCol)
+	}
+	if got, want := tbl.FirstVisibleRow(), 3*rowsPerCol; got != want {
+		t.Fatalf("first visible model row = %d, want %d", got, want)
+	}
+	if got, want := tbl.ListItemForRow(3*rowsPerCol+rowsPerCol-1), 3; got != want {
+		t.Fatalf("list item for last row in column = %d, want %d", got, want)
+	}
+}
+
 type tableTestModel struct {
 	rows int
 }

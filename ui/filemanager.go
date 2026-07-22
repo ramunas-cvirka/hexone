@@ -769,7 +769,7 @@ func (p *filePaneState) applyListingWithOptions(listing filesys.Listing, opts fi
 	p.applySort("")
 	p.table.Selected = 0
 	if opts.restoreScroll {
-		p.table.List.Position = restorePaneListPosition(p.model.entries, opts.restorePos, opts.restoreAnchor)
+		p.table.List.Position = restorePaneListPosition(p.table, p.model.entries, opts.restorePos, opts.restoreAnchor)
 	} else {
 		p.table.List.Position = layout.Position{}
 	}
@@ -794,12 +794,12 @@ func sanitizePaneListPosition(pos layout.Position) layout.Position {
 	return pos
 }
 
-func restorePaneListPosition(entries []filesys.Entry, pos layout.Position, anchorPath string) layout.Position {
+func restorePaneListPosition(tbl *table.Table, entries []filesys.Entry, pos layout.Position, anchorPath string) layout.Position {
 	pos = sanitizePaneListPosition(pos)
 	if strings.TrimSpace(anchorPath) != "" {
 		for i := range entries {
 			if entries[i].Path == anchorPath {
-				pos.First = i
+				pos.First = tbl.ListItemForRow(i)
 				break
 			}
 		}
@@ -809,8 +809,9 @@ func restorePaneListPosition(entries []filesys.Entry, pos layout.Position, ancho
 		pos.Offset = 0
 		return pos
 	}
-	if pos.First >= len(entries) {
-		pos.First = len(entries) - 1
+	maxFirst := tbl.ListItemForRow(len(entries) - 1)
+	if pos.First > maxFirst {
+		pos.First = maxFirst
 		pos.Offset = 0
 	}
 	return pos
@@ -1918,7 +1919,7 @@ func (p *filePaneState) visibleAnchorPath() string {
 	if p == nil || p.table == nil || p.model == nil || p.model.Len() == 0 {
 		return ""
 	}
-	row := p.table.List.Position.First
+	row := p.table.FirstVisibleRow()
 	if row < 0 {
 		row = 0
 	}
@@ -3340,10 +3341,46 @@ func (ui *UI) requestPaneLoadWithSelection(idx int, dir, primaryPath, secondaryP
 }
 
 func (ui *UI) requestPaneLoadWithSelectionAndScroll(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
-	return ui.requestPaneLoadWithSelectionScrollAndVisibility(idx, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, false, restoreAnchor, noticeText, noticeDur)
+	return ui.requestPaneLoadRequest(idx, dir, filePaneLoadResult{
+		primaryPath:   primaryPath,
+		secondaryPath: secondaryPath,
+		fallbackRow:   fallbackRow,
+		restorePos:    restorePos,
+		restoreScroll: restoreScroll,
+		restoreAnchor: restoreAnchor,
+		noticeText:    noticeText,
+		noticeDur:     noticeDur,
+	}, true)
 }
 
 func (ui *UI) requestPaneLoadWithSelectionScrollAndVisibility(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll, ensureVisible bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
+	return ui.requestPaneLoadRequest(idx, dir, filePaneLoadResult{
+		primaryPath:   primaryPath,
+		secondaryPath: secondaryPath,
+		fallbackRow:   fallbackRow,
+		restorePos:    restorePos,
+		restoreScroll: restoreScroll,
+		ensureVisible: ensureVisible,
+		restoreAnchor: restoreAnchor,
+		noticeText:    noticeText,
+		noticeDur:     noticeDur,
+	}, true)
+}
+
+func (ui *UI) requestPaneRefreshWithSelectionAndScroll(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
+	return ui.requestPaneLoadRequest(idx, dir, filePaneLoadResult{
+		primaryPath:   primaryPath,
+		secondaryPath: secondaryPath,
+		fallbackRow:   fallbackRow,
+		restorePos:    restorePos,
+		restoreScroll: true,
+		restoreAnchor: restoreAnchor,
+		noticeText:    noticeText,
+		noticeDur:     noticeDur,
+	}, false)
+}
+
+func (ui *UI) requestPaneLoadRequest(idx int, dir string, req filePaneLoadResult, activate bool) bool {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return false
 	}
@@ -3351,7 +3388,9 @@ func (ui *UI) requestPaneLoadWithSelectionScrollAndVisibility(idx int, dir, prim
 	if pane == nil {
 		return false
 	}
-	ui.setActiveFilePane(idx)
+	if activate {
+		ui.setActiveFilePane(idx)
+	}
 
 	pane.closeSortMenu()
 	pane.closeFavoriteMenu()
@@ -3368,16 +3407,16 @@ func (ui *UI) requestPaneLoadWithSelectionScrollAndVisibility(idx int, dir, prim
 			pane.setNotice(err.Error(), time.Now())
 			return false
 		}
-		if restoreScroll {
-			pane.table.List.Position = restorePaneListPosition(pane.model.entries, restorePos, restoreAnchor)
+		if req.restoreScroll {
+			pane.table.List.Position = restorePaneListPosition(pane.table, pane.model.entries, req.restorePos, req.restoreAnchor)
 		}
-		pane.applySelection(primaryPath, secondaryPath, fallbackRow, ensureVisible || !restoreScroll)
-		if noticeText != "" {
-			pane.setNoticeFor(noticeText, time.Now(), noticeDur)
+		pane.applySelection(req.primaryPath, req.secondaryPath, req.fallbackRow, req.ensureVisible || !req.restoreScroll)
+		if req.noticeText != "" {
+			pane.setNoticeFor(req.noticeText, time.Now(), req.noticeDur)
 		}
 		return true
 	}
-	return startLocalPaneLoadWithRestoreAndVisibility(pane, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, ensureVisible, restoreAnchor, noticeText, noticeDur)
+	return startLocalPaneLoadRequest(pane, dir, req, false)
 }
 
 func (ui *UI) loadPaneDir(idx int, dir string) bool {

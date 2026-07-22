@@ -581,7 +581,7 @@ func filePaneRestoreAnchorPathSkipping(pane *filePaneState, skippedPaths map[str
 	if pane == nil || pane.table == nil || pane.model == nil || pane.model.Len() == 0 {
 		return ""
 	}
-	first := pane.table.List.Position.First
+	first := pane.table.FirstVisibleRow()
 	if first < 0 {
 		first = 0
 	}

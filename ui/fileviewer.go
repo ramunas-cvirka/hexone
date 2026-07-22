@@ -1026,7 +1026,7 @@ func (ui *UI) restoreFileViewerPaneScrollSnapshots(snapshots []fileViewerPaneScr
 		if pane == nil || pane.table == nil || pane.model == nil || pane.dir != snapshot.dir {
 			continue
 		}
-		pane.table.List.Position = restorePaneListPosition(pane.model.entries, snapshot.position, snapshot.anchorPath)
+		pane.table.List.Position = restorePaneListPosition(pane.table, pane.model.entries, snapshot.position, snapshot.anchorPath)
 	}
 }
 
