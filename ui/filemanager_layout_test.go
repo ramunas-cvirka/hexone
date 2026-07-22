@@ -475,7 +475,7 @@ func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
 		Constraints: layout.Constraints{Max: image.Pt(640, 360)},
 	}
 	pane.driveSegmentRect = ui.filePaneDriveSegmentBounds(th, gtx, pane, image.Pt(18, 18))
-	if got, want := pane.driveSegmentRect.Min.Y, tabStripHeightDp+1; got != want {
+	if got, want := pane.driveSegmentRect.Min.Y, tabStripHeightDp+filePaneTabConnectorHeightDp+1; got != want {
 		t.Fatalf("drive label top=%d want header-local top %d", got, want)
 	}
 

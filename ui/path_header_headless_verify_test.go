@@ -39,7 +39,16 @@ func TestHeadlessPathHeader(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	left := ui.filePanes[0]
 	left.cancelPendingLoad()
-	left.applyListing(pathHeaderVerifyListing("/Users/ramunas/go/src/hexone/ui"), "", "", 0)
+	left.applyListing(pathHeaderVerifyListing("/Users/ramunas/go/src/gpstrack-go"), "", "", 0)
+	leftSibling := newFilePaneState("/Users/ramunas/go/src", ui.fmCfg)
+	leftSibling.cancelPendingLoad()
+	leftSibling.applyListing(pathHeaderVerifyListing("/Users/ramunas/go/src"), "", "", 0)
+	rightSibling := newFilePaneState("/Users/ramunas/go/src/git", ui.fmCfg)
+	rightSibling.cancelPendingLoad()
+	rightSibling.applyListing(pathHeaderVerifyListing("/Users/ramunas/go/src/git"), "", "", 0)
+	ui.filePaneTabs[0].tabs = []*filePaneState{leftSibling, left, rightSibling}
+	ui.filePaneTabs[0].active = 1
+	ui.filePanes[0] = left
 	if len(ui.filePanes) > 1 {
 		ui.filePanes[1].cancelPendingLoad()
 		ui.filePanes[1].applyListing(pathHeaderVerifyListing("/srv/assets/production"), "", "", 0)
@@ -115,6 +124,10 @@ func TestHeadlessPathHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	render("path-header-filtered.png", image.Pt(1100, 620))
+	if !ui.activateFilePanePathSegment(0, left, left.dir) {
+		t.Fatal("current-directory breadcrumb did not reset the filter")
+	}
+	render("path-header-filter-reset.png", image.Pt(1100, 620))
 	left.beginPathEdit()
 	render("path-header-editor.png", image.Pt(1100, 620))
 	left.stopPathEdit()

@@ -171,6 +171,36 @@ func TestActivateFilePanePathSegmentStartsLoadImmediately(t *testing.T) {
 	}
 }
 
+func TestActivateCurrentFilePanePathSegmentResetsFilter(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	dir := t.TempDir()
+	pane := newFilePaneState(dir, cfg)
+	pane.applyListing(filesys.Listing{Dir: dir, Entries: []filesys.Entry{
+		{Name: "main.go", DisplayName: "main.go", Kind: filesys.EntryFile, Path: filepath.Join(dir, "main.go")},
+		{Name: "README.md", DisplayName: "README.md", Kind: filesys.EntryFile, Path: filepath.Join(dir, "README.md")},
+	}}, "", "", 0)
+	if err := pane.setFilter("*.go"); err != nil {
+		t.Fatalf("set filter: %v", err)
+	}
+
+	ui := &UI{fmCfg: cfg, filePanes: []*filePaneState{pane}}
+	if !ui.activateFilePanePathSegment(0, pane, dir) {
+		t.Fatal("activating the current directory did not reset the filter")
+	}
+	if got, want := pane.displayFilter(), filePaneDefaultFilter; got != want {
+		t.Fatalf("filter=%q want %q", got, want)
+	}
+	if got, want := pane.model.Len(), 2; got != want {
+		t.Fatalf("rows after reset=%d want %d", got, want)
+	}
+	if pane.loading {
+		t.Fatal("resetting the current-directory filter should not reload the pane")
+	}
+	if ui.activateFilePanePathSegment(0, pane, dir) {
+		t.Fatal("activating the current directory with the default filter should be a no-op")
+	}
+}
+
 func testPathListing(dir string) filesys.Listing {
 	return filesys.Listing{Dir: dir}
 }

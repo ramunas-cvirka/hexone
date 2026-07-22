@@ -37,6 +37,17 @@ const (
 	remoteIndicatorWidthDp = 11
 )
 
+type appTabStripGeometry struct {
+	activeMinX    int
+	activeMaxX    int
+	activeVisible bool
+}
+
+type appTabStripStyle struct {
+	open             bool
+	activeBackground color.NRGBA
+}
+
 type filePaneTabSet struct {
 	tabs        []*filePaneState
 	active      int
@@ -47,6 +58,7 @@ type filePaneTabSet struct {
 	prevClick   widget.Clickable
 	nextClick   widget.Clickable
 	addClick    widget.Clickable
+	geometry    appTabStripGeometry
 }
 
 type terminalTabSet struct {
@@ -61,6 +73,7 @@ type terminalTabSet struct {
 	addClick     widget.Clickable
 	snippetClick widget.Clickable
 	maxClick     widget.Clickable
+	geometry     appTabStripGeometry
 }
 
 type appTabItem struct {
@@ -341,7 +354,12 @@ func (ui *UI) layoutFilePaneTabStrip(th *material.Theme, gtx layout.Context, pan
 		item.remote = prepareRemoteIndicatorHover(set.remoteHover[i], item.remoteKey)
 		items = append(items, item)
 	}
-	actions, dims := ui.layoutAppTabStrip(th, gtx, items, &set.scroll, &set.tabClicks, &set.closeClicks, &set.prevClick, &set.nextClick, &set.addClick)
+	style := appTabStripStyle{
+		open:             true,
+		activeBackground: filePanePaletteFromConfig(ui.fmCfg).CurrentDirBg,
+	}
+	actions, dims, geometry := ui.layoutAppTabStrip(th, gtx, items, &set.scroll, &set.tabClicks, &set.closeClicks, &set.prevClick, &set.nextClick, &set.addClick, style)
+	set.geometry = geometry
 	if actions.selectIdx >= 0 {
 		ui.activateFilePaneTab(paneIdx, actions.selectIdx)
 		gtx.Execute(opInvalidate())
@@ -513,7 +531,9 @@ func (ui *UI) layoutTerminalTabStrip(th *material.Theme, gtx layout.Context) lay
 	}
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			actions, dims := ui.layoutAppTabStrip(th, gtx, items, &ui.terminalTabs.scroll, &ui.terminalTabs.tabClicks, &ui.terminalTabs.closeClicks, &ui.terminalTabs.prevClick, &ui.terminalTabs.nextClick, &ui.terminalTabs.addClick)
+			style := appTabStripStyle{open: true, activeBackground: terminalBG}
+			actions, dims, geometry := ui.layoutAppTabStrip(th, gtx, items, &ui.terminalTabs.scroll, &ui.terminalTabs.tabClicks, &ui.terminalTabs.closeClicks, &ui.terminalTabs.prevClick, &ui.terminalTabs.nextClick, &ui.terminalTabs.addClick, style)
+			ui.terminalTabs.geometry = geometry
 			if actions.selectIdx >= 0 {
 				ui.activateTerminalTab(actions.selectIdx)
 				gtx.Execute(opInvalidate())
@@ -527,13 +547,13 @@ func (ui *UI) layoutTerminalTabStrip(th *material.Theme, gtx layout.Context) lay
 			return dims
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutTabStripSeparator(gtx)
+			return ui.layoutTabStripSeparatorStyle(gtx, true)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutTabStripButton(th, gtx, &ui.terminalTabs.snippetClick, uitheme.FavoriteIcon(ui.terminalSnippetMenuOpen), true)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutTabStripSeparator(gtx)
+			return ui.layoutTabStripSeparatorStyle(gtx, true)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutTabStripButton(th, gtx, &ui.terminalTabs.maxClick, icon, true)
@@ -549,10 +569,12 @@ func (ui *UI) layoutAppTabStrip(
 	tabClicks *[]widget.Clickable,
 	closeClicks *[]widget.Clickable,
 	prevClick, nextClick, addClick *widget.Clickable,
-) (appTabStripActions, layout.Dimensions) {
+	style appTabStripStyle,
+) (appTabStripActions, layout.Dimensions, appTabStripGeometry) {
 	actions := appTabStripActions{selectIdx: -1, closeIdx: -1}
+	geometry := appTabStripGeometry{}
 	if len(items) == 0 {
-		return actions, layout.Dimensions{}
+		return actions, layout.Dimensions{}, geometry
 	}
 	ensureClickableSlice(tabClicks, len(items))
 	ensureClickableSlice(closeClicks, len(items))
@@ -593,15 +615,17 @@ func (ui *UI) layoutAppTabStrip(
 		plan = tabStripPlanWithMin(widths, minWidths, available, controlW, *scroll)
 	}
 
-	return actions, fixedHeight(gtx, gtx.Dp(unit.Dp(tabStripHeightDp)), func(gtx layout.Context) layout.Dimensions {
+	dims := fixedHeight(gtx, gtx.Dp(unit.Dp(tabStripHeightDp)), func(gtx layout.Context) layout.Dimensions {
 		children := make([]layout.FlexChild, 0, len(items)+4)
+		x := 0
 		if plan.overflow {
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutTabStripButton(th, gtx, prevClick, uitheme.ChevronLeftIcon(), plan.start > 0)
 			}))
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutTabStripSeparator(gtx)
+				return ui.layoutTabStripSeparatorStyle(gtx, style.open)
 			}))
+			x += controlW + tabStripSeparatorWidth(gtx)
 		}
 		for i := plan.start; i < plan.end; i++ {
 			idx := i
@@ -609,15 +633,22 @@ func (ui *UI) layoutAppTabStrip(
 			if planIdx := i - plan.start; planIdx >= 0 && planIdx < len(plan.widths) {
 				tabW = plan.widths[planIdx]
 			}
+			if items[idx].active {
+				geometry.activeMinX = x
+				geometry.activeMaxX = x + tabW
+				geometry.activeVisible = true
+			}
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return fixedWidth(gtx, tabW, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutTabStripTab(th, gtx, items[idx], &(*tabClicks)[idx], &(*closeClicks)[idx], idx, len(items) > 1)
+					return ui.layoutTabStripTab(th, gtx, items[idx], &(*tabClicks)[idx], &(*closeClicks)[idx], idx, len(items) > 1, style)
 				})
 			}))
+			x += tabW
 			if i < plan.end-1 || plan.overflow {
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutTabStripSeparator(gtx)
+					return ui.layoutTabStripSeparatorStyle(gtx, style.open)
 				}))
+				x += tabStripSeparatorWidth(gtx)
 			}
 		}
 		if plan.overflow {
@@ -625,28 +656,34 @@ func (ui *UI) layoutAppTabStrip(
 				return ui.layoutTabStripButton(th, gtx, nextClick, uitheme.ChevronRightIcon(), plan.end < len(items))
 			}))
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutTabStripSeparator(gtx)
+				return ui.layoutTabStripSeparatorStyle(gtx, style.open)
 			}))
+			x += controlW + tabStripSeparatorWidth(gtx)
 		} else if len(items) > 0 {
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutTabStripSeparator(gtx)
+				return ui.layoutTabStripSeparatorStyle(gtx, style.open)
 			}))
+			x += tabStripSeparatorWidth(gtx)
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutTabStripButton(th, gtx, addClick, uitheme.AddIcon(), true)
 		}))
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 	})
+	return actions, dims, geometry
 }
 
-func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item appTabItem, click, closeClick *widget.Clickable, idx int, closable bool) layout.Dimensions {
+func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item appTabItem, click, closeClick *widget.Clickable, idx int, closable bool, style appTabStripStyle) layout.Dimensions {
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
 		bg, fg := ui.tabStripColors(item.active, click.Hovered(), idx)
+		if style.open && item.active {
+			bg = style.activeBackground
+		}
 		if bg.A != 0 {
 			paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 		}
-		if item.active {
+		if item.active && !style.open {
 			h := gtx.Constraints.Max.Y
 			if h < 1 {
 				h = gtx.Dp(unit.Dp(tabStripHeightDp))
@@ -823,16 +860,24 @@ func (ui *UI) layoutTabStripButton(_ *material.Theme, gtx layout.Context, click 
 }
 
 func (ui *UI) layoutTabStripSeparator(gtx layout.Context) layout.Dimensions {
+	return ui.layoutTabStripSeparatorStyle(gtx, false)
+}
+
+func (ui *UI) layoutTabStripSeparatorStyle(gtx layout.Context, fullHeight bool) layout.Dimensions {
 	w := tabStripSeparatorWidth(gtx)
 	h := gtx.Constraints.Max.Y
 	if h < 1 {
 		h = gtx.Dp(unit.Dp(tabStripHeightDp))
 	}
-	lineH := h - gtx.Dp(unit.Dp(7))
-	if lineH < h/2 {
-		lineH = h / 2
+	lineH := h
+	y0 := 0
+	if !fullHeight {
+		lineH = h - gtx.Dp(unit.Dp(7))
+		if lineH < h/2 {
+			lineH = h / 2
+		}
+		y0 = (h - lineH) / 2
 	}
-	y0 := (h - lineH) / 2
 	paint.FillShape(gtx.Ops, ui.tabStripSeparatorColor(), clip.Rect(image.Rect(0, y0, w, y0+lineH)).Op())
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }

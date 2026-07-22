@@ -38,7 +38,7 @@ Each file pane has its own independent compact tab strip above the current-dir l
 - `Ctrl+Tab` selects the next tab; `Ctrl+Shift+Tab` selects the previous tab.
 - You can also hold `Ctrl+Tab` and press `Left` or `Right` before releasing `Tab` to choose the direction explicitly.
 
-Tab titles use the current directory and trim to fit. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, and `tabs.active_color`.
+Tab titles use the current directory and trim to fit. The active tab opens through the notched frame into its current-dir line; inactive tabs remain separated above the connecting rail. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, and `tabs.active_color`.
 
 ## Current Dir Line
 
@@ -46,7 +46,7 @@ The current-dir line at the top of each pane is interactive.
 
 Its font family and size are independent from the rest of the interface. Change the `Current dir` row in Fonts settings, or set `current_dir.typeface` and `current_dir.font_size_sp` in `hexone.yaml`. The default is Iosevka Nerd Font Mono at 11sp. The ASCII-shaped frame and sort-direction arrow are painted independently, so the frame remains continuous and the arrow scales cleanly with every selected font and size.
 
-- Click a path segment to jump to that level.
+- Click an ancestor path segment to jump to that level. Click the current directory to reset its filter to `*.*`.
 - Double-click the current-dir line to edit the path directly.
 - Press `Enter` in the path editor to go there.
 - Press `Esc` to cancel path editing.
@@ -110,7 +110,7 @@ Multi-Rename applies a set of filename transformations to the selected items in 
 
 The terminal drawer is a real PTY-backed terminal. Open or close it with `F12`, and use `Shift+Tab` to move keyboard focus between it and the file panes.
 
-The terminal drawer also has tabs. Use `+` for a new terminal tab, `x` to close one, and `<` or `>` when the tab row overflows.
+The terminal drawer also has tabs. Its active tab opens through the straight separator rail into the terminal surface, matching the file-pane tab treatment without the current-dir frame. Use `+` for a new terminal tab, `x` to close one, and `<` or `>` when the tab row overflows.
 
 While the terminal has keyboard focus, `Ctrl+N`, `Ctrl+X`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, and the directional tab chord act on terminal tabs instead of file-pane tabs. Terminal tabs and both file-pane tab groups remain independent.
 

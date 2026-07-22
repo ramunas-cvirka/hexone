@@ -80,6 +80,9 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## v1.1.0 - Unreleased
 
+- Updated terminal tabs to use the same separated, open-tab treatment as file panes, with a straight rail into the terminal surface.
+- Connected each file pane's active tab to its current-directory header with a compact notched frame, while inactive tabs remain separated on the upper rail.
+- Clicking the current directory in a file-pane breadcrumb now resets that pane tab's active filter to `*.*`.
 - Added terminal snippets, available from the `☆` button or `Ctrl+Shift+P` / `Cmd+Shift+P`. Snippets can be global, limited to one directory, or shared across a local Git repository, and are inserted at the prompt for review without running automatically.
 - Improved Brief mode so filename columns follow the longest displayed name in the current directory up to the configured maximum. Shorter names now produce narrower columns, allowing more columns to fit without prematurely truncating filenames.
 - Restyled the function bar so `F1`–`F10` and held `Ctrl` / `Alt` shortcuts use a bold, high-contrast color while their action labels remain normal-weight.

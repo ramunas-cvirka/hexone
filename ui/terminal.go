@@ -3791,6 +3791,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 			off := op.Offset(tabRect.Min).Push(gtx.Ops)
 			ui.layoutTerminalTabStrip(th, tabGtx)
 			off.Pop()
+			ui.drawTerminalTabRail(gtx, tabRect)
 		}
 		if !terminalFocused {
 			if shade := filePaneInactiveShadeColor(ui.fmCfg, terminalBG); shade.A != 0 {
@@ -3801,6 +3802,40 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 
 		return layout.Dimensions{Size: size}
 	})
+}
+
+func (ui *UI) drawTerminalTabRail(gtx layout.Context, tabRect image.Rectangle) {
+	if ui == nil || tabRect.Dx() <= 0 {
+		return
+	}
+	stroke := gtx.Dp(unit.Dp(1))
+	if stroke < 1 {
+		stroke = 1
+	}
+	y := tabRect.Max.Y
+	w := tabRect.Dx()
+	geometry := ui.terminalTabs.geometry
+	railColor := filePanePathFrameColor(filePanePaletteFromConfig(ui.fmCfg))
+	if !geometry.activeVisible {
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(tabRect.Min.X, y, tabRect.Max.X, y+stroke)).Op())
+		return
+	}
+	activeMin := max(0, min(w, geometry.activeMinX))
+	activeMax := max(activeMin, min(w, geometry.activeMaxX))
+	legH := gtx.Dp(unit.Dp(4))
+	if legH < stroke {
+		legH = stroke
+	}
+	if activeMin > 0 {
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(tabRect.Min.X, y, tabRect.Min.X+activeMin, y+stroke)).Op())
+		leftX := tabRect.Min.X + activeMin - stroke
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(leftX, y-legH, leftX+stroke, y+stroke)).Op())
+	}
+	if activeMax < w {
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(tabRect.Min.X+activeMax, y, tabRect.Max.X, y+stroke)).Op())
+		rightX := tabRect.Min.X + activeMax
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(rightX, y-legH, rightX+stroke, y+stroke)).Op())
+	}
 }
 
 func terminalGridContentRect(content image.Rectangle, cellH int) (image.Rectangle, int) {

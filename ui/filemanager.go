@@ -3390,7 +3390,27 @@ func (ui *UI) activateFilePanePathSegment(idx int, pane *filePaneState, target s
 	}
 	pane.clearPendingPathNavigate()
 	pane.clearPathClickState()
+	if filePanePathTargetsCurrentDir(pane, target) {
+		if pane.displayFilter() == filePaneDefaultFilter {
+			return false
+		}
+		return pane.setFilter(filePaneDefaultFilter) == nil
+	}
 	return ui.loadPaneDir(idx, target)
+}
+
+func filePanePathTargetsCurrentDir(pane *filePaneState, target string) bool {
+	if pane == nil {
+		return false
+	}
+	if pane.remoteConnected() {
+		current := strings.TrimSpace(pane.dir)
+		if current == "" {
+			current = "/"
+		}
+		return path.Clean(target) == path.Clean(current)
+	}
+	return filepath.Clean(target) == filepath.Clean(pane.displayDir())
 }
 
 func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {

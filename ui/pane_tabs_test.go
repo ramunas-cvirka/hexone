@@ -190,6 +190,50 @@ func TestFilePaneTabCloseButtonDoesNotSelectInactiveTab(t *testing.T) {
 	}
 }
 
+func TestFilePaneTabStripReportsConnectedFrameGeometry(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	tabs := []*filePaneState{
+		newFilePaneState(filepath.Join(t.TempDir(), "src"), cfg),
+		newFilePaneState(filepath.Join(t.TempDir(), "gpstrack-go"), cfg),
+		newFilePaneState(filepath.Join(t.TempDir(), "git"), cfg),
+	}
+	for _, pane := range tabs {
+		pane.cancelPendingLoad()
+	}
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{tabs[1]},
+		filePaneTabs: []filePaneTabSet{{tabs: tabs, active: 1}},
+	}
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(800, tabStripHeightDp)),
+	}
+	ui.layoutFilePaneTabStrip(th, gtx, 0)
+
+	items := make([]appTabItem, len(tabs))
+	for i, pane := range tabs {
+		items[i] = filePaneTabItem(pane)
+	}
+	widths := ui.tabStripWidths(th, gtx, cfg, items)
+	separatorW := tabStripSeparatorWidth(gtx)
+	wantMin := widths[0] + separatorW
+	wantMax := wantMin + widths[1]
+	got := ui.filePaneTabs[0].geometry
+	if !got.activeVisible || got.activeMinX != wantMin || got.activeMaxX != wantMax {
+		t.Fatalf("active geometry=%+v want visible span [%d,%d)", got, wantMin, wantMax)
+	}
+
+	connectorGtx := gtx
+	connectorGtx.Ops = new(op.Ops)
+	connectorGtx.Constraints = layout.Constraints{Max: image.Pt(800, 100)}
+	if dims := ui.layoutFilePaneTabConnector(connectorGtx, 0, tabs[1]); dims.Size != image.Pt(800, filePaneTabConnectorHeightDp) {
+		t.Fatalf("connector size=%v want %v", dims.Size, image.Pt(800, filePaneTabConnectorHeightDp))
+	}
+}
+
 func TestSnapshotSessionIncludesFilePaneTabs(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	leftA := newFilePaneState(filepath.Join(t.TempDir(), "alpha"), cfg)

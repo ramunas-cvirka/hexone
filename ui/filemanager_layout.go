@@ -40,6 +40,7 @@ const (
 	filePaneBreadcrumbSeparatorLeftInsetDp  = 1
 	filePaneBreadcrumbSeparatorRightInsetDp = 2
 	filePaneBreadcrumbDesiredInkGapDp       = 2
+	filePaneTabConnectorHeightDp            = 5
 	filePaneCornerDp                        = 8
 	filePaneControlCornerDp                 = 6
 	filePaneOverlayCornerDp                 = 6
@@ -651,7 +652,14 @@ func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pa
 												return ui.layoutFilePaneTabStrip(th, gtx, idx)
 											}),
 											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-												dims := ui.layoutFilePaneHeader(th, gtx, idx, pane, active)
+												dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														return ui.layoutFilePaneTabConnector(gtx, idx, pane)
+													}),
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														return ui.layoutFilePaneHeader(th, gtx, idx, pane, active)
+													}),
+												)
 												pane.headerHeight = dims.Size.Y
 												return dims
 											}),
@@ -1571,19 +1579,126 @@ func (ui *UI) layoutFilePaneHeader(th *material.Theme, gtx layout.Context, idx i
 func (ui *UI) layoutFilePaneHeaderContent(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
 	palette := filePanePaletteFromConfig(ui.fmCfg)
 	rowBg, rowBorder := filePanePathRowColors(palette)
-	return fillFlatBox(gtx, rowBg, rowBorder, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				if pane.pathEditing {
-					return ui.layoutFilePanePathEditor(th, gtx, idx, pane, active)
-				}
-				return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutFilePaneControlStrip(th, gtx, idx, pane)
-			}),
-		)
-	})
+	m := op.Record(gtx.Ops)
+	dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			if pane.pathEditing {
+				return ui.layoutFilePanePathEditor(th, gtx, idx, pane, active)
+			}
+			return ui.layoutFilePanePathArea(th, gtx, idx, pane, active)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFilePaneControlStrip(th, gtx, idx, pane)
+		}),
+	)
+	call := m.Stop()
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		call.Add(gtx.Ops)
+		return dims
+	}
+	paint.FillShape(gtx.Ops, rowBg, clip.Rect(image.Rectangle{Max: dims.Size}).Op())
+	if rowBorder.A != 0 {
+		paint.FillShape(gtx.Ops, rowBorder, clip.Rect(image.Rect(0, dims.Size.Y-1, dims.Size.X, dims.Size.Y)).Op())
+	}
+	call.Add(gtx.Ops)
+	ui.drawFilePaneConnectedHeaderCorners(th, gtx, pane, dims.Size, filePanePathFrameColor(palette))
+	return dims
+}
+
+func (ui *UI) layoutFilePaneTabConnector(gtx layout.Context, paneIdx int, pane *filePaneState) layout.Dimensions {
+	h := gtx.Dp(unit.Dp(filePaneTabConnectorHeightDp))
+	if h < 3 {
+		h = 3
+	}
+	w := gtx.Constraints.Max.X
+	if w < 1 {
+		return layout.Dimensions{Size: image.Pt(0, h)}
+	}
+
+	geometry := appTabStripGeometry{}
+	if ui != nil && paneIdx >= 0 && paneIdx < len(ui.filePaneTabs) {
+		geometry = ui.filePaneTabs[paneIdx].geometry
+	}
+	activeMin := max(0, min(w, geometry.activeMinX))
+	activeMax := max(activeMin, min(w, geometry.activeMaxX))
+	palette := filePanePaletteFromConfig(ui.fmCfg)
+	paint.FillShape(gtx.Ops, palette.CurrentDirBg, clip.Rect(image.Rect(0, 0, w, h)).Op())
+
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	em := max(1, gtx.Sp(textSize))
+	stroke := max(float32(1), float32(em)/12)
+	inset := stroke / 2
+	railY := inset
+	stemTop := -float32(gtx.Dp(unit.Dp(4)))
+	bottom := float32(h) + inset
+	leftX := inset
+	rightX := float32(w-1) - inset
+	radius := min(float32(gtx.Dp(unit.Dp(3))), float32(h-1))
+	if radius < 1 {
+		radius = 1
+	}
+
+	var rail clip.Path
+	rail.Begin(gtx.Ops)
+	if geometry.activeVisible && activeMax > activeMin {
+		leftNotch := float32(activeMin)
+		rightNotch := float32(activeMax)
+		if activeMin <= 0 {
+			rail.MoveTo(f32.Pt(leftX, bottom))
+			rail.LineTo(f32.Pt(leftX, stemTop))
+		} else {
+			rail.MoveTo(f32.Pt(leftX, bottom))
+			rail.LineTo(f32.Pt(leftX, railY+radius))
+			rail.QuadTo(f32.Pt(leftX, railY), f32.Pt(leftX+radius, railY))
+			rail.LineTo(f32.Pt(leftNotch, railY))
+			rail.LineTo(f32.Pt(leftNotch, stemTop))
+		}
+
+		rail.MoveTo(f32.Pt(rightNotch, stemTop))
+		rail.LineTo(f32.Pt(rightNotch, railY))
+		rail.LineTo(f32.Pt(rightX-radius, railY))
+		rail.QuadTo(f32.Pt(rightX, railY), f32.Pt(rightX, railY+radius))
+		rail.LineTo(f32.Pt(rightX, bottom))
+	} else {
+		rail.MoveTo(f32.Pt(leftX, bottom))
+		rail.LineTo(f32.Pt(leftX, railY+radius))
+		rail.QuadTo(f32.Pt(leftX, railY), f32.Pt(leftX+radius, railY))
+		rail.LineTo(f32.Pt(rightX-radius, railY))
+		rail.QuadTo(f32.Pt(rightX, railY), f32.Pt(rightX, railY+radius))
+		rail.LineTo(f32.Pt(rightX, bottom))
+	}
+	paint.FillShape(gtx.Ops, filePanePathFrameColor(palette), clip.Stroke{Path: rail.End(), Width: stroke}.Op())
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+func (ui *UI) drawFilePaneConnectedHeaderCorners(th *material.Theme, gtx layout.Context, pane *filePaneState, size image.Point, fg color.NRGBA) {
+	if size.X < 2 || size.Y < 2 || fg.A == 0 {
+		return
+	}
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	em := max(1, gtx.Sp(textSize))
+	stroke := max(float32(1), float32(em)/12)
+	inset := stroke / 2
+	middle := float32(size.Y-1) / 2
+	radius := min(float32(gtx.Dp(unit.Dp(3))), middle)
+	if radius < 1 {
+		radius = 1
+	}
+	edgeW := float32(ui.filePaneFrameEdgeWidth(th, gtx, pane))
+	leftX := inset
+	rightX := float32(size.X-1) - inset
+
+	var corners clip.Path
+	corners.Begin(gtx.Ops)
+	corners.MoveTo(f32.Pt(leftX, -inset))
+	corners.LineTo(f32.Pt(leftX, middle-radius))
+	corners.QuadTo(f32.Pt(leftX, middle), f32.Pt(leftX+radius, middle))
+	corners.LineTo(f32.Pt(max(leftX+radius, edgeW), middle))
+	corners.MoveTo(f32.Pt(rightX, -inset))
+	corners.LineTo(f32.Pt(rightX, middle-radius))
+	corners.QuadTo(f32.Pt(rightX, middle), f32.Pt(rightX-radius, middle))
+	corners.LineTo(f32.Pt(min(rightX-radius, rightX-edgeW), middle))
+	paint.FillShape(gtx.Ops, fg, clip.Stroke{Path: corners.End(), Width: stroke}.Op())
 }
 
 func (ui *UI) layoutFilePanePathArea(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, active bool) layout.Dimensions {
@@ -1836,7 +1951,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 				pane.closeDriveMenu()
 				pane.closeFavoriteMenu()
 				pane.closeContextMenu()
-				if segments[i].path != "" && i != len(segments)-1 {
+				if segments[i].path != "" {
 					if ui.activateFilePanePathSegment(idx, pane, segments[i].path) {
 						gtx.Execute(op.InvalidateCmd{})
 						return ui.layoutFilePanePath(th, gtx, idx, pane, active)
@@ -1905,7 +2020,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 			pane.closeDriveMenu()
 			pane.closeFavoriteMenu()
 			pane.closeContextMenu()
-			if segments[i].path != "" && i != len(segments)-1 {
+			if segments[i].path != "" {
 				if ui.activateFilePanePathSegment(idx, pane, segments[i].path) {
 					gtx.Execute(op.InvalidateCmd{})
 					return ui.layoutFilePanePath(th, gtx, idx, pane, active)
@@ -2706,7 +2821,7 @@ func (ui *UI) layoutFilePaneControlStrip(th *material.Theme, gtx layout.Context,
 					return ui.layoutFilePaneFrameBracket(gtx, pane, false, filePanePathFrameColor(palette))
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutFilePaneFrameLine(gtx, ui.filePaneFrameEdgeWidth(th, gtx, pane), filePanePathFrameColor(palette))
+					return layoutFilePaneFrameSpacer(gtx, ui.filePaneFrameEdgeWidth(th, gtx, pane))
 				}),
 			)
 			closeW = dims.Size.X
@@ -2853,6 +2968,23 @@ func layoutFilePaneFrameLine(gtx layout.Context, width int, fg color.NRGBA) layo
 	}
 	y := (height - stroke) / 2
 	paint.FillShape(gtx.Ops, fg, clip.Rect(image.Rect(0, y, width, y+stroke)).Op())
+	return layout.Dimensions{Size: image.Pt(width, height)}
+}
+
+func layoutFilePaneFrameSpacer(gtx layout.Context, width int) layout.Dimensions {
+	if width < 1 {
+		return layout.Dimensions{}
+	}
+	if maxW := gtx.Constraints.Max.X; maxW > 0 && width > maxW {
+		width = maxW
+	}
+	height := gtx.Constraints.Max.Y
+	if height < gtx.Constraints.Min.Y {
+		height = gtx.Constraints.Min.Y
+	}
+	if height < 1 {
+		height = 1
+	}
 	return layout.Dimensions{Size: image.Pt(width, height)}
 }
 
@@ -3145,7 +3277,7 @@ func (ui *UI) layoutFilePaneDriveMenu(th *material.Theme, gtx layout.Context, id
 func (ui *UI) filePaneDriveSegmentBounds(th *material.Theme, gtx layout.Context, pane *filePaneState, size image.Point) image.Rectangle {
 	_, textSize := ui.filePaneHeaderTextStyle(pane)
 	x := gtx.Dp(unit.Dp(2)) + ui.filePaneFrameEdgeWidth(th, gtx, pane) + filePaneFrameBracketWidth(gtx, textSize)
-	y := gtx.Dp(unit.Dp(tabStripHeightDp + 1))
+	y := gtx.Dp(unit.Dp(tabStripHeightDp + filePaneTabConnectorHeightDp + 1))
 	return image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+size.X, y+size.Y)}
 }
 
