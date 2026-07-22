@@ -1683,10 +1683,7 @@ func (ui *UI) processFilePaneDriveSegmentInput(gtx layout.Context, idx int, pane
 		pane.closeFavoriteMenu()
 		pane.closeContextMenu()
 		pane.stopPathEdit()
-		pane.openDriveMenu(image.Point{
-			X: pe.Position.Round().X,
-			Y: pane.headerHeight + gtx.Dp(unit.Dp(4)),
-		}, gtx.Now)
+		pane.openDriveMenu(gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
 }
@@ -1951,7 +1948,7 @@ func (ui *UI) layoutFilePanePath(th *material.Theme, gtx layout.Context, idx int
 				}
 				dims := ui.layoutFilePanePathSegmentLabel(th, gtx, pane, segments[i].label, bg, lblColor, border, weight)
 				if i == 0 && localDriveRoot(pane.displayDir()) != "" {
-					pane.driveSegmentRect = image.Rectangle{Max: dims.Size}
+					pane.driveSegmentRect = ui.filePaneDriveSegmentBounds(th, gtx, pane, dims.Size)
 					defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
 					pass := pointer.PassOp{}.Push(gtx.Ops)
 					event.Op(gtx.Ops, &pane.drivePointerTag)
@@ -3126,7 +3123,7 @@ func (ui *UI) layoutFilePaneDriveMenu(th *material.Theme, gtx layout.Context, id
 	menuDims := ui.layoutFilePaneDriveMenuCard(th, gtx, pane, drives, alpha)
 	call := m.Stop()
 
-	anchor := clampFilePaneMenuPoint(pane.driveMenuPos, menuDims.Size, gtx.Constraints.Max)
+	anchor := ui.filePaneDriveMenuBasePoint(th, gtx, pane, menuDims.Size)
 	anchor.Y += slideY
 	anchor = clampFilePaneMenuPoint(anchor, menuDims.Size, gtx.Constraints.Max)
 	pane.driveMenuRect = image.Rectangle{Min: anchor, Max: anchor.Add(menuDims.Size)}
@@ -3143,6 +3140,29 @@ func (ui *UI) layoutFilePaneDriveMenu(th *material.Theme, gtx layout.Context, id
 	pass.Pop()
 
 	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+func (ui *UI) filePaneDriveSegmentBounds(th *material.Theme, gtx layout.Context, pane *filePaneState, size image.Point) image.Rectangle {
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	x := gtx.Dp(unit.Dp(2)) + ui.filePaneFrameEdgeWidth(th, gtx, pane) + filePaneFrameBracketWidth(gtx, textSize)
+	y := gtx.Dp(unit.Dp(tabStripHeightDp + 1))
+	return image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+size.X, y+size.Y)}
+}
+
+func (ui *UI) filePaneDriveMenuBasePoint(th *material.Theme, gtx layout.Context, pane *filePaneState, size image.Point) image.Point {
+	x := 0
+	if pane != nil && pane.driveSegmentRect.Dx() > 0 {
+		x = pane.driveSegmentRect.Min.X
+	} else {
+		_, textSize := ui.filePaneHeaderTextStyle(pane)
+		x = gtx.Dp(unit.Dp(2)) + ui.filePaneFrameEdgeWidth(th, gtx, pane) + filePaneFrameBracketWidth(gtx, textSize)
+	}
+	headerH := 0
+	if pane != nil {
+		headerH = pane.headerHeight
+	}
+	y := gtx.Dp(unit.Dp(tabStripHeightDp)) + headerH + gtx.Dp(unit.Dp(2))
+	return clampFilePaneMenuPoint(image.Pt(x, y), size, gtx.Constraints.Max)
 }
 
 func (ui *UI) driveMenuHoveredIndex(pane *filePaneState, drives []string) int {

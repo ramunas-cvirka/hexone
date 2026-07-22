@@ -420,7 +420,6 @@ type filePaneState struct {
 	driveMenuPointerTag       uiEventTag
 	driveMenuClicks           []widget.Clickable
 	driveMenuOpen             bool
-	driveMenuPos              image.Point
 	driveMenuRect             image.Rectangle
 	driveSegmentRect          image.Rectangle
 	driveMenuOpenedAt         time.Time
@@ -1318,12 +1317,11 @@ func (p *filePaneState) openContextMenu(row int, pos image.Point, now time.Time)
 	p.ctxMenuClicks = nil
 }
 
-func (p *filePaneState) openDriveMenu(pos image.Point, now time.Time) {
+func (p *filePaneState) openDriveMenu(now time.Time) {
 	if p == nil {
 		return
 	}
 	p.driveMenuOpen = true
-	p.driveMenuPos = pos
 	p.driveMenuRect = image.Rectangle{}
 	p.driveMenuOpenedAt = now
 	p.driveMenuSelected = -1
@@ -3216,10 +3214,7 @@ func (ui *UI) openPaneDriveMenu(idx int) bool {
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
-	pane.openDriveMenu(image.Point{
-		X: 0,
-		Y: pane.headerHeight + 4,
-	}, time.Now())
+	pane.openDriveMenu(time.Now())
 	pane.setDriveMenuSelection(-1, platform.AvailableLocalDrives())
 	return true
 }

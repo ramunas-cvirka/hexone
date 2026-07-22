@@ -462,6 +462,7 @@ func TestFavoriteOrderMenuDisablesBoundaryActions(t *testing.T) {
 
 func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
 	pane := newFilePaneState(".", ui.fmCfg)
 	pane.headerHeight = 20
 	pane.sortControlWidth = 18
@@ -472,6 +473,10 @@ func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
 		Ops:         new(op.Ops),
 		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
 		Constraints: layout.Constraints{Max: image.Pt(640, 360)},
+	}
+	pane.driveSegmentRect = ui.filePaneDriveSegmentBounds(th, gtx, pane, image.Pt(18, 18))
+	if got, want := pane.driveSegmentRect.Min.Y, tabStripHeightDp+1; got != want {
+		t.Fatalf("drive label top=%d want header-local top %d", got, want)
 	}
 
 	sortSize := image.Pt(96, 89)
@@ -490,6 +495,14 @@ func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
 	}
 	if got, want := favoriteRect.Min.Y, tabStripHeightDp+pane.headerHeight+2; got != want {
 		t.Fatalf("favorite menu top=%d want below header at %d", got, want)
+	}
+
+	driveAnchor := ui.filePaneDriveMenuBasePoint(th, gtx, pane, image.Pt(120, 96))
+	if got, want := driveAnchor.X, pane.driveSegmentRect.Min.X; got != want {
+		t.Fatalf("drive menu left edge=%d want drive label left edge %d", got, want)
+	}
+	if got, want := driveAnchor.Y, tabStripHeightDp+pane.headerHeight+2; got != want {
+		t.Fatalf("drive menu top=%d want below header at %d", got, want)
 	}
 }
 
