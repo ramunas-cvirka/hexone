@@ -120,7 +120,7 @@ func (ui *UI) handleFileManagerKeys(gtx layout.Context) {
 	if ui.terminalFocused(gtx) {
 		return
 	}
-	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
+	if ui.fileCopyBlocksUI() || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
 		return
 	}
 	ui.handleFileManagerEscape(gtx)
@@ -404,7 +404,7 @@ func (ui *UI) handleFileManagerInsert() bool {
 	if ui.fileViewer != nil {
 		return false
 	}
-	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
+	if ui.fileCopyBlocksUI() || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
 		return false
 	}
 	if ui.pathEditActive() {
@@ -425,7 +425,7 @@ func (ui *UI) handleFileManagerSelectAll(_ time.Time) bool {
 	if ui.fileViewer != nil {
 		return false
 	}
-	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
+	if ui.fileCopyBlocksUI() || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
 		return false
 	}
 	if ui.pathEditActive() {
@@ -446,7 +446,7 @@ func (ui *UI) handleFileManagerSelectMatching(_ time.Time) bool {
 	if ui.fileViewer != nil {
 		return false
 	}
-	if ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
+	if ui.fileCopyBlocksUI() || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.archiveExtractConflictOpen() {
 		return false
 	}
 	if ui.pathEditActive() {

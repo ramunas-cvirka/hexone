@@ -80,29 +80,9 @@ Release notes extraction in CI expects release headings that begin with `## v...
 
 ## v1.1.0 - Unreleased
 
-- Updated terminal tabs to use the same separated, open-tab treatment as file panes, with a straight rail into the terminal surface.
-- Connected each file pane's active tab to its current-directory header with a compact notched frame, while inactive tabs remain separated on the upper rail.
-- Clicking the current directory in a file-pane breadcrumb now resets that pane tab's active filter to `*.*`.
-- Fixed `F6` move completion changing the active file pane or disturbing either pane's viewport, including horizontal Brief-mode positions; the source selection now moves to the nearest surviving file while the destination selection stays in place.
-- Added terminal snippets, available from the `☆` button or `Ctrl+Shift+P` / `Cmd+Shift+P`. Snippets can be global, limited to one directory, or shared across a local Git repository, and are inserted at the prompt for review without running automatically.
-- Improved Brief mode so filename columns follow the longest displayed name in the current directory up to the configured maximum. Shorter names now produce narrower columns, allowing more columns to fit without prematurely truncating filenames.
-- Restyled the function bar so `F1`–`F10` and held `Ctrl` / `Alt` shortcuts use a bold, high-contrast color while their action labels remain normal-weight.
-- Fixed function-bar actions shifting when a context-sensitive label changes; all ten keys now keep equal window-relative slots and overlong labels are ellipsized in place.
-- Improved the File panes settings previews with representative long filenames, a responsive Brief-width preview, and `?` help tooltips that explain when the Full and Brief filename-width settings take effect.
-- Added a GitHub Actions workflow that runs the complete Go unit-test suite on every branch push and pull request.
-- Added editable File and Hex viewer modes. `F4` enters editing, `F3` discards changes and returns to view mode, `Esc` discards changes and closes the viewer, and `F2` / `Ctrl+S` / `Cmd+S` saves. Switching viewer modes with unsaved changes now offers Save or Discard.
-- File editing preserves syntax highlighting, compact line spacing, scrollbars, word wrapping, text encoding, BOM, and line endings, and adds working Copy and Paste context-menu actions. Find remains available while editing and searches the last saved/view buffer.
-- Hex editing supports separate hexadecimal-nibble and ASCII input lanes, keyboard navigation, drag selection, multi-byte replacement, highlighted active nibbles, and distinct unsaved-byte coloring. Hex saves are sparse in-place patches that write only changed byte ranges, regardless of total file size, and Hex copy now supports both hexadecimal and escaped-text formats.
-- Redesigned the viewer header with equal-width retro File, Hex, and Cmd tabs, a centered and middle-truncated filename rail, dirty-file marking, and eye/pen actions for view/edit state and current-command/history selection.
-- Custom Command and SSH Sessions editors now show `Save (*)` whenever their drafts differ from the saved configuration and clear the marker after saving or reverting the changes.
-- Added `Backspace` navigation in file panes to open the parent directory, matching the traditional file-manager `cd ..` behavior.
-- Changed file-pane mouse-wheel scrolling to move the viewport without changing the active item: rows scroll in Full mode and columns scroll in Brief mode. The previous selection-moving behavior remains available through the **Mouse wheel moves the active item** setting and `wheel_moves_selection` configuration option.
-- Added a viewer-specific function bar: `F2` saves edits, `F3` returns to view-only mode or closes an already read-only viewer, `F4` enters editing, `F5` toggles line numbers, `F7` finds, `F8` switches between text and hex, `F9` toggles wrapping, and `F10` exits Hexone while discarding unsaved viewer changes. `F6` remains unassigned in the viewer.
-- Added line numbers to File and Cmd text views, enabled by default and configurable in Settings with full dirty-draft tracking.
-- Added optional local Trash / Recycle Bin deletion, disabled by default, with a recoverable-action confirmation message and native platform integration. A separate disabled-by-default option skips deletion confirmation; SSH deletions always remain permanent. These options are also available as `use_trash` and `delete_without_confirmation` in the configuration file.
-- Settings now marks the draft as `Save (*)` when any of the new file-pane mouse-wheel or deletion options changes, and clears the marker when the change is reverted.
-- Fixed mouse cursors becoming stuck as an arrow or hand after crossing between the viewer, file panes, terminal, and app boundaries. Clipboard-read targets now remain pointer-transparent and expire cleanly so pending or failed paste operations cannot leave stale cursor routing behind.
-- Redesigned the file-pane current-directory header with compact chevron breadcrumbs, editable wildcard or regular-expression filters, integrated mode/sort/favorites controls, Windows drive switching, and a dedicated font setting with dirty-draft tracking.
-- Improved Hex editing with `Shift`-based keyboard selection, clearer HEX/ASCII lane highlighting, cyan selected ASCII text, and automatic input-lane switching when a drag crosses between columns.
-- Tab strips now grow just enough for larger configured tab fonts, while connected headers, menus, terminal content, and tab rails remain aligned.
-- Redesigned the Protocol Analyzer as a compact, flat, continuously connected frame with a clearer hex input, integrated protocol selection and status rails, aligned byte highlighting, a hierarchical ASCII decode tree, and an overflow scrollbar for large packets or reduced-height layouts such as the `F12` terminal drawer.
+- File and Hex viewer modes now support editing. Changes can be saved or discarded. Hex mode accepts HEX and ASCII input. A selection can overwrite several bytes. Changed bytes are highlighted and saved in place.
+- Redesigned the internal viewer. Separate File, Hex, and Cmd tabs share a persistent filename rail. The viewer now has its own function bar with viewer-specific actions.
+- Added native desktop file clipboard integration and optional Trash / Recycle Bin deletion.
+- Redesigned the file-pane tabs and current-directory line. Active tabs connect to the current-directory line through a notched frame. The line includes breadcrumbs, editable filters, and pane controls. Brief mode now sizes columns to their contents.
+- Added terminal snippets with global, directory, and Git-repository scopes.
+- Redesigned the Protocol Analyzer for clearer input, navigation, and decoding.

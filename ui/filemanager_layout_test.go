@@ -870,6 +870,42 @@ func TestBackspaceNavigatesActiveFilePaneToParent(t *testing.T) {
 	}
 }
 
+func TestDeleteKeyStartsFilePaneDeleteAction(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "alpha.txt")
+	if err := os.WriteFile(target, []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: root,
+		Entries: []filesys.Entry{{
+			Name:        "alpha.txt",
+			DisplayName: "alpha.txt",
+			Path:        target,
+			Kind:        filesys.EntryFile,
+		}},
+	}, target, "", 0)
+
+	gtx, router := testKeyContext()
+	gtx.Now = time.Now()
+	router.Event(key.Filter{Name: key.NameDeleteForward})
+	router.Queue(key.Event{Name: key.NameDeleteForward, State: key.Press})
+	ui.handleFileManagerKeys(gtx)
+
+	if ui.fileDelete == nil {
+		t.Fatal("Delete should start the file-pane delete action")
+	}
+	if got := ui.fileDelete.targetPath; got != target {
+		t.Fatalf("Delete target=%q want %q", got, target)
+	}
+	if ui.fileDelete.running {
+		t.Fatal("Delete should preserve the default confirmation step")
+	}
+}
+
 func TestBackspaceAtFilesystemRootIsIgnored(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	pane := ui.activePane()

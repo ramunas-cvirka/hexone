@@ -4,13 +4,19 @@
 package ui
 
 import (
+	"errors"
 	"hexone/filesys"
 	"hexone/fm"
 	"image"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/widget"
+	"gioui.org/widget/material"
 )
 
 func TestFilePaneContextMenuSpecForFileUsesNestedSupportedActions(t *testing.T) {
@@ -77,6 +83,174 @@ func TestFilePaneContextMenuSpecForDirectoryIncludesSystemFileManager(t *testing
 	spec := ui.filePaneContextMenuSpec(0, pane)
 	assertMenuHasLabel(t, spec.Items, "Open in Test Manager")
 	assertMenuMissingLabel(t, spec.Items, "Reveal in Test Manager")
+}
+
+func TestFilePaneContextMenuOffersNativeCopyAndDetectedPasteFiles(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	pane.model = &filePaneModel{
+		entries: []filesys.Entry{{
+			Path:        "/tmp/docs",
+			DisplayName: "docs",
+			Kind:        filesys.EntryDir,
+		}},
+		cfg: ui.fmCfg,
+	}
+	pane.table.Selected = 0
+	pane.ctxMenuRow = 0
+	pane.ctxMenuClipboardFileCount = 3
+
+	spec := ui.filePaneContextMenuSpec(0, pane)
+	assertMenuHasLabel(t, spec.Items, "Copy File")
+	assertMenuHasLabel(t, spec.Items, "Paste 3 Files")
+}
+
+func TestFilePaneBackgroundContextMenuOnlyShowsPasteForFileClipboard(t *testing.T) {
+	oldRead := readFileClipboardFilesFunc
+	defer func() { readFileClipboardFilesFunc = oldRead }()
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	readFileClipboardFilesFunc = func() ([]string, error) {
+		return []string{"/tmp/one.txt"}, nil
+	}
+
+	ui.openFilePaneContextMenu(0, -1, image.Point{}, time.Now())
+	spec := ui.filePaneContextMenuSpec(0, pane)
+	assertMenuHasLabel(t, spec.Items, "Paste File")
+
+	pane.closeContextMenu()
+	readFileClipboardFilesFunc = func() ([]string, error) {
+		return nil, errors.New("clipboard unavailable")
+	}
+	ui.openFilePaneContextMenu(0, -1, image.Point{}, time.Now())
+	spec = ui.filePaneContextMenuSpec(0, pane)
+	assertMenuMissingLabel(t, spec.Items, "Paste File")
+	assertMenuMissingLabel(t, spec.Items, "Paste Files")
+}
+
+func TestFilePaneCopyFilesActionWritesMarkedLocalPaths(t *testing.T) {
+	oldWrite := writeFileClipboardFilesFunc
+	defer func() { writeFileClipboardFilesFunc = oldWrite }()
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	pane.model = &filePaneModel{
+		entries: []filesys.Entry{
+			{Path: "/tmp/one.txt", DisplayName: "one.txt", Kind: filesys.EntryFile},
+			{Path: "/tmp/two.txt", DisplayName: "two.txt", Kind: filesys.EntryFile},
+		},
+		cfg: ui.fmCfg,
+	}
+	pane.markRow(0)
+	pane.markRow(1)
+	var got []string
+	writeFileClipboardFilesFunc = func(paths []string) error {
+		got = append([]string(nil), paths...)
+		return nil
+	}
+
+	ui.handleFilePaneContextMenuAction(0, pane, 0, filePaneMenuActionCopyFiles, time.Now())
+
+	if len(got) != 2 || got[0] != "/tmp/one.txt" || got[1] != "/tmp/two.txt" {
+		t.Fatalf("clipboard paths=%v want both marked paths", got)
+	}
+	if pane.noticeText != "2 files copied to clipboard" {
+		t.Fatalf("notice=%q", pane.noticeText)
+	}
+}
+
+func TestFilePanePasteFilesActionStartsCopyImmediately(t *testing.T) {
+	oldRead := readFileClipboardFilesFunc
+	defer func() { readFileClipboardFilesFunc = oldRead }()
+
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+	src := filepath.Join(srcDir, "sample.txt")
+	if err := os.WriteFile(src, []byte("sample"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	pane.dir = dstDir
+	readFileClipboardFilesFunc = func() ([]string, error) {
+		return []string{src}, nil
+	}
+
+	actionNow := time.Now()
+	ui.handleFilePaneContextMenuAction(0, pane, -1, filePaneMenuActionPasteFiles, actionNow)
+
+	if ui.fileCopy == nil {
+		t.Fatal("paste should start the copy workflow")
+	}
+	if !ui.fileCopy.running {
+		t.Fatal("paste should start copying without waiting for modal confirmation")
+	}
+	if !ui.fileCopy.directPaste {
+		t.Fatal("paste should use direct-paste progress behavior")
+	}
+	if got := ui.fileCopy.srcPath; got != src {
+		t.Fatalf("copy source=%q want %q", got, src)
+	}
+	if got := ui.fileCopy.dstPath; got != filepath.Join(dstDir, "sample.txt") {
+		t.Fatalf("copy destination=%q", got)
+	}
+	var ops op.Ops
+	dims := ui.layoutFileCopyDialog(material.NewTheme(), layout.Context{
+		Ops:         &ops,
+		Constraints: layout.Exact(image.Pt(800, 600)),
+		Now:         actionNow.Add(10 * time.Second),
+	})
+	if dims.Size != (image.Point{}) {
+		t.Fatalf("direct paste displayed a confirmation modal: size=%v", dims.Size)
+	}
+	select {
+	case err := <-ui.fileCopy.doneCh:
+		if err != nil {
+			t.Fatalf("direct paste failed: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("direct paste did not finish")
+	}
+	if data, err := os.ReadFile(filepath.Join(dstDir, "sample.txt")); err != nil || string(data) != "sample" {
+		t.Fatalf("pasted file data=%q err=%v", data, err)
+	}
+}
+
+func TestFilePanePasteFilesActionDoesNotOverwriteWithoutConfirmation(t *testing.T) {
+	oldRead := readFileClipboardFilesFunc
+	defer func() { readFileClipboardFilesFunc = oldRead }()
+
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+	src := filepath.Join(srcDir, "sample.txt")
+	dst := filepath.Join(dstDir, "sample.txt")
+	if err := os.WriteFile(src, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	pane.dir = dstDir
+	readFileClipboardFilesFunc = func() ([]string, error) {
+		return []string{src}, nil
+	}
+
+	ui.handleFilePaneContextMenuAction(0, pane, -1, filePaneMenuActionPasteFiles, time.Now())
+
+	if ui.fileCopy != nil {
+		t.Fatal("conflicting direct paste should not start an overwrite")
+	}
+	if data, err := os.ReadFile(dst); err != nil || string(data) != "existing" {
+		t.Fatalf("existing destination changed: data=%q err=%v", data, err)
+	}
+	if pane.noticeText != "paste failed: sample.txt already exists" {
+		t.Fatalf("notice=%q", pane.noticeText)
+	}
 }
 
 func TestFileOpenWithAppsForPathSortsBestMatchFirst(t *testing.T) {

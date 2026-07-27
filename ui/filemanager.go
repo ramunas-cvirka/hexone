@@ -417,6 +417,7 @@ type filePaneState struct {
 	ctxMenuOpenedAt           time.Time
 	ctxMenuHoverID            string
 	ctxMenuHoverAnim          segmentedAnimState
+	ctxMenuClipboardFileCount int
 	drivePointerTag           uiEventTag
 	driveMenuPointerTag       uiEventTag
 	driveMenuClicks           []widget.Clickable
@@ -1196,6 +1197,7 @@ func (p *filePaneState) closeContextMenu() {
 	p.ctxMenuOpenedAt = time.Time{}
 	p.ctxMenuHoverID = ""
 	p.ctxMenuHoverAnim = segmentedAnimState{}
+	p.ctxMenuClipboardFileCount = 0
 	if p.table != nil {
 		p.table.ResetPointerState()
 	}
@@ -1310,6 +1312,7 @@ func (p *filePaneState) openContextMenu(row int, pos image.Point, now time.Time)
 	p.ctxMenuOpenedAt = now
 	p.ctxMenuHoverID = ""
 	p.ctxMenuHoverAnim = segmentedAnimState{}
+	p.ctxMenuClipboardFileCount = 0
 	if p.table != nil {
 		p.table.ResetPointerState()
 	}
@@ -3897,6 +3900,11 @@ func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point, now time.Ti
 	pane.closeDriveMenu()
 	pane.closeFavoriteMenu()
 	pane.openContextMenu(row, pos, now)
+	if pane.writableLocalView() {
+		if paths, err := readFileClipboardFilesFunc(); err == nil {
+			pane.ctxMenuClipboardFileCount = len(paths)
+		}
+	}
 }
 
 func (ui *UI) prepareFilePaneContextMenuTarget(pane *filePaneState, row int) bool {

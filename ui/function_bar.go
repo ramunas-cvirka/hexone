@@ -102,7 +102,11 @@ func popupPressed(gtx layout.Context, tag event.Tag) bool {
 }
 
 func (ui *UI) hasBlockingFileDialog() bool {
-	return ui != nil && (ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.multiRename != nil || ui.customCommandEditor != nil || ui.terminalSnippetEditor != nil || ui.archiveExtractConflictOpen())
+	return ui != nil && (ui.fileCopyBlocksUI() || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.multiRename != nil || ui.customCommandEditor != nil || ui.terminalSnippetEditor != nil || ui.archiveExtractConflictOpen())
+}
+
+func (ui *UI) fileCopyBlocksUI() bool {
+	return ui != nil && ui.fileCopy != nil && !ui.fileCopy.directPaste
 }
 
 func (ui *UI) closeFunctionBarToolsMenu() {
@@ -235,7 +239,7 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 		}
 		return !ui.hasBlockingFileDialog()
 	case functionBarActionCopy, functionBarActionMove, functionBarActionCreate, functionBarActionDelete:
-		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
+		return ui.fileViewer == nil && ui.fileCopy == nil && !ui.hasBlockingFileDialog()
 	default:
 		return false
 	}

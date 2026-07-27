@@ -29,7 +29,8 @@ func TestFileKeyMapUsesFixedNavigationAndFunctionKeys(t *testing.T) {
 		{name: "copy", ev: key.Event{Name: key.NameF5, State: key.Press}, want: fileActionCopy},
 		{name: "move", ev: key.Event{Name: key.NameF6, State: key.Press}, want: fileActionRenameMove},
 		{name: "create", ev: key.Event{Name: key.NameF7, State: key.Press}, want: fileActionCreate},
-		{name: "delete", ev: key.Event{Name: key.NameF8, State: key.Press}, want: fileActionDelete},
+		{name: "delete with F8", ev: key.Event{Name: key.NameF8, State: key.Press}, want: fileActionDelete},
+		{name: "delete with Delete", ev: key.Event{Name: key.NameDeleteForward, State: key.Press}, want: fileActionDelete},
 	}
 
 	for _, tc := range tests {
@@ -39,6 +40,15 @@ func TestFileKeyMapUsesFixedNavigationAndFunctionKeys(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Fatalf("%s: action=%v want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestFileKeyNameRecognizesDeleteAliases(t *testing.T) {
+	for _, alias := range []string{"delete", "del"} {
+		got, ok := fileKeyName(alias)
+		if !ok || got != key.NameDeleteForward {
+			t.Fatalf("fileKeyName(%q) = %q, %v; want %q, true", alias, got, ok, key.NameDeleteForward)
 		}
 	}
 }

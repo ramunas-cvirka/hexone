@@ -82,7 +82,7 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F5` copies.
 - `F6` moves or renames.
 - `F7` creates a file or folder.
-- `F8` deletes selected items. In **Settings → File panes → Other**, deletion can use the local system Trash / Recycle Bin and can optionally skip confirmation. SSH deletions are always permanent.
+- `F8` or `Delete` deletes selected items. In **Settings → File panes → Other**, deletion can use the local system Trash / Recycle Bin and can optionally skip confirmation. SSH deletions are always permanent.
 - `F9` opens the Tools menu (`Multi-Rename`, `Hex to ASCII`, `Protocol Analyzer`, `Settings`).
 - `Ctrl+M` / `Cmd+M` opens Multi-Rename for the current file-pane selection.
 - `F10` exits the app.
@@ -90,6 +90,14 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F12` opens or closes the terminal drawer.
 
 If the function key bar is auto-hidden in the viewer, `F11` can still bring it back.
+
+Right-click a local file-pane item to copy the selected file or marked files to
+the system file clipboard. Finder, File Explorer, and applications that accept
+file clipboard data can paste them. When the system clipboard contains files,
+the local pane context menu also offers **Paste File(s)** and starts copying
+immediately into the current directory. Paste progress appears in the pane's
+bottom status bar without opening a modal. File clipboard actions are
+unavailable inside archives and SSH panes.
 
 When the terminal drawer is open, `Shift+Tab` toggles keyboard focus between the terminal and the file panes. Plain `Tab` stays available to the terminal for shell completion while the terminal is focused.
 
@@ -228,17 +236,30 @@ Useful viewer keys:
 - supported images open as an image preview inside `file` mode
 - supported PDFs open as a rendered page preview inside `file` mode
 - `hex` mode is better for binary files, mixed data, or damaged content
-- in hex edit mode, click the hex columns to enter hexadecimal nibbles or the text column to enter ASCII bytes; two hex digits complete a byte and advance, and held keys repeat across following bytes
-- drag in either Hex edit lane to select multiple bytes; the cyan-tinted edit background marks the active input lane, and crossing between the HEX and text columns while dragging switches the input mode
-- Hex input applies its first digit to every selected high nibble and its second digit to every selected low nibble, while ASCII input applies the character to every selected byte
-- the active HEX byte uses a three-character background with the current nibble in cyan; ASCII entry colors every selected character cyan, while unsaved modified bytes appear in red in both columns
-- arrow, paging, Home, and End keys move the active byte; saving clears all modified-byte markers
+- in Hex edit mode, click the HEX columns to edit individual nibbles
+- click the ASCII column to edit whole bytes
+- two hex digits complete one byte and move to the next byte
+- drag in either lane to select multiple bytes
+- the cyan-tinted background shows the active input lane
+- dragging across the HEX and ASCII lanes switches the input mode
+- a multi-byte selection is an overwrite range
+- ASCII input writes the typed character to every selected byte
+- the first HEX digit overwrites every selected high nibble
+- the second HEX digit overwrites every selected low nibble
+- modified bytes use pink/red text in both columns until saved
+- restoring a byte to its original value removes its modified marker
+- the active HEX nibble is cyan
+- active ASCII characters are also cyan
+- arrow keys, paging keys, Home, and End move the active byte
+- saving clears all modified-byte markers
 - hold `Shift` with those navigation keys to extend the byte selection from the active caret
 - moving away after entering one hex digit keeps the changed high nibble and preserves the byte's original low nibble
-- the Hex context menu offers `Copy as Hex` and `Copy as Text`; text copy preserves printable ASCII and writes other bytes as `\xNN` escapes
+- the Hex context menu offers `Copy as Hex` and `Copy as Text`
+- text copy preserves printable ASCII and writes other bytes as `\xNN` escapes
 - text saves preserve the detected UTF-8, UTF-16, or CP437 encoding, BOM, and CRLF line endings
 - read-only File mode uses the same compact line spacing and visual font weight as File edit mode
-- File edit mode follows the Word Wrap setting; when wrapping is off, long lines stay intact and use a horizontal scrollbar
+- File edit mode follows the Word Wrap setting
+- when wrapping is off, long lines stay intact and use a horizontal scrollbar
 - File edit mode provides `Copy` and `Paste` in its context menu
 - local and SFTP files can be edited; files inside archives and image/PDF/command previews remain read-only
 - on SSH panes, `hex` Find can use the configured remote search utility command for large files

@@ -26,6 +26,8 @@ const (
 	filePaneMenuActionCopyDialog        = "copy-dialog"
 	filePaneMenuActionMoveDialog        = "move-dialog"
 	filePaneMenuActionDeleteDialog      = "delete-dialog"
+	filePaneMenuActionCopyFiles         = "copy-files"
+	filePaneMenuActionPasteFiles        = "paste-files"
 	filePaneMenuActionCopyPath          = "copy-path"
 	filePaneMenuActionPermissions       = "permissions"
 	filePaneMenuActionNewFolder         = "new-folder"
@@ -67,6 +69,9 @@ type fileOpenWithApp struct {
 	Label    string
 	MatchLen int
 }
+
+var readFileClipboardFilesFunc = platform.ReadClipboardFiles
+var writeFileClipboardFilesFunc = platform.WriteClipboardFiles
 
 func fileContextMenuActionItem(id, label, action string) fileContextMenuItem {
 	return fileContextMenuItem{ID: id, Label: label, Action: action}
@@ -190,6 +195,11 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 			fileContextMenuActionItem("refresh", "Refresh", filePaneMenuActionRefresh),
 			fileContextMenuActionItem("copy-path", "Copy Path", filePaneMenuActionCopyPath),
 		}
+		if pane.ctxMenuClipboardFileCount > 0 {
+			root.Items = append(root.Items[:1], append([]fileContextMenuItem{
+				fileContextMenuActionItem("paste-files", filePanePasteFilesLabel(pane.ctxMenuClipboardFileCount), filePaneMenuActionPasteFiles),
+			}, root.Items[1:]...)...)
+		}
 		if !pane.remoteConnected() {
 			root.Items = append(root.Items[:2], append([]fileContextMenuItem{
 				fileContextMenuActionItem("system-file-manager", filePaneSystemFileManagerLabel(nil), filePaneMenuActionSystemFileManager),
@@ -215,6 +225,10 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 	readOnlyArchive := pane.archiveBrowsing()
 	fileOpsMenu := ui.filePaneFileOpsMenuSpec(readOnlyArchive)
 	canExtractHere := !readOnlyArchive && entry.Kind == filesys.EntryFile && entry.CanEnter
+	pasteFilesItem := fileContextMenuItem{}
+	if pane.ctxMenuClipboardFileCount > 0 && pane.writableLocalView() {
+		pasteFilesItem = fileContextMenuActionItem("paste-files", filePanePasteFilesLabel(pane.ctxMenuClipboardFileCount), filePaneMenuActionPasteFiles)
+	}
 
 	switch entry.Kind {
 	case filesys.EntryParent:
@@ -227,8 +241,11 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		}
 		root.Items = append(root.Items,
 			fileContextMenuSeparator("sep-copy-path"),
-			fileContextMenuActionItem("copy-path", "Copy Path", filePaneMenuActionCopyPath),
 		)
+		if pasteFilesItem.Action != "" {
+			root.Items = append(root.Items, pasteFilesItem)
+		}
+		root.Items = append(root.Items, fileContextMenuActionItem("copy-path", "Copy Path", filePaneMenuActionCopyPath))
 	case filesys.EntryDir:
 		root.Items = append(root.Items, fileContextMenuActionItem("open", "Open", filePaneMenuActionOpen))
 		if otherPaneAvailable {
@@ -248,6 +265,12 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		}
 		root.Items = append(root.Items,
 			fileContextMenuSeparator("sep-edit"),
+			fileContextMenuActionItem("copy-files", filePaneCopyFilesLabel(pane), filePaneMenuActionCopyFiles),
+		)
+		if pasteFilesItem.Action != "" {
+			root.Items = append(root.Items, pasteFilesItem)
+		}
+		root.Items = append(root.Items,
 			fileContextMenuActionItem("rename", "Rename", filePaneMenuActionRename),
 			fileContextMenuSubmenuItem("ops", "File Ops", fileOpsMenu),
 			fileContextMenuSeparator("sep-meta"),
@@ -279,6 +302,12 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		}
 		root.Items = append(root.Items,
 			fileContextMenuSeparator("sep-edit"),
+			fileContextMenuActionItem("copy-files", filePaneCopyFilesLabel(pane), filePaneMenuActionCopyFiles),
+		)
+		if pasteFilesItem.Action != "" {
+			root.Items = append(root.Items, pasteFilesItem)
+		}
+		root.Items = append(root.Items,
 			fileContextMenuActionItem("rename", "Rename", filePaneMenuActionRename),
 			fileContextMenuSubmenuItem("ops", "File Ops", fileOpsMenu),
 			fileContextMenuSeparator("sep-meta"),
@@ -287,6 +316,30 @@ func (ui *UI) filePaneContextMenuSpec(idx int, pane *filePaneState) fileContextM
 		)
 	}
 	return root
+}
+
+func filePaneCopyFilesLabel(pane *filePaneState) string {
+	count := 0
+	if pane != nil {
+		count = len(pane.selectedEntriesForAction())
+	}
+	if count == 1 {
+		return "Copy File"
+	}
+	if count > 1 {
+		return "Copy " + strconv.Itoa(count) + " Files"
+	}
+	return "Copy Files"
+}
+
+func filePanePasteFilesLabel(count int) string {
+	if count == 1 {
+		return "Paste File"
+	}
+	if count > 1 {
+		return "Paste " + strconv.Itoa(count) + " Files"
+	}
+	return "Paste Files"
 }
 
 func (ui *UI) filePaneFileOpsMenuSpec(readOnly bool) *fileContextMenuSpec {
@@ -412,6 +465,10 @@ func (ui *UI) handleFilePaneContextMenuAction(idx int, pane *filePaneState, row 
 	if pane == nil {
 		return result
 	}
+	if ui.fileCopy != nil && ui.fileCopy.directPaste && filePaneContextActionMutatesFiles(action) {
+		pane.setNotice("paste already in progress", now)
+		return result
+	}
 	switch action {
 	case filePaneMenuActionOpen:
 		ui.openFilePaneContextTarget(idx, row, now)
@@ -425,6 +482,28 @@ func (ui *UI) handleFilePaneContextMenuAction(idx int, pane *filePaneState, row 
 		ui.startFileMoveDialog(idx, now)
 	case filePaneMenuActionDeleteDialog:
 		ui.startFileDeleteDialog(idx, now)
+	case filePaneMenuActionCopyFiles:
+		paths := filePaneSelectedLocalClipboardPaths(pane)
+		if len(paths) == 0 {
+			pane.setNotice("nothing local selected to copy", now)
+			break
+		}
+		if err := writeFileClipboardFilesFunc(paths); err != nil {
+			pane.setNotice("copy to clipboard failed: "+err.Error(), now)
+			break
+		}
+		pane.setNotice(fileClipboardCopiedNotice(len(paths)), now)
+	case filePaneMenuActionPasteFiles:
+		paths, err := readFileClipboardFilesFunc()
+		if err != nil {
+			pane.setNotice("read clipboard failed: "+err.Error(), now)
+			break
+		}
+		if len(paths) == 0 {
+			pane.setNotice("clipboard contains no files", now)
+			break
+		}
+		ui.startClipboardFilePaste(idx, paths, now)
 	case filePaneMenuActionExtractHere:
 		ui.startArchiveExtractHere(idx, row, now)
 	case filePaneMenuActionCopyPath:
@@ -456,6 +535,45 @@ func (ui *UI) handleFilePaneContextMenuAction(idx int, pane *filePaneState, row 
 		pane.setNotice("action is not implemented yet", now)
 	}
 	return result
+}
+
+func filePaneContextActionMutatesFiles(action string) bool {
+	switch action {
+	case filePaneMenuActionRename,
+		filePaneMenuActionCopyDialog,
+		filePaneMenuActionMoveDialog,
+		filePaneMenuActionDeleteDialog,
+		filePaneMenuActionPasteFiles,
+		filePaneMenuActionPermissions,
+		filePaneMenuActionNewFolder,
+		filePaneMenuActionNewFile,
+		filePaneMenuActionExtractHere:
+		return true
+	default:
+		return false
+	}
+}
+
+func filePaneSelectedLocalClipboardPaths(pane *filePaneState) []string {
+	if pane == nil || !pane.writableLocalView() {
+		return nil
+	}
+	selected := pane.selectedEntriesForAction()
+	paths := make([]string, 0, len(selected))
+	for _, entry := range selected {
+		if entry.Kind == filesys.EntryParent || strings.TrimSpace(entry.Path) == "" {
+			continue
+		}
+		paths = append(paths, filepath.Clean(entry.Path))
+	}
+	return paths
+}
+
+func fileClipboardCopiedNotice(count int) string {
+	if count == 1 {
+		return "file copied to clipboard"
+	}
+	return strconv.Itoa(count) + " files copied to clipboard"
 }
 
 func (ui *UI) writeClipboardText(gtx layout.Context, text string) {

@@ -87,6 +87,11 @@ func newFileKeyMap(cfg *fm.Config) fileKeyMap {
 		if !ok {
 			bindings, _ = parseFileKeyBindings(spec.fallback)
 		}
+		if spec.action == fileActionDelete {
+			bindings = appendUniqueKeyBinding(bindings, fileKeyBinding{
+				Name: key.NameDeleteForward,
+			})
+		}
 		out.entries = append(out.entries, fileActionBinding{
 			Action:   spec.action,
 			Bindings: bindings,
@@ -195,6 +200,8 @@ func fileKeyName(part string) (key.Name, bool) {
 		return key.NameEnter, true
 	case "backspace":
 		return key.NameDeleteBackward, true
+	case "delete", "del":
+		return key.NameDeleteForward, true
 	case "insert", "ins":
 		return keyNameInsert, true
 	case "tab":
