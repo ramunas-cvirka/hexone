@@ -100,6 +100,59 @@ func TestMarshalConfigOmitsInternalFields(t *testing.T) {
 	if !strings.Contains(out, "interface:\n") || !strings.Contains(out, "font_size_sp: 14") {
 		t.Fatalf("serialized config missing interface font settings:\n%s", out)
 	}
+	if !strings.Contains(out, "current_dir:\n") || !strings.Contains(out, "typeface: Iosevka Nerd Font Mono") {
+		t.Fatalf("serialized config missing current-dir font settings:\n%s", out)
+	}
+}
+
+func TestMouseWheelSelectionMovementDefaultsOffAndRoundTrips(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.General.WheelMovesSelection {
+		t.Fatal("mouse wheel should scroll the pane without moving the active item by default")
+	}
+
+	cfg.General.WheelMovesSelection = true
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if !strings.Contains(string(data), "wheel_moves_selection: true") {
+		t.Fatalf("serialized config missing wheel behavior:\n%s", data)
+	}
+
+	loaded := DefaultConfig()
+	if err := yaml.Unmarshal(data, loaded); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if !loaded.General.WheelMovesSelection {
+		t.Fatal("mouse wheel selection behavior did not survive config round trip")
+	}
+}
+
+func TestDeleteSafetyOptionsDefaultOffAndRoundTrip(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.General.UseTrash || cfg.General.DeleteWithoutConfirm {
+		t.Fatalf("delete options should default off: useTrash=%v withoutConfirmation=%v", cfg.General.UseTrash, cfg.General.DeleteWithoutConfirm)
+	}
+
+	cfg.General.UseTrash = true
+	cfg.General.DeleteWithoutConfirm = true
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	out := string(data)
+	if !strings.Contains(out, "use_trash: true") || !strings.Contains(out, "delete_without_confirmation: true") {
+		t.Fatalf("serialized config missing delete options:\n%s", out)
+	}
+
+	loaded := DefaultConfig()
+	if err := yaml.Unmarshal(data, loaded); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if !loaded.General.UseTrash || !loaded.General.DeleteWithoutConfirm {
+		t.Fatalf("delete options did not round trip: %#v", loaded.General)
+	}
 }
 
 func TestNormalizeTerminalHeightRowsAllowsTallDynamicLayouts(t *testing.T) {
@@ -158,6 +211,29 @@ general:
 	}
 }
 
+func TestCurrentDirFontDefaultsIndependentlyFromInterfaceFont(t *testing.T) {
+	raw := `
+interface:
+  typeface: Hack Nerd Font Mono
+  font_size_sp: 18
+`
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if got, want := cfg.Interface.Typeface, resources.BundledFontFamilyHackNerdFontMono; got != want {
+		t.Fatalf("interface typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.CurrentDir.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("current-dir typeface=%q want independent default %q", got, want)
+	}
+	if got, want := cfg.CurrentDir.FontSizeSp, float32(11); got != want {
+		t.Fatalf("current-dir font size=%v want independent default %v", got, want)
+	}
+}
+
 func TestDefaultConfigUsesShippedVisualStyle(t *testing.T) {
 	cfg := DefaultConfig()
 
@@ -169,6 +245,12 @@ func TestDefaultConfigUsesShippedVisualStyle(t *testing.T) {
 	}
 	if got, want := cfg.Interface.FontSizeSp, float32(14); got != want {
 		t.Fatalf("interface font size=%v want %v", got, want)
+	}
+	if got, want := cfg.CurrentDir.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
+		t.Fatalf("current-dir typeface=%q want %q", got, want)
+	}
+	if got, want := cfg.CurrentDir.FontSizeSp, float32(11); got != want {
+		t.Fatalf("current-dir font size=%v want %v", got, want)
 	}
 	if got, want := cfg.Tabs.Typeface, resources.BundledFontFamilyIosevkaNerdFontMono; got != want {
 		t.Fatalf("tabs typeface=%q want %q", got, want)
@@ -900,6 +982,36 @@ func TestDefaultConfigEnablesViewerSmoothScrolling(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigShowsViewerLineNumbers(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if !cfg.Viewer.ShowLineNumbers {
+		t.Fatal("viewer show_line_numbers should default to true")
+	}
+
+	out := string(mustMarshalConfig(t, cfg))
+	if !strings.Contains(out, "show_line_numbers: true") {
+		t.Fatalf("serialized config missing viewer show_line_numbers:\n%s", out)
+	}
+}
+
+func TestLoadConfigDefaultsViewerLineNumbersWhenFieldMissing(t *testing.T) {
+	raw := `
+viewer:
+  shell: auto
+  command: cat {path}
+`
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal([]byte(raw), cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	cfg.normalize()
+
+	if !cfg.Viewer.ShowLineNumbers {
+		t.Fatal("viewer show_line_numbers should stay enabled when yaml omits the field")
+	}
+}
+
 func TestLoadConfigDefaultsViewerSmoothScrollingWhenFieldMissing(t *testing.T) {
 	raw := `
 viewer:
@@ -1580,6 +1692,25 @@ func TestFilenamePermissionAndSizeMatchesSupportPartialRules(t *testing.T) {
 	}
 	if FilenameSizeMatches(2048, FilenameSizeRule{Size: "1k", Match: FilenameSizeMatchAtMost}) {
 		t.Fatal("at-most size match should reject larger values")
+	}
+}
+
+func TestNormalizeTerminalSnippetsUsesExplicitScopes(t *testing.T) {
+	got := NormalizeTerminalSnippets([]TerminalSnippet{
+		{Name: "Global", Command: "date", Scope: TerminalSnippetScopeGlobal, Context: "/ignored"},
+		{Name: "Repo", Command: "go test ./...", Scope: TerminalSnippetScopeRepository, Context: "/src/app"},
+		{Name: "Invalid", Command: "pwd", Scope: TerminalSnippetScopeDirectory},
+		{Name: "Multiline", Command: "echo one\necho two", Scope: TerminalSnippetScopeGlobal},
+		{Name: "Repo", Command: "go test -race ./...", Scope: TerminalSnippetScopeRepository, Context: "/src/app"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("snippet count=%d want 2", len(got))
+	}
+	if got[0].Scope != TerminalSnippetScopeGlobal || got[0].Context != "" {
+		t.Fatalf("global snippet=%+v", got[0])
+	}
+	if got[1].Command != "go test -race ./..." {
+		t.Fatalf("duplicate scoped snippet was not replaced: %+v", got[1])
 	}
 }
 

@@ -61,6 +61,10 @@ const (
 
 	FontWeightRegular = "regular"
 	FontWeightBold    = "bold"
+
+	TerminalSnippetScopeGlobal     = "global"
+	TerminalSnippetScopeDirectory  = "directory"
+	TerminalSnippetScopeRepository = "repository"
 )
 
 type NameCompact struct {
@@ -174,6 +178,11 @@ type TabsConfig struct {
 }
 
 type InterfaceConfig struct {
+	Typeface   string  `yaml:"typeface"`
+	FontSizeSp float32 `yaml:"font_size_sp"`
+}
+
+type CurrentDirConfig struct {
 	Typeface   string  `yaml:"typeface"`
 	FontSizeSp float32 `yaml:"font_size_sp"`
 }
@@ -391,6 +400,9 @@ type GeneralConfig struct {
 	DateWeight            string  `yaml:"date_weight"`
 	DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 	OpenFavoritesInNewTab bool    `yaml:"open_favorites_in_new_tab"`
+	WheelMovesSelection   bool    `yaml:"wheel_moves_selection"`
+	UseTrash              bool    `yaml:"use_trash"`
+	DeleteWithoutConfirm  bool    `yaml:"delete_without_confirmation"`
 	CompletionSound       string  `yaml:"completion_sound"`
 }
 
@@ -405,6 +417,9 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 		DateWeight            string  `yaml:"date_weight"`
 		DimInactivePanes      bool    `yaml:"dim_inactive_panes"`
 		OpenFavoritesInNewTab *bool   `yaml:"open_favorites_in_new_tab"`
+		WheelMovesSelection   bool    `yaml:"wheel_moves_selection"`
+		UseTrash              bool    `yaml:"use_trash"`
+		DeleteWithoutConfirm  bool    `yaml:"delete_without_confirmation"`
 		CompletionSound       string  `yaml:"completion_sound"`
 	}
 	if err := node.Decode(&raw); err != nil {
@@ -422,6 +437,9 @@ func (g *GeneralConfig) UnmarshalYAML(node *yaml.Node) error {
 	if raw.OpenFavoritesInNewTab != nil {
 		g.OpenFavoritesInNewTab = *raw.OpenFavoritesInNewTab
 	}
+	g.WheelMovesSelection = raw.WheelMovesSelection
+	g.UseTrash = raw.UseTrash
+	g.DeleteWithoutConfirm = raw.DeleteWithoutConfirm
 	g.CompletionSound = NormalizeCompletionSound(raw.CompletionSound)
 	return nil
 }
@@ -484,6 +502,13 @@ type CustomCommand struct {
 	Command string `yaml:"command"`
 }
 
+type TerminalSnippet struct {
+	Name    string `yaml:"name"`
+	Command string `yaml:"command"`
+	Scope   string `yaml:"scope"`
+	Context string `yaml:"context,omitempty"`
+}
+
 type AssociationProgram struct {
 	AppPath    string   `yaml:"app_path"`
 	Extensions []string `yaml:"extensions"`
@@ -525,6 +550,7 @@ type ViewerConfig struct {
 	HexBytesText            string              `yaml:"hex_bytes_text,omitempty"`
 	HexASCIIText            string              `yaml:"hex_ascii_text,omitempty"`
 	SmoothScrolling         bool                `yaml:"smooth_scrolling"`
+	ShowLineNumbers         bool                `yaml:"show_line_numbers"`
 	Shell                   string              `yaml:"shell"`
 	Command                 string              `yaml:"command"`
 	RemoteSearchMode        string              `yaml:"remote_search_mode"`
@@ -588,10 +614,12 @@ type Config struct {
 	Terminal          TerminalConfig       `yaml:"terminal"`
 	Tabs              TabsConfig           `yaml:"tabs"`
 	Interface         InterfaceConfig      `yaml:"interface"`
+	CurrentDir        CurrentDirConfig     `yaml:"current_dir"`
 	General           GeneralConfig        `yaml:"general"`
 	Colors            ColorsConfig         `yaml:"colors"`
 	Associations      []AssociationProgram `yaml:"associations,omitempty"`
 	CustomCommands    []CustomCommand      `yaml:"custom_commands,omitempty"`
+	TerminalSnippets  []TerminalSnippet    `yaml:"terminal_snippets,omitempty"`
 	Viewer            ViewerConfig         `yaml:"viewer"`
 	SSH               SSHConfig            `yaml:"ssh"`
 
@@ -608,11 +636,13 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Terminal          TerminalConfig       `yaml:"terminal"`
 		Tabs              TabsConfig           `yaml:"tabs"`
 		Interface         InterfaceConfig      `yaml:"interface"`
+		CurrentDir        CurrentDirConfig     `yaml:"current_dir"`
 		Font              legacyFontConfig     `yaml:"font"`
 		General           GeneralConfig        `yaml:"general"`
 		Colors            ColorsConfig         `yaml:"colors"`
 		Associations      []AssociationProgram `yaml:"associations,omitempty"`
 		CustomCommands    []CustomCommand      `yaml:"custom_commands,omitempty"`
+		TerminalSnippets  []TerminalSnippet    `yaml:"terminal_snippets,omitempty"`
 		Viewer            ViewerConfig         `yaml:"viewer"`
 		SSH               SSHConfig            `yaml:"ssh"`
 	}{
@@ -625,6 +655,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		},
 		Viewer: ViewerConfig{
 			SmoothScrolling: true,
+			ShowLineNumbers: true,
 		},
 	}
 	if err := node.Decode(&raw); err != nil {
@@ -649,10 +680,12 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Terminal:          raw.Terminal,
 		Tabs:              raw.Tabs,
 		Interface:         raw.Interface,
+		CurrentDir:        raw.CurrentDir,
 		General:           raw.General,
 		Colors:            raw.Colors,
 		Associations:      raw.Associations,
 		CustomCommands:    raw.CustomCommands,
+		TerminalSnippets:  raw.TerminalSnippets,
 		Viewer:            raw.Viewer,
 		SSH:               raw.SSH,
 	}
@@ -697,6 +730,10 @@ func DefaultConfig() *Config {
 			Typeface:   resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp: 14,
 		},
+		CurrentDir: CurrentDirConfig{
+			Typeface:   resources.BundledFontFamilyIosevkaNerdFontMono,
+			FontSizeSp: 11,
+		},
 		General: GeneralConfig{
 			Typeface:              resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp:            15,
@@ -730,8 +767,9 @@ func DefaultConfig() *Config {
 				},
 			},
 		},
-		Associations:   nil,
-		CustomCommands: nil,
+		Associations:     nil,
+		CustomCommands:   nil,
+		TerminalSnippets: nil,
 		Viewer: ViewerConfig{
 			FileEncoding:            ViewerFileEncodingAuto,
 			Typeface:                resources.BundledFontFamilyFiraCodeNerdFontMono,
@@ -739,6 +777,7 @@ func DefaultConfig() *Config {
 			Text:                    DefaultViewerTextHex,
 			Selection:               DefaultViewerSelectionHex,
 			SmoothScrolling:         true,
+			ShowLineNumbers:         true,
 			Shell:                   "auto",
 			Command:                 "cat {path}",
 			RemoteSearchMode:        ViewerRemoteSearchModeRemote,
@@ -1053,6 +1092,12 @@ func (c *Config) normalize() {
 	if c.Interface.FontSizeSp < 6 {
 		c.Interface.FontSizeSp = 14
 	}
+	if c.CurrentDir.Typeface == "" || !resources.IsBundledFontFamily(c.CurrentDir.Typeface) {
+		c.CurrentDir.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	}
+	if c.CurrentDir.FontSizeSp < 6 {
+		c.CurrentDir.FontSizeSp = 11
+	}
 	if c.Tabs.Typeface == "" {
 		c.Tabs.Typeface = c.General.Typeface
 	}
@@ -1114,6 +1159,7 @@ func (c *Config) normalize() {
 	c.Colors.Filenames.ExtensionRules = NormalizeFilenameExtensionRules(c.Colors.Filenames.ExtensionRules)
 	c.Colors.Filenames.SizeRules = NormalizeFilenameSizeRules(c.Colors.Filenames.SizeRules)
 	c.CustomCommands = NormalizeCustomCommands(c.CustomCommands)
+	c.TerminalSnippets = NormalizeTerminalSnippets(c.TerminalSnippets)
 
 	c.Viewer.FileEncoding = NormalizeViewerFileEncoding(c.Viewer.FileEncoding)
 	c.Viewer.Shell = NormalizeViewerShell(c.Viewer.Shell)
@@ -1428,6 +1474,61 @@ func NormalizeCustomCommands(raw []CustomCommand) []CustomCommand {
 		}
 		cmd.Slot = i + 1
 		out = append(out, cmd)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func NormalizeTerminalSnippet(raw TerminalSnippet) (TerminalSnippet, bool) {
+	command := strings.TrimSpace(raw.Command)
+	if command == "" || strings.ContainsAny(command, "\r\n") {
+		return TerminalSnippet{}, false
+	}
+	name := strings.TrimSpace(raw.Name)
+	if name == "" {
+		name = customCommandFallbackName(command)
+	}
+	scope := strings.ToLower(strings.TrimSpace(raw.Scope))
+	context := strings.TrimSpace(raw.Context)
+	switch scope {
+	case "", TerminalSnippetScopeGlobal:
+		scope = TerminalSnippetScopeGlobal
+		context = ""
+	case TerminalSnippetScopeDirectory, TerminalSnippetScopeRepository:
+		if context == "" {
+			return TerminalSnippet{}, false
+		}
+	default:
+		return TerminalSnippet{}, false
+	}
+	return TerminalSnippet{
+		Name:    name,
+		Command: command,
+		Scope:   scope,
+		Context: context,
+	}, true
+}
+
+func NormalizeTerminalSnippets(raw []TerminalSnippet) []TerminalSnippet {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]TerminalSnippet, 0, len(raw))
+	seen := make(map[string]int, len(raw))
+	for _, candidate := range raw {
+		snippet, ok := NormalizeTerminalSnippet(candidate)
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(snippet.Name) + "\x00" + snippet.Scope + "\x00" + snippet.Context
+		if index, exists := seen[key]; exists {
+			out[index] = snippet
+			continue
+		}
+		seen[key] = len(out)
+		out = append(out, snippet)
 	}
 	if len(out) == 0 {
 		return nil

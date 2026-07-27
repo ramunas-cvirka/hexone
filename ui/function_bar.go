@@ -18,7 +18,6 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -34,7 +33,8 @@ const (
 type functionBarAction uint8
 
 const (
-	functionBarActionHelp functionBarAction = iota
+	functionBarActionNone functionBarAction = iota
+	functionBarActionHelp
 	functionBarActionCustom
 	functionBarActionView
 	functionBarActionOpen
@@ -44,6 +44,11 @@ const (
 	functionBarActionDelete
 	functionBarActionTools
 	functionBarActionExit
+	functionBarActionViewerSave
+	functionBarActionViewerFind
+	functionBarActionViewerMode
+	functionBarActionViewerWrap
+	functionBarActionViewerLineNumbers
 )
 
 type functionBarButtonSpec struct {
@@ -97,7 +102,11 @@ func popupPressed(gtx layout.Context, tag event.Tag) bool {
 }
 
 func (ui *UI) hasBlockingFileDialog() bool {
-	return ui != nil && (ui.fileCopy != nil || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.multiRename != nil || ui.customCommandEditor != nil || ui.archiveExtractConflictOpen())
+	return ui != nil && (ui.fileCopyBlocksUI() || ui.fileDelete != nil || ui.fileMove != nil || ui.fileCreate != nil || ui.filePerm != nil || ui.multiRename != nil || ui.customCommandEditor != nil || ui.terminalSnippetEditor != nil || ui.archiveExtractConflictOpen())
+}
+
+func (ui *UI) fileCopyBlocksUI() bool {
+	return ui != nil && ui.fileCopy != nil && !ui.fileCopy.directPaste
 }
 
 func (ui *UI) closeFunctionBarToolsMenu() {
@@ -203,6 +212,12 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 		return ui.helpModal == nil && ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
 	case functionBarActionTools:
 		return ui.helpModal == nil && ui.settingsModal == nil && ui.sshModal == nil && !ui.hasBlockingFileDialog()
+	case functionBarActionViewerSave,
+		functionBarActionViewerFind,
+		functionBarActionViewerMode,
+		functionBarActionViewerWrap,
+		functionBarActionViewerLineNumbers:
+		return ui.viewerFunctionBarActionEnabled(action)
 	}
 
 	if ui.Tabs.Value != "tab0" || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.pathEditActive() {
@@ -211,25 +226,57 @@ func (ui *UI) functionBarActionEnabled(action functionBarAction) bool {
 
 	switch action {
 	case functionBarActionCustom:
-		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
+		return !ui.hasBlockingFileDialog()
 	case functionBarActionView:
 		if ui.fileViewer != nil {
 			return true
 		}
 		return !ui.hasBlockingFileDialog()
 	case functionBarActionOpen:
-		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
+		if ui.fileViewer != nil {
+			ok, _ := ui.fileViewerCanEdit(ui.fileViewer)
+			return ok
+		}
+		return !ui.hasBlockingFileDialog()
 	case functionBarActionCopy, functionBarActionMove, functionBarActionCreate, functionBarActionDelete:
-		return ui.fileViewer == nil && !ui.hasBlockingFileDialog()
+		return ui.fileViewer == nil && ui.fileCopy == nil && !ui.hasBlockingFileDialog()
+	default:
+		return false
+	}
+}
+
+func (ui *UI) viewerFunctionBarActionEnabled(action functionBarAction) bool {
+	if ui == nil || ui.fileViewer == nil || ui.Tabs.Value != "tab0" ||
+		ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil ||
+		ui.hasBlockingFileDialog() || ui.fileViewer.modeSwitchPrompt.open {
+		return false
+	}
+	st := ui.fileViewer
+	switch action {
+	case functionBarActionViewerSave:
+		return st.editMode && st.editDirty && !st.saving
+	case functionBarActionViewerFind:
+		return !st.commandEditOn && viewerSupportsFind(st)
+	case functionBarActionViewerMode:
+		return !st.commandOnly
+	case functionBarActionViewerWrap:
+		return !st.detectedImagePreview && st.mode != "hex" && !st.commandEditOn
+	case functionBarActionViewerLineNumbers:
+		return !st.detectedImagePreview && st.mode != "hex" && !st.commandEditOn
 	default:
 		return false
 	}
 }
 
 func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) bool {
+	return ui.performFunctionBarActionContext(layout.Context{Now: now}, action)
+}
+
+func (ui *UI) performFunctionBarActionContext(gtx layout.Context, action functionBarAction) bool {
 	if ui == nil {
 		return false
 	}
+	now := gtx.Now
 	switch action {
 	case functionBarActionHelp:
 		if !ui.functionBarActionEnabled(action) {
@@ -241,6 +288,11 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 	case functionBarActionCustom:
 		if !ui.functionBarActionEnabled(action) {
 			return false
+		}
+		if ui.fileViewer != nil {
+			ui.closeFunctionBarPopups()
+			ui.startFileViewerSave(now)
+			return true
 		}
 		if ui.customCommandMenuOpen {
 			ui.closeCustomCommandMenu()
@@ -260,7 +312,12 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 		}
 		ui.closeFunctionBarPopups()
 		if ui.fileViewer != nil {
-			ui.startFileViewerLoad(now)
+			if ui.fileViewer.editMode {
+				ui.discardFileViewerChanges(ui.fileViewer)
+				ui.stopFileViewerEdit()
+				return true
+			}
+			ui.closeFileViewer()
 			return true
 		}
 		ui.startFileViewer(ui.activeFilePane, now)
@@ -270,6 +327,10 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 			return false
 		}
 		ui.closeFunctionBarPopups()
+		if ui.fileViewer != nil {
+			ui.startFileViewerEdit(now)
+			return true
+		}
 		ui.startFileExternalOpenAction(ui.activeFilePane, now)
 		return true
 	case functionBarActionCopy:
@@ -321,24 +382,97 @@ func (ui *UI) performFunctionBarAction(action functionBarAction, now time.Time) 
 			return false
 		}
 		ui.closeFunctionBarPopups()
+		if st := ui.fileViewer; st != nil {
+			ui.discardFileViewerChanges(st)
+			ui.stopFileViewerEdit()
+		}
 		ui.requestWindowClose()
+		return true
+	case functionBarActionViewerSave:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		return ui.startFileViewerSave(now)
+	case functionBarActionViewerFind:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.openFileViewerFind(now)
+		return true
+	case functionBarActionViewerMode:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		next := "hex"
+		if ui.fileViewer.mode == "hex" {
+			next = "file"
+		}
+		ui.setFileViewerMode(next, now)
+		return true
+	case functionBarActionViewerWrap:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.toggleViewerWordWrap()
+		return true
+	case functionBarActionViewerLineNumbers:
+		if !ui.functionBarActionEnabled(action) {
+			return false
+		}
+		ui.toggleViewerLineNumbers()
 		return true
 	}
 	return false
 }
 
 func (ui *UI) functionBarButtonSpecs() []functionBarButtonSpec {
+	if ui != nil && ui.fileViewer != nil {
+		return ui.viewerFunctionBarButtonSpecs()
+	}
+	customLabel := "Custom"
+	viewLabel := "View"
+	openLabel := "Open"
+	customFill := ui.customCommandMenuFill()
+	openFill := float32(0)
 	return []functionBarButtonSpec{
 		{action: functionBarActionHelp, keyLabel: "F1", label: "Help", click: &ui.functionBarClicks[0], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionHelp)},
-		{action: functionBarActionCustom, keyLabel: "F2", label: "Custom", click: &ui.functionBarClicks[1], activeFill: ui.customCommandMenuFill(), enabled: ui.functionBarActionEnabled(functionBarActionCustom)},
-		{action: functionBarActionView, keyLabel: "F3", label: "View", click: &ui.functionBarClicks[2], activeFill: boolFill(ui.fileViewer != nil), enabled: ui.functionBarActionEnabled(functionBarActionView)},
-		{action: functionBarActionOpen, keyLabel: "F4", label: "Open", click: &ui.functionBarClicks[3], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
+		{action: functionBarActionCustom, keyLabel: "F2", label: customLabel, click: &ui.functionBarClicks[1], activeFill: customFill, enabled: ui.functionBarActionEnabled(functionBarActionCustom)},
+		{action: functionBarActionView, keyLabel: "F3", label: viewLabel, click: &ui.functionBarClicks[2], activeFill: boolFill(ui.fileViewer != nil), enabled: ui.functionBarActionEnabled(functionBarActionView)},
+		{action: functionBarActionOpen, keyLabel: "F4", label: openLabel, click: &ui.functionBarClicks[3], activeFill: openFill, enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
 		{action: functionBarActionCopy, keyLabel: "F5", label: "Copy", click: &ui.functionBarClicks[4], activeFill: boolFill(ui.fileCopy != nil), enabled: ui.functionBarActionEnabled(functionBarActionCopy)},
 		{action: functionBarActionMove, keyLabel: "F6", label: "Move", click: &ui.functionBarClicks[5], activeFill: boolFill(ui.fileMove != nil), enabled: ui.functionBarActionEnabled(functionBarActionMove)},
 		{action: functionBarActionCreate, keyLabel: "F7", label: "New", click: &ui.functionBarClicks[6], activeFill: boolFill(ui.fileCreate != nil), enabled: ui.functionBarActionEnabled(functionBarActionCreate)},
 		{action: functionBarActionDelete, keyLabel: "F8", label: "Delete", click: &ui.functionBarClicks[7], activeFill: boolFill(ui.fileDelete != nil), enabled: ui.functionBarActionEnabled(functionBarActionDelete)},
 		{action: functionBarActionTools, keyLabel: "F9", label: "Tools", click: &ui.functionBarClicks[8], activeFill: ui.functionBarToolsFill(), enabled: ui.functionBarActionEnabled(functionBarActionTools)},
 		{action: functionBarActionExit, keyLabel: "F10", label: "Exit", click: &ui.functionBarClicks[9], activeFill: 0, enabled: ui.functionBarActionEnabled(functionBarActionExit)},
+	}
+}
+
+func (ui *UI) viewerFunctionBarButtonSpecs() []functionBarButtonSpec {
+	st := ui.fileViewer
+	viewLabel := "Close"
+	if st.editMode {
+		viewLabel = "View"
+	}
+	modeLabel := "Hex"
+	if st.mode == "hex" {
+		modeLabel = "Text"
+	}
+	wrapLabel := "Wrap"
+	if st.wrapEnabled {
+		wrapLabel = "Unwrap"
+	}
+	return []functionBarButtonSpec{
+		{action: functionBarActionHelp, keyLabel: "F1", label: "Help", click: &ui.functionBarClicks[0], enabled: ui.functionBarActionEnabled(functionBarActionHelp)},
+		{action: functionBarActionViewerSave, keyLabel: "F2", label: "Save", click: &ui.functionBarClicks[1], enabled: ui.functionBarActionEnabled(functionBarActionViewerSave)},
+		{action: functionBarActionView, keyLabel: "F3", label: viewLabel, click: &ui.functionBarClicks[2], enabled: ui.functionBarActionEnabled(functionBarActionView)},
+		{action: functionBarActionOpen, keyLabel: "F4", label: "Edit", click: &ui.functionBarClicks[3], enabled: ui.functionBarActionEnabled(functionBarActionOpen)},
+		{action: functionBarActionViewerLineNumbers, keyLabel: "F5", label: "Lines", click: &ui.functionBarClicks[4], enabled: ui.functionBarActionEnabled(functionBarActionViewerLineNumbers)},
+		{action: functionBarActionNone, keyLabel: "F6", label: "", click: &ui.functionBarClicks[5], enabled: false},
+		{action: functionBarActionViewerFind, keyLabel: "F7", label: "Find", click: &ui.functionBarClicks[6], enabled: ui.functionBarActionEnabled(functionBarActionViewerFind)},
+		{action: functionBarActionViewerMode, keyLabel: "F8", label: modeLabel, click: &ui.functionBarClicks[7], enabled: ui.functionBarActionEnabled(functionBarActionViewerMode)},
+		{action: functionBarActionViewerWrap, keyLabel: "F9", label: wrapLabel, click: &ui.functionBarClicks[8], enabled: ui.functionBarActionEnabled(functionBarActionViewerWrap)},
+		{action: functionBarActionExit, keyLabel: "F10", label: "Exit", click: &ui.functionBarClicks[9], enabled: ui.functionBarActionEnabled(functionBarActionExit)},
 	}
 }
 
@@ -379,8 +513,47 @@ func (ui *UI) functionBarTextSize() unit.Sp {
 	return ui.scaleInterfaceFontSize(11)
 }
 
-func (ui *UI) functionBarButtonText(spec functionBarButtonSpec) string {
-	return spec.keyLabel + " " + spec.label
+func functionBarKeyTextColor(labelColor color.NRGBA) color.NRGBA {
+	return color.NRGBA{R: 92, G: 214, B: 255, A: labelColor.A}
+}
+
+func (ui *UI) functionBarLabelStyle(th *material.Theme, label string, fg color.NRGBA, weight font.Weight) material.LabelStyle {
+	lbl := material.Body2(th, label)
+	lbl.Font.Typeface = ui.interfaceTypeface()
+	lbl.Font.Weight = weight
+	lbl.TextSize = ui.functionBarTextSize()
+	lbl.Color = fg
+	lbl.MaxLines = 1
+	lbl.Truncator = "…"
+	return lbl
+}
+
+func (ui *UI) functionBarShortcutLabelStyle(th *material.Theme, label string, labelColor color.NRGBA) material.LabelStyle {
+	return ui.functionBarLabelStyle(th, label, functionBarKeyTextColor(labelColor), font.Bold)
+}
+
+func (ui *UI) functionBarActionLabelStyle(th *material.Theme, label string, labelColor color.NRGBA) material.LabelStyle {
+	return ui.functionBarLabelStyle(th, label, labelColor, font.Normal)
+}
+
+func (ui *UI) functionBarSplitLabelStyles(th *material.Theme, shortcut, action string, labelColor color.NRGBA) (material.LabelStyle, material.LabelStyle, material.LabelStyle) {
+	shortcutLabel := ui.functionBarShortcutLabelStyle(th, strings.TrimSpace(shortcut), labelColor)
+	actionLabel := ui.functionBarActionLabelStyle(th, strings.TrimSpace(action), labelColor)
+	spaceLabel := ui.functionBarActionLabelStyle(th, " ", labelColor)
+	return shortcutLabel, spaceLabel, actionLabel
+}
+
+func (ui *UI) layoutFunctionBarSplitLabel(th *material.Theme, gtx layout.Context, shortcut, action string, labelColor color.NRGBA) layout.Dimensions {
+	shortcutLabel, spaceLabel, actionLabel := ui.functionBarSplitLabelStyles(th, shortcut, action, labelColor)
+
+	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(
+			gtx,
+			layout.Rigid(shortcutLabel.Layout),
+			layout.Rigid(spaceLabel.Layout),
+			layout.Rigid(actionLabel.Layout),
+		)
+	})
 }
 
 func (ui *UI) setFunctionBarHeldModifier(mod key.Modifiers, down bool) bool {
@@ -562,7 +735,7 @@ func (ui *UI) functionBarModifierHintSpecsForContext(terminalFocused bool, goos 
 			}
 		}
 		if !ui.pathEditActive() {
-			add("S", "Settings")
+			add("S", "Save")
 		}
 		return hints
 	}
@@ -638,6 +811,15 @@ func (ui *UI) functionBarHintSlotLabelsForSpecs(hints []functionBarHintSpec, slo
 	return labels
 }
 
+func functionBarHintSlots(hints []functionBarHintSpec, slotCount int) []functionBarHintSpec {
+	if slotCount < 0 {
+		slotCount = 0
+	}
+	slots := make([]functionBarHintSpec, slotCount)
+	copy(slots, hints)
+	return slots
+}
+
 func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context, hints []functionBarHintSpec) layout.Dimensions {
 	stripH := gtx.Dp(unit.Dp(functionBarStripDp))
 	if stripH < 1 {
@@ -658,7 +840,8 @@ func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context,
 		}
 		specs := ui.functionBarButtonSpecs()
 		widths := ui.functionBarWidths(th, gtx, specs)
-		slotLabels := ui.functionBarHintSlotLabelsForSpecs(hints, len(widths))
+		slots := functionBarHintSlots(hints, len(widths))
+		labelColor := color.NRGBA{R: 228, G: 232, B: 240, A: 255}
 		return fixedWidth(gtx, outerW, func(gtx layout.Context) layout.Dimensions {
 			return fillRoundedBox(
 				gtx,
@@ -675,15 +858,7 @@ func (ui *UI) layoutFunctionBarHintStrip(th *material.Theme, gtx layout.Context,
 									children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 										return fixedWidth(gtx, widths[i], func(gtx layout.Context) layout.Dimensions {
 											return fillBgExact(gtx, color.NRGBA{}, func(gtx layout.Context) layout.Dimensions {
-												lbl := material.Body2(th, slotLabels[i])
-												lbl.Font.Typeface = ui.interfaceTypeface()
-												lbl.Font.Weight = font.Medium
-												lbl.TextSize = ui.functionBarTextSize()
-												lbl.Color = color.NRGBA{R: 228, G: 232, B: 240, A: 255}
-												lbl.MaxLines = 1
-												lbl.Truncator = "…"
-												lbl.Alignment = text.Middle
-												return layoutVCenteredLabel(gtx, lbl)
+												return ui.layoutFunctionBarSplitLabel(th, gtx, slots[i].shortcut, slots[i].label, labelColor)
 											})
 										})
 									}))
@@ -703,57 +878,19 @@ func dimColor(c color.NRGBA, alpha uint8) color.NRGBA {
 	return c
 }
 
-func (ui *UI) functionBarWidths(th *material.Theme, gtx layout.Context, specs []functionBarButtonSpec) []int {
+func (ui *UI) functionBarWidths(_ *material.Theme, gtx layout.Context, specs []functionBarButtonSpec) []int {
 	widths := make([]int, len(specs))
 	if len(specs) == 0 {
 		return widths
 	}
-	total := 0
-	minWidth := gtx.Dp(unit.Dp(42))
-	padding := gtx.Dp(unit.Dp(16))
-	for i, spec := range specs {
-		lbl := material.Body2(th, ui.functionBarButtonText(spec))
-		lbl.Font.Typeface = ui.interfaceTypeface()
-		lbl.Font.Weight = font.Medium
-		lbl.TextSize = ui.functionBarTextSize()
-		lbl.MaxLines = 1
-		w := measureLabelUnconstrained(gtx, lbl).Size.X + padding
-		if w < minWidth {
-			w = minWidth
-		}
-		widths[i] = w
-		total += w
-	}
-
 	avail := gtx.Constraints.Max.X
 	if avail < len(widths) {
 		avail = len(widths)
 	}
-	if total > avail {
-		scaled := 0
-		for i := range widths {
-			w := widths[i] * avail / total
-			if w < 1 {
-				w = 1
-			}
-			widths[i] = w
-			scaled += w
-		}
-		for i := len(widths) - 1; i >= 0 && scaled < avail; i-- {
-			widths[i]++
-			scaled++
-		}
-		return widths
-	}
-
-	extra := avail - total
-	if extra <= 0 {
-		return widths
-	}
-	add := extra / len(widths)
-	rem := extra % len(widths)
+	base := avail / len(widths)
+	rem := avail % len(widths)
 	for i := range widths {
-		widths[i] += add
+		widths[i] = base
 		if i < rem {
 			widths[i]++
 		}
@@ -774,6 +911,9 @@ func (ui *UI) functionBarActiveIndex(specs []functionBarButtonSpec) int {
 	if ui == nil {
 		return -1
 	}
+	if ui.fileViewer != nil {
+		return -1
+	}
 	switch {
 	case ui.customCommandMenuOpen, ui.customCommandEditor != nil:
 		return ui.functionBarIndexForAction(specs, functionBarActionCustom)
@@ -787,8 +927,6 @@ func (ui *UI) functionBarActiveIndex(specs []functionBarButtonSpec) int {
 		return ui.functionBarIndexForAction(specs, functionBarActionMove)
 	case ui.fileCopy != nil:
 		return ui.functionBarIndexForAction(specs, functionBarActionCopy)
-	case ui.fileViewer != nil:
-		return ui.functionBarIndexForAction(specs, functionBarActionView)
 	default:
 		return -1
 	}
@@ -865,6 +1003,12 @@ func (ui *UI) functionBarSliderState(now time.Time) (float32, float32, bool) {
 }
 
 func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.Dimensions {
+	return layoutClippedToDimensions(gtx, func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFunctionBarContent(th, gtx)
+	})
+}
+
+func (ui *UI) layoutFunctionBarContent(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	if ui == nil {
 		return layout.Dimensions{}
 	}
@@ -879,7 +1023,7 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 		}
 		for spec.click.Clicked(gtx) {
 			ui.setToolbarPulse(spec.keyLabel, gtx.Now)
-			if !ui.performFunctionBarAction(spec.action, gtx.Now) {
+			if !ui.performFunctionBarActionContext(gtx, spec.action) {
 				continue
 			}
 			gtx.Execute(op.InvalidateCmd{})
@@ -1012,14 +1156,7 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 											}
 
 											dims := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-												lbl := material.Body2(th, ui.functionBarButtonText(spec))
-												lbl.Font.Typeface = ui.interfaceTypeface()
-												lbl.Font.Weight = font.Medium
-												lbl.TextSize = ui.functionBarTextSize()
-												lbl.Color = fg
-												lbl.MaxLines = 1
-												lbl.Alignment = text.Middle
-												return layoutVCenteredLabel(gtx, lbl)
+												return ui.layoutFunctionBarSplitLabel(th, gtx, spec.keyLabel, spec.label, fg)
 											})
 											if spec.enabled {
 												defer clip.Rect(image.Rectangle{Max: image.Pt(segW, stripH)}).Push(gtx.Ops).Pop()
@@ -1041,21 +1178,6 @@ func (ui *UI) layoutFunctionBar(th *material.Theme, gtx layout.Context) layout.D
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	return dims
-}
-
-func (ui *UI) applyFunctionBarCursor(gtx layout.Context) {
-	if ui == nil || !ui.functionBarVisible() {
-		return
-	}
-	if hints := ui.functionBarModifierHintSpecsForContext(ui.terminalFocused(gtx), runtime.GOOS); len(hints) > 0 {
-		return
-	}
-	for i := range ui.functionBarClicks {
-		if ui.functionBarClicks[i].Hovered() {
-			pointer.CursorPointer.Add(gtx.Ops)
-			return
-		}
-	}
 }
 
 func (ui *UI) ensureFunctionBarToolClicks(n int) {

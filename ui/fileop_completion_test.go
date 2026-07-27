@@ -14,6 +14,7 @@ import (
 	"gioui.org/widget/material"
 	"hexone/filesys"
 	"hexone/fm"
+	"hexone/ui/widget/table"
 )
 
 func TestFinishFileCopyKeepsDestinationScrollStableAndShowsNotice(t *testing.T) {
@@ -230,12 +231,19 @@ func TestFinishFileMoveKeepsSourceScrollStableAndShowsNotice(t *testing.T) {
 	srcPath := filepath.Join(srcDir, fileDeleteTestName(10))
 
 	dstDir := t.TempDir()
+	createFileOpRows(t, dstDir, 30)
 	ui := NewUI(fm.DefaultConfig())
 	srcPane := ui.filePanes[0]
-	waitForPaneLoads(t, ui, srcPane)
+	dstPane := ui.filePanes[1]
+	waitForPaneLoads(t, ui, srcPane, dstPane)
 	prepareFileOpPane(t, srcPane, srcDir, 10)
+	prepareFileOpPane(t, dstPane, dstDir, 20)
+	srcPane.table.List.Position.Offset = -5
+	dstPane.table.List.Position.Offset = -9
+	dstSelectedPath := dstPane.selectedEntry().Path
+	ui.setActiveFilePane(0)
 
-	dstPath := filepath.Join(dstDir, fileDeleteTestName(10))
+	dstPath := filepath.Join(dstDir, "aaa-moved.txt")
 	if err := os.Rename(srcPath, dstPath); err != nil {
 		t.Fatalf("os.Rename: %v", err)
 	}
@@ -251,13 +259,105 @@ func TestFinishFileMoveKeepsSourceScrollStableAndShowsNotice(t *testing.T) {
 	}
 
 	ui.finishFileMove(time.Now())
-	waitForPaneLoads(t, ui, srcPane)
+	waitForPaneLoads(t, ui, srcPane, dstPane)
 
 	if got := srcPane.table.List.Position.First; got != 11 {
 		t.Fatalf("source first visible row = %d, want 11", got)
 	}
+	if got := srcPane.table.List.Position.Offset; got != -5 {
+		t.Fatalf("source pixel offset = %d, want -5", got)
+	}
+	if got := srcPane.selectedEntry(); got == nil || got.Path != filepath.Join(srcDir, fileDeleteTestName(11)) {
+		t.Fatalf("source selection = %+v, want nearby file %q", got, filepath.Join(srcDir, fileDeleteTestName(11)))
+	}
+	if got := dstPane.table.List.Position.First; got != 22 {
+		t.Fatalf("destination first visible row = %d, want 22", got)
+	}
+	if got := dstPane.table.List.Position.Offset; got != -9 {
+		t.Fatalf("destination pixel offset = %d, want -9", got)
+	}
+	if got := dstPane.selectedEntry(); got == nil || got.Path != dstSelectedPath {
+		t.Fatalf("destination selection = %+v, want preserved path %q", got, dstSelectedPath)
+	}
+	if got := ui.activeFilePane; got != 0 {
+		t.Fatalf("activeFilePane = %d, want 0", got)
+	}
 	if got, want := srcPane.noticeText, "moved 1 item"; got != want {
 		t.Fatalf("source noticeText = %q, want %q", got, want)
+	}
+}
+
+func TestFinishFileMoveKeepsBriefViewportsStable(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+	createFileOpRows(t, srcDir, 120)
+	createFileOpRows(t, dstDir, 120)
+
+	ui := NewUI(fm.DefaultConfig())
+	srcPane := ui.filePanes[0]
+	dstPane := ui.filePanes[1]
+	waitForPaneLoads(t, ui, srcPane, dstPane)
+	prepareFileOpPane(t, srcPane, srcDir, 0)
+	prepareFileOpPane(t, dstPane, dstDir, 0)
+
+	gtx := testPathLayoutContext()
+	gtx.Constraints.Min = image.Point{}
+	gtx.Constraints.Max = image.Pt(480, 180)
+	th := material.NewTheme()
+	for _, pane := range []*filePaneState{srcPane, dstPane} {
+		pane.table.SetMode(table.ModeBrief)
+		pane.table.Layout(th, gtx, pane.model)
+	}
+	srcPane.table.List.Position.First = 3
+	dstPane.table.List.Position.First = 4
+	for _, pane := range []*filePaneState{srcPane, dstPane} {
+		pane.table.Layout(th, gtx, pane.model)
+	}
+
+	srcRow := srcPane.table.FirstVisibleRow() + 2
+	dstRow := dstPane.table.FirstVisibleRow() + 1
+	srcPane.table.SetSelected(srcRow, srcPane.model.Len(), false)
+	dstPane.table.SetSelected(dstRow, dstPane.model.Len(), false)
+	srcPath := srcPane.selectedEntry().Path
+	dstSelectedPath := dstPane.selectedEntry().Path
+	srcPos := sanitizePaneListPosition(srcPane.table.List.Position)
+	dstPos := sanitizePaneListPosition(dstPane.table.List.Position)
+	ui.setActiveFilePane(0)
+
+	dstPath := filepath.Join(dstDir, "aaa-moved.txt")
+	if err := os.Rename(srcPath, dstPath); err != nil {
+		t.Fatalf("os.Rename: %v", err)
+	}
+	ui.fileMove = &fileMoveState{
+		pane: 0,
+		row:  srcRow,
+		sources: []fileMoveSource{{
+			Path: srcPath,
+			Name: filepath.Base(srcPath),
+		}},
+		dstPath: dstPath,
+	}
+
+	ui.finishFileMove(time.Now())
+	waitForPaneLoads(t, ui, srcPane, dstPane)
+	for _, pane := range []*filePaneState{srcPane, dstPane} {
+		pane.table.Layout(th, gtx, pane.model)
+	}
+
+	if got := sanitizePaneListPosition(srcPane.table.List.Position); got != srcPos {
+		t.Fatalf("source brief position = %+v, want %+v", got, srcPos)
+	}
+	if got := sanitizePaneListPosition(dstPane.table.List.Position); got != dstPos {
+		t.Fatalf("destination brief position = %+v, want %+v", got, dstPos)
+	}
+	if got := srcPane.selectedEntry(); got == nil || got.Path == srcPath {
+		t.Fatalf("source selection = %+v, want a nearby surviving file", got)
+	}
+	if got := dstPane.selectedEntry(); got == nil || got.Path != dstSelectedPath {
+		t.Fatalf("destination selection = %+v, want preserved path %q", got, dstSelectedPath)
+	}
+	if got := ui.activeFilePane; got != 0 {
+		t.Fatalf("activeFilePane = %d, want 0", got)
 	}
 }
 

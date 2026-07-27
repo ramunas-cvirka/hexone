@@ -77,3 +77,12 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Saved SSH passwords and private-key passphrases in Windows Credential Manager, macOS Keychain, or the Linux Secret Service instead of `hexone.yaml`.
 - Changed Enter to open regular files with their system-associated application while continuing to open directories and archives inside Hexone.
 - Added a Microsoft Store MSIX distribution. Store installations keep configuration and session data in the package's `LocalState` folder, while Windows portable builds continue to keep configuration beside `hexone.exe`.
+
+## v1.1.0 - Unreleased
+
+- File and Hex viewer modes now support editing. Changes can be saved or discarded. Hex mode accepts HEX and ASCII input. A selection can overwrite several bytes. Changed bytes are highlighted and saved in place.
+- Redesigned the internal viewer. Separate File, Hex, and Cmd tabs share a persistent filename rail. The viewer now has its own function bar with viewer-specific actions.
+- Added native desktop file clipboard integration and optional Trash / Recycle Bin deletion.
+- Redesigned the file-pane tabs and current-directory line. Active tabs connect to the current-directory line through a notched frame. The line includes breadcrumbs, editable filters, and pane controls. Brief mode now sizes columns to their contents.
+- Added terminal snippets with global, directory, and Git-repository scopes.
+- Redesigned the Protocol Analyzer for clearer input, navigation, and decoding.

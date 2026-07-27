@@ -69,6 +69,29 @@ func TestFileViewerHexSeparatorContrastsWithDarkAndLightThemes(t *testing.T) {
 	}
 }
 
+func TestFileViewerModifiedByteColorContrastsWithDarkAndLightThemes(t *testing.T) {
+	for _, tc := range []struct {
+		background string
+		want       string
+	}{
+		{background: "#101820", want: "#FF9EAA"},
+		{background: "#F4F5F7", want: "#A01830"},
+	} {
+		cfg := fm.DefaultConfig()
+		cfg.Viewer.Background = tc.background
+		theme := (&UI{fmCfg: cfg}).fileViewerTheme()
+		if got := contrastScore(theme.PanelBg, theme.ModifiedText); got < 2.0 {
+			t.Fatalf("background %s modified-byte contrast=%0.2f want >= 2.0", tc.background, got)
+		}
+		if theme.ModifiedText == theme.HexText || theme.ModifiedText == theme.ASCIIText {
+			t.Fatalf("background %s modified-byte color is not distinct", tc.background)
+		}
+		if got := fm.FormatHexColor(theme.ModifiedText); got != tc.want {
+			t.Fatalf("background %s modified-byte color=%s want %s", tc.background, got, tc.want)
+		}
+	}
+}
+
 func TestFileViewerThemeUsesScrollbarOverrides(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.Viewer.Background = "#112233"
@@ -102,16 +125,24 @@ func TestPopupThemeUsesPopupHoverOverrides(t *testing.T) {
 }
 
 func TestFileViewerSelectionContrastIsStrongerThanBefore(t *testing.T) {
-	cfg := fm.DefaultConfig()
-	theme := (&UI{fmCfg: cfg}).fileViewerTheme()
+	for _, background := range []string{"#202020", "#F4F5F7"} {
+		cfg := fm.DefaultConfig()
+		cfg.Viewer.Background = background
+		theme := (&UI{fmCfg: cfg}).fileViewerTheme()
+		selection := compositeNRGBAOverOpaque(theme.PanelBg, theme.Selection)
+		strong := compositeNRGBAOverOpaque(theme.PanelBg, theme.StrongSelection)
 
-	if got := contrastScore(theme.PanelBg, theme.Selection); got < 1.45 {
-		t.Fatalf("selection contrast=%0.2f want >= 1.45", got)
-	}
-	if got := contrastScore(theme.PanelBg, theme.StrongSelection); got < 1.7 {
-		t.Fatalf("strong selection contrast=%0.2f want >= 1.70", got)
-	}
-	if contrastScore(theme.PanelBg, theme.StrongSelection) < contrastScore(theme.PanelBg, theme.Selection) {
-		t.Fatal("strong selection should be at least as contrasty as normal selection")
+		if got := contrastScore(theme.PanelBg, selection); got < 2.15 {
+			t.Fatalf("background %s rendered selection contrast=%0.2f want >= 2.15", background, got)
+		}
+		if got := contrastScore(selection, theme.Text); got < 3.9 {
+			t.Fatalf("background %s selected text contrast=%0.2f want >= 3.90", background, got)
+		}
+		if got := contrastScore(theme.PanelBg, strong); got < 2.9 {
+			t.Fatalf("background %s rendered strong-selection contrast=%0.2f want >= 2.90", background, got)
+		}
+		if got := contrastScore(strong, theme.Text); got < 2.9 {
+			t.Fatalf("background %s strong selected text contrast=%0.2f want >= 2.90", background, got)
+		}
 	}
 }

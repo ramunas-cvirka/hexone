@@ -176,6 +176,31 @@ func TestToggleViewerWordWrapPersistsOnlyViewerSetting(t *testing.T) {
 	}
 }
 
+func TestToggleViewerLineNumbersPersistsOnlyViewerSetting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(original)
+	ui.configPath = path
+	ui.fileViewer = &fileViewerState{mode: "file"}
+	ui.toggleViewerLineNumbers()
+
+	if ui.fmCfg.Viewer.ShowLineNumbers {
+		t.Fatal("line-number toggle did not disable viewer setting")
+	}
+	saved := fm.LoadConfig(path)
+	if saved.Viewer.ShowLineNumbers {
+		t.Fatal("viewer.show_line_numbers was not persisted")
+	}
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+}
+
 func TestCustomCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone.yaml")
 	original := fm.DefaultConfig()
@@ -204,6 +229,38 @@ func TestCustomCommandRuntimeSavePreservesUnrelatedState(t *testing.T) {
 	}
 	if got, want := saved.CustomCommands[0].Name, "Health"; got != want {
 		t.Fatalf("custom command name=%q want %q", got, want)
+	}
+}
+
+func TestTerminalSnippetRuntimeSavePreservesUnrelatedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone.yaml")
+	original := fm.DefaultConfig()
+	original.FavoriteLocations = []string{"/tmp/demo"}
+	original.CustomCommands = []fm.CustomCommand{{Name: "Health", Command: "uptime"}}
+	if err := fm.SaveConfig(path, original); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = path
+	ui.fmCfg.TerminalSnippets = []fm.TerminalSnippet{{
+		Name:    "Tests",
+		Command: "go test ./...",
+		Scope:   fm.TerminalSnippetScopeGlobal,
+	}}
+	if err := ui.saveFMConfigWithOptions("terminal-snippets", false); err != nil {
+		t.Fatalf("saveFMConfigWithOptions(terminal-snippets): %v", err)
+	}
+
+	saved := fm.LoadConfig(path)
+	if got, want := len(saved.FavoriteLocations), 1; got != want {
+		t.Fatalf("favorites count=%d want %d", got, want)
+	}
+	if got, want := len(saved.CustomCommands), 1; got != want {
+		t.Fatalf("custom command count=%d want %d", got, want)
+	}
+	if got, want := len(saved.TerminalSnippets), 1; got != want {
+		t.Fatalf("terminal snippet count=%d want %d", got, want)
 	}
 }
 

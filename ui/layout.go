@@ -97,11 +97,8 @@ type tab2State struct {
 	hoverRowID    string
 	selectedRowID string
 
-	// scroll-to-selected: tracks which rowID we last scrolled to.
-	lastScrolledRowID string
-
-	list   layout.List
-	clicks map[string]*widget.Clickable
+	scrollList widget.List
+	clicks     map[string]*widget.Clickable
 
 	selectPressHeld map[string]bool
 
@@ -113,6 +110,15 @@ type tab2State struct {
 // to be independent.
 type uiEventTag struct {
 	_ byte
+}
+
+func registerPointerTransparentEventTarget(gtx layout.Context, tag event.Tag) {
+	if tag == nil {
+		return
+	}
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, tag)
+	pass.Pop()
 }
 
 type UI struct {
@@ -133,91 +139,103 @@ type UI struct {
 	tab2State *tab2State
 
 	// Tab buttons
-	tab0, tab1, tab2            widget.Clickable
-	settingsClick               widget.Clickable
-	toolbarPrevTab              string
-	toolbarAnimAt               time.Time
-	toolbarHoverKey             string
-	toolbarHoverPrev            string
-	toolbarHoverAt              time.Time
-	toolbarPulseKey             string
-	toolbarPulseAt              time.Time
-	functionBarClicks           [10]widget.Clickable
-	functionBarHidden           bool
-	functionBarViewerShown      bool
-	functionBarTerminalShown    bool
-	customCommandMenuOpen       bool
-	customCommandMenuButtonRect image.Rectangle
-	customCommandMenuRect       image.Rectangle
-	customCommandMenuOpenedAt   time.Time
-	customCommandMenuHoverID    string
-	customCommandMenuHoverAnim  segmentedAnimState
-	customCommandMenuSelected   int
-	customCommandMenuClicks     []widget.Clickable
-	customCommandMenuGlobalTag  uiEventTag
-	customCommandMenuBodyTag    uiEventTag
-	functionBarToolsOpen        bool
-	functionBarToolsButtonRect  image.Rectangle
-	functionBarToolsRect        image.Rectangle
-	functionBarToolsOpenedAt    time.Time
-	functionBarToolsHoverID     string
-	functionBarToolsHoverAnim   segmentedAnimState
-	functionBarToolsSelected    int
-	functionBarToolClicks       []widget.Clickable
-	functionBarPopupGlobalTag   uiEventTag
-	functionBarPopupBodyTag     uiEventTag
-	functionBarSliderPrevIndex  int
-	functionBarSliderIndex      int
-	functionBarSliderPrevShown  bool
-	functionBarSliderShown      bool
-	functionBarSliderAnimAt     time.Time
-	functionBarHeldMods         key.Modifiers
-	requestedWindowClose        bool
-	filePanes                   []*filePaneState
-	fmCfg                       *fm.Config
-	configPath                  string
-	typeface                    font.Typeface
-	textSize                    unit.Sp
-	invalidate                  func()
-	windowFocused               bool
-	fileKeys                    fileKeyMap
-	activeFilePane              int
-	filePaneTabs                []filePaneTabSet
-	tabShortcut                 tabShortcutState
-	sortDirPrunedAt             time.Time
-	terminal                    *terminalSession
-	terminalTabs                terminalTabSet
-	runtimeTerminalShell        string
-	terminalFocusPointerTag     uiEventTag
-	pendingFileOpen             *fileOpenRequest
-	fileCopy                    *fileCopyState
-	archiveExtract              *archiveExtractState
-	fileDelete                  *fileDeleteState
-	fileMove                    *fileMoveState
-	fileCreate                  *fileCreateState
-	filePerm                    *filePermState
-	multiRename                 *multiRenameState
-	fileViewer                  *fileViewerState
-	customCommandEditor         *customCommandEditorState
-	helpModal                   *helpModalState
-	settingsModal               *settingsModalState
-	sshModal                    *sshModalState
-	sshCredentials              sshCredentialState
-	editorMenuOpenID            string
-	editorMenuTarget            *widget.Editor
-	editorMenuPos               image.Point
-	editorMenuPressPos          image.Point
-	editorMenuRect              image.Rectangle
-	editorMenuOpenedAt          time.Time
-	editorMenuHoverAction       string
-	editorMenuHoverAnim         segmentedAnimState
-	editorMenuTags              map[string]*editorMenuEventTag
-	editorMenuCanPaste          bool
-	editorMenuUseExplicitCaret  bool
-	editorMenuClipboardTarget   *widget.Editor
-	editorMenuClipboardUseCaret bool
-	editorMenuClipboardTag      uiEventTag
-	editorMenuGlobalPointerTag  uiEventTag
+	tab0, tab1, tab2             widget.Clickable
+	settingsClick                widget.Clickable
+	toolbarPrevTab               string
+	toolbarAnimAt                time.Time
+	toolbarHoverKey              string
+	toolbarHoverPrev             string
+	toolbarHoverAt               time.Time
+	toolbarPulseKey              string
+	toolbarPulseAt               time.Time
+	functionBarClicks            [10]widget.Clickable
+	functionBarHidden            bool
+	functionBarViewerShown       bool
+	functionBarTerminalShown     bool
+	customCommandMenuOpen        bool
+	customCommandMenuButtonRect  image.Rectangle
+	customCommandMenuRect        image.Rectangle
+	customCommandMenuOpenedAt    time.Time
+	customCommandMenuHoverID     string
+	customCommandMenuHoverAnim   segmentedAnimState
+	customCommandMenuSelected    int
+	customCommandMenuClicks      []widget.Clickable
+	customCommandMenuGlobalTag   uiEventTag
+	customCommandMenuBodyTag     uiEventTag
+	functionBarToolsOpen         bool
+	functionBarToolsButtonRect   image.Rectangle
+	functionBarToolsRect         image.Rectangle
+	functionBarToolsOpenedAt     time.Time
+	functionBarToolsHoverID      string
+	functionBarToolsHoverAnim    segmentedAnimState
+	functionBarToolsSelected     int
+	functionBarToolClicks        []widget.Clickable
+	functionBarPopupGlobalTag    uiEventTag
+	functionBarPopupBodyTag      uiEventTag
+	functionBarSliderPrevIndex   int
+	functionBarSliderIndex       int
+	functionBarSliderPrevShown   bool
+	functionBarSliderShown       bool
+	functionBarSliderAnimAt      time.Time
+	functionBarHeldMods          key.Modifiers
+	requestedWindowClose         bool
+	filePanes                    []*filePaneState
+	fmCfg                        *fm.Config
+	configPath                   string
+	typeface                     font.Typeface
+	textSize                     unit.Sp
+	invalidate                   func()
+	windowFocused                bool
+	fileKeys                     fileKeyMap
+	activeFilePane               int
+	filePaneTabs                 []filePaneTabSet
+	tabShortcut                  tabShortcutState
+	sortDirPrunedAt              time.Time
+	terminal                     *terminalSession
+	terminalTabs                 terminalTabSet
+	terminalSnippetMenuOpen      bool
+	terminalSnippetMenuOpenedAt  time.Time
+	terminalSnippetMenuClicks    []widget.Clickable
+	terminalSnippetRemoveClicks  []widget.Clickable
+	terminalSnippetMenuSelected  int
+	terminalSnippetMenuHoverID   string
+	terminalSnippetMenuHoverAnim segmentedAnimState
+	terminalSnippetList          layout.List
+	terminalSnippetMenuTag       uiEventTag
+	terminalSnippetMenuBodyTag   uiEventTag
+	terminalSnippetEditor        *terminalSnippetEditorState
+	runtimeTerminalShell         string
+	terminalFocusPointerTag      uiEventTag
+	pendingFileOpen              *fileOpenRequest
+	fileCopy                     *fileCopyState
+	archiveExtract               *archiveExtractState
+	fileDelete                   *fileDeleteState
+	fileMove                     *fileMoveState
+	fileCreate                   *fileCreateState
+	filePerm                     *filePermState
+	multiRename                  *multiRenameState
+	fileViewer                   *fileViewerState
+	customCommandEditor          *customCommandEditorState
+	helpModal                    *helpModalState
+	settingsModal                *settingsModalState
+	sshModal                     *sshModalState
+	sshCredentials               sshCredentialState
+	editorMenuOpenID             string
+	editorMenuTarget             *widget.Editor
+	editorMenuPos                image.Point
+	editorMenuPressPos           image.Point
+	editorMenuRect               image.Rectangle
+	editorMenuOpenedAt           time.Time
+	editorMenuHoverAction        string
+	editorMenuHoverAnim          segmentedAnimState
+	editorMenuTags               map[string]*editorMenuEventTag
+	editorMenuCanPaste           bool
+	editorMenuUseExplicitCaret   bool
+	editorMenuClipboardTarget    *widget.Editor
+	editorMenuClipboardUseCaret  bool
+	editorMenuClipboardPendingAt time.Time
+	editorMenuClipboardTag       uiEventTag
+	editorMenuGlobalPointerTag   uiEventTag
 
 	protoDropGlobalPointerTag uiEventTag
 }
@@ -292,6 +310,20 @@ func (ui *UI) interfaceTypeface() font.Typeface {
 		return font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 	}
 	return font.Typeface(ui.fmCfg.Interface.Typeface)
+}
+
+func (ui *UI) currentDirTypeface() font.Typeface {
+	if ui == nil || ui.fmCfg == nil || ui.fmCfg.CurrentDir.Typeface == "" {
+		return font.Typeface(resources.BundledFontFamilyIosevkaNerdFontMono)
+	}
+	return font.Typeface(ui.fmCfg.CurrentDir.Typeface)
+}
+
+func (ui *UI) currentDirTextSize() unit.Sp {
+	if ui == nil || ui.fmCfg == nil || ui.fmCfg.CurrentDir.FontSizeSp < 6 {
+		return 11
+	}
+	return normalizeUIFontSize(unit.Sp(ui.fmCfg.CurrentDir.FontSizeSp))
 }
 
 func (ui *UI) interfaceBaseTextSize() unit.Sp {
@@ -477,6 +509,23 @@ func fixedHeight(gtx layout.Context, h int, w layout.Widget) layout.Dimensions {
 	gtx2.Constraints.Min.Y = h
 	gtx2.Constraints.Max.Y = h
 	return w(gtx2)
+}
+
+func layoutClippedToDimensions(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	if w == nil {
+		return layout.Dimensions{}
+	}
+	macro := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := macro.Stop()
+	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
+		call.Add(gtx.Ops)
+		return dims
+	}
+	stack := clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	stack.Pop()
+	return dims
 }
 
 func (ui *UI) toolbarLabelSize(th *material.Theme) unit.Sp {
@@ -746,6 +795,8 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.syncThemeRuntime(th)
 	ui.handleFunctionBarModifierKeys(gtx)
 	ui.handleGlobalFunctionKeys(gtx)
+	ui.handleTerminalSnippetShortcut(gtx)
+	ui.handleTerminalSnippetMenuKeys(gtx)
 	ui.handleCustomCommandMenuKeys(gtx)
 	ui.handleFunctionBarPopupKeys(gtx)
 	ui.handleGlobalEscapeToFileManager(gtx)
@@ -753,6 +804,7 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.handleEditorContextMenuClipboardEvents(gtx)
 	ui.handleTerminalClipboardEvents(gtx)
 	ui.handleTerminalOutsidePointerFocus(gtx)
+	ui.handleTerminalSnippetEditorPreLayoutInput(gtx)
 	ui.handleCustomCommandEditorPreLayoutInput(gtx)
 	ui.handleMultiRenamePreLayoutInput(gtx)
 
@@ -798,7 +850,6 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 					return ui.layoutTerminalPane(th, gtx)
 				}),
 			)
-			ui.applyFunctionBarCursor(gtx)
 			return dims
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -812,6 +863,12 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutFunctionBarPopup(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutTerminalSnippetMenuPopup(th, gtx)
+		}),
+		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutTerminalSnippetEditor(th, gtx)
 		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 			return ui.layoutCustomCommandEditor(th, gtx)
@@ -903,6 +960,21 @@ func (ui *UI) handleEditorContextMenuGlobalPresses(gtx layout.Context) {
 			if !pe.Buttons.Contain(pointer.ButtonPrimary) {
 				continue
 			}
+			if ui.editorMenuOpenID == "viewer-file-edit" && ui.fileViewer != nil && ui.fileViewer.editVirtualReady {
+				switch action {
+				case "copy":
+					ui.copyFileViewerVirtualEditText(gtx, ui.fileViewer)
+				case "paste":
+					if ui.editorMenuCanPaste {
+						ui.pasteFileViewerVirtualEditText(gtx, ui.fileViewer)
+					}
+				case "word-wrap":
+					ui.toggleViewerWordWrap()
+				}
+				ui.closeEditorContextMenu()
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
 			ed := ui.editorMenuTarget
 			if ed == nil {
 				ui.closeEditorContextMenu()
@@ -915,6 +987,10 @@ func (ui *UI) handleEditorContextMenuGlobalPresses(gtx layout.Context) {
 			case "paste":
 				if ui.editorMenuCanPaste {
 					ui.pasteEditorText(gtx, ed, true)
+				}
+			case "word-wrap":
+				if ui.editorMenuOpenID == "viewer-file-edit" {
+					ui.toggleViewerWordWrap()
 				}
 			}
 			ui.closeEditorContextMenu()
@@ -1023,14 +1099,14 @@ func (ui *UI) handleGlobalEscapeToFileManager(gtx layout.Context) {
 }
 
 func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
-	if ui != nil && (ui.customCommandEditor != nil || ui.multiRename != nil) {
+	if ui != nil && (ui.customCommandEditor != nil || ui.terminalSnippetEditor != nil || ui.multiRename != nil) {
 		return
 	}
 	if ui != nil {
 		ui.handleTabShortcuts(gtx)
 		ui.handleTerminalFocusToggleKey(gtx)
 	}
-	if ui != nil && ui.terminalFocused(gtx) {
+	if ui != nil && ui.fileViewer == nil && ui.terminalFocused(gtx) {
 		ui.handleTerminalFunctionBarToggleKey(gtx)
 		ui.handleTerminalToggleKey(gtx)
 		ui.handleGlobalSettingsShortcut(gtx)
@@ -1061,6 +1137,14 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 		key.Filter{Name: "M", Required: key.ModShortcut, Optional: anyMods},
 		key.Filter{Name: "m", Required: key.ModShortcut, Optional: anyMods},
 	}
+	if ui != nil && ui.fileViewer != nil {
+		filters = append(filters,
+			key.Filter{Name: key.NameF5, Optional: anyMods},
+			key.Filter{Name: key.NameF6, Optional: anyMods},
+			key.Filter{Name: key.NameF7, Optional: anyMods},
+			key.Filter{Name: key.NameF8, Optional: anyMods},
+		)
+	}
 	filters = append(filters, customCommandShortcutKeyFilters(anyMods)...)
 	for {
 		ev, ok := gtx.Event(filters...)
@@ -1081,14 +1165,18 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionHelp, gtx.Now) {
+			if ui.performFunctionBarActionContext(gtx, functionBarActionHelp) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF2:
 			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionCustom, gtx.Now) {
+			action := functionBarActionCustom
+			if ui.fileViewer != nil {
+				action = functionBarActionViewerSave
+			}
+			if ui.performFunctionBarActionContext(gtx, action) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF3:
@@ -1103,7 +1191,7 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionView, gtx.Now) {
+			if ui.performFunctionBarActionContext(gtx, functionBarActionView) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF4:
@@ -1113,21 +1201,50 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 			if ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionOpen, gtx.Now) {
+			if ui.performFunctionBarActionContext(gtx, functionBarActionOpen) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF5:
+			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {
+				continue
+			}
+			if ui.performFunctionBarActionContext(gtx, functionBarActionViewerLineNumbers) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF6:
+			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {
+				continue
+			}
+		case key.NameF7:
+			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {
+				continue
+			}
+			if ui.performFunctionBarActionContext(gtx, functionBarActionViewerFind) {
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		case key.NameF8:
+			if ke.State != key.Press || ke.Modifiers != 0 || ui.fileViewer == nil {
+				continue
+			}
+			if ui.performFunctionBarActionContext(gtx, functionBarActionViewerMode) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF9:
 			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionTools, gtx.Now) {
+			action := functionBarActionTools
+			if ui.fileViewer != nil {
+				action = functionBarActionViewerWrap
+			}
+			if ui.performFunctionBarActionContext(gtx, action) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF10:
 			if ke.State != key.Press || ke.Modifiers != 0 {
 				continue
 			}
-			if ui.performFunctionBarAction(functionBarActionExit, gtx.Now) {
+			if ui.performFunctionBarActionContext(gtx, functionBarActionExit) {
 				gtx.Execute(op.InvalidateCmd{})
 			}
 		case key.NameF11:
@@ -1222,6 +1339,11 @@ func (ui *UI) handleGlobalFunctionKeys(gtx layout.Context) {
 				continue
 			}
 			if ui == nil || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil || ui.hasBlockingFileDialog() {
+				continue
+			}
+			if ui.fileViewer != nil {
+				ui.startFileViewerSave(gtx.Now)
+				gtx.Execute(op.InvalidateCmd{})
 				continue
 			}
 			if ui.pathEditActive() {

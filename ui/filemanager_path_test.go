@@ -29,7 +29,7 @@ func TestSplitFilePathSegmentsCompactLabels(t *testing.T) {
 		t.Fatalf("segment count = %d, want 4", len(segments))
 	}
 
-	wantLabels := []string{root, "opt", root + "gpstrack", root + "log"}
+	wantLabels := []string{root, "opt", "gpstrack", "log"}
 	wantPaths := []string{
 		root,
 		filepath.Join(root, "opt"),
@@ -46,13 +46,42 @@ func TestSplitFilePathSegmentsCompactLabels(t *testing.T) {
 	}
 }
 
+func TestCompactFilePathSegmentsKeepsRootAndUsefulTail(t *testing.T) {
+	segments := []filePathSegment{
+		{label: "/", path: "/"},
+		{label: "Users", path: "/Users"},
+		{label: "ramunas", path: "/Users/ramunas"},
+		{label: "go", path: "/Users/ramunas/go"},
+		{label: "src", path: "/Users/ramunas/go/src"},
+		{label: "hexone", path: "/Users/ramunas/go/src/hexone"},
+		{label: "ui", path: "/Users/ramunas/go/src/hexone/ui"},
+	}
+
+	got := compactFilePathSegments(segments, 125)
+	wantLabels := []string{"/", "…", "hexone", "ui"}
+	if len(got) != len(wantLabels) {
+		t.Fatalf("segments=%#v want labels %v", got, wantLabels)
+	}
+	for i, label := range wantLabels {
+		if got[i].label != label {
+			t.Fatalf("segment %d label=%q want %q", i, got[i].label, label)
+		}
+	}
+	if got[1].path != "" {
+		t.Fatalf("ellipsis should not navigate: path=%q", got[1].path)
+	}
+	if got[len(got)-1].path != segments[len(segments)-1].path {
+		t.Fatal("current directory target should be preserved")
+	}
+}
+
 func TestRemotePathDisplaySegmentsMergesHostIntoRoot(t *testing.T) {
 	segments := remotePathDisplaySegments("root@157.180.68.247", "/opt/gpstrack/log")
 	if len(segments) != 4 {
 		t.Fatalf("segment count = %d, want 4", len(segments))
 	}
 
-	wantLabels := []string{"root@157.180.68.247/", "opt", "/gpstrack", "/log"}
+	wantLabels := []string{"root@157.180.68.247", "opt", "gpstrack", "log"}
 	wantPaths := []string{"/", "/opt", "/opt/gpstrack", "/opt/gpstrack/log"}
 	for i := range wantLabels {
 		if segments[i].label != wantLabels[i] {
@@ -69,8 +98,8 @@ func TestRemotePathDisplaySegmentsDefaultsAddress(t *testing.T) {
 	if len(segments) != 1 {
 		t.Fatalf("segment count = %d, want 1", len(segments))
 	}
-	if segments[0].label != "ssh/" {
-		t.Fatalf("root label = %q, want %q", segments[0].label, "ssh/")
+	if segments[0].label != "ssh" {
+		t.Fatalf("root label = %q, want %q", segments[0].label, "ssh")
 	}
 	if segments[0].path != "/" {
 		t.Fatalf("root path = %q, want /", segments[0].path)
@@ -139,6 +168,36 @@ func TestActivateFilePanePathSegmentStartsLoadImmediately(t *testing.T) {
 	}
 	if got, want := pane.loadingDir, filepath.Clean(target); got != want {
 		t.Fatalf("loading dir = %q, want %q", got, want)
+	}
+}
+
+func TestActivateCurrentFilePanePathSegmentResetsFilter(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	dir := t.TempDir()
+	pane := newFilePaneState(dir, cfg)
+	pane.applyListing(filesys.Listing{Dir: dir, Entries: []filesys.Entry{
+		{Name: "main.go", DisplayName: "main.go", Kind: filesys.EntryFile, Path: filepath.Join(dir, "main.go")},
+		{Name: "README.md", DisplayName: "README.md", Kind: filesys.EntryFile, Path: filepath.Join(dir, "README.md")},
+	}}, "", "", 0)
+	if err := pane.setFilter("*.go"); err != nil {
+		t.Fatalf("set filter: %v", err)
+	}
+
+	ui := &UI{fmCfg: cfg, filePanes: []*filePaneState{pane}}
+	if !ui.activateFilePanePathSegment(0, pane, dir) {
+		t.Fatal("activating the current directory did not reset the filter")
+	}
+	if got, want := pane.displayFilter(), filePaneDefaultFilter; got != want {
+		t.Fatalf("filter=%q want %q", got, want)
+	}
+	if got, want := pane.model.Len(), 2; got != want {
+		t.Fatalf("rows after reset=%d want %d", got, want)
+	}
+	if pane.loading {
+		t.Fatal("resetting the current-directory filter should not reload the pane")
+	}
+	if ui.activateFilePanePathSegment(0, pane, dir) {
+		t.Fatal("activating the current directory with the default filter should be a no-op")
 	}
 }
 

@@ -307,6 +307,46 @@ func TestBriefModeScrollbarReservesBottomSpaceAndRecomputesRows(t *testing.T) {
 	}
 }
 
+func TestBriefModeFitsColumnsUsingMeasuredContentBelowConfiguredMaximum(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(300), MinWidth: unit.Dp(20), PadX: unit.Dp(4), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(20)
+	tbl.BriefColumnWidth = unit.Dp(300)
+	tbl.BriefGap = 0
+	gtx := testTableLayoutContext(image.Pt(404, 104))
+	model := tableBriefWidthTestModel{
+		tableTestModel: tableTestModel{rows: 20},
+		textWidth:      180,
+	}
+
+	tbl.Layout(th, gtx, model)
+
+	if got, want := tbl.briefVisibleCols, 2; got != want {
+		t.Fatalf("visible brief columns=%d want %d from measured content width", got, want)
+	}
+}
+
+func TestBriefModeCapsMeasuredContentAtConfiguredMaximum(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(300), MinWidth: unit.Dp(20), PadX: unit.Dp(4), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(20)
+	tbl.BriefColumnWidth = unit.Dp(300)
+	tbl.BriefGap = 0
+	gtx := testTableLayoutContext(image.Pt(404, 104))
+	model := tableBriefWidthTestModel{
+		tableTestModel: tableTestModel{rows: 20},
+		textWidth:      420,
+	}
+
+	tbl.Layout(th, gtx, model)
+
+	if got, want := tbl.briefVisibleCols, 1; got != want {
+		t.Fatalf("visible brief columns=%d want %d when content exceeds configured maximum", got, want)
+	}
+}
+
 func TestBriefModeUsesRemainderAbovePartialMinimum(t *testing.T) {
 	th := material.NewTheme()
 	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
@@ -351,12 +391,76 @@ func TestScrollbarDragUpdatesListPositionImmediately(t *testing.T) {
 	}
 }
 
+func TestBriefWheelScrollMovesColumnsWithoutMovingSelection(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(20)
+	tbl.BriefColumnWidth = unit.Dp(80)
+	tbl.Selected = 7
+	gtx := testTableLayoutContext(image.Pt(120, 100))
+	tbl.Layout(th, gtx, tableTestModel{rows: 100})
+
+	if !tbl.HandleScrollViewport(120, 100) {
+		t.Fatal("vertical wheel should advance the brief-mode column viewport")
+	}
+	if got, want := tbl.List.Position.First, 1; got != want {
+		t.Fatalf("brief first column=%d want %d", got, want)
+	}
+	if got, want := tbl.Selected, 7; got != want {
+		t.Fatalf("brief active row=%d want unchanged %d", got, want)
+	}
+	if !tbl.HandleScrollViewport(-120, 100) || tbl.List.Position.First != 0 {
+		t.Fatalf("reverse wheel should return to the first brief column, got %d", tbl.List.Position.First)
+	}
+
+	tbl.SetMode(ModeFull)
+	tbl.Layout(th, gtx, tableTestModel{rows: 100})
+	fullFirst := tbl.List.Position.First
+	if !tbl.HandleScrollViewport(120, 100) || tbl.List.Position.First != fullFirst+1 {
+		t.Fatalf("full-mode wheel should advance one row from %d, got first=%d", fullFirst, tbl.List.Position.First)
+	}
+	if got, want := tbl.Selected, 7; got != want {
+		t.Fatalf("full active row=%d want unchanged %d", got, want)
+	}
+}
+
+func TestBriefModeMapsVisibleColumnsToModelRows(t *testing.T) {
+	th := material.NewTheme()
+	tbl := New([]Column{{Width: unit.Dp(80), MinWidth: unit.Dp(20), Flex: true}})
+	tbl.SetMode(ModeBrief)
+	tbl.RowHeight = unit.Dp(20)
+	tbl.BriefColumnWidth = unit.Dp(80)
+	tbl.Layout(th, testTableLayoutContext(image.Pt(240, 100)), tableTestModel{rows: 100})
+
+	tbl.List.Position.First = 3
+	rowsPerCol := tbl.briefRowsPerCol
+	if rowsPerCol < 2 {
+		t.Fatalf("brief rows per column = %d, want at least 2", rowsPerCol)
+	}
+	if got, want := tbl.FirstVisibleRow(), 3*rowsPerCol; got != want {
+		t.Fatalf("first visible model row = %d, want %d", got, want)
+	}
+	if got, want := tbl.ListItemForRow(3*rowsPerCol+rowsPerCol-1), 3; got != want {
+		t.Fatalf("list item for last row in column = %d, want %d", got, want)
+	}
+}
+
 type tableTestModel struct {
 	rows int
 }
 
 type tableIconTestModel struct {
 	tableTestModel
+}
+
+type tableBriefWidthTestModel struct {
+	tableTestModel
+	textWidth int
+}
+
+func (m tableBriefWidthTestModel) BriefColumnTextWidthPx() int {
+	return m.textWidth
 }
 
 func (tableIconTestModel) LeadingIcon(row, col int) (LeadingIcon, bool) {

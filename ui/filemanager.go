@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"fmt"
 	"hexone/filesys"
 	"hexone/fm"
 	"hexone/ui/platform"
@@ -16,6 +17,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,7 +38,18 @@ type filePaneModel struct {
 	filenameTheme   filePaneFilenameTheme
 	filenameVisuals []filePaneFilenameVisual
 	measureTextPx   func(string) int
+	measureTextKey  filePaneTextMeasureKey
+	measureKeyValid bool
 	measureCache    map[string]int
+	briefTextWidth  int
+	briefWidthValid bool
+}
+
+type filePaneTextMeasureKey struct {
+	typeface font.Typeface
+	textSize unit.Sp
+	pxPerDp  float32
+	pxPerSp  float32
 }
 
 type fileSortKey uint8
@@ -57,6 +70,16 @@ func (m *filePaneModel) Len() int {
 		return 0
 	}
 	return len(m.entries)
+}
+
+func (m *filePaneModel) setEntries(entries []filesys.Entry) {
+	if m == nil {
+		return
+	}
+	m.entries = entries
+	m.briefTextWidth = 0
+	m.briefWidthValid = false
+	clear(m.measureCache)
 }
 
 func (m *filePaneModel) Entry(row int) *filesys.Entry {
@@ -318,105 +341,113 @@ func (m *filePaneModel) filePaneEntryNameCell(entry filesys.Entry, st table.Cell
 }
 
 type filePaneState struct {
-	table                 *table.Table
-	model                 *filePaneModel
-	pathSegClicks         []widget.Clickable
-	pathEdit              widget.Editor
-	pathEditing           bool
-	pathEditFocus         bool
-	inlineNameEdit        widget.Editor
-	inlineNameEditing     bool
-	inlineNameFocus       bool
-	inlineNameRow         int
-	inlineNamePath        string
-	inlineNameOriginal    string
-	inlineNameRect        image.Rectangle
-	inlineNamePendingRow  int
-	inlineNamePendingAt   time.Time
-	pathClickKey          string
-	pathClickAt           time.Time
-	pendingPathNav        string
-	pendingPathAt         time.Time
-	tableClickRow         int
-	tableClickCol         int
-	tableClickAt          time.Time
-	pathRowClick          widget.Clickable
-	modeClick             widget.Clickable
-	sortClick             widget.Clickable
-	favoriteClick         widget.Clickable
-	disconnectClick       widget.Clickable
-	tablePointerTag       uiEventTag
-	sortOptionBtns        [4]widget.Clickable
-	sortMenuOpen          bool
-	sortMenuOpenedAt      time.Time
-	sortMenuHoverID       string
-	sortMenuHoverAnim     segmentedAnimState
-	sortMenuRect          image.Rectangle
-	sortPointerTag        uiEventTag
-	sortMenuClick         widget.Clickable
-	favoritePointerTag    uiEventTag
-	favoriteMenuClick     widget.Clickable
-	favoriteOptionClicks  []widget.Clickable
-	favoriteRemoveClicks  []widget.Clickable
-	favoriteMenuOpen      bool
-	favoriteMenuRect      image.Rectangle
-	favoriteMenuOpenedAt  time.Time
-	favoriteMenuHoverID   string
-	favoriteMenuHoverAnim segmentedAnimState
-	favoriteHoverKey      string
-	favoriteHoverAt       time.Time
-	favoriteRevealKey     string
-	favoriteRevealHideAt  time.Time
-	favoritePointerPos    image.Point
-	favoritePointerPosSet bool
-	favoriteOrderOpen     bool
-	favoriteOrderIndex    int
-	favoriteOrderPos      image.Point
-	favoriteOrderRect     image.Rectangle
-	favoriteOrderClicks   [2]widget.Clickable
-	headerHeight          int
-	ctxPointerTag         uiEventTag
-	ctxMenuClicks         map[string]*widget.Clickable
-	ctxMenuOpen           bool
-	ctxMenuRow            int
-	ctxMenuPos            image.Point
-	ctxMenuRects          []image.Rectangle
-	ctxMenuItemRects      map[string]image.Rectangle
-	ctxMenuPath           []string
-	ctxMenuOpenedAt       time.Time
-	ctxMenuHoverID        string
-	ctxMenuHoverAnim      segmentedAnimState
-	drivePointerTag       uiEventTag
-	driveMenuPointerTag   uiEventTag
-	driveMenuClicks       []widget.Clickable
-	driveMenuOpen         bool
-	driveMenuPos          image.Point
-	driveMenuRect         image.Rectangle
-	driveSegmentRect      image.Rectangle
-	driveMenuOpenedAt     time.Time
-	driveMenuSelected     int
-	driveMenuHoverID      string
-	driveMenuHoverAnim    segmentedAnimState
-	sortKey               fileSortKey
-	sortDesc              bool
-	dirsFirst             bool
-	remote                *paneSSHSession
-	localDirBeforeRemote  string
-	dir                   string
-	loading               bool
-	loadQuiet             bool
-	loadingDir            string
-	loadingStartedAt      time.Time
-	loadSeq               int
-	loadResultCh          chan filePaneLoadResult
-	dirWatch              filePaneDirWatchState
-	navScrollByDir        map[string]layout.Position
-	err                   string
-	noticeText            string
-	noticeShownAt         time.Time
-	noticeUntil           time.Time
-	volumeBadge           filePaneVolumeBadgeState
-	markedRows            map[int]struct{}
+	table                     *table.Table
+	model                     *filePaneModel
+	allEntries                []filesys.Entry
+	pathSegClicks             []widget.Clickable
+	pathEdit                  widget.Editor
+	pathEditing               bool
+	pathEditFocus             bool
+	filterClick               widget.Clickable
+	filterText                string
+	inlineNameEdit            widget.Editor
+	inlineNameEditing         bool
+	inlineNameFocus           bool
+	inlineNameRow             int
+	inlineNamePath            string
+	inlineNameOriginal        string
+	inlineNameRect            image.Rectangle
+	inlineNamePendingRow      int
+	inlineNamePendingAt       time.Time
+	pathClickKey              string
+	pathClickAt               time.Time
+	pendingPathNav            string
+	pendingPathAt             time.Time
+	tableClickRow             int
+	tableClickCol             int
+	tableClickAt              time.Time
+	pathRowClick              widget.Clickable
+	modeClick                 widget.Clickable
+	sortClick                 widget.Clickable
+	favoriteClick             widget.Clickable
+	disconnectClick           widget.Clickable
+	tablePointerTag           uiEventTag
+	sortOptionBtns            [4]widget.Clickable
+	sortMenuOpen              bool
+	sortMenuOpenedAt          time.Time
+	sortMenuHoverID           string
+	sortMenuHoverAnim         segmentedAnimState
+	sortMenuRect              image.Rectangle
+	sortControlWidth          int
+	sortControlRightInset     int
+	sortPointerTag            uiEventTag
+	sortMenuClick             widget.Clickable
+	favoritePointerTag        uiEventTag
+	favoriteMenuClick         widget.Clickable
+	favoriteOptionClicks      []widget.Clickable
+	favoriteRemoveClicks      []widget.Clickable
+	favoriteMenuOpen          bool
+	favoriteMenuRect          image.Rectangle
+	favoriteControlWidth      int
+	favoriteControlRightInset int
+	favoriteMenuOpenedAt      time.Time
+	favoriteMenuHoverID       string
+	favoriteMenuHoverAnim     segmentedAnimState
+	favoriteHoverKey          string
+	favoriteHoverAt           time.Time
+	favoriteRevealKey         string
+	favoriteRevealHideAt      time.Time
+	favoritePointerPos        image.Point
+	favoritePointerPosSet     bool
+	favoriteOrderOpen         bool
+	favoriteOrderIndex        int
+	favoriteOrderPos          image.Point
+	favoriteOrderRect         image.Rectangle
+	favoriteOrderClicks       [2]widget.Clickable
+	tabHeight                 int
+	headerHeight              int
+	ctxPointerTag             uiEventTag
+	ctxMenuClicks             map[string]*widget.Clickable
+	ctxMenuOpen               bool
+	ctxMenuRow                int
+	ctxMenuPos                image.Point
+	ctxMenuRects              []image.Rectangle
+	ctxMenuItemRects          map[string]image.Rectangle
+	ctxMenuPath               []string
+	ctxMenuOpenedAt           time.Time
+	ctxMenuHoverID            string
+	ctxMenuHoverAnim          segmentedAnimState
+	ctxMenuClipboardFileCount int
+	drivePointerTag           uiEventTag
+	driveMenuPointerTag       uiEventTag
+	driveMenuClicks           []widget.Clickable
+	driveMenuOpen             bool
+	driveMenuRect             image.Rectangle
+	driveSegmentRect          image.Rectangle
+	driveMenuOpenedAt         time.Time
+	driveMenuSelected         int
+	driveMenuHoverID          string
+	driveMenuHoverAnim        segmentedAnimState
+	sortKey                   fileSortKey
+	sortDesc                  bool
+	dirsFirst                 bool
+	remote                    *paneSSHSession
+	localDirBeforeRemote      string
+	dir                       string
+	loading                   bool
+	loadQuiet                 bool
+	loadingDir                string
+	loadingStartedAt          time.Time
+	loadSeq                   int
+	loadResultCh              chan filePaneLoadResult
+	dirWatch                  filePaneDirWatchState
+	navScrollByDir            map[string]layout.Position
+	err                       string
+	noticeText                string
+	noticeShownAt             time.Time
+	noticeUntil               time.Time
+	volumeBadge               filePaneVolumeBadgeState
+	markedRows                map[int]struct{}
 }
 
 type filePaneDirWatchState struct {
@@ -520,6 +551,7 @@ func newFilePaneState(dir string, cfg *fm.Config) *filePaneState {
 	}
 	pane.pathEdit.SingleLine = true
 	pane.pathEdit.Submit = true
+	pane.filterText = filePaneDefaultFilter
 	pane.inlineNameEdit.SingleLine = true
 	pane.inlineNameEdit.Submit = true
 	pane.inlineNameRow = -1
@@ -733,12 +765,13 @@ func (p *filePaneState) applyListingWithOptions(listing filesys.Listing, opts fi
 	if !opts.preserveMarks {
 		p.clearMarkedRows()
 	}
-	p.model.entries = listing.Entries
+	p.allEntries = append(p.allEntries[:0], listing.Entries...)
+	p.rebuildFilteredEntries()
 	p.applyConfiguredSortForCurrentDir()
 	p.applySort("")
 	p.table.Selected = 0
 	if opts.restoreScroll {
-		p.table.List.Position = restorePaneListPosition(p.model.entries, opts.restorePos, opts.restoreAnchor)
+		p.table.List.Position = restorePaneListPosition(p.table, p.model.entries, opts.restorePos, opts.restoreAnchor)
 	} else {
 		p.table.List.Position = layout.Position{}
 	}
@@ -763,12 +796,12 @@ func sanitizePaneListPosition(pos layout.Position) layout.Position {
 	return pos
 }
 
-func restorePaneListPosition(entries []filesys.Entry, pos layout.Position, anchorPath string) layout.Position {
+func restorePaneListPosition(tbl *table.Table, entries []filesys.Entry, pos layout.Position, anchorPath string) layout.Position {
 	pos = sanitizePaneListPosition(pos)
 	if strings.TrimSpace(anchorPath) != "" {
 		for i := range entries {
 			if entries[i].Path == anchorPath {
-				pos.First = i
+				pos.First = tbl.ListItemForRow(i)
 				break
 			}
 		}
@@ -778,8 +811,9 @@ func restorePaneListPosition(entries []filesys.Entry, pos layout.Position, ancho
 		pos.Offset = 0
 		return pos
 	}
-	if pos.First >= len(entries) {
-		pos.First = len(entries) - 1
+	maxFirst := tbl.ListItemForRow(len(entries) - 1)
+	if pos.First > maxFirst {
+		pos.First = maxFirst
 		pos.Offset = 0
 	}
 	return pos
@@ -837,13 +871,13 @@ func (p *filePaneState) beginPathEdit() {
 	p.clearPendingPathNavigate()
 	p.pathEditing = true
 	p.pathEditFocus = true
-	text := p.dir
+	pathText := p.dir
 	if p.remoteConnected() {
-		if strings.TrimSpace(text) == "" {
-			text = "/"
+		if strings.TrimSpace(pathText) == "" {
+			pathText = "/"
 		}
 	}
-	p.pathEdit.SetText(text)
+	p.pathEdit.SetText(formatFilePanePathFilterExpression(pathText, p.displayFilter(), p.remoteConnected()))
 	p.pathEdit.SetCaret(0, p.pathEdit.Len())
 }
 
@@ -853,6 +887,160 @@ func (p *filePaneState) stopPathEdit() {
 	}
 	p.pathEditing = false
 	p.pathEditFocus = false
+}
+
+const filePaneDefaultFilter = "*.*"
+
+func (p *filePaneState) displayFilter() string {
+	if p == nil || strings.TrimSpace(p.filterText) == "" {
+		return filePaneDefaultFilter
+	}
+	return strings.TrimSpace(p.filterText)
+}
+
+func normalizeFilePaneFilter(raw string) string {
+	filter := strings.TrimSpace(raw)
+	if filter == "" || filter == "*" {
+		return filePaneDefaultFilter
+	}
+	return filter
+}
+
+func formatFilePanePathFilterExpression(pathText, filterText string, remote bool) string {
+	separator := string(filepath.Separator)
+	if remote {
+		separator = "/"
+	}
+	pathText = strings.TrimSpace(pathText)
+	base := strings.TrimRight(pathText, separator)
+	if base == "" {
+		return separator + normalizeFilePaneFilter(filterText)
+	}
+	return base + separator + normalizeFilePaneFilter(filterText)
+}
+
+func splitFilePanePathFilterExpression(raw, currentFilter string, remote bool) (pathText, filterText string) {
+	expression := strings.TrimSpace(raw)
+	filterText = normalizeFilePaneFilter(currentFilter)
+	separator := strings.Index(expression, " > ")
+	separatorWidth := len(" > ")
+	if separator >= 0 {
+		prefix := expression[:separator]
+		lastPathSeparator := strings.LastIndexAny(prefix, `/\`)
+		lastComponent := strings.TrimSpace(prefix[lastPathSeparator+1:])
+		if !strings.HasPrefix(strings.ToLower(lastComponent), "re:") {
+			pathText = strings.TrimSpace(prefix)
+			filterText = normalizeFilePaneFilter(expression[separator+separatorWidth:])
+			return pathText, filterText
+		}
+	}
+
+	var dir, filter string
+	if remote {
+		dir, filter = path.Split(expression)
+		dir = path.Clean(dir)
+	} else {
+		dir, filter = filepath.Split(expression)
+		dir = filepath.Clean(dir)
+	}
+	if strings.TrimSpace(filter) == "" {
+		return expression, filterText
+	}
+	pathText = dir
+	filterText = normalizeFilePaneFilter(filter)
+	return pathText, filterText
+}
+
+func compileFilePaneFilter(raw string) (func(filesys.Entry) bool, error) {
+	filter := normalizeFilePaneFilter(raw)
+	if filter == filePaneDefaultFilter {
+		return func(filesys.Entry) bool { return true }, nil
+	}
+	if strings.HasPrefix(strings.ToLower(filter), "re:") {
+		pattern := strings.TrimSpace(filter[len("re:"):])
+		if pattern == "" {
+			return nil, fmt.Errorf("regex is empty")
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return nil, err
+		}
+		return func(entry filesys.Entry) bool {
+			return entry.Kind == filesys.EntryParent || entry.Kind == filesys.EntryDir || re.MatchString(entry.Name)
+		}, nil
+	}
+
+	patterns := strings.FieldsFunc(filter, func(r rune) bool { return r == ';' || r == ',' })
+	if len(patterns) == 0 {
+		patterns = []string{filter}
+	}
+	for i := range patterns {
+		patterns[i] = strings.TrimSpace(patterns[i])
+		if patterns[i] == "" {
+			return nil, fmt.Errorf("empty wildcard")
+		}
+		if _, err := path.Match(patterns[i], ""); err != nil {
+			return nil, err
+		}
+	}
+	return func(entry filesys.Entry) bool {
+		if entry.Kind == filesys.EntryParent || entry.Kind == filesys.EntryDir {
+			return true
+		}
+		for _, pattern := range patterns {
+			if matched, _ := path.Match(pattern, entry.Name); matched {
+				return true
+			}
+		}
+		return false
+	}, nil
+}
+
+func (p *filePaneState) rebuildFilteredEntries() {
+	if p == nil || p.model == nil {
+		return
+	}
+	match, err := compileFilePaneFilter(p.displayFilter())
+	if err != nil {
+		match, _ = compileFilePaneFilter(filePaneDefaultFilter)
+	}
+	entries := make([]filesys.Entry, 0, len(p.allEntries))
+	for _, entry := range p.allEntries {
+		if match(entry) {
+			entries = append(entries, entry)
+		}
+	}
+	p.model.setEntries(entries)
+}
+
+func (p *filePaneState) setFilter(raw string) error {
+	if p == nil {
+		return nil
+	}
+	next := normalizeFilePaneFilter(raw)
+	if _, err := compileFilePaneFilter(next); err != nil {
+		return err
+	}
+	selectedPath := ""
+	if selected := p.selectedEntry(); selected != nil {
+		selectedPath = selected.Path
+	}
+	markedPaths := append([]string(nil), p.markedPaths()...)
+	p.filterText = next
+	p.clearMarkedRows()
+	p.rebuildFilteredEntries()
+	p.applySort("")
+	if p.table != nil {
+		row := 0
+		if selectedPath != "" {
+			if idx := p.findEntryPathIndex(selectedPath); idx >= 0 {
+				row = idx
+			}
+		}
+		p.table.SetSelected(row, p.model.Len(), true)
+	}
+	p.restoreMarkedPaths(markedPaths)
+	return nil
 }
 
 func (p *filePaneState) inlineNameEntry() *filesys.Entry {
@@ -1009,6 +1197,7 @@ func (p *filePaneState) closeContextMenu() {
 	p.ctxMenuOpenedAt = time.Time{}
 	p.ctxMenuHoverID = ""
 	p.ctxMenuHoverAnim = segmentedAnimState{}
+	p.ctxMenuClipboardFileCount = 0
 	if p.table != nil {
 		p.table.ResetPointerState()
 	}
@@ -1123,6 +1312,7 @@ func (p *filePaneState) openContextMenu(row int, pos image.Point, now time.Time)
 	p.ctxMenuOpenedAt = now
 	p.ctxMenuHoverID = ""
 	p.ctxMenuHoverAnim = segmentedAnimState{}
+	p.ctxMenuClipboardFileCount = 0
 	if p.table != nil {
 		p.table.ResetPointerState()
 	}
@@ -1132,12 +1322,11 @@ func (p *filePaneState) openContextMenu(row int, pos image.Point, now time.Time)
 	p.ctxMenuClicks = nil
 }
 
-func (p *filePaneState) openDriveMenu(pos image.Point, now time.Time) {
+func (p *filePaneState) openDriveMenu(now time.Time) {
 	if p == nil {
 		return
 	}
 	p.driveMenuOpen = true
-	p.driveMenuPos = pos
 	p.driveMenuRect = image.Rectangle{}
 	p.driveMenuOpenedAt = now
 	p.driveMenuSelected = -1
@@ -1273,6 +1462,58 @@ type filePathSegment struct {
 	path  string
 }
 
+const (
+	filePathEstimatedCharPx = 8
+	filePathSeparatorPx     = 10
+)
+
+func estimatedFilePathSegmentsWidth(segments []filePathSegment) int {
+	return filePathSegmentsWidth(segments, func(segment filePathSegment, _ bool) int {
+		return utf8.RuneCountInString(segment.label) * filePathEstimatedCharPx
+	}, filePathSeparatorPx)
+}
+
+func filePathSegmentsWidth(segments []filePathSegment, segmentWidth func(filePathSegment, bool) int, separatorWidth int) int {
+	width := 0
+	for i := range segments {
+		if i > 0 {
+			width += separatorWidth
+		}
+		width += segmentWidth(segments[i], i == len(segments)-1)
+	}
+	return width
+}
+
+func compactFilePathSegments(segments []filePathSegment, maxWidth int) []filePathSegment {
+	return compactFilePathSegmentsMeasured(segments, maxWidth, func(segment filePathSegment, _ bool) int {
+		return utf8.RuneCountInString(segment.label) * filePathEstimatedCharPx
+	}, filePathSeparatorPx)
+}
+
+func compactFilePathSegmentsMeasured(segments []filePathSegment, maxWidth int, segmentWidth func(filePathSegment, bool) int, separatorWidth int) []filePathSegment {
+	if len(segments) <= 2 || maxWidth <= 0 || filePathSegmentsWidth(segments, segmentWidth, separatorWidth) <= maxWidth {
+		return segments
+	}
+
+	ellipsis := filePathSegment{label: "…"}
+	tail := []filePathSegment{segments[len(segments)-1]}
+	used := segmentWidth(segments[0], false) + separatorWidth +
+		segmentWidth(ellipsis, false) + separatorWidth + segmentWidth(tail[0], true)
+	for i := len(segments) - 2; i > 0; i-- {
+		cost := separatorWidth + segmentWidth(segments[i], false)
+		if used+cost > maxWidth {
+			break
+		}
+		tail = append([]filePathSegment{segments[i]}, tail...)
+		used += cost
+	}
+
+	out := make([]filePathSegment, 0, len(tail)+2)
+	out = append(out, segments[0], ellipsis)
+	out = append(out, tail...)
+	return out
+}
+
 func splitFilePathSegments(dir string) []filePathSegment {
 	if dir == "" {
 		dir = "."
@@ -1301,17 +1542,18 @@ func splitFilePathSegments(dir string) []filePathSegment {
 			root = sep
 		}
 		current = root
-		out = append(out, filePathSegment{label: root, path: current})
+		label := root
+		if vol != "" {
+			label = vol
+		}
+		out = append(out, filePathSegment{label: label, path: current})
 	} else if vol != "" {
 		current = vol
 		out = append(out, filePathSegment{label: vol, path: current})
 	}
 
-	for i, part := range parts {
+	for _, part := range parts {
 		label := part
-		if len(out) > 0 && !(hasRoot && i == 0) {
-			label = sep + part
-		}
 		if current == "" {
 			current = part
 		} else {
@@ -1356,7 +1598,7 @@ func splitRemotePathSegments(dir string) []filePathSegment {
 	out = append(out, filePathSegment{label: "/", path: "/"})
 
 	current := "/"
-	for i, part := range parts {
+	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -1366,11 +1608,7 @@ func splitRemotePathSegments(dir string) []filePathSegment {
 		} else {
 			current = current + "/" + part
 		}
-		label := "/" + part
-		if i == 0 {
-			label = part
-		}
-		out = append(out, filePathSegment{label: label, path: current})
+		out = append(out, filePathSegment{label: part, path: current})
 	}
 	return out
 }
@@ -1384,7 +1622,7 @@ func remotePathDisplaySegments(address, dir string) []filePathSegment {
 	if address == "" {
 		address = "ssh"
 	}
-	segments[0].label = address + segments[0].label
+	segments[0].label = address
 	return segments
 }
 
@@ -1685,7 +1923,7 @@ func (p *filePaneState) visibleAnchorPath() string {
 	if p == nil || p.table == nil || p.model == nil || p.model.Len() == 0 {
 		return ""
 	}
-	row := p.table.List.Position.First
+	row := p.table.FirstVisibleRow()
 	if row < 0 {
 		row = 0
 	}
@@ -2275,6 +2513,25 @@ func (m *filePaneModel) setTextMeasurer(measure func(string) int) {
 	}
 }
 
+func (m *filePaneModel) setTextMeasurerForStyle(key filePaneTextMeasureKey, measure func(string) int) {
+	if m == nil {
+		return
+	}
+	m.measureTextPx = measure
+	if measure == nil {
+		return
+	}
+	if !m.measureKeyValid || m.measureTextKey != key {
+		clear(m.measureCache)
+		m.briefWidthValid = false
+		m.measureTextKey = key
+		m.measureKeyValid = true
+	}
+	if m.measureCache == nil {
+		m.measureCache = make(map[string]int)
+	}
+}
+
 func (m *filePaneModel) measuredTextWidth(text string) (int, bool) {
 	if m == nil || m.measureTextPx == nil {
 		return 0, false
@@ -2285,6 +2542,38 @@ func (m *filePaneModel) measuredTextWidth(text string) (int, bool) {
 	width := m.measureTextPx(text)
 	m.measureCache[text] = width
 	return width, true
+}
+
+func (m *filePaneModel) BriefColumnTextWidthPx() int {
+	if m == nil {
+		return 0
+	}
+	if m.briefWidthValid {
+		return m.briefTextWidth
+	}
+
+	maxWidth := 0
+	for row := range m.entries {
+		txt, st := m.Cell(row, 0)
+		width := m.approxCharPx() * utf8.RuneCountInString(txt+st.Suffix)
+		if measured, ok := m.measuredTextWidth(txt); ok {
+			width = measured
+			if st.Suffix != "" {
+				if suffixWidth, suffixOK := m.measuredTextWidth(st.Suffix); suffixOK {
+					width += suffixWidth
+				}
+			}
+		}
+		if width > maxWidth {
+			maxWidth = width
+		}
+	}
+
+	m.briefTextWidth = maxWidth
+	// Exact shaped measurements are stable for the lifetime of a pane. Pane
+	// recreation handles font changes, while setEntries invalidates content.
+	m.briefWidthValid = m.measureTextPx != nil
+	return maxWidth
 }
 
 func (m *filePaneModel) approxChars(widthPx, reservePx int) int {
@@ -2930,10 +3219,7 @@ func (ui *UI) openPaneDriveMenu(idx int) bool {
 	pane.closeFavoriteMenu()
 	pane.closeContextMenu()
 	pane.stopPathEdit()
-	pane.openDriveMenu(image.Point{
-		X: 0,
-		Y: pane.headerHeight + 4,
-	}, time.Now())
+	pane.openDriveMenu(time.Now())
 	pane.setDriveMenuSelection(-1, platform.AvailableLocalDrives())
 	return true
 }
@@ -3059,10 +3345,46 @@ func (ui *UI) requestPaneLoadWithSelection(idx int, dir, primaryPath, secondaryP
 }
 
 func (ui *UI) requestPaneLoadWithSelectionAndScroll(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
-	return ui.requestPaneLoadWithSelectionScrollAndVisibility(idx, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, false, restoreAnchor, noticeText, noticeDur)
+	return ui.requestPaneLoadRequest(idx, dir, filePaneLoadResult{
+		primaryPath:   primaryPath,
+		secondaryPath: secondaryPath,
+		fallbackRow:   fallbackRow,
+		restorePos:    restorePos,
+		restoreScroll: restoreScroll,
+		restoreAnchor: restoreAnchor,
+		noticeText:    noticeText,
+		noticeDur:     noticeDur,
+	}, true)
 }
 
 func (ui *UI) requestPaneLoadWithSelectionScrollAndVisibility(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreScroll, ensureVisible bool, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
+	return ui.requestPaneLoadRequest(idx, dir, filePaneLoadResult{
+		primaryPath:   primaryPath,
+		secondaryPath: secondaryPath,
+		fallbackRow:   fallbackRow,
+		restorePos:    restorePos,
+		restoreScroll: restoreScroll,
+		ensureVisible: ensureVisible,
+		restoreAnchor: restoreAnchor,
+		noticeText:    noticeText,
+		noticeDur:     noticeDur,
+	}, true)
+}
+
+func (ui *UI) requestPaneRefreshWithSelectionAndScroll(idx int, dir, primaryPath, secondaryPath string, fallbackRow int, restorePos layout.Position, restoreAnchor, noticeText string, noticeDur time.Duration) bool {
+	return ui.requestPaneLoadRequest(idx, dir, filePaneLoadResult{
+		primaryPath:   primaryPath,
+		secondaryPath: secondaryPath,
+		fallbackRow:   fallbackRow,
+		restorePos:    restorePos,
+		restoreScroll: true,
+		restoreAnchor: restoreAnchor,
+		noticeText:    noticeText,
+		noticeDur:     noticeDur,
+	}, false)
+}
+
+func (ui *UI) requestPaneLoadRequest(idx int, dir string, req filePaneLoadResult, activate bool) bool {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return false
 	}
@@ -3070,7 +3392,9 @@ func (ui *UI) requestPaneLoadWithSelectionScrollAndVisibility(idx int, dir, prim
 	if pane == nil {
 		return false
 	}
-	ui.setActiveFilePane(idx)
+	if activate {
+		ui.setActiveFilePane(idx)
+	}
 
 	pane.closeSortMenu()
 	pane.closeFavoriteMenu()
@@ -3087,16 +3411,16 @@ func (ui *UI) requestPaneLoadWithSelectionScrollAndVisibility(idx int, dir, prim
 			pane.setNotice(err.Error(), time.Now())
 			return false
 		}
-		if restoreScroll {
-			pane.table.List.Position = restorePaneListPosition(pane.model.entries, restorePos, restoreAnchor)
+		if req.restoreScroll {
+			pane.table.List.Position = restorePaneListPosition(pane.table, pane.model.entries, req.restorePos, req.restoreAnchor)
 		}
-		pane.applySelection(primaryPath, secondaryPath, fallbackRow, ensureVisible || !restoreScroll)
-		if noticeText != "" {
-			pane.setNoticeFor(noticeText, time.Now(), noticeDur)
+		pane.applySelection(req.primaryPath, req.secondaryPath, req.fallbackRow, req.ensureVisible || !req.restoreScroll)
+		if req.noticeText != "" {
+			pane.setNoticeFor(req.noticeText, time.Now(), req.noticeDur)
 		}
 		return true
 	}
-	return startLocalPaneLoadWithRestoreAndVisibility(pane, dir, primaryPath, secondaryPath, fallbackRow, restorePos, restoreScroll, ensureVisible, restoreAnchor, noticeText, noticeDur)
+	return startLocalPaneLoadRequest(pane, dir, req, false)
 }
 
 func (ui *UI) loadPaneDir(idx int, dir string) bool {
@@ -3109,7 +3433,27 @@ func (ui *UI) activateFilePanePathSegment(idx int, pane *filePaneState, target s
 	}
 	pane.clearPendingPathNavigate()
 	pane.clearPathClickState()
+	if filePanePathTargetsCurrentDir(pane, target) {
+		if pane.displayFilter() == filePaneDefaultFilter {
+			return false
+		}
+		return pane.setFilter(filePaneDefaultFilter) == nil
+	}
 	return ui.loadPaneDir(idx, target)
+}
+
+func filePanePathTargetsCurrentDir(pane *filePaneState, target string) bool {
+	if pane == nil {
+		return false
+	}
+	if pane.remoteConnected() {
+		current := strings.TrimSpace(pane.dir)
+		if current == "" {
+			current = "/"
+		}
+		return path.Clean(target) == path.Clean(current)
+	}
+	return filepath.Clean(target) == filepath.Clean(pane.displayDir())
 }
 
 func (ui *UI) pumpFilePaneLoads(gtx layout.Context) {
@@ -3198,9 +3542,13 @@ func (ui *UI) submitPanePathEdit(idx int, raw string) bool {
 		return false
 	}
 
-	target := strings.TrimSpace(raw)
+	target, nextFilter := splitFilePanePathFilterExpression(raw, pane.displayFilter(), pane.remoteConnected())
 	if target == "" {
 		pane.setNotice("path is empty", time.Now())
+		return false
+	}
+	if _, err := compileFilePaneFilter(nextFilter); err != nil {
+		pane.setNotice("invalid filter: "+err.Error(), time.Now())
 		return false
 	}
 	if pane.remoteConnected() {
@@ -3213,20 +3561,46 @@ func (ui *UI) submitPanePathEdit(idx int, raw string) bool {
 		}
 		target = path.Clean(target)
 		if target == path.Clean(pane.dir) {
+			if err := pane.setFilter(nextFilter); err != nil {
+				pane.setNotice("invalid filter: "+err.Error(), time.Now())
+				return false
+			}
 			pane.stopPathEdit()
 			return true
 		}
-		return ui.loadPaneDir(idx, target)
+		previousFilter := pane.displayFilter()
+		if err := pane.setFilter(nextFilter); err != nil {
+			pane.setNotice("invalid filter: "+err.Error(), time.Now())
+			return false
+		}
+		if ui.loadPaneDir(idx, target) {
+			return true
+		}
+		_ = pane.setFilter(previousFilter)
+		return false
 	}
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(pane.dir, target)
 	}
 	target = filepath.Clean(target)
 	if target == filepath.Clean(pane.dir) {
+		if err := pane.setFilter(nextFilter); err != nil {
+			pane.setNotice("invalid filter: "+err.Error(), time.Now())
+			return false
+		}
 		pane.stopPathEdit()
 		return true
 	}
-	return ui.loadPaneDir(idx, target)
+	previousFilter := pane.displayFilter()
+	if err := pane.setFilter(nextFilter); err != nil {
+		pane.setNotice("invalid filter: "+err.Error(), time.Now())
+		return false
+	}
+	if ui.loadPaneDir(idx, target) {
+		return true
+	}
+	_ = pane.setFilter(previousFilter)
+	return false
 }
 
 func (ui *UI) cyclePaneSort(idx int) {
@@ -3492,6 +3866,23 @@ func (ui *UI) activateFilePaneRow(idx, row int) bool {
 	return true
 }
 
+func (ui *UI) navigateFilePaneParent(idx int) bool {
+	if ui == nil || idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil || pane.loading || pane.model == nil {
+		return false
+	}
+	for row := 0; row < pane.model.Len(); row++ {
+		entry := pane.model.Entry(row)
+		if entry != nil && entry.Kind == filesys.EntryParent && entry.CanEnter {
+			return ui.activateFilePaneRow(idx, row)
+		}
+	}
+	return false
+}
+
 func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point, now time.Time) {
 	if idx < 0 || idx >= len(ui.filePanes) {
 		return
@@ -3509,6 +3900,11 @@ func (ui *UI) openFilePaneContextMenu(idx, row int, pos image.Point, now time.Ti
 	pane.closeDriveMenu()
 	pane.closeFavoriteMenu()
 	pane.openContextMenu(row, pos, now)
+	if pane.writableLocalView() {
+		if paths, err := readFileClipboardFilesFunc(); err == nil {
+			pane.ctxMenuClipboardFileCount = len(paths)
+		}
+	}
 }
 
 func (ui *UI) prepareFilePaneContextMenuTarget(pane *filePaneState, row int) bool {

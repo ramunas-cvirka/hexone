@@ -4,13 +4,93 @@
 package ui
 
 import (
-	"hexone/fm"
+	"image"
+	"image/color"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/io/key"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 	"gioui.org/widget"
+	"gioui.org/widget/material"
+
+	"hexone/fm"
 )
+
+func TestFunctionBarKeyTextUsesDistinctHighContrastColor(t *testing.T) {
+	barBackground := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
+	labelColor := color.NRGBA{R: 210, G: 210, B: 210, A: 255}
+	keyColor := functionBarKeyTextColor(labelColor)
+
+	if keyColor == labelColor {
+		t.Fatal("function-key and action labels should use different colors")
+	}
+	if got := contrastScore(barBackground, keyColor); got < 7 {
+		t.Fatalf("function-key contrast ratio=%0.2f want at least 7", got)
+	}
+	if keyColor.A != labelColor.A {
+		t.Fatalf("function-key alpha=%d want label alpha %d", keyColor.A, labelColor.A)
+	}
+}
+
+func TestFunctionBarSplitLabelUsesBoldShortcutAndNormalAction(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	labelColor := color.NRGBA{R: 210, G: 210, B: 210, A: 255}
+
+	shortcut, _, action := ui.functionBarSplitLabelStyles(th, "Ctrl+A", "Select All", labelColor)
+
+	if shortcut.Font.Weight != font.Bold {
+		t.Fatalf("shortcut weight=%v want bold", shortcut.Font.Weight)
+	}
+	if action.Font.Weight != font.Normal {
+		t.Fatalf("action weight=%v want normal", action.Font.Weight)
+	}
+	if shortcut.Color != functionBarKeyTextColor(labelColor) {
+		t.Fatalf("shortcut color=%v want accent %v", shortcut.Color, functionBarKeyTextColor(labelColor))
+	}
+	if action.Color != labelColor {
+		t.Fatalf("action color=%v want label color %v", action.Color, labelColor)
+	}
+	if action.MaxLines != 1 || action.Truncator != "…" {
+		t.Fatalf("action truncation MaxLines=%d Truncator=%q want one-line ellipsis", action.MaxLines, action.Truncator)
+	}
+}
+
+func TestFunctionBarWidthsAreFixedByWindowWidth(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = &fileViewerState{mode: "file"}
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(1003, 24)),
+	}
+	short := ui.viewerFunctionBarButtonSpecs()
+	long := append([]functionBarButtonSpec(nil), short...)
+	long[2].label = "very-long-descriptive-text-bla-blabla"
+
+	shortWidths := ui.functionBarWidths(th, gtx, short)
+	longWidths := ui.functionBarWidths(th, gtx, long)
+	if !reflect.DeepEqual(shortWidths, longWidths) {
+		t.Fatalf("label changed slot widths: short=%v long=%v", shortWidths, longWidths)
+	}
+	total := 0
+	for i, width := range shortWidths {
+		total += width
+		if width < 100 || width > 101 {
+			t.Fatalf("slot %d width=%d want equal 100/101px partition", i, width)
+		}
+	}
+	if total != 1003 {
+		t.Fatalf("slot widths total=%d want window width 1003", total)
+	}
+}
 
 func TestFunctionBarToolSpecsFollowActiveWorkspace(t *testing.T) {
 	ui := &UI{}
@@ -234,6 +314,170 @@ func TestViewerFunctionBarAutoHideCanBeTemporarilyShown(t *testing.T) {
 	}
 }
 
+func TestViewerFunctionBarExitRequestsApplicationExit(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	ui.fileViewer = &fileViewerState{mode: "file"}
+
+	if !ui.performFunctionBarAction(functionBarActionExit, time.Now()) {
+		t.Fatal("viewer F10 Exit action should be handled")
+	}
+	if ui.fileViewer == nil {
+		t.Fatal("application Exit should leave viewer state intact until the window closes")
+	}
+	if !ui.ConsumeWindowCloseRequest() {
+		t.Fatal("viewer F10 Exit should request application exit")
+	}
+}
+
+func TestViewerFunctionBarExitDiscardsUnsavedTextChanges(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	st := &fileViewerState{
+		mode:             "file",
+		editMode:         true,
+		editDirty:        true,
+		editBaselineText: "original",
+		content:          "changed",
+	}
+	st.contentEditor.SetText("changed")
+	ui.fileViewer = st
+
+	if !ui.performFunctionBarAction(functionBarActionExit, time.Now()) {
+		t.Fatal("viewer F10 Exit action should be handled")
+	}
+	if st.editMode || st.editDirty || st.contentEditor.Text() != "original" || st.content != "original" {
+		t.Fatalf("F10 text discard edit=%v dirty=%v editor=%q content=%q", st.editMode, st.editDirty, st.contentEditor.Text(), st.content)
+	}
+	if !ui.ConsumeWindowCloseRequest() {
+		t.Fatal("viewer F10 should request application exit after discarding text changes")
+	}
+}
+
+func TestViewerFunctionBarExitDiscardsUnsavedHexChanges(t *testing.T) {
+	v := newHexViewerState()
+	v.edits = map[int64]byte{3: 0xFF}
+	st := &fileViewerState{mode: "hex", editMode: true, editDirty: true, hex: v}
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	ui.fileViewer = st
+
+	if !ui.performFunctionBarAction(functionBarActionExit, time.Now()) {
+		t.Fatal("viewer F10 Exit action should be handled")
+	}
+	if st.editMode || st.editDirty || v.edits != nil {
+		t.Fatalf("F10 HEX discard edit=%v dirty=%v edits=%v", st.editMode, st.editDirty, v.edits)
+	}
+	if !ui.ConsumeWindowCloseRequest() {
+		t.Fatal("viewer F10 should request application exit after discarding HEX changes")
+	}
+}
+
+func TestViewerFunctionBarEnablesEditorActions(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	st := &fileViewerState{mode: "file"}
+	ui.fileViewer = st
+
+	if ui.functionBarActionEnabled(functionBarActionViewerSave) {
+		t.Fatal("viewer Save should be disabled outside edit mode")
+	}
+	st.editMode = true
+	st.editDirty = true
+	if !ui.functionBarActionEnabled(functionBarActionViewerSave) {
+		t.Fatal("viewer Save should be enabled for dirty edits")
+	}
+	if !ui.functionBarActionEnabled(functionBarActionViewerFind) {
+		t.Fatal("viewer Find should remain enabled while editing")
+	}
+	if !ui.functionBarActionEnabled(functionBarActionViewerMode) {
+		t.Fatal("viewer mode switch should remain enabled while editing")
+	}
+}
+
+func TestViewerEditorFunctionKeysRouteFindAndModeSwitch(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	st := &fileViewerState{
+		mode:             "file",
+		path:             "notes.txt",
+		content:          "committed needle",
+		editMode:         true,
+		editDirty:        true,
+		editBaselineText: "committed needle",
+	}
+	st.stream.SetContent(st.content)
+	ui.fileViewer = st
+	gtx, router := testKeyContext()
+	anyMods := ^key.Modifiers(0)
+
+	router.Event(key.Filter{Name: key.NameF7, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF7, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if !st.find.open {
+		t.Fatal("viewer F7 should open Find while editing")
+	}
+
+	router.Event(key.Filter{Name: key.NameF8, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF8, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if !st.modeSwitchPrompt.open || st.modeSwitchPrompt.targetMode != "hex" {
+		t.Fatalf("viewer F8 prompt=%v target=%q want dirty-edit switch to hex", st.modeSwitchPrompt.open, st.modeSwitchPrompt.targetMode)
+	}
+}
+
+func TestViewerFunctionKeysRouteToViewerCommands(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.Tabs.Value = "tab0"
+	ui.fileViewer = &fileViewerState{mode: "file"}
+	gtx, router := testKeyContext()
+	anyMods := ^key.Modifiers(0)
+
+	router.Event(key.Filter{Name: key.NameF7, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF7, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if !ui.fileViewer.find.open {
+		t.Fatal("viewer F7 should open Find")
+	}
+
+	router.Event(key.Filter{Name: key.NameF10, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF10, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if ui.fileViewer == nil {
+		t.Fatal("viewer F10 should preserve viewer state until application exit")
+	}
+	if !ui.ConsumeWindowCloseRequest() {
+		t.Fatal("viewer F10 should request application exit")
+	}
+}
+
+func TestViewerF5TogglesLineNumbersAndF6IsUnassigned(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.Tabs.Value = "tab0"
+	st := &fileViewerState{mode: "file", editMode: true, editDirty: true}
+	ui.fileViewer = st
+	gtx, router := testKeyContext()
+	anyMods := ^key.Modifiers(0)
+
+	router.Event(key.Filter{Name: key.NameF5, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF5, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if ui.fmCfg.Viewer.ShowLineNumbers {
+		t.Fatal("viewer F5 should disable line numbers")
+	}
+
+	router.Event(key.Filter{Name: key.NameF6, Optional: anyMods})
+	router.Queue(key.Event{Name: key.NameF6, State: key.Press})
+	ui.handleGlobalFunctionKeys(gtx)
+	if st.saving || !st.editMode || !st.editDirty {
+		t.Fatalf("F5/F6 changed edit state saving=%v edit=%v dirty=%v", st.saving, st.editMode, st.editDirty)
+	}
+	if ui.ConsumeWindowCloseRequest() {
+		t.Fatal("F5/F6 should not request application exit")
+	}
+}
+
 func TestTerminalMaximizedFunctionBarAutoHideCanBeTemporarilyShown(t *testing.T) {
 	now := time.Date(2026, time.March, 8, 10, 5, 0, 0, time.UTC)
 	cfg := fm.DefaultConfig()
@@ -393,7 +637,7 @@ func TestFunctionBarModifierHintTextShowsViewerTextShortcuts(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ctrl hints for the viewer")
 	}
-	want := "Ctrl+F Find | Ctrl+C Copy | Ctrl+A Select All | Ctrl+S Settings"
+	want := "Ctrl+F Find | Ctrl+C Copy | Ctrl+A Select All | Ctrl+S Save"
 	if got != want {
 		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
 	}
@@ -413,7 +657,7 @@ func TestFunctionBarModifierHintTextShowsViewerImageShortcuts(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ctrl hints for image previews")
 	}
-	want := "Ctrl+/- Zoom | Ctrl+S Settings"
+	want := "Ctrl+/- Zoom | Ctrl+S Save"
 	if got != want {
 		t.Fatalf("functionBarModifierHintText()=%q want %q", got, want)
 	}

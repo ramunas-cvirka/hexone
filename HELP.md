@@ -38,20 +38,27 @@ Each file pane has its own independent compact tab strip above the current-dir l
 - `Ctrl+Tab` selects the next tab; `Ctrl+Shift+Tab` selects the previous tab.
 - You can also hold `Ctrl+Tab` and press `Left` or `Right` before releasing `Tab` to choose the direction explicitly.
 
-Tab titles use the current directory and trim to fit. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, and `tabs.active_color`.
+Tab titles use the current directory and trim to fit. The active tab opens through the notched frame into its current-dir line; inactive tabs remain separated above the connecting rail. Their font family and size can be set independently with `tabs.typeface` and `tabs.font_size_sp`, either in the Fonts settings or in `hexone.yaml`. Widths and colors are controlled by `tabs.width_mode`, `tabs.max_width_dp`, `tabs.color`, `tabs.alt_color`, and `tabs.active_color`.
 
 ## Current Dir Line
 
 The current-dir line at the top of each pane is interactive.
 
-- Click a path segment to jump to that level.
+Its font family and size are independent from the rest of the interface. Change the `Current dir` row in Fonts settings, or set `current_dir.typeface` and `current_dir.font_size_sp` in `hexone.yaml`. The default is Iosevka Nerd Font Mono at 11sp. The ASCII-shaped frame and sort-direction arrow are painted independently, so the frame remains continuous and the arrow scales cleanly with every selected font and size.
+
+- Click an ancestor path segment to jump to that level. Click the current directory to reset its filter to `*.*`.
 - Double-click the current-dir line to edit the path directly.
 - Press `Enter` in the path editor to go there.
 - Press `Esc` to cancel path editing.
+- Click the `*.*` mask after `>` to edit the combined OS-style path and mask for that pane tab (for example `/work/src/*.go` or `C:\work\src\*.go`).
+- Press `Enter` to apply both values. Press `Esc` or click outside the editor to cancel the draft.
+- Wildcard masks accept `*` and `?`; separate alternatives with `;` or `,` (for example `*.go;*.md`).
+- Prefix a filter with `re:` to use a regular expression (for example `re:^test_.*\.go$`).
+- Directories and the `..` row remain visible while a filter is active. Submit an empty mask to restore `*.*`.
 
 On Windows:
 
-- the drive part of the current-dir line can open the drive picker
+- right-click the drive segment of the current-dir line to open the drive picker
 - `Alt+1` opens the drive picker for the left pane
 - `Alt+2` opens the drive picker for the right pane
 - in the drive picker, use `Up`/`Down` to move, `Enter` to select, and `Esc` to close
@@ -75,7 +82,7 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F5` copies.
 - `F6` moves or renames.
 - `F7` creates a file or folder.
-- `F8` deletes.
+- `F8` or `Delete` deletes selected items. In **Settings → File panes → Other**, deletion can use the local system Trash / Recycle Bin and can optionally skip confirmation. SSH deletions are always permanent.
 - `F9` opens the Tools menu (`Multi-Rename`, `Hex to ASCII`, `Protocol Analyzer`, `Settings`).
 - `Ctrl+M` / `Cmd+M` opens Multi-Rename for the current file-pane selection.
 - `F10` exits the app.
@@ -83,6 +90,14 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F12` opens or closes the terminal drawer.
 
 If the function key bar is auto-hidden in the viewer, `F11` can still bring it back.
+
+Right-click a local file-pane item to copy the selected file or marked files to
+the system file clipboard. Finder, File Explorer, and applications that accept
+file clipboard data can paste them. When the system clipboard contains files,
+the local pane context menu also offers **Paste File(s)** and starts copying
+immediately into the current directory. Paste progress appears in the pane's
+bottom status bar without opening a modal. File clipboard actions are
+unavailable inside archives and SSH panes.
 
 When the terminal drawer is open, `Shift+Tab` toggles keyboard focus between the terminal and the file panes. Plain `Tab` stays available to the terminal for shell completion while the terminal is focused.
 
@@ -103,7 +118,7 @@ Multi-Rename applies a set of filename transformations to the selected items in 
 
 The terminal drawer is a real PTY-backed terminal. Open or close it with `F12`, and use `Shift+Tab` to move keyboard focus between it and the file panes.
 
-The terminal drawer also has tabs. Use `+` for a new terminal tab, `x` to close one, and `<` or `>` when the tab row overflows.
+The terminal drawer also has tabs. Its active tab opens through the straight separator rail into the terminal surface, matching the file-pane tab treatment without the current-dir frame. Use `+` for a new terminal tab, `x` to close one, and `<` or `>` when the tab row overflows.
 
 While the terminal has keyboard focus, `Ctrl+N`, `Ctrl+X`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, and the directional tab chord act on terminal tabs instead of file-pane tabs. Terminal tabs and both file-pane tab groups remain independent.
 
@@ -126,6 +141,21 @@ Right-click opens the terminal context menu. It can:
 
 For local shells, Hexone can usually read the terminal process current directory directly.
 
+### Terminal Snippets
+
+Use the `☆` button at the right side of the terminal tab row, or `Ctrl+Shift+P` / `Cmd+Shift+P`, to save and insert terminal snippets. The keyboard shortcut opens the menu; use the arrow keys and Enter to choose an item.
+
+- `Save current command…` opens an editable draft taken from the current prompt line.
+- Terminal snippets are single-line prompt insertions; use the F2 custom commands feature for multi-line commands.
+- The snippet editor prefills the command currently being typed, or the last command submitted in that terminal when the prompt is empty.
+- Every snippet has exactly one scope: `Global`, `Directory`, or `Git repository`.
+- Directory snippets match only the exact terminal folder.
+- Git repository snippets match anywhere below the saved repository root.
+- Selecting a snippet inserts it at the prompt for review; it is not executed automatically.
+- Use the `x` beside a snippet to remove it.
+
+When the current terminal is inside a local Git repository, new snippets default to repository scope. Outside a repository they default to directory scope when the terminal location is available, and otherwise to global scope. Repository scope is unavailable for remote terminals because Hexone cannot safely infer the remote repository root without running a command.
+
 For SSH shells, Hexone needs the remote shell to emit OSC 7 working-directory updates. Hexone can parse OSC 7 and use it to open the matching remote directory in a file pane, but it cannot infer the remote directory from a prompt alone.
 
 If your remote shell does not already emit OSC 7, add something like this to the remote `~/.bashrc`:
@@ -141,7 +171,7 @@ After reconnecting, `Set Left Pane to Terminal Dir` and `Set Right Pane to Termi
 
 ## Custom Commands
 
-`F2` is for saved shell snippets that are not tied to a single file. The editor stores up to 10 fixed slots, each with a short name and multi-line command body.
+`F2` is for saved commands that run in the command-only viewer and are not tied to a single file. The editor stores up to 10 fixed slots, each with a short name and multi-line command body.
 
 - `Run` saves the current command and shows its output in a command-only viewer.
 - Saving an empty command clears the selected slot.
@@ -180,13 +210,17 @@ The internal viewer has three explicit modes, plus automatic image-style preview
 - `hex` for raw bytes
 - `command` for shell output based on the selected file
 
-The active mode tab includes the complete filename, for example `File - photo.jpg`; switching modes moves the filename to `Hex` or `Cmd`.
+The centered filename rail stays visible while switching between `File`, `Hex`, and `Cmd`. Unsaved edits are marked after the filename, for example `[notes.txt *]`.
 
 New viewer opens default to `file`; exact target commands and filename command rules open in `command`, while files over the configured read limit open in `hex` when no target or rule command applies.
 
 Useful viewer keys:
 
-- `F3` refreshes the current file or reruns the current command
+- `F4` turns editing on in text and hex views
+- `F3` discards unsaved changes and turns editing off; outside edit mode it refreshes the current file or reruns the current command
+- `Esc` discards unsaved changes and closes the viewer
+- `F5` toggles line numbers in File and Cmd text views
+- `F2`, `Ctrl+S`, or `Cmd+S` saves changes
 - `Tab` moves `file -> hex -> command`; `Shift+Tab` moves backward
 - `Ctrl+F` or `Cmd+F` opens Find in `file`, `hex`, and `command`
 - `Enter` jumps to the next find result; `Shift+Enter` jumps to the previous one
@@ -202,13 +236,39 @@ Useful viewer keys:
 - supported images open as an image preview inside `file` mode
 - supported PDFs open as a rendered page preview inside `file` mode
 - `hex` mode is better for binary files, mixed data, or damaged content
+- in Hex edit mode, click the HEX columns to edit individual nibbles
+- click the ASCII column to edit whole bytes
+- two hex digits complete one byte and move to the next byte
+- drag in either lane to select multiple bytes
+- the cyan-tinted background shows the active input lane
+- dragging across the HEX and ASCII lanes switches the input mode
+- a multi-byte selection is an overwrite range
+- ASCII input writes the typed character to every selected byte
+- the first HEX digit overwrites every selected high nibble
+- the second HEX digit overwrites every selected low nibble
+- modified bytes use pink/red text in both columns until saved
+- restoring a byte to its original value removes its modified marker
+- the active HEX nibble is cyan
+- active ASCII characters are also cyan
+- arrow keys, paging keys, Home, and End move the active byte
+- saving clears all modified-byte markers
+- hold `Shift` with those navigation keys to extend the byte selection from the active caret
+- moving away after entering one hex digit keeps the changed high nibble and preserves the byte's original low nibble
+- the Hex context menu offers `Copy as Hex` and `Copy as Text`
+- text copy preserves printable ASCII and writes other bytes as `\xNN` escapes
+- text saves preserve the detected UTF-8, UTF-16, or CP437 encoding, BOM, and CRLF line endings
+- read-only File mode uses the same compact line spacing and visual font weight as File edit mode
+- File edit mode follows the Word Wrap setting
+- when wrapping is off, long lines stay intact and use a horizontal scrollbar
+- File edit mode provides `Copy` and `Paste` in its context menu
+- local and SFTP files can be edited; files inside archives and image/PDF/command previews remain read-only
 - on SSH panes, `hex` Find can use the configured remote search utility command for large files
 
 ### Command Mode
 
 `command` mode runs a shell command against the selected file and captures its output.
 It is not a terminal: there is no PTY, no interactive stdin, and no full-screen pager UI.
-Recent commands are kept in viewer command history for quick reuse.
+Recent commands are kept in viewer command history for quick reuse. The eye action in the active `Cmd` tab shows the current command; click it to open command history, where the action changes to a pen. Click the pen to return to the current command.
 These placeholders are available:
 
 - `{path}` or `{fullpath}` for the full selected path
@@ -315,6 +375,7 @@ Useful things to adjust:
 - shell selection for viewer commands and the terminal drawer
 - remote search utility command for SSH hex find
 - viewer smooth scrolling
+- viewer line numbers (shown by default)
 - viewer word wrapping for File and Cmd text
 - file encoding defaults
 - auto-refresh interval for non-streaming command mode
@@ -329,6 +390,7 @@ viewer:
   shell: auto
   command: cat {path}
   smooth_scrolling: true
+  show_line_numbers: true
   word_wrap: false
   command_by_target:
     local:/Users/me/logs/app.log: tail -n 200 -f {path}
@@ -361,9 +423,10 @@ Notes:
 - `command_rules` switch the viewer into command mode automatically when a filename matches
 - `command_by_target` overrides the chosen command and opens that target in command mode by default
 - `remote_search_command` is used by SSH hex Find; set it to `off` to disable the remote utility path
+- `show_line_numbers` controls the File and Cmd text gutter and can also be toggled with `F5`
 - `word_wrap` controls File and Cmd text and can also be toggled from their right-click menu
 - `command_auto_refresh` matters most for non-streaming command mode
-- Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling and viewer auto-hide
+- Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling, line numbers, and viewer auto-hide
 
 ## Protocol Analyzer
 

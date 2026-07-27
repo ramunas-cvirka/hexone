@@ -190,11 +190,56 @@ func TestFilePaneTabCloseButtonDoesNotSelectInactiveTab(t *testing.T) {
 	}
 }
 
+func TestFilePaneTabStripReportsConnectedFrameGeometry(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	tabs := []*filePaneState{
+		newFilePaneState(filepath.Join(t.TempDir(), "src"), cfg),
+		newFilePaneState(filepath.Join(t.TempDir(), "gpstrack-go"), cfg),
+		newFilePaneState(filepath.Join(t.TempDir(), "git"), cfg),
+	}
+	for _, pane := range tabs {
+		pane.cancelPendingLoad()
+	}
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{tabs[1]},
+		filePaneTabs: []filePaneTabSet{{tabs: tabs, active: 1}},
+	}
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(800, tabStripHeightDp)),
+	}
+	ui.layoutFilePaneTabStrip(th, gtx, 0)
+
+	items := make([]appTabItem, len(tabs))
+	for i, pane := range tabs {
+		items[i] = filePaneTabItem(pane)
+	}
+	widths := ui.tabStripWidths(th, gtx, cfg, items)
+	separatorW := tabStripSeparatorWidth(gtx)
+	wantMin := widths[0] + separatorW
+	wantMax := wantMin + widths[1]
+	got := ui.filePaneTabs[0].geometry
+	if !got.activeVisible || got.activeMinX != wantMin || got.activeMaxX != wantMax {
+		t.Fatalf("active geometry=%+v want visible span [%d,%d)", got, wantMin, wantMax)
+	}
+
+	connectorGtx := gtx
+	connectorGtx.Ops = new(op.Ops)
+	connectorGtx.Constraints = layout.Constraints{Max: image.Pt(800, 100)}
+	if dims := ui.layoutFilePaneTabConnector(connectorGtx, 0, tabs[1]); dims.Size != image.Pt(800, filePaneTabConnectorHeightDp) {
+		t.Fatalf("connector size=%v want %v", dims.Size, image.Pt(800, filePaneTabConnectorHeightDp))
+	}
+}
+
 func TestSnapshotSessionIncludesFilePaneTabs(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	leftA := newFilePaneState(filepath.Join(t.TempDir(), "alpha"), cfg)
 	leftB := newFilePaneState(filepath.Join(t.TempDir(), "beta"), cfg)
 	right := newFilePaneState(filepath.Join(t.TempDir(), "gamma"), cfg)
+	leftA.filterText = "*.go"
 	ui := &UI{
 		Tabs:           widget.Enum{Value: "tab0"},
 		fmCfg:          cfg,
@@ -217,6 +262,9 @@ func TestSnapshotSessionIncludesFilePaneTabs(t *testing.T) {
 	if got, want := s.FilePaneTabs[0].Tabs[0].Dir, leftA.dir; got != want {
 		t.Fatalf("saved hidden tab dir=%q want %q", got, want)
 	}
+	if got, want := s.FilePaneTabs[0].Tabs[0].Filter, "*.go"; got != want {
+		t.Fatalf("saved hidden tab filter=%q want %q", got, want)
+	}
 }
 
 func TestApplySessionRestoresFilePaneTabs(t *testing.T) {
@@ -233,7 +281,7 @@ func TestApplySessionRestoresFilePaneTabs(t *testing.T) {
 				Active: 1,
 				Tabs: []fm.SessionPane{
 					{Dir: leftA, SortKey: "date", Mode: "brief"},
-					{Dir: leftB, SortKey: "size", SortDescending: true, Mode: "full"},
+					{Dir: leftB, SortKey: "size", SortDescending: true, Mode: "full", Filter: "*.go"},
 				},
 			},
 		},
@@ -254,6 +302,9 @@ func TestApplySessionRestoresFilePaneTabs(t *testing.T) {
 	}
 	if !active.sortDesc {
 		t.Fatal("active tab sort direction should be restored")
+	}
+	if got, want := active.displayFilter(), "*.go"; got != want {
+		t.Fatalf("active tab filter=%q want %q", got, want)
 	}
 }
 
@@ -407,6 +458,32 @@ func TestTabStripUsesConfiguredFont(t *testing.T) {
 	}
 	if got, want := ui.tabStripTextSize(), unit.Sp(cfg.Tabs.FontSizeSp); got != want {
 		t.Fatalf("tab text size=%v want %v", got, want)
+	}
+}
+
+func TestTabStripHeightGrowsWithConfiguredFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(640, 120)},
+	}
+	if got, want := ui.tabStripHeight(gtx), tabStripHeightDp; got != want {
+		t.Fatalf("default tab height=%d want compact minimum %d", got, want)
+	}
+
+	cfg.Tabs.FontSizeSp = 24
+	if got, want := ui.tabStripHeight(gtx), 32; got != want {
+		t.Fatalf("large-font tab height=%d want font height plus padding %d", got, want)
+	}
+
+	pane := newFilePaneState(t.TempDir(), cfg)
+	pane.cancelPendingLoad()
+	ui.filePanes = []*filePaneState{pane}
+	ui.filePaneTabs = []filePaneTabSet{{tabs: []*filePaneState{pane}}}
+	if dims := ui.layoutFilePaneTabStrip(material.NewTheme(), gtx, 0); dims.Size.Y != 32 {
+		t.Fatalf("laid-out large-font tab strip height=%d want 32", dims.Size.Y)
 	}
 }
 

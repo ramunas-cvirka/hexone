@@ -8,8 +8,10 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 
 	"gioui.org/f32"
@@ -22,6 +24,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"hexone/fm"
 )
@@ -62,6 +65,18 @@ func TestFileViewerContextMenuWordWrapToggle(t *testing.T) {
 	}
 	if st.menuOpen {
 		t.Fatal("context menu should close after toggling word wrap")
+	}
+}
+
+func TestFileViewerHexContextMenuHasCopyFormatsWithoutWordWrap(t *testing.T) {
+	st := &fileViewerState{mode: "hex"}
+	rows := fileViewerContextMenuRows(st)
+	labels := make([]string, 0, len(rows))
+	for _, row := range rows {
+		labels = append(labels, row.item.Label)
+	}
+	if got, want := strings.Join(labels, "|"), "Copy as Hex|Copy as Text"; got != want {
+		t.Fatalf("Hex context menu=%q want %q", got, want)
 	}
 }
 
@@ -271,7 +286,7 @@ func TestFileViewerTabAnimationFollowsHistoryToggle(t *testing.T) {
 	}
 }
 
-func TestFileViewerModeTabsUseRegularConfiguredTabWidths(t *testing.T) {
+func TestFileViewerModeTabsUseCompactRetroWidths(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.Tabs.WidthMode = "fixed"
 	cfg.Tabs.FixedWidthDp = 84
@@ -288,63 +303,295 @@ func TestFileViewerModeTabsUseRegularConfiguredTabWidths(t *testing.T) {
 			Max: image.Pt(640, 24),
 		},
 	}
-	items := []appTabItem{{title: "File"}, {title: "Hex"}, {title: "Cmd"}}
-	widths := ui.tabStripWidths(th, gtx, cfg, items)
-
 	dims := ui.layoutFileViewerModeTabs(th, gtx, st, 24)
-	separatorW := tabStripSeparatorWidth(gtx)
-	historyW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "..") + gtx.Dp(unit.Dp(14))
-	if minW := tabStripControlWidth(gtx); historyW < minW {
-		historyW = minW
+	if dims.Size.X >= 4*cfg.Tabs.FixedWidthDp {
+		t.Fatalf("compact mode strip width=%d should ignore regular fixed tab width %d", dims.Size.X, cfg.Tabs.FixedWidthDp)
 	}
-	wantW := widths[0] + widths[1] + widths[2] + separatorW*3 + historyW
-	if dims.Size.X != wantW {
-		t.Fatalf("mode tab strip width=%d want regular tab width total %d", dims.Size.X, wantW)
-	}
-	wantActive := image.Rect(widths[0]+separatorW, 0, widths[0]+separatorW+widths[1], 24)
-	if st.activeTabRect != wantActive {
-		t.Fatalf("active Hex tab rect=%v want %v", st.activeTabRect, wantActive)
+	if st.activeTabRect.Min.X <= 0 || st.activeTabRect.Dx() <= 0 {
+		t.Fatalf("active Hex tab rect=%v should follow compact File selector", st.activeTabRect)
 	}
 }
 
-func TestViewerModeTabTitleMovesFilenameToActiveMode(t *testing.T) {
+func TestViewerFilenameRailTitleIsIndependentOfMode(t *testing.T) {
 	st := &fileViewerState{name: "tik_tok.jpg", mode: "file"}
-	if got := viewerModeTabTitle(st, "file", "File"); got != "File - tik_tok.jpg" {
-		t.Fatalf("file tab=%q", got)
-	}
-	if got := viewerModeTabTitle(st, "hex", "Hex"); got != "Hex" {
-		t.Fatalf("inactive hex tab=%q", got)
+	if got := viewerFilenameRailTitle(st); got != "tik_tok.jpg" {
+		t.Fatalf("file rail=%q", got)
 	}
 	st.mode = "hex"
-	if got := viewerModeTabTitle(st, "hex", "Hex"); got != "Hex - tik_tok.jpg" {
-		t.Fatalf("hex tab=%q", got)
+	if got := viewerFilenameRailTitle(st); got != "tik_tok.jpg" {
+		t.Fatalf("hex rail=%q", got)
 	}
 	st.mode = "command"
-	if got := viewerModeTabTitle(st, "command", "Cmd"); got != "Cmd - tik_tok.jpg" {
-		t.Fatalf("command tab=%q", got)
+	if got := viewerFilenameRailTitle(st); got != "tik_tok.jpg" {
+		t.Fatalf("command rail=%q", got)
 	}
 	st.historyOpen = true
-	if got := viewerModeTabTitle(st, "command", "Cmd"); got != "Cmd" {
-		t.Fatalf("history-open command tab=%q", got)
+	if got := viewerFilenameRailTitle(st); got != "tik_tok.jpg" {
+		t.Fatalf("history rail=%q", got)
 	}
 }
 
-func TestFileViewerActiveModeTabExpandsForFullFilename(t *testing.T) {
+func TestViewerFilenameRailTitleMiddleTruncatesLongFilename(t *testing.T) {
+	name := strings.Repeat("界", 72) + ".openapi.yaml"
+	st := &fileViewerState{name: name, mode: "file", editDirty: true}
+
+	got := viewerFilenameRailTitle(st)
+	const suffix = " *"
+	if !strings.HasSuffix(got, suffix) {
+		t.Fatalf("rail title=%q missing suffix %q", got, suffix)
+	}
+	trimmed := strings.TrimSuffix(got, suffix)
+	if count := utf8.RuneCountInString(trimmed); count != viewerModeTabFilenameMaxRunes {
+		t.Fatalf("trimmed filename rune count=%d want %d: %q", count, viewerModeTabFilenameMaxRunes, trimmed)
+	}
+	if !strings.Contains(trimmed, "…") {
+		t.Fatalf("trimmed filename=%q missing middle ellipsis", trimmed)
+	}
+	if !strings.HasPrefix(trimmed, strings.Repeat("界", 32)) {
+		t.Fatalf("trimmed filename=%q did not preserve its beginning", trimmed)
+	}
+	if !strings.HasSuffix(trimmed, ".openapi.yaml") {
+		t.Fatalf("trimmed filename=%q did not preserve its extension/end", trimmed)
+	}
+}
+
+func TestViewerHeaderFilenameRailStaysCenteredWithUnevenControls(t *testing.T) {
+	const width = 600
+	start, railWidth, titleCenterX := viewerHeaderFilenameRailBounds(width, 210, 20, 0)
+	if got, want := start, 210; got != want {
+		t.Fatalf("rail start=%d want %d", got, want)
+	}
+	if got, want := start+railWidth, width-20; got != want {
+		t.Fatalf("rail end=%d want close-button edge %d", got, want)
+	}
+	if got := start + titleCenterX; got != width/2 {
+		t.Fatalf("title center=%d want header center %d", got, width/2)
+	}
+}
+
+func TestViewerFilenameRailShiftsBeforeTrimming(t *testing.T) {
+	left, right := viewerFilenameRailSideWidths(300, 20, 100, 8)
+	if left != 8 {
+		t.Fatalf("left rail=%d want one-character minimum 8", left)
+	}
+	if right != 192 {
+		t.Fatalf("right rail=%d want remaining space 192", right)
+	}
+
+	left, right = viewerFilenameRailSideWidths(300, 150, 100, 8)
+	if left != 100 || right != 100 {
+		t.Fatalf("centered rail sides=(%d,%d) want (100,100)", left, right)
+	}
+}
+
+func TestFileViewerEditingStatusIsRepresentedByTabGlyphOnly(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	status, _ := ui.fileViewerBaseStatusText(&fileViewerState{status: "editing"})
+	if status != "" {
+		t.Fatalf("editing overlay status=%q want hidden", status)
+	}
+	status, _ = ui.fileViewerBaseStatusText(&fileViewerState{status: "modified"})
+	if status != "" {
+		t.Fatalf("modified overlay status=%q want hidden", status)
+	}
+}
+
+func TestFileViewerModeTabsStayCompactForLongFilename(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.Tabs.WidthMode = "fixed"
 	cfg.Tabs.FixedWidthDp = 48
 	ui := NewUI(cfg)
 	th := material.NewTheme()
-	st := &fileViewerState{name: "a-fully-visible-image-name.jpg", mode: "file"}
 	gtx := layout.Context{
 		Ops:         new(op.Ops),
 		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
 		Constraints: layout.Constraints{Max: image.Pt(900, 24)},
 	}
-	ui.layoutFileViewerModeTabs(th, gtx, st, 24)
-	wantMin := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "File - "+st.name)
-	if got := st.activeTabRect.Dx(); got < wantMin {
-		t.Fatalf("active tab width=%d want at least full title width %d", got, wantMin)
+	short := &fileViewerState{name: "a.jpg", mode: "file"}
+	long := &fileViewerState{name: strings.Repeat("very-long-", 12) + "image.jpg", mode: "file"}
+	shortDims := ui.layoutFileViewerModeTabs(th, gtx, short, 24)
+	gtx.Ops.Reset()
+	longDims := ui.layoutFileViewerModeTabs(th, gtx, long, 24)
+	if shortDims.Size.X != longDims.Size.X {
+		t.Fatalf("mode strip width changed with filename: short=%d long=%d", shortDims.Size.X, longDims.Size.X)
+	}
+}
+
+func TestViewerFileAndHexTabsReserveStableActionWidth(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(640, 24)},
+	}
+	inactive := viewerModeTabSpec{label: "File", reserveSides: true}
+	active := inactive
+	active.active = true
+	active.actionIcon = &widget.Icon{}
+	if inactiveW, activeW := ui.viewerModeTabWidth(th, gtx, inactive), ui.viewerModeTabWidth(th, gtx, active); inactiveW != activeW {
+		t.Fatalf("File tab width changed with action visibility: inactive=%d active=%d", inactiveW, activeW)
+	}
+	cmdBare := viewerModeTabSpec{label: "Cmd"}
+	cmdPadded := viewerModeTabSpec{label: "Cmd", reserveSides: true}
+	wantExtra := gtx.Dp(unit.Dp((viewerModeTabActionWidthDp + viewerModeTabLabelGapDp) * 2))
+	if got := ui.viewerModeTabWidth(th, gtx, cmdPadded) - ui.viewerModeTabWidth(th, gtx, cmdBare); got != wantExtra {
+		t.Fatalf("Cmd symmetric reserve=%d want %d", got, wantExtra)
+	}
+	leftRun := viewerModeTabMarkerGapDp + viewerModeTabActionWidthDp + viewerModeTabLabelGapDp
+	rightRun := viewerModeTabLabelGapDp + viewerModeTabActionWidthDp + viewerModeTabOuterInsetDp
+	if leftRun != rightRun {
+		t.Fatalf("label side runs are not balanced: glyph side=%d right side=%d", leftRun, rightRun)
+	}
+}
+
+func TestFileViewerModeTabsFoldHistoryIntoCmdAction(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &fileViewerState{mode: "command"}
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(640, tabStripHeightDp)),
+	}
+
+	dims := ui.layoutFileViewerModeTabs(th, gtx, st, tabStripHeightDp)
+	fileW := ui.viewerModeTabWidth(th, gtx, viewerModeTabSpec{label: "File", reserveSides: true})
+	hexW := ui.viewerModeTabWidth(th, gtx, viewerModeTabSpec{label: "Hex", reserveSides: true})
+	cmdW := ui.viewerModeTabWidth(th, gtx, viewerModeTabSpec{label: "Cmd", reserveSides: true})
+	if fileW != hexW || fileW != cmdW {
+		t.Fatalf("mode tabs do not share a marker-to-marker span: File=%d Hex=%d Cmd=%d", fileW, hexW, cmdW)
+	}
+	markerW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "░")
+	wantWidth := fileW + hexW + cmdW +
+		3*gtx.Dp(unit.Dp(viewerModeTabInterGapDp)) +
+		gtx.Dp(unit.Dp(viewerModeTabOuterInsetDp)) +
+		markerW
+	if dims.Size.X != wantWidth {
+		t.Fatalf("mode strip width=%d want exactly three tabs width %d", dims.Size.X, wantWidth)
+	}
+}
+
+func TestFileViewerCmdModeActionTogglesHistory(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	st := &fileViewerState{mode: "command"}
+	ui.fileViewer = st
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Source:      router.Source(),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(640, tabStripHeightDp)),
+		Now:         time.Now(),
+	}
+	frame := func() {
+		gtx.Ops.Reset()
+		gtx.Now = time.Now()
+		historyClicked := st.historyClick.Clicked(gtx)
+		if st.modeCmdClick.Clicked(gtx) && !historyClicked {
+			ui.setFileViewerMode("command", gtx.Now)
+		}
+		if historyClicked {
+			st.setHistoryOpen(!st.historyOpen, gtx.Now)
+		}
+		ui.layoutFileViewerModeTabs(th, gtx, st, tabStripHeightDp)
+		router.Frame(gtx.Ops)
+	}
+	clickModeAction := func() {
+		markerW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "█")
+		x := st.activeTabRect.Min.X +
+			gtx.Dp(unit.Dp(viewerModeTabOuterInsetDp+viewerModeTabMarkerGapDp)) +
+			markerW +
+			gtx.Dp(unit.Dp(viewerModeTabActionWidthDp/2))
+		pos := f32.Pt(float32(x), float32(tabStripHeightDp/2))
+		router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos})
+		frame()
+		router.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos})
+		frame()
+	}
+
+	frame()
+	clickModeAction()
+	if !st.historyOpen {
+		t.Fatal("Cmd view action did not open command history")
+	}
+	if st.activeTabRect.Dx() <= 0 {
+		t.Fatal("Cmd tab should remain the active tab while history is open")
+	}
+	clickModeAction()
+	if st.historyOpen {
+		t.Fatal("Cmd history action did not return to the current command")
+	}
+}
+
+func TestFileViewerModeTabTrailingActionTogglesBothWays(t *testing.T) {
+	for _, mode := range []string{"file", "hex"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := fm.DefaultConfig()
+			ui := NewUI(cfg)
+			th := material.NewTheme()
+			st := &fileViewerState{
+				mode:             mode,
+				name:             "notes.txt",
+				content:          "alpha",
+				editBaselineText: "alpha",
+			}
+			st.contentEditor.SetText("alpha")
+			st.stream.SetContent("alpha")
+			if mode == "hex" {
+				st.hex = newHexViewerState()
+				st.hex.fileSize = 1
+				st.hex.buffer = []byte{'a'}
+			}
+			ui.fileViewer = st
+
+			router := new(input.Router)
+			gtx := layout.Context{
+				Ops:         new(op.Ops),
+				Source:      router.Source(),
+				Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+				Constraints: layout.Exact(image.Pt(640, tabStripHeightDp)),
+				Now:         time.Now(),
+			}
+			frame := func() {
+				gtx.Ops.Reset()
+				gtx.Now = time.Now()
+				if st.modeFileClick.Clicked(gtx) {
+					ui.setFileViewerMode("file", gtx.Now)
+				}
+				if st.modeHexClick.Clicked(gtx) {
+					ui.setFileViewerMode("hex", gtx.Now)
+				}
+				if st.editToggleClick.Clicked(gtx) {
+					ui.toggleFileViewerEdit(gtx.Now)
+				}
+				ui.layoutFileViewerModeTabs(th, gtx, st, tabStripHeightDp)
+				router.Frame(gtx.Ops)
+			}
+			clickTrailingAction := func() {
+				markerW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "█")
+				actionX := st.activeTabRect.Min.X +
+					gtx.Dp(unit.Dp(viewerModeTabOuterInsetDp+viewerModeTabMarkerGapDp)) +
+					markerW +
+					gtx.Dp(unit.Dp(viewerModeTabActionWidthDp/2))
+				pos := f32.Pt(float32(actionX), float32(tabStripHeightDp/2))
+				router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos})
+				frame()
+				router.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos})
+				frame()
+			}
+
+			frame()
+			clickTrailingAction()
+			if !st.editMode {
+				t.Fatal("clicking the view tab action did not enter edit mode")
+			}
+			clickTrailingAction()
+			if st.editMode {
+				t.Fatal("clicking the editing tab action did not return to view mode")
+			}
+		})
 	}
 }
 

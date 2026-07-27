@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ type fileCopyState struct {
 
 	srcEndpoint copyEndpoint
 	dstEndpoint copyEndpoint
+	directPaste bool
 
 	dstEdit     widget.Editor
 	dstEditWant bool
@@ -212,6 +214,10 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	if pane == nil {
 		return
 	}
+	if ui.fileCopy != nil {
+		pane.setNotice("copy already in progress", now)
+		return
+	}
 	selected := pane.selectedEntriesForAction()
 	if len(selected) == 0 {
 		if entry := pane.selectedEntry(); entry != nil && entry.Kind == filesys.EntryParent {
@@ -271,6 +277,119 @@ func (ui *UI) startFileCopyDialog(idx int, now time.Time) {
 	ui.rep.active = false
 	ui.rep.pane = -1
 	ui.clearFileCopyHotkeyHold()
+}
+
+func (ui *UI) startClipboardFilePaste(idx int, clipboardPaths []string, now time.Time) {
+	if idx < 0 || idx >= len(ui.filePanes) {
+		return
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil || !pane.writableLocalView() {
+		return
+	}
+
+	sources := make([]fileCopySource, 0, len(clipboardPaths))
+	seen := make(map[string]struct{}, len(clipboardPaths))
+	for _, raw := range clipboardPaths {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		abs, err := filepath.Abs(raw)
+		if err != nil {
+			continue
+		}
+		clean := filepath.Clean(abs)
+		key := clean
+		if runtime.GOOS == "windows" {
+			key = strings.ToLower(key)
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		sources = append(sources, fileCopySource{
+			Path: clean,
+			Name: filepath.Base(clean),
+		})
+	}
+	if len(sources) == 0 {
+		pane.setNotice("clipboard contains no usable local files", now)
+		return
+	}
+
+	ui.setActiveFilePane(idx)
+	pane.stopPathEdit()
+	pane.closeSortMenu()
+	pane.closeDriveMenu()
+	pane.closeFavoriteMenu()
+	pane.closeContextMenu()
+	ui.closeSortMenusExcept(idx)
+	ui.closeDriveMenusExcept(idx)
+	ui.closeFavoriteMenusExcept(idx)
+	ui.closeContextMenusExcept(idx)
+
+	first := sources[0]
+	srcEndpoint := copyEndpoint{
+		pane: idx,
+		dir:  filepath.Dir(first.Path),
+	}
+	dstEndpoint := copyEndpointFromPane(idx, pane)
+	dstDir := pane.dir
+	dstDefault := dstEndpoint.join(dstDir, srcEndpoint.baseName(first.Path))
+	if len(sources) > 1 {
+		dstDefault = dstDir
+	}
+	if err := validateDirectPasteDestinations(sources, dstEndpoint, dstDir); err != nil {
+		pane.setNotice("paste failed: "+err.Error(), now)
+		return
+	}
+
+	st := &fileCopyState{
+		pane:        idx,
+		srcPane:     idx,
+		dstPane:     idx,
+		op:          fileCopyOpCopy,
+		sources:     sources,
+		srcPath:     first.Path,
+		dstPath:     dstDefault,
+		dstRaw:      dstDefault,
+		srcEndpoint: srcEndpoint,
+		dstEndpoint: dstEndpoint,
+		directPaste: true,
+	}
+	st.dstEdit.SingleLine = true
+	st.dstEdit.Submit = true
+	st.dstEdit.SetText(dstDefault)
+	st.dstEdit.SetCaret(st.dstEdit.Len(), st.dstEdit.Len())
+
+	ui.fileCopy = st
+	ui.rep.active = false
+	ui.rep.pane = -1
+	ui.clearFileCopyHotkeyHold()
+	ui.submitFileCopyDialog(now)
+}
+
+func validateDirectPasteDestinations(sources []fileCopySource, dstEndpoint copyEndpoint, dstDir string) error {
+	targets := make(map[string]struct{}, len(sources))
+	for _, source := range sources {
+		name := filepath.Base(filepath.Clean(source.Path))
+		target := dstEndpoint.join(dstDir, name)
+		key := target
+		if runtime.GOOS == "windows" {
+			key = strings.ToLower(key)
+		}
+		if _, duplicate := targets[key]; duplicate {
+			return fmt.Errorf("multiple clipboard files are named %s", name)
+		}
+		targets[key] = struct{}{}
+		if _, err := os.Lstat(target); err == nil {
+			return fmt.Errorf("%s already exists", name)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (ui *UI) closeFileCopyDialog() {
@@ -884,6 +1003,10 @@ func (ui *UI) pumpFileCopyState(gtx layout.Context) {
 					ui.finishFileCopyCanceled(gtx.Now)
 					return
 				}
+				if st.directPaste {
+					ui.finishDirectFilePasteError(gtx.Now, err)
+					return
+				}
 				st.lastErr = err.Error()
 			} else {
 				ui.finishFileCopy(gtx.Now)
@@ -892,6 +1015,51 @@ func (ui *UI) pumpFileCopyState(gtx layout.Context) {
 		default:
 		}
 		gtx.Execute(op.InvalidateCmd{})
+	}
+}
+
+func (ui *UI) finishDirectFilePasteError(now time.Time, err error) {
+	st := ui.fileCopy
+	if st == nil {
+		return
+	}
+	paneIdx := st.dstPane
+	ui.fileCopy = nil
+	ui.clearFileCopyHotkeyHold()
+	if paneIdx < 0 || paneIdx >= len(ui.filePanes) {
+		return
+	}
+	pane := ui.filePanes[paneIdx]
+	if pane == nil {
+		return
+	}
+	notice := "paste failed"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		notice += ": " + err.Error()
+	}
+	if pane.table == nil {
+		pane.setNotice(notice, now)
+		return
+	}
+	selectedPath := ""
+	if selected := pane.selectedEntry(); selected != nil {
+		selectedPath = selected.Path
+	}
+	restorePos := sanitizePaneListPosition(pane.table.List.Position)
+	restoreAnchor := pane.visibleAnchorPath()
+	if !ui.requestPaneLoadWithSelectionAndScroll(
+		paneIdx,
+		pane.dir,
+		selectedPath,
+		"",
+		pane.table.Selected,
+		restorePos,
+		true,
+		restoreAnchor,
+		notice,
+		fileCopyCanceledNoticeDur,
+	) {
+		pane.setNotice(notice, now)
 	}
 }
 
@@ -1027,6 +1195,9 @@ func fileCopySuccessNotice(st *fileCopyState) (string, time.Duration) {
 func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	st := ui.fileCopy
 	if st == nil {
+		return layout.Dimensions{}
+	}
+	if st.directPaste {
 		return layout.Dimensions{}
 	}
 
@@ -2201,6 +2372,106 @@ func copyProgressCurrent(progress filesys.CopyProgress) string {
 		return path.Base(progress.CurrentPath)
 	}
 	return filepath.Base(progress.CurrentPath)
+}
+
+func directFilePasteStatusLineForWidth(st *fileCopyState, now time.Time, maxWidth int, measure func(string) int) string {
+	parts := directFilePasteStatusPartsFor(st, now)
+	if parts.filename == "" {
+		return ""
+	}
+	details := append([]string(nil), parts.details...)
+	name := parts.filename
+	if measure == nil || maxWidth <= 0 {
+		return directFilePasteBuildStatusLine(name, details)
+	}
+	for {
+		line := directFilePasteBuildStatusLine(name, details)
+		if measure(line) <= maxWidth {
+			return line
+		}
+		nameMax := maxWidth - measure(directFilePasteBuildStatusLine("", details))
+		name = archiveExtractTrimMiddleToWidth(parts.filename, nameMax, measure)
+		line = directFilePasteBuildStatusLine(name, details)
+		if measure(line) <= maxWidth || len(details) <= 1 {
+			return line
+		}
+		details = details[:len(details)-1]
+		name = parts.filename
+	}
+}
+
+func directFilePasteStatusLineWithSeparatorForWidth(st *fileCopyState, now time.Time, maxWidth int, measure func(string) int, trailing bool) string {
+	separator := "| "
+	if trailing {
+		separator = " |"
+	}
+	lineMax := maxWidth
+	if measure != nil && maxWidth > 0 {
+		lineMax -= measure(separator)
+		if lineMax < 0 {
+			lineMax = 0
+		}
+	}
+	line := directFilePasteStatusLineForWidth(st, now, lineMax, measure)
+	if strings.TrimSpace(line) == "" {
+		return ""
+	}
+	if trailing {
+		return line + separator
+	}
+	return separator + line
+}
+
+func directFilePasteStatusPartsFor(st *fileCopyState, now time.Time) archiveExtractStatusParts {
+	if st == nil || !st.directPaste {
+		return archiveExtractStatusParts{}
+	}
+	progress := st.progress
+	name := strings.TrimSpace(copyProgressCurrent(progress))
+	if name == "" {
+		if count := st.sourceCount(); count > 1 {
+			name = fmt.Sprintf("%d files", count)
+		} else {
+			name = filepath.Base(filepath.Clean(st.srcPath))
+		}
+	}
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = "files"
+	}
+
+	parts := archiveExtractStatusParts{filename: name}
+	if progress.BytesTotal > 0 || progress.EntriesTotal > 0 {
+		frac := copyProgressFraction(progress)
+		if frac < 0 {
+			frac = 0
+		}
+		if frac > 1 {
+			frac = 1
+		}
+		parts.details = append(parts.details, fmt.Sprintf("%s %d%%", archiveExtractStatusBar(frac), int(frac*100+0.5)))
+	} else {
+		parts.details = append(parts.details, "preparing")
+	}
+
+	speed := st.speedBytes
+	if speed <= 0 {
+		speed = archiveExtractSpeed(progress, st.startedAt, now)
+	}
+	if speed > 0 {
+		parts.details = append(parts.details, formatCopySize(speed)+"/s")
+		if eta := archiveExtractETA(progress, speed); eta > 0 {
+			parts.details = append(parts.details, formatArchiveExtractETA(eta)+" left")
+		}
+	}
+	return parts
+}
+
+func directFilePasteBuildStatusLine(filename string, details []string) string {
+	line := "[Pasting] " + filename
+	if len(details) > 0 {
+		line += " | " + strings.Join(details, " | ")
+	}
+	return line
 }
 
 func formatCopySize(size int64) string {

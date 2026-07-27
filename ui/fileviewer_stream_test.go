@@ -35,6 +35,35 @@ func TestStreamLinePaintSpecUsesOffsetInsteadOfSlicing(t *testing.T) {
 	}
 }
 
+func TestTextViewerLineNumberGutterFollowsConfig(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	st := &fileViewerState{mode: "file"}
+	st.stream.SetContent("alpha\nbeta\ngamma")
+
+	layoutViewer := func() {
+		gtx := layout.Context{
+			Ops:         new(op.Ops),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(320, 120)),
+			Now:         time.Now(),
+		}
+		ui.layoutStreamOutputView(th, gtx, st)
+	}
+
+	layoutViewer()
+	if st.stream.lineNumRect.Empty() || st.stream.textRect.Min.X <= 0 {
+		t.Fatalf("default line-number gutter=%v text rect=%v", st.stream.lineNumRect, st.stream.textRect)
+	}
+
+	cfg.Viewer.ShowLineNumbers = false
+	layoutViewer()
+	if !st.stream.lineNumRect.Empty() || st.stream.textRect.Min.X != 0 {
+		t.Fatalf("disabled line-number gutter=%v text rect=%v", st.stream.lineNumRect, st.stream.textRect)
+	}
+}
+
 func TestStreamLinePaintSpecLeavesWrappedLinesAtPad(t *testing.T) {
 	v := &streamOutputView{
 		textPad:     3,

@@ -107,7 +107,7 @@ func (ui *UI) saveFMConfigWithOptions(reason string, allowDefaultReset bool) err
 	if strings.TrimSpace(reason) == "" {
 		reason = "runtime"
 	}
-	log.Printf("save config: reason=%s path=%s favorites=%d ssh=%d custom_commands=%d command_history=%d command_targets=%d", reason, path, len(ui.fmCfg.FavoriteLocations), len(ui.fmCfg.SSH.Setups), len(ui.fmCfg.CustomCommands), len(ui.fmCfg.Viewer.CommandHistory), len(ui.fmCfg.Viewer.CommandByTarget))
+	log.Printf("save config: reason=%s path=%s favorites=%d ssh=%d custom_commands=%d terminal_snippets=%d command_history=%d command_targets=%d", reason, path, len(ui.fmCfg.FavoriteLocations), len(ui.fmCfg.SSH.Setups), len(ui.fmCfg.CustomCommands), len(ui.fmCfg.TerminalSnippets), len(ui.fmCfg.Viewer.CommandHistory), len(ui.fmCfg.Viewer.CommandByTarget))
 	return fm.SaveConfig(path, ui.fmCfg)
 }
 
@@ -154,7 +154,7 @@ func configHasCriticalUserState(cfg *fm.Config) bool {
 		return false
 	}
 	defaultCfg := fm.DefaultConfig()
-	if len(cfg.FavoriteLocations) > 0 || len(cfg.SSH.Setups) > 0 || len(cfg.CustomCommands) > 0 || len(cfg.Viewer.CommandByTarget) > 0 || len(cfg.Viewer.CommandHistory) > 0 || len(cfg.Viewer.CommandRules) > 0 || len(cfg.Associations) > 0 {
+	if len(cfg.FavoriteLocations) > 0 || len(cfg.SSH.Setups) > 0 || len(cfg.CustomCommands) > 0 || len(cfg.TerminalSnippets) > 0 || len(cfg.Viewer.CommandByTarget) > 0 || len(cfg.Viewer.CommandHistory) > 0 || len(cfg.Viewer.CommandRules) > 0 || len(cfg.Associations) > 0 {
 		return true
 	}
 	return strings.TrimSpace(cfg.Viewer.Command) != strings.TrimSpace(defaultCfg.Viewer.Command)
@@ -175,6 +175,8 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 		rebased.Viewer.CommandAutoRefresh = next.Viewer.CommandAutoRefresh
 	case "viewer-word-wrap":
 		rebased.Viewer.WordWrap = next.Viewer.WordWrap
+	case "viewer-line-numbers":
+		rebased.Viewer.ShowLineNumbers = next.Viewer.ShowLineNumbers
 	case "viewer-encoding":
 		rebased.Viewer.FileEncoding = next.Viewer.FileEncoding
 	case "terminal-height":
@@ -190,6 +192,8 @@ func rebaseRuntimeConfigSave(reason string, existing, next *fm.Config) (*fm.Conf
 		rebased.Viewer.CommandHistory = cloneStringSlice(next.Viewer.CommandHistory)
 	case "custom-commands":
 		rebased.CustomCommands = cloneCustomCommands(next.CustomCommands)
+	case "terminal-snippets":
+		rebased.TerminalSnippets = cloneTerminalSnippets(next.TerminalSnippets)
 	case "favorites-add", "favorites-remove":
 		rebased.FavoriteLocations = cloneStringSlice(next.FavoriteLocations)
 	case "ssh-modal":
@@ -246,6 +250,7 @@ func cloneFMConfigForRuntimeSave(cfg *fm.Config) *fm.Config {
 	out.Sort.PerDir = cloneStringMap(cfg.Sort.PerDir)
 	out.Associations = cloneAssociationPrograms(cfg.Associations)
 	out.CustomCommands = cloneCustomCommands(cfg.CustomCommands)
+	out.TerminalSnippets = cloneTerminalSnippets(cfg.TerminalSnippets)
 	out.Viewer.Associations = cloneViewerAssociations(cfg.Viewer.Associations)
 	out.Viewer.CommandRules = cloneViewerCommandRules(cfg.Viewer.CommandRules)
 	out.Viewer.CommandByTarget = cloneStringMap(cfg.Viewer.CommandByTarget)
@@ -284,6 +289,13 @@ func cloneCustomCommands(src []fm.CustomCommand) []fm.CustomCommand {
 		return nil
 	}
 	return append([]fm.CustomCommand(nil), src...)
+}
+
+func cloneTerminalSnippets(src []fm.TerminalSnippet) []fm.TerminalSnippet {
+	if src == nil {
+		return nil
+	}
+	return append([]fm.TerminalSnippet(nil), src...)
 }
 
 func cloneViewerAssociations(src []fm.ViewerAssociation) []fm.ViewerAssociation {

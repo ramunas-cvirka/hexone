@@ -10,11 +10,14 @@ import (
 	"image/color"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -139,6 +142,33 @@ func TestSettingsBriefPreviewUsesDistinctEntries(t *testing.T) {
 	}
 }
 
+func TestSettingsBriefPreviewWidthFollowsConfiguredMaximumUntilLongestSample(t *testing.T) {
+	for _, configured := range []float32{8, 24, 40} {
+		if got := settingsBriefPreviewColumnChars(configured); got != configured {
+			t.Fatalf("preview column characters=%v want configured maximum %v", got, configured)
+		}
+	}
+	longest := settingsBriefPreviewLongestNameChars()
+	if longest <= 40 {
+		t.Fatalf("longest preview filename=%v chars want more than 40", longest)
+	}
+	if got := settingsBriefPreviewColumnChars(settingsPaneCharsMax); got != longest {
+		t.Fatalf("preview column characters=%v want longest sample width %v", got, longest)
+	}
+}
+
+func TestSettingsBriefPreviewIncludesSeveralLongFilenameExamples(t *testing.T) {
+	longNames := 0
+	for _, row := range settingsBriefPanePreviewRows {
+		if utf8.RuneCountInString(row.name) > 30 {
+			longNames++
+		}
+	}
+	if longNames < 2 {
+		t.Fatalf("brief preview long filename examples=%d want at least 2", longNames)
+	}
+}
+
 func TestSettingsSaveLabelIndicatesDirtyDraft(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	ui.openSettingsModal()
@@ -156,6 +186,124 @@ func TestSettingsSaveLabelIndicatesDirtyDraft(t *testing.T) {
 	st.paneFullChars--
 	if st.dirty() || st.saveLabel() != "Save" {
 		t.Fatalf("reverted draft dirty=%v label=%q", st.dirty(), st.saveLabel())
+	}
+}
+
+func TestSettingsSaveLabelTracksViewerLineNumbers(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	if !st.viewShowLineNumbersBool.Value {
+		t.Fatal("line-number draft should load enabled by default")
+	}
+
+	st.viewShowLineNumbersBool.Value = false
+	if !st.dirty() || st.saveLabel() != "Save (*)" {
+		t.Fatalf("disabled line numbers dirty=%v label=%q", st.dirty(), st.saveLabel())
+	}
+	st.viewShowLineNumbersBool.Value = true
+	if st.dirty() || st.saveLabel() != "Save" {
+		t.Fatalf("reverted line numbers dirty=%v label=%q", st.dirty(), st.saveLabel())
+	}
+}
+
+func TestSettingsSaveLabelTracksCurrentDirFont(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*settingsModalState)
+		revert func(*settingsModalState)
+	}{
+		{
+			name: "family",
+			change: func(st *settingsModalState) {
+				st.currentDirFontFamily = "changed current-dir family"
+			},
+			revert: func(st *settingsModalState) {
+				st.currentDirFontFamily = st.interfaceFontFamily
+			},
+		},
+		{
+			name: "size",
+			change: func(st *settingsModalState) {
+				st.currentDirFontSizeSp++
+			},
+			revert: func(st *settingsModalState) {
+				st.currentDirFontSizeSp--
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := fm.DefaultConfig()
+			cfg.CurrentDir.Typeface = cfg.Interface.Typeface
+			ui := NewUI(cfg)
+			ui.openSettingsModal()
+			st := ui.settingsModal
+			if st == nil {
+				t.Fatal("settings modal did not open")
+			}
+
+			tt.change(st)
+			if !st.dirty() || st.saveLabel() != "Save (*)" {
+				t.Fatalf("changed current-dir font dirty=%v label=%q", st.dirty(), st.saveLabel())
+			}
+
+			tt.revert(st)
+			if st.dirty() || st.saveLabel() != "Save" {
+				t.Fatalf("reverted current-dir font dirty=%v label=%q", st.dirty(), st.saveLabel())
+			}
+		})
+	}
+}
+
+func TestSettingsSaveLabelIndicatesDirtyGeneralFilePaneToggles(t *testing.T) {
+	tests := []struct {
+		name   string
+		toggle func(*settingsModalState)
+	}{
+		{
+			name: "mouse wheel moves selection",
+			toggle: func(st *settingsModalState) {
+				st.generalWheelMovesSelection.Value = !st.generalWheelMovesSelection.Value
+			},
+		},
+		{
+			name: "use trash",
+			toggle: func(st *settingsModalState) {
+				st.generalUseTrash.Value = !st.generalUseTrash.Value
+			},
+		},
+		{
+			name: "delete without confirmation",
+			toggle: func(st *settingsModalState) {
+				st.generalDeleteWithoutConfirm.Value = !st.generalDeleteWithoutConfirm.Value
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ui := NewUI(fm.DefaultConfig())
+			ui.openSettingsModal()
+			st := ui.settingsModal
+			if st == nil {
+				t.Fatal("settings modal did not open")
+			}
+
+			tt.toggle(st)
+			if !st.dirty() || st.saveLabel() != "Save (*)" {
+				t.Fatalf("toggled draft dirty=%v label=%q", st.dirty(), st.saveLabel())
+			}
+
+			tt.toggle(st)
+			if st.dirty() || st.saveLabel() != "Save" {
+				t.Fatalf("reverted draft dirty=%v label=%q", st.dirty(), st.saveLabel())
+			}
+		})
 	}
 }
 
@@ -389,6 +537,13 @@ func TestSettingsKeyboardFocusOrderTracksFilePaneInnerTab(t *testing.T) {
 	if len(other) < 5 || other[2] != settingsKeyboardFocusGeneralDimInactive || other[len(other)-1] != settingsKeyboardFocusFooter {
 		t.Fatalf("other focus order=%v", other)
 	}
+	if !slices.Contains(other, settingsKeyboardFocusGeneralWheelMovesSelection) {
+		t.Fatalf("other focus order missing mouse-wheel checkbox: %v", other)
+	}
+	if !slices.Contains(other, settingsKeyboardFocusGeneralUseTrash) ||
+		!slices.Contains(other, settingsKeyboardFocusGeneralDeleteWithoutConfirm) {
+		t.Fatalf("other focus order missing delete safety checkboxes: %v", other)
+	}
 }
 
 func TestSettingsKeyboardFocusOrderIncludesTerminalControls(t *testing.T) {
@@ -414,6 +569,8 @@ func TestSettingsKeyboardFocusOrderIncludesFontControls(t *testing.T) {
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusFontsInterfaceFont,
 		settingsKeyboardFocusFontsInterfaceFontSize,
+		settingsKeyboardFocusFontsCurrentDirFont,
+		settingsKeyboardFocusFontsCurrentDirFontSize,
 		settingsKeyboardFocusGeneralPaneFont,
 		settingsKeyboardFocusGeneralPaneFontSize,
 		settingsKeyboardFocusFontsTabsFont,
@@ -478,6 +635,72 @@ func TestSettingsModalLoadsAndSavesInterfaceFontControls(t *testing.T) {
 	}
 }
 
+func TestSettingsModalLoadsAndSavesCurrentDirFontControls(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.CurrentDir.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.CurrentDir.FontSizeSp = 11
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if got, want := st.currentDirFontFamily, cfg.CurrentDir.Typeface; got != want {
+		t.Fatalf("current-dir font family=%q want %q", got, want)
+	}
+	if got, want := st.currentDirFontSizeSp, cfg.CurrentDir.FontSizeSp; got != want {
+		t.Fatalf("current-dir font size=%v want %v", got, want)
+	}
+
+	st.currentDirFontFamily = resources.BundledFontFamilyHackNerdFontMono
+	st.currentDirFontSizeSp = 12.5
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+	saved := fm.LoadConfig(ui.configPath)
+	if got, want := saved.CurrentDir.Typeface, st.currentDirFontFamily; got != want {
+		t.Fatalf("saved current-dir font family=%q want %q", got, want)
+	}
+	if got, want := saved.CurrentDir.FontSizeSp, st.currentDirFontSizeSp; got != want {
+		t.Fatalf("saved current-dir font size=%v want %v", got, want)
+	}
+}
+
+func TestSettingsFontRowLabelWidthFitsLongestLabel(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Interface.FontSizeSp = 18
+	ui := NewUI(cfg)
+	th := material.NewTheme()
+	gtx := testLabelLayoutContext(image.Pt(640, 40))
+
+	probe := material.Body2(th, "Current dir")
+	probe.Font.Typeface = ui.interfaceTypeface()
+	probe.Font.Weight = font.Medium
+	probe.TextSize = ui.scaleModalFontSize(10)
+	probe.MaxLines = 1
+	measured := measureLabelUnconstrained(gtx, probe).Size.X
+	if got := ui.settingsFontRowLabelWidth(th, gtx); got < measured {
+		t.Fatalf("font row label width=%d shorter than longest label=%d", got, measured)
+	}
+}
+
+func TestSettingsColorTransparentCheckboxMatchesValueFieldRows(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Interface.FontSizeSp = 18
+	ui := NewUI(cfg)
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	gtx := testLabelLayoutContext(image.Pt(400, 100))
+	gtx.Constraints.Min = image.Point{}
+
+	dims := ui.layoutSettingsColorTransparentCheckbox(th, gtx, ui.settingsModal)
+	captionH := settingsColorValueCaptionHeight(th, gtx, ui.fmCfg, ui.interfaceTypeface())
+	controlH := settingsColorValueControlHeight(th, gtx, ui.fmCfg, ui.interfaceTypeface())
+	wantH := captionH + gtx.Dp(unit.Dp(2)) + controlH
+	if dims.Size.Y != wantH {
+		t.Fatalf("transparent checkbox column height=%d want value-field height=%d", dims.Size.Y, wantH)
+	}
+}
+
 func TestSettingsPanePreviewHeightTracksPaneFont(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	ui := NewUI(cfg)
@@ -503,7 +726,7 @@ func TestSettingsColorPreviewPathHeightMatchesPanePathBar(t *testing.T) {
 	pathGtx := testPathLayoutContext()
 	pathDims := ui.layoutFilePanePathArea(th, pathGtx, 0, pane, true)
 
-	previewPathH := settingsColorPreviewPathContainerHeight(pathGtx)
+	previewPathH := ui.settingsColorPreviewPathContainerHeight(pathGtx)
 	if previewPathH != pathDims.Size.Y {
 		t.Fatalf("preview path height=%d want real path bar height %d", previewPathH, pathDims.Size.Y)
 	}
@@ -602,6 +825,7 @@ func TestSettingsKeyboardFocusOrderIncludesViewerControls(t *testing.T) {
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusViewerRemoteSearch,
 		settingsKeyboardFocusViewerSmoothScrolling,
+		settingsKeyboardFocusViewerShowLineNumbers,
 		settingsKeyboardFocusViewerHideFunctionBar,
 		settingsKeyboardFocusViewerTargetKey,
 		settingsKeyboardFocusViewerTargetBrowse,
@@ -780,6 +1004,57 @@ func TestSettingsModalKeyboardSpaceTogglesFavoritesNewTab(t *testing.T) {
 	}
 }
 
+func TestSettingsModalLoadsTogglesAndSavesMouseWheelBehavior(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.WheelMovesSelection = true
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if st == nil || !st.generalWheelMovesSelection.Value {
+		t.Fatal("settings should load the configured mouse-wheel behavior")
+	}
+	st.focus = settingsKeyboardFocusGeneralWheelMovesSelection
+	if !st.toggleFocusedCheckbox() || st.generalWheelMovesSelection.Value {
+		t.Fatal("Space-toggle path should disable the mouse-wheel checkbox")
+	}
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("saveSettingsModal: %v", err)
+	}
+	if ui.fmCfg.General.WheelMovesSelection {
+		t.Fatal("settings should persist the disabled mouse-wheel behavior")
+	}
+}
+
+func TestSettingsModalLoadsTogglesAndSavesDeleteSafetyOptions(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.UseTrash = true
+	cfg.General.DeleteWithoutConfirm = true
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if st == nil || !st.generalUseTrash.Value || !st.generalDeleteWithoutConfirm.Value {
+		t.Fatal("settings should load configured delete safety options")
+	}
+	st.focus = settingsKeyboardFocusGeneralUseTrash
+	if !st.toggleFocusedCheckbox() || st.generalUseTrash.Value {
+		t.Fatal("Space-toggle path should disable Trash")
+	}
+	st.focus = settingsKeyboardFocusGeneralDeleteWithoutConfirm
+	if !st.toggleFocusedCheckbox() || st.generalDeleteWithoutConfirm.Value {
+		t.Fatal("Space-toggle path should enable delete confirmation")
+	}
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("saveSettingsModal: %v", err)
+	}
+	if ui.fmCfg.General.UseTrash || ui.fmCfg.General.DeleteWithoutConfirm {
+		t.Fatalf("settings did not save delete safety options: %#v", ui.fmCfg.General)
+	}
+}
+
 func TestSettingsModalKeyboardSpaceTogglesTerminalAcceleratedKeys(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	ui.openSettingsModal()
@@ -895,6 +1170,39 @@ func TestSettingsModalKeyboardSpaceTogglesViewerSmoothScrolling(t *testing.T) {
 
 	if st.viewSmoothScrollingBool.Value {
 		t.Fatal("Space should toggle the focused viewer smooth scrolling checkbox")
+	}
+}
+
+func TestSettingsModalKeyboardSpaceTogglesViewerLineNumbers(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	th := material.NewTheme()
+	now := time.Now()
+	router := new(input.Router)
+	gtx := testDialogLayoutContext(router, now)
+
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	st.activeTab = "viewer"
+	st.focus = settingsKeyboardFocusViewerShowLineNumbers
+	st.keyFocus.wantFocus = true
+	st.viewShowLineNumbersBool.Value = true
+
+	frame := func(at time.Time) {
+		gtx.Now = at
+		gtx.Ops.Reset()
+		ui.layoutSettingsModal(th, gtx)
+		router.Frame(gtx.Ops)
+	}
+
+	frame(now)
+	router.Queue(key.Event{Name: key.NameSpace, State: key.Press})
+	frame(now.Add(time.Millisecond))
+
+	if st.viewShowLineNumbersBool.Value {
+		t.Fatal("Space should toggle the focused viewer line-number checkbox")
 	}
 }
 
@@ -2579,7 +2887,7 @@ func TestSettingsConfigEditorUsesFullWidth(t *testing.T) {
 	}
 }
 
-func TestSettingsConfigPathPacksIntoTwoLinesAndKeepsFullText(t *testing.T) {
+func TestSettingsConfigPathFitsTwoLinesWithoutLosingSelectableText(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
 	st := &settingsModalState{}
@@ -2597,8 +2905,11 @@ func TestSettingsConfigPathPacksIntoTwoLinesAndKeepsFullText(t *testing.T) {
 
 	lbl := ui.settingsConfigPathLabel(th, st, path)
 	dims := lbl.Layout(gtx)
-	if dims.Size.Y > gtx.Sp(lbl.TextSize)*2+4 {
-		t.Fatalf("config path height=%d exceeds two compact lines", dims.Size.Y)
+	singleLineState := &settingsModalState{}
+	singleLineLabel := ui.settingsConfigPathLabel(th, singleLineState, `C:\hexone.yaml`)
+	singleLineDims := singleLineLabel.Layout(gtx)
+	if dims.Size.Y > singleLineDims.Size.Y*2 {
+		t.Fatalf("config path height=%d exceeds two line heights of %d", dims.Size.Y, singleLineDims.Size.Y)
 	}
 	if st.configPathSelect.Truncated() {
 		t.Fatal("representative MSIX config path should fit without truncation")

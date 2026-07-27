@@ -408,7 +408,12 @@ func (ui *UI) filePaneStatusBarSeparatorMode(idx int) filePaneStatusBarSeparator
 }
 
 func (ui *UI) layoutFilePaneStatusBar(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState, palette filePanePalette) layout.Dimensions {
-	if pane == nil || ui == nil || ui.archiveExtractPane() != pane {
+	if pane == nil || ui == nil {
+		return layout.Dimensions{}
+	}
+	showArchiveExtract := ui.archiveExtractPane() == pane
+	directPaste := ui.directFilePasteForPane(idx)
+	if !showArchiveExtract && directPaste == nil {
 		return layout.Dimensions{}
 	}
 
@@ -429,9 +434,17 @@ func (ui *UI) layoutFilePaneStatusBar(th *material.Theme, gtx layout.Context, id
 	if textMax < 0 {
 		textMax = 0
 	}
-	label := archiveExtractStatusLineForWidth(ui.archiveExtract, gtx.Now, textMax, measure)
-	if mode != filePaneStatusBarSeparatorNone {
-		label = archiveExtractStatusLineWithSeparatorForWidth(ui.archiveExtract, gtx.Now, textMax, measure, trailingSeparator)
+	label := ""
+	if showArchiveExtract {
+		label = archiveExtractStatusLineForWidth(ui.archiveExtract, gtx.Now, textMax, measure)
+		if mode != filePaneStatusBarSeparatorNone {
+			label = archiveExtractStatusLineWithSeparatorForWidth(ui.archiveExtract, gtx.Now, textMax, measure, trailingSeparator)
+		}
+	} else {
+		label = directFilePasteStatusLineForWidth(directPaste, gtx.Now, textMax, measure)
+		if mode != filePaneStatusBarSeparatorNone {
+			label = directFilePasteStatusLineWithSeparatorForWidth(directPaste, gtx.Now, textMax, measure, trailingSeparator)
+		}
 	}
 	if strings.TrimSpace(label) == "" {
 		return layout.Dimensions{}
@@ -453,6 +466,13 @@ func (ui *UI) layoutFilePaneStatusBar(th *material.Theme, gtx layout.Context, id
 			return lbl.Layout(gtx)
 		})
 	})
+}
+
+func (ui *UI) directFilePasteForPane(idx int) *fileCopyState {
+	if ui == nil || ui.fileCopy == nil || !ui.fileCopy.directPaste || !ui.fileCopy.running || ui.fileCopy.dstPane != idx {
+		return nil
+	}
+	return ui.fileCopy
 }
 
 func (ui *UI) filePaneVolumeBadgeWidth(th *material.Theme, gtx layout.Context, pane *filePaneState, label string) int {

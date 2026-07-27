@@ -36,6 +36,22 @@ func TestLayoutVCenteredLabelLowersBaselineInTallCell(t *testing.T) {
 	}
 }
 
+func TestLayoutInkVCenteredLabelKeepsStableCell(t *testing.T) {
+	th := material.NewTheme()
+	gtx := testLabelLayoutContext(image.Pt(24, 18))
+	lbl := material.Body2(th, "N")
+	lbl.TextSize = unit.Sp(11)
+	lbl.MaxLines = 1
+
+	dims := layoutInkVCenteredLabel(gtx, lbl)
+	if got, want := dims.Size, image.Pt(24, 18); got != want {
+		t.Fatalf("ink-centered label size=%v want %v", got, want)
+	}
+	if dims.Baseline < 0 || dims.Baseline > dims.Size.Y {
+		t.Fatalf("ink-centered label baseline=%d outside height %d", dims.Baseline, dims.Size.Y)
+	}
+}
+
 func testLabelLayoutContext(size image.Point) layout.Context {
 	var router input.Router
 	return layout.Context{

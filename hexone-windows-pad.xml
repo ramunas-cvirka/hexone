@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<XML_DIZ_INFO>
+  <MASTER_PAD_VERSION_INFO>
+    <MASTER_PAD_VERSION>4.0</MASTER_PAD_VERSION>
+    <MASTER_PAD_EDITOR>Hand-authored for Hexone</MASTER_PAD_EDITOR>
+    <MASTER_PAD_INFO>Portable Application Description (PAD) data for software catalogs and download sites.</MASTER_PAD_INFO>
+  </MASTER_PAD_VERSION_INFO>
+  <Company_Info>
+    <Company_Name>Hexone</Company_Name>
+    <Company_WebSite_URL>https://github.com/ramunas-cvirka/hexone</Company_WebSite_URL>
+    <Contact_Info>
+      <Author_First_Name>Ramunas</Author_First_Name>
+      <Author_Last_Name>Cvirka</Author_Last_Name>
+      <Author_Email>ramucvir@gmail.com</Author_Email>
+    </Contact_Info>
+  </Company_Info>
+  <Program_Info>
+    <Program_Name>Hexone</Program_Name>
+    <Program_Version>1.0.0</Program_Version>
+    <Program_Release_Month>07</Program_Release_Month>
+    <Program_Release_Day>13</Program_Release_Day>
+    <Program_Release_Year>2026</Program_Release_Year>
+    <Program_Cost_Dollars>0.00</Program_Cost_Dollars>
+    <Program_Cost_Other_Code></Program_Cost_Other_Code>
+    <Program_Cost_Other></Program_Cost_Other>
+    <Program_Type>Freeware</Program_Type>
+    <Program_Release_Status>New Release</Program_Release_Status>
+    <Program_Install_Support>No Install Support</Program_Install_Support>
+    <Program_OS_Support>WinOther</Program_OS_Support>
+    <Program_Target_Platform>Windows</Program_Target_Platform>
+    <Program_Language>English</Program_Language>
+    <File_Info>
+      <File_Size_Bytes>38716327</File_Size_Bytes>
+      <File_Size_K>37808.91</File_Size_K>
+      <File_Size_MB>36.92</File_Size_MB>
+    </File_Info>
+    <Expire_Info>
+      <Has_Expire_Info>N</Has_Expire_Info>
+      <Expire_Count></Expire_Count>
+      <Expire_Based_On></Expire_Based_On>
+      <Expire_Other_Info></Expire_Other_Info>
+      <Expire_Month></Expire_Month>
+      <Expire_Day></Expire_Day>
+      <Expire_Year></Expire_Year>
+    </Expire_Info>
+    <Program_Change_Info>Initial stable release with dual-pane file management, SSH/SFTP, an integrated terminal, multi-file rename, archive support, and built-in text, code, hex, image, and PDF viewing.</Program_Change_Info>
+    <Program_Category_Class>System::File Management::File Managers</Program_Category_Class>
+    <Program_Specific_Category>Utilities</Program_Specific_Category>
+    <Program_System_Requirements>64-bit Windows 10 version 1809 or later, or Windows 11</Program_System_Requirements>
+  </Program_Info>
+  <Program_Descriptions>
+    <English>
+      <Keywords>file manager,dual pane,SSH,SFTP,terminal,file viewer,hex viewer,PDF viewer,large files,multi rename,archive</Keywords>
+      <Char_Desc_45>Keyboard-driven dual-pane file manager</Char_Desc_45>
+      <Char_Desc_80>Dual-pane file manager with SSH, terminal, and built-in file viewers.</Char_Desc_80>
+      <Char_Desc_250>Hexone is a fast, keyboard-driven dual-pane file manager for Windows. Browse local and SSH/SFTP files, work with pane and terminal tabs, and inspect text, code, hex, images, PDFs, logs, and binary files without leaving the application.</Char_Desc_250>
+      <Char_Desc_450>Hexone is a fast, keyboard-driven dual-pane file manager for Windows. It combines local file management, SSH/SFTP browsing, pane tabs, favorites, sorting, multi-file rename, and an integrated multi-tab terminal. Its built-in viewer opens text, syntax-highlighted code, hexadecimal data, images, PDFs, logs, and binary files, with search and large-file support.</Char_Desc_450>
+      <Char_Desc_2000>Hexone is a fast, keyboard-driven dual-pane file manager designed for efficient local and remote file work. Use independent pane tabs, sorting, favorites, file operations, archive extraction, and multi-file rename without leaving the application. Browse remote systems over SSH/SFTP and view remote files directly. The integrated terminal supports multiple tabs and follows the active pane directory.
+
+A built-in viewer handles plain text, syntax-highlighted source code, hexadecimal data, images, PDFs, command output, logs, and binary files. Search works across supported viewing modes, while large-file handling avoids loading an entire multi-gigabyte log or binary into memory.
+
+Hexone is free and open source under the Apache License 2.0 and contains no telemetry, analytics, advertising, or publisher-operated cloud services.</Char_Desc_2000>
+    </English>
+  </Program_Descriptions>
+  <Web_Info>
+    <Application_URLs>
+      <Application_Info_URL>https://github.com/ramunas-cvirka/hexone</Application_Info_URL>
+      <Application_Order_URL></Application_Order_URL>
+      <Application_Screenshot_URL>https://raw.githubusercontent.com/ramunas-cvirka/hexone/main/assets/win-screenshots/basic_file_panes.jpg</Application_Screenshot_URL>
+      <Application_Icon_URL>https://raw.githubusercontent.com/ramunas-cvirka/hexone/main/assets/store-listing/hexone-icon-32x32.png</Application_Icon_URL>
+      <Application_XML_File_URL>https://raw.githubusercontent.com/ramunas-cvirka/hexone/main/hexone-windows-pad.xml</Application_XML_File_URL>
+    </Application_URLs>
+    <Download_URLs>
+      <Primary_Download_URL>https://github.com/ramunas-cvirka/hexone/releases/download/v1.0.0/hexone_windows_amd64_portable.zip</Primary_Download_URL>
+      <Secondary_Download_URL>https://github.com/ramunas-cvirka/hexone/releases/latest/download/hexone_windows_amd64_portable.zip</Secondary_Download_URL>
+      <Additional_Download_URL_1></Additional_Download_URL_1>
+      <Additional_Download_URL_2></Additional_Download_URL_2>
+    </Download_URLs>
+  </Web_Info>
+  <Permissions>
+    <Distribution_Permissions>The unmodified Hexone distribution archive may be freely distributed and mirrored. The archive contents, copyright notices, license, and attribution files must remain intact. Modified builds must not be presented as official Hexone releases.</Distribution_Permissions>
+    <EULA>Hexone is licensed under the Apache License, Version 2.0. The complete license text is included in the distribution and is available at https://github.com/ramunas-cvirka/hexone/blob/main/LICENSE.</EULA>
+  </Permissions>
+</XML_DIZ_INFO>

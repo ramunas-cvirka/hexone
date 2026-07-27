@@ -10,10 +10,33 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestDirectFilePasteStatusLineShowsBottomBarProgress(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	st := &fileCopyState{
+		directPaste: true,
+		running:     true,
+		srcPath:     "/tmp/movie.mkv",
+		startedAt:   now.Add(-2 * time.Second),
+		progress: filesys.CopyProgress{
+			BytesDone:   50 << 20,
+			BytesTotal:  100 << 20,
+			CurrentPath: "/tmp/movie.mkv",
+		},
+	}
+
+	got := directFilePasteStatusLineForWidth(st, now, 2000, func(text string) int { return len(text) })
+	for _, want := range []string{"[Pasting] movie.mkv", "50%", "MB/s", "left"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("status line %q missing %q", got, want)
+		}
+	}
+}
 
 type transferTestInfo struct {
 	name string

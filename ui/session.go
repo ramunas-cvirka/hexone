@@ -77,6 +77,9 @@ func (ui *UI) ApplySession(s *fm.SessionState) {
 			paneState := s.Panes[i]
 			pane.sortKey = parseFileSortKey(paneState.SortKey)
 			pane.sortDesc = paneState.SortDescending
+			if err := pane.setFilter(paneState.Filter); err != nil {
+				_ = pane.setFilter(filePaneDefaultFilter)
+			}
 			if pane.table != nil {
 				switch strings.ToLower(strings.TrimSpace(paneState.Mode)) {
 				case "brief":
@@ -135,6 +138,7 @@ func sessionPaneFromFilePane(pane *filePaneState) fm.SessionPane {
 		SortKey:        pane.sessionSortKey(),
 		SortDescending: pane.sortDesc,
 		Mode:           pane.sessionMode(),
+		Filter:         pane.displayFilter(),
 	}
 }
 
@@ -182,6 +186,9 @@ func applySessionPaneOptions(pane *filePaneState, paneState fm.SessionPane) {
 	}
 	pane.sortKey = parseFileSortKey(paneState.SortKey)
 	pane.sortDesc = paneState.SortDescending
+	if err := pane.setFilter(paneState.Filter); err != nil {
+		_ = pane.setFilter(filePaneDefaultFilter)
+	}
 	if pane.table != nil {
 		switch strings.ToLower(strings.TrimSpace(paneState.Mode)) {
 		case "brief":

@@ -782,6 +782,27 @@ func (st *customCommandEditorState) slotDirty(index int) bool {
 	return !customCommandEditorEquivalent(st.draft[index], st.saved[index])
 }
 
+func (st *customCommandEditorState) hasUnsavedChanges() bool {
+	if st == nil {
+		return false
+	}
+	st.syncCurrentFieldsToDraft()
+	st.ensureDraftSlots()
+	for i := range st.draft {
+		if st.slotDirty(i) {
+			return true
+		}
+	}
+	return false
+}
+
+func (st *customCommandEditorState) saveLabel() string {
+	if st != nil && st.hasUnsavedChanges() {
+		return "Save (*)"
+	}
+	return "Save"
+}
+
 func (st *customCommandEditorState) loadSlotFields(index int) {
 	if st == nil || index < 0 || index >= 10 {
 		return
@@ -1217,6 +1238,7 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 	}
 
 	canRun := st.canUpsertCurrentCommand()
+	saveLabel := st.saveLabel()
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1283,7 +1305,7 @@ func (ui *UI) layoutCustomCommandEditorBody(th *material.Theme, gtx layout.Conte
 				return ui.layoutDialogActionTriple(
 					th, gtx,
 					&st.cancelClick, "Cancel", hoverCancel, pulseCancel, false,
-					&st.saveClick, "Save", hoverSave, pulseSave, false,
+					&st.saveClick, saveLabel, hoverSave, pulseSave, false,
 					&st.runClick, "Run", hoverRun, pulseRun, !canRun,
 					st.actionVisualState(customCommandEditorActionCancel, canRun),
 					st.actionVisualState(customCommandEditorActionSave, canRun),

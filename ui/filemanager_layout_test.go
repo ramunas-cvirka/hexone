@@ -4,12 +4,15 @@
 package ui
 
 import (
+	"fmt"
+	resources "hexone"
 	"hexone/filesys"
 	"hexone/fm"
 	"hexone/ui/platform"
 	"hexone/ui/widget/table"
 	"image"
 	"image/color"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -17,14 +20,281 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/font/opentype"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 )
+
+func TestFilePaneHeaderTextStyleUsesCurrentDirFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Interface.Typeface = resources.BundledFontFamilyFiraCodeNerdFontMono
+	cfg.Interface.FontSizeSp = 18
+	cfg.CurrentDir.Typeface = resources.BundledFontFamilyHackNerdFontMono
+	cfg.CurrentDir.FontSizeSp = 12.5
+	ui := NewUI(cfg)
+
+	face, size := ui.filePaneHeaderTextStyle(ui.filePanes[0])
+	if got, want := string(face), cfg.CurrentDir.Typeface; got != want {
+		t.Fatalf("header typeface=%q want current-dir typeface %q", got, want)
+	}
+	if got, want := float32(size), cfg.CurrentDir.FontSizeSp; got != want {
+		t.Fatalf("header text size=%v want current-dir size %v", got, want)
+	}
+}
+
+func testThemeWithBundledTypeface(t *testing.T, familyName string) *material.Theme {
+	t.Helper()
+	var collection []text.FontFace
+	for _, family := range resources.BundledFontFamilies() {
+		if family.Name != familyName {
+			continue
+		}
+		for _, variant := range []struct {
+			path   string
+			weight font.Weight
+		}{
+			{path: family.RegularPath, weight: font.Normal},
+			{path: family.BoldPath, weight: font.Bold},
+		} {
+			data, ok := resources.BundledFont(variant.path)
+			if !ok {
+				t.Fatalf("missing bundled font %s", variant.path)
+			}
+			face, err := opentype.Parse(data)
+			if err != nil {
+				t.Fatalf("parse bundled font %s: %v", variant.path, err)
+			}
+			collection = append(collection, text.FontFace{
+				Font: font.Font{Typeface: font.Typeface(family.Name), Weight: variant.weight},
+				Face: face,
+			})
+		}
+		break
+	}
+	if len(collection) == 0 {
+		t.Fatalf("bundled font family %q not found", familyName)
+	}
+	theme := material.NewTheme()
+	theme.Shaper = text.NewShaper(text.WithCollection(collection))
+	return theme
+}
+
+func TestFilePaneFilterLeadingInsetScalesWithCurrentDirFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.CurrentDir.FontSizeSp = 11
+	ui := NewUI(cfg)
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	if got, want := ui.filePaneFilterLeadingInset(gtx, ui.filePanes[0]), 2; got != want {
+		t.Fatalf("11sp filter inset=%d want %d", got, want)
+	}
+
+	ui.fmCfg.CurrentDir.FontSizeSp = 22
+	if got, want := ui.filePaneFilterLeadingInset(gtx, ui.filePanes[0]), 4; got != want {
+		t.Fatalf("22sp filter inset=%d want %d", got, want)
+	}
+
+	ui.fmCfg.CurrentDir.FontSizeSp = 11
+	gtx.Metric.PxPerSp = 2
+	if got, want := ui.filePaneFilterLeadingInset(gtx, ui.filePanes[0]), 4; got != want {
+		t.Fatalf("2x-density filter inset=%d want %d", got, want)
+	}
+}
+
+func TestFilePaneBreadcrumbKeepsFullPathUntilMeasuredIosevkaWidthIsUsed(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.FontSizeSp = 30 // Must not influence current-dir path fitting.
+	cfg.CurrentDir.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.CurrentDir.FontSizeSp = 12
+	ui := NewUI(cfg)
+	pane := ui.filePanes[0]
+	th := testThemeWithBundledTypeface(t, resources.BundledFontFamilyIosevkaNerdFontMono)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(1000, 24)},
+	}
+	segments := []filePathSegment{
+		{label: "C:", path: `C:\`},
+		{label: "Users", path: `C:\Users`},
+		{label: "ramuc", path: `C:\Users\ramuc`},
+		{label: "go", path: `C:\Users\ramuc\go`},
+		{label: "src", path: `C:\Users\ramuc\go\src`},
+		{label: "hexone", path: `C:\Users\ramuc\go\src\hexone`},
+		{label: "dist", path: `C:\Users\ramuc\go\src\hexone\dist`},
+	}
+	separatorW := ui.filePaneBreadcrumbSeparatorWidth(th, gtx, pane, "›")
+	fullW := filePathSegmentsWidth(segments, func(segment filePathSegment, last bool) int {
+		return ui.filePaneBreadcrumbSegmentWidth(th, gtx, pane, segment, last)
+	}, separatorW)
+	chromeW := gtx.Constraints.Max.X - ui.filePaneBreadcrumbSegmentBudget(th, gtx, pane)
+	filterW := ui.filePaneFilterLeadingInset(gtx, pane) + ui.filePaneBreadcrumbTextWidth(th, gtx, pane, filePaneDefaultFilter, font.Normal)
+	_, textSize := ui.filePaneHeaderTextStyle(pane)
+	nonRailChromeW := ui.filePaneFrameEdgeWidth(th, gtx, pane) +
+		2*filePaneFrameBracketWidth(gtx, textSize) +
+		ui.filePaneBreadcrumbSeparatorWidth(th, gtx, pane, ">") + filterW
+	if railW, want := chromeW-nonRailChromeW, ui.filePaneFrameEdgeWidth(th, gtx, pane); railW != want {
+		t.Fatalf("reserved path-to-controls rail=%d want one frame character %d", railW, want)
+	}
+
+	gtx.Constraints.Max.X = chromeW + fullW
+	if got := ui.compactFilePaneBreadcrumb(th, gtx, pane, segments); len(got) != len(segments) || got[1].label == "…" {
+		t.Fatalf("exact-fit breadcrumb compacted to %#v", got)
+	}
+
+	gtx.Constraints.Max.X--
+	got := ui.compactFilePaneBreadcrumb(th, gtx, pane, segments)
+	if len(got) < 3 || got[1].label != "…" {
+		t.Fatalf("one-pixel overflow breadcrumb=%#v, want compacted middle", got)
+	}
+}
+
+func TestFilePaneBreadcrumbIosevkaEllipsisKeepsGapBeforeChevron(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.CurrentDir.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.CurrentDir.FontSizeSp = 12
+	ui := NewUI(cfg)
+	pane := ui.filePanes[0]
+	th := testThemeWithBundledTypeface(t, resources.BundledFontFamilyIosevkaNerdFontMono)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(500, 24)},
+	}
+
+	ellipsisInkW := ui.filePaneBreadcrumbTextWidth(th, gtx, pane, "…", font.Normal)
+	ellipsisSlotW := ui.filePaneBreadcrumbSegmentWidth(th, gtx, pane, filePathSegment{label: "…"}, false)
+	trailingGap := ellipsisSlotW - ellipsisInkW
+	if want := ui.filePaneBreadcrumbEllipsisGapWidth(th, gtx, pane); trailingGap != want {
+		t.Fatalf("Iosevka ellipsis trailing gap=%d want %d", trailingGap, want)
+	}
+	_, ellipsisRight := ui.filePaneBreadcrumbGlyphOverhangs(th, gtx, pane, "…", font.Normal)
+	chevronLeft, _ := ui.filePaneBreadcrumbGlyphOverhangs(th, gtx, pane, "›", font.Medium)
+	visualInkGap := trailingGap + gtx.Dp(unit.Dp(filePaneBreadcrumbSeparatorLeftInsetDp)) - ellipsisRight - chevronLeft
+	if want := gtx.Dp(unit.Dp(filePaneBreadcrumbDesiredInkGapDp)); visualInkGap < want {
+		t.Fatalf("Iosevka ellipsis-to-chevron ink gap=%d want at least %d", visualInkGap, want)
+	}
+}
+
+func TestFilePaneBreadcrumbEllipsisGapAdaptsToBundledFontInk(t *testing.T) {
+	gaps := make(map[string]int)
+	for _, family := range resources.BundledFontFamilies() {
+		cfg := fm.DefaultConfig()
+		cfg.CurrentDir.Typeface = family.Name
+		cfg.CurrentDir.FontSizeSp = 12
+		ui := NewUI(cfg)
+		pane := ui.filePanes[0]
+		th := testThemeWithBundledTypeface(t, family.Name)
+		gtx := layout.Context{
+			Ops:         new(op.Ops),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Constraints{Max: image.Pt(500, 24)},
+		}
+
+		ellipsisLeft, ellipsisRight := ui.filePaneBreadcrumbGlyphOverhangs(th, gtx, pane, "…", font.Normal)
+		chevronLeft, chevronRight := ui.filePaneBreadcrumbGlyphOverhangs(th, gtx, pane, "›", font.Medium)
+		for label, value := range map[string]int{
+			"ellipsis left":  ellipsisLeft,
+			"ellipsis right": ellipsisRight,
+			"chevron left":   chevronLeft,
+			"chevron right":  chevronRight,
+		} {
+			if value < 0 {
+				t.Fatalf("%s %s overhang=%d want non-negative", family.Name, label, value)
+			}
+		}
+		gap := ui.filePaneBreadcrumbEllipsisGapWidth(th, gtx, pane)
+		gaps[family.Name] = gap
+		want := max(0,
+			gtx.Dp(unit.Dp(filePaneBreadcrumbDesiredInkGapDp))+
+				ellipsisRight+chevronLeft-
+				gtx.Dp(unit.Dp(filePaneBreadcrumbSeparatorLeftInsetDp)),
+		)
+		if gap != want {
+			t.Fatalf("%s adaptive ellipsis gap=%d want ink-derived %d", family.Name, gap, want)
+		}
+		if cellW := ui.filePaneFrameEdgeWidth(th, gtx, pane); family.Name != resources.BundledFontFamilyIosevkaNerdFontMono && gap >= cellW {
+			t.Fatalf("%s adaptive ellipsis gap=%d should stay below full character cell %d", family.Name, gap, cellW)
+		}
+	}
+	if iosevka, fira := gaps[resources.BundledFontFamilyIosevkaNerdFontMono], gaps[resources.BundledFontFamilyFiraCodeNerdFontMono]; iosevka <= fira {
+		t.Fatalf("font-aware gaps Iosevka=%d FiraCode=%d, want Iosevka's ink overhang to reserve more", iosevka, fira)
+	}
+}
+
+func TestFilePaneBreadcrumbIosevkaChevronKeepsGapBeforeDotPrefixedSegment(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.CurrentDir.Typeface = resources.BundledFontFamilyIosevkaNerdFontMono
+	cfg.CurrentDir.FontSizeSp = 12
+	ui := NewUI(cfg)
+	pane := ui.filePanes[0]
+	th := testThemeWithBundledTypeface(t, resources.BundledFontFamilyIosevkaNerdFontMono)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(500, 24)},
+	}
+
+	chevronInkW := ui.filePaneBreadcrumbTextWidth(th, gtx, pane, "›", font.Medium)
+	chevronSlotW := ui.filePaneBreadcrumbSeparatorWidth(th, gtx, pane, "›")
+	insetW := chevronSlotW - chevronInkW
+	wantInsetW := gtx.Dp(unit.Dp(filePaneBreadcrumbSeparatorLeftInsetDp + filePaneBreadcrumbSeparatorRightInsetDp))
+	if insetW != wantInsetW {
+		t.Fatalf("Iosevka chevron inset width=%d want %d", insetW, wantInsetW)
+	}
+	if rightGap := gtx.Dp(unit.Dp(filePaneBreadcrumbSeparatorRightInsetDp)); rightGap < 2 {
+		t.Fatalf("Iosevka chevron-to-dot protected gap=%d want at least 2px", rightGap)
+	}
+}
+
+func TestLayoutFilePaneModeBadgeFillsHeaderHeight(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.filePanes[0]
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(100, 40)},
+	}
+	stripH := ui.filePaneHeaderStripHeight(gtx, pane)
+	dims := ui.layoutFilePaneModeBadge(
+		gtx,
+		pane,
+		stripH,
+		color.NRGBA{R: 28, G: 34, B: 48, A: 255},
+		color.NRGBA{R: 230, G: 236, B: 255, A: 255},
+	)
+	if dims.Size.Y != stripH {
+		t.Fatalf("mode badge height=%d want full header height %d", dims.Size.Y, stripH)
+	}
+	if dims.Size.X <= 0 || dims.Size.X >= gtx.Constraints.Max.X {
+		t.Fatalf("mode badge width=%d want compact positive control width", dims.Size.X)
+	}
+}
+
+func TestFilePaneSortDirectionArrowKeepsStableSize(t *testing.T) {
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(20, 20)},
+	}
+	fg := color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	up := layoutFilePaneSortDirectionArrow(gtx, unit.Sp(11), false, fg)
+	gtx.Ops = new(op.Ops)
+	down := layoutFilePaneSortDirectionArrow(gtx, unit.Sp(11), true, fg)
+	if up.Size != down.Size || up.Size.X <= 0 || up.Size.Y <= 0 {
+		t.Fatalf("sort arrow sizes up=%v down=%v", up.Size, down.Size)
+	}
+	gtx.Ops = new(op.Ops)
+	large := layoutFilePaneSortDirectionArrow(gtx, unit.Sp(18), false, fg)
+	if large.Size.X <= up.Size.X || large.Size.Y <= up.Size.Y {
+		t.Fatalf("large sort arrow=%v want larger than default %v", large.Size, up.Size)
+	}
+}
 
 func TestLayoutFilePaneModeGlyphKeepsSameCanvasAcrossModes(t *testing.T) {
 	gtx := layout.Context{
@@ -187,6 +457,53 @@ func TestFavoriteOrderMenuDisablesBoundaryActions(t *testing.T) {
 	bottom := filePaneFavoriteOrderItems(2, 3)
 	if bottom[0].Disabled || !bottom[1].Disabled {
 		t.Fatalf("bottom favorite actions=%+v", bottom)
+	}
+}
+
+func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	pane := newFilePaneState(".", ui.fmCfg)
+	pane.tabHeight = 34
+	pane.headerHeight = 20
+	pane.sortControlWidth = 18
+	pane.sortControlRightInset = 28
+	pane.favoriteControlWidth = 12
+	pane.favoriteControlRightInset = 5
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(640, 360)},
+	}
+	pane.driveSegmentRect = ui.filePaneDriveSegmentBounds(th, gtx, pane, image.Pt(18, 18))
+	if got, want := pane.driveSegmentRect.Min.Y, pane.tabHeight+filePaneTabConnectorHeightDp+1; got != want {
+		t.Fatalf("drive label top=%d want header-local top %d", got, want)
+	}
+
+	sortSize := image.Pt(96, 89)
+	sortRect := filePaneSortMenuBaseRect(gtx, pane, sortSize, 0)
+	if got, want := sortRect.Max.X, 640-pane.sortControlRightInset; got != want {
+		t.Fatalf("sort menu right edge=%d want control right edge %d", got, want)
+	}
+	if got, want := sortRect.Min.Y, pane.tabHeight+pane.headerHeight+2; got != want {
+		t.Fatalf("sort menu top=%d want below header at %d", got, want)
+	}
+
+	items := []fileFavoriteItem{{label: "Add current dir", addCurrent: true}}
+	favoriteRect := ui.filePaneFavoriteMenuBaseRect(gtx, pane, items, 0)
+	if got, want := favoriteRect.Max.X, 640-pane.favoriteControlRightInset; got != want {
+		t.Fatalf("favorite menu right edge=%d want control right edge %d", got, want)
+	}
+	if got, want := favoriteRect.Min.Y, pane.tabHeight+pane.headerHeight+2; got != want {
+		t.Fatalf("favorite menu top=%d want below header at %d", got, want)
+	}
+
+	driveAnchor := ui.filePaneDriveMenuBasePoint(th, gtx, pane, image.Pt(120, 96))
+	if got, want := driveAnchor.X, pane.driveSegmentRect.Min.X; got != want {
+		t.Fatalf("drive menu left edge=%d want drive label left edge %d", got, want)
+	}
+	if got, want := driveAnchor.Y, pane.tabHeight+pane.headerHeight+2; got != want {
+		t.Fatalf("drive menu top=%d want below header at %d", got, want)
 	}
 }
 
@@ -519,6 +836,146 @@ func TestGioInsertPressAndReleaseControlsRepeat(t *testing.T) {
 	ui.handleFileManagerKeys(gtx)
 	if ui.rep.active || ui.held[fileActionKey(fileActionMarkSelectNext)] {
 		t.Fatal("Gio Insert release should stop repeat")
+	}
+}
+
+func TestBackspaceNavigatesActiveFilePaneToParent(t *testing.T) {
+	parent := t.TempDir()
+	child := filepath.Join(parent, "child")
+	if err := os.Mkdir(child, 0o755); err != nil {
+		t.Fatalf("create child directory: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: child,
+		Entries: []filesys.Entry{
+			{Name: "..", DisplayName: "..", Path: parent, Kind: filesys.EntryParent, CanEnter: true},
+			{Name: "file.txt", Path: filepath.Join(child, "file.txt"), Kind: filesys.EntryFile},
+		},
+	}, "", "", 1)
+
+	gtx, router := testKeyContext()
+	gtx.Now = time.Now()
+	router.Event(key.Filter{Name: key.NameDeleteBackward})
+	router.Queue(key.Event{Name: key.NameDeleteBackward, State: key.Press})
+	ui.handleFileManagerKeys(gtx)
+
+	if !pane.loading {
+		t.Fatal("Backspace should start loading the parent directory")
+	}
+	if got := pane.loadingDir; got != parent {
+		t.Fatalf("Backspace loading directory=%q want parent %q", got, parent)
+	}
+}
+
+func TestDeleteKeyStartsFilePaneDeleteAction(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "alpha.txt")
+	if err := os.WriteFile(target, []byte("alpha"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir: root,
+		Entries: []filesys.Entry{{
+			Name:        "alpha.txt",
+			DisplayName: "alpha.txt",
+			Path:        target,
+			Kind:        filesys.EntryFile,
+		}},
+	}, target, "", 0)
+
+	gtx, router := testKeyContext()
+	gtx.Now = time.Now()
+	router.Event(key.Filter{Name: key.NameDeleteForward})
+	router.Queue(key.Event{Name: key.NameDeleteForward, State: key.Press})
+	ui.handleFileManagerKeys(gtx)
+
+	if ui.fileDelete == nil {
+		t.Fatal("Delete should start the file-pane delete action")
+	}
+	if got := ui.fileDelete.targetPath; got != target {
+		t.Fatalf("Delete target=%q want %q", got, target)
+	}
+	if ui.fileDelete.running {
+		t.Fatal("Delete should preserve the default confirmation step")
+	}
+}
+
+func TestBackspaceAtFilesystemRootIsIgnored(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	pane := ui.activePane()
+	pane.applyListing(filesys.Listing{
+		Dir:     string(filepath.Separator),
+		Entries: []filesys.Entry{{Name: "tmp", Path: "/tmp", Kind: filesys.EntryDir, CanEnter: true}},
+	}, "", "", 0)
+
+	if ui.navigateFilePaneParent(ui.activeFilePane) {
+		t.Fatal("parent navigation should be ignored when the pane has no parent entry")
+	}
+	if pane.loading {
+		t.Fatal("root pane should not start a load")
+	}
+}
+
+func TestFilePaneWheelSelectionBehaviorFollowsConfig(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	if filePaneWheelMovesSelection(cfg) {
+		t.Fatal("default mouse wheel behavior should preserve the active item")
+	}
+
+	cfg.General.WheelMovesSelection = true
+	if !filePaneWheelMovesSelection(cfg) {
+		t.Fatal("configured legacy mouse wheel behavior should move the active item")
+	}
+}
+
+func TestFilePaneWheelScrollsFullListWithoutMovingActiveItemByDefault(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	entries := make([]filesys.Entry, 40)
+	for i := range entries {
+		entries[i] = filesys.Entry{
+			Name:        fmt.Sprintf("file-%02d.txt", i),
+			DisplayName: fmt.Sprintf("file-%02d.txt", i),
+			Path:        filepath.Join(pane.dir, fmt.Sprintf("file-%02d.txt", i)),
+		}
+	}
+	pane.applyListing(filesys.Listing{Dir: pane.dir, Entries: entries}, "", "", 0)
+	ui := &UI{
+		fmCfg:          cfg,
+		filePanes:      []*filePaneState{pane},
+		activeFilePane: 0,
+		held:           make(map[string]bool),
+	}
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Source:      router.Source(),
+		Now:         time.Now(),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(420, 120)),
+	}
+	th := material.NewTheme()
+
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Scroll,
+		Position: f32.Pt(40, 40),
+		Scroll:   f32.Pt(0, 120),
+	})
+	gtx.Now = gtx.Now.Add(time.Millisecond)
+	testFilePaneTableFrame(ui, th, router, &gtx, 0, pane)
+
+	if got := pane.table.Selected; got != 0 {
+		t.Fatalf("default wheel moved active item to row %d", got)
+	}
+	if pos := pane.table.List.Position; pos.First == 0 && pos.Offset == 0 {
+		t.Fatalf("default wheel did not scroll the full file list: %#v", pos)
 	}
 }
 

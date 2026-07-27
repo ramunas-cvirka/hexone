@@ -321,6 +321,43 @@ func TestLayoutFilePaneStatusBarUsesFullPaneWidth(t *testing.T) {
 	}
 }
 
+func TestLayoutFilePaneStatusBarShowsDirectPasteWithoutBlockingUI(t *testing.T) {
+	ui := NewUI(nil)
+	pane := newFilePaneState(t.TempDir(), nil)
+	ui.filePanes = []*filePaneState{pane}
+	ui.activeFilePane = 0
+
+	now := time.Unix(1700000000, 0)
+	ui.fileCopy = &fileCopyState{
+		pane:        0,
+		srcPane:     0,
+		dstPane:     0,
+		srcPath:     filepath.Join(t.TempDir(), "movie.mkv"),
+		directPaste: true,
+		running:     true,
+		startedAt:   now.Add(-time.Second),
+		progress: filesys.CopyProgress{
+			BytesDone:   50 << 20,
+			BytesTotal:  100 << 20,
+			CurrentPath: "movie.mkv",
+		},
+	}
+
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Now:         now,
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(320, 80)),
+	}
+	dims := ui.layoutFilePaneStatusBar(material.NewTheme(), gtx, 0, pane, filePanePaletteFromConfig(ui.fmCfg))
+	if dims.Size.X != 320 || dims.Size.Y <= 0 {
+		t.Fatalf("direct paste status bar size=%v, want full-width positive bar", dims.Size)
+	}
+	if ui.hasBlockingFileDialog() || ui.fileCopyBlocksUI() {
+		t.Fatal("direct paste should not block normal pane interaction")
+	}
+}
+
 func TestFilePaneStatusBarSeparatorModeFollowsPaneSide(t *testing.T) {
 	ui := NewUI(nil)
 	left := newFilePaneState(t.TempDir(), nil)

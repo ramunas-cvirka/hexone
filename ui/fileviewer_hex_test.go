@@ -101,6 +101,13 @@ func TestFormatHexSelectionCopyUsesContinuousHex(t *testing.T) {
 	}
 }
 
+func TestFormatHexSelectionTextCopyEscapesNonTextBytes(t *testing.T) {
+	data := []byte{'H', 'i', 0x00, '\\', '\n', 0xFF}
+	if got, want := formatHexSelectionTextCopy(data), `Hi\x00\\\x0A\xFF`; got != want {
+		t.Fatalf("formatHexSelectionTextCopy = %q, want %q", got, want)
+	}
+}
+
 func TestCopyFileViewerTextRejectsHexSelectionOverLimit(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	st := &fileViewerState{
@@ -172,6 +179,50 @@ func TestHexDisplayStartFallsBackUntilJumpTargetIsBuffered(t *testing.T) {
 	}
 	if !v.lastPaintSet || v.lastPaintTop != 4 {
 		t.Fatalf("last painted state=(%d,%v) want 4,true", v.lastPaintTop, v.lastPaintSet)
+	}
+}
+
+func TestHexScrollByDeltaRespondsToFineWheelInput(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     16 * 100,
+		bytesPerLine: 16,
+		visibleLines: 8,
+	}
+
+	v.scrollByDelta(0.5)
+
+	if got, want := v.topLine, int64(1); got != want {
+		t.Fatalf("topLine=%d want %d after fine wheel delta", got, want)
+	}
+}
+
+func TestHexScrollByDeltaCapsCoarseWheelInput(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     16 * 100,
+		bytesPerLine: 16,
+		visibleLines: 8,
+	}
+
+	v.scrollByDelta(120)
+
+	if got, want := v.topLine, int64(hexViewerWheelMaxLines); got != want {
+		t.Fatalf("topLine=%d want capped coarse-wheel step %d", got, want)
+	}
+}
+
+func TestHexScrollByDeltaDropsCarryWhenDirectionChanges(t *testing.T) {
+	v := &hexViewerState{
+		fileSize:     16 * 100,
+		bytesPerLine: 16,
+		visibleLines: 8,
+		topLine:      10,
+	}
+
+	v.scrollByDelta(0.25)
+	v.scrollByDelta(-0.5)
+
+	if got, want := v.topLine, int64(9); got != want {
+		t.Fatalf("topLine=%d want %d after reversing a fine wheel gesture", got, want)
 	}
 }
 

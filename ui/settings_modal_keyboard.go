@@ -20,6 +20,9 @@ const (
 	settingsKeyboardFocusNav
 	settingsKeyboardFocusGeneralDimInactive
 	settingsKeyboardFocusGeneralFavoritesNewTab
+	settingsKeyboardFocusGeneralWheelMovesSelection
+	settingsKeyboardFocusGeneralUseTrash
+	settingsKeyboardFocusGeneralDeleteWithoutConfirm
 	settingsKeyboardFocusGeneralCompletionSound
 	settingsKeyboardFocusFilePaneMode
 	settingsKeyboardFocusFilePaneFileWeight
@@ -36,6 +39,8 @@ const (
 	settingsKeyboardFocusTerminalAcceleratedKeys
 	settingsKeyboardFocusFontsInterfaceFont
 	settingsKeyboardFocusFontsInterfaceFontSize
+	settingsKeyboardFocusFontsCurrentDirFont
+	settingsKeyboardFocusFontsCurrentDirFontSize
 	settingsKeyboardFocusGeneralPaneFont
 	settingsKeyboardFocusGeneralPaneFontSize
 	settingsKeyboardFocusFontsTabsFont
@@ -46,6 +51,7 @@ const (
 	settingsKeyboardFocusFontsTerminalFontSize
 	settingsKeyboardFocusViewerRemoteSearch
 	settingsKeyboardFocusViewerSmoothScrolling
+	settingsKeyboardFocusViewerShowLineNumbers
 	settingsKeyboardFocusViewerHideFunctionBar
 	settingsKeyboardFocusViewerTargetKey
 	settingsKeyboardFocusViewerTargetBrowse
@@ -167,10 +173,14 @@ func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) 
 	switch target {
 	case settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
+		settingsKeyboardFocusGeneralWheelMovesSelection,
+		settingsKeyboardFocusGeneralUseTrash,
+		settingsKeyboardFocusGeneralDeleteWithoutConfirm,
 		settingsKeyboardFocusTerminalShell,
 		settingsKeyboardFocusTerminalAcceleratedKeys,
 		settingsKeyboardFocusViewerRemoteSearch,
 		settingsKeyboardFocusViewerSmoothScrolling,
+		settingsKeyboardFocusViewerShowLineNumbers,
 		settingsKeyboardFocusViewerHideFunctionBar,
 		settingsKeyboardFocusViewerTargetKey,
 		settingsKeyboardFocusViewerTargetCommand,
@@ -215,6 +225,12 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 		st.focus = settingsKeyboardFocusGeneralDimInactive
 	case gtx.Focused(&st.generalFavoritesNewTabBool):
 		st.focus = settingsKeyboardFocusGeneralFavoritesNewTab
+	case gtx.Focused(&st.generalWheelMovesSelection):
+		st.focus = settingsKeyboardFocusGeneralWheelMovesSelection
+	case gtx.Focused(&st.generalUseTrash):
+		st.focus = settingsKeyboardFocusGeneralUseTrash
+	case gtx.Focused(&st.generalDeleteWithoutConfirm):
+		st.focus = settingsKeyboardFocusGeneralDeleteWithoutConfirm
 	case gtx.Focused(&st.terminalAcceleratedKeysBool):
 		st.focus = settingsKeyboardFocusTerminalAcceleratedKeys
 	case gtx.Focused(&st.viewShellEdit):
@@ -223,6 +239,8 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 		st.focus = settingsKeyboardFocusViewerRemoteSearch
 	case gtx.Focused(&st.viewSmoothScrollingBool):
 		st.focus = settingsKeyboardFocusViewerSmoothScrolling
+	case gtx.Focused(&st.viewShowLineNumbersBool):
+		st.focus = settingsKeyboardFocusViewerShowLineNumbers
 	case gtx.Focused(&st.viewHideFunctionBarBool):
 		st.focus = settingsKeyboardFocusViewerHideFunctionBar
 	case gtx.Focused(&st.viewTargetKeyEdit):
@@ -306,6 +324,9 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 			order = append(order,
 				settingsKeyboardFocusGeneralDimInactive,
 				settingsKeyboardFocusGeneralFavoritesNewTab,
+				settingsKeyboardFocusGeneralWheelMovesSelection,
+				settingsKeyboardFocusGeneralUseTrash,
+				settingsKeyboardFocusGeneralDeleteWithoutConfirm,
 				settingsKeyboardFocusGeneralCompletionSound,
 				settingsKeyboardFocusFilePaneFileWeight,
 				settingsKeyboardFocusFilePaneDirWeight,
@@ -332,6 +353,10 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		}
 		order = append(order, settingsKeyboardFocusFontsInterfaceFontSize)
 		if len(resources.BundledFontFamilies()) > 0 {
+			order = append(order, settingsKeyboardFocusFontsCurrentDirFont)
+		}
+		order = append(order, settingsKeyboardFocusFontsCurrentDirFontSize)
+		if len(resources.BundledFontFamilies()) > 0 {
 			order = append(order, settingsKeyboardFocusGeneralPaneFont)
 		}
 		order = append(order, settingsKeyboardFocusGeneralPaneFontSize)
@@ -351,6 +376,7 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		order = append(order,
 			settingsKeyboardFocusViewerRemoteSearch,
 			settingsKeyboardFocusViewerSmoothScrolling,
+			settingsKeyboardFocusViewerShowLineNumbers,
 			settingsKeyboardFocusViewerHideFunctionBar,
 			settingsKeyboardFocusViewerTargetKey,
 			settingsKeyboardFocusViewerTargetBrowse,
@@ -533,8 +559,20 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 	case settingsKeyboardFocusGeneralFavoritesNewTab:
 		st.generalFavoritesNewTabBool.Value = !st.generalFavoritesNewTabBool.Value
 		return true
+	case settingsKeyboardFocusGeneralWheelMovesSelection:
+		st.generalWheelMovesSelection.Value = !st.generalWheelMovesSelection.Value
+		return true
+	case settingsKeyboardFocusGeneralUseTrash:
+		st.generalUseTrash.Value = !st.generalUseTrash.Value
+		return true
+	case settingsKeyboardFocusGeneralDeleteWithoutConfirm:
+		st.generalDeleteWithoutConfirm.Value = !st.generalDeleteWithoutConfirm.Value
+		return true
 	case settingsKeyboardFocusViewerSmoothScrolling:
 		st.viewSmoothScrollingBool.Value = !st.viewSmoothScrollingBool.Value
+		return true
+	case settingsKeyboardFocusViewerShowLineNumbers:
+		st.viewShowLineNumbersBool.Value = !st.viewShowLineNumbersBool.Value
 		return true
 	case settingsKeyboardFocusViewerHideFunctionBar:
 		st.viewHideFunctionBarBool.Value = !st.viewHideFunctionBarBool.Value
@@ -1331,6 +1369,28 @@ func (st *settingsModalState) stepInterfaceFontFamily(step int, families []resou
 	return true
 }
 
+func (st *settingsModalState) stepCurrentDirFontFamily(step int, families []resources.BundledFontFamily, now time.Time) bool {
+	if st == nil || len(families) == 0 {
+		return false
+	}
+	keys := make([]string, len(families))
+	current := st.currentDirFontFamily
+	if current == "" {
+		current = families[0].Name
+	}
+	for i, family := range families {
+		keys[i] = family.Name
+	}
+	next := settingsChoiceStep(current, keys, step)
+	if next == "" || next == current {
+		return false
+	}
+	st.currentDirFontPickerAnim.setValue(&st.currentDirFontFamily, next, now)
+	st.currentDirFontPickerAnim.anim.setPulse(next, now)
+	st.errText = ""
+	return true
+}
+
 func (st *settingsModalState) stepViewFontFamily(step int, families []resources.BundledFontFamily, now time.Time) bool {
 	if st == nil || len(families) == 0 {
 		return false
@@ -1465,6 +1525,11 @@ func (st *settingsModalState) stepFontSize(focus settingsKeyboardFocus, step int
 		next := settingsStepFontSize(st.interfaceFontSizeSp, step)
 		changed := next != st.interfaceFontSizeSp
 		st.interfaceFontSizeSp = next
+		return changed
+	case settingsKeyboardFocusFontsCurrentDirFontSize:
+		next := settingsStepFontSize(st.currentDirFontSizeSp, step)
+		changed := next != st.currentDirFontSizeSp
+		st.currentDirFontSizeSp = next
 		return changed
 	case settingsKeyboardFocusGeneralPaneFontSize:
 		next := settingsStepFontSize(st.paneFontSizeSp, step)
@@ -1636,6 +1701,8 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 	switch st.focus {
 	case settingsKeyboardFocusFontsInterfaceFont:
 		return st.stepInterfaceFontFamily(step, families, now)
+	case settingsKeyboardFocusFontsCurrentDirFont:
+		return st.stepCurrentDirFontFamily(step, families, now)
 	case settingsKeyboardFocusGeneralPaneFont:
 		return st.stepPaneFontFamily(step, families, now)
 	case settingsKeyboardFocusFontsTabsFont:

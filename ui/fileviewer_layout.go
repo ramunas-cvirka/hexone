@@ -20,6 +20,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -35,6 +36,12 @@ const (
 	viewerInlineCommandDisplayInsetDp   = 10
 	viewerInlineCommandVerticalInsetDp  = 2
 	viewerInlineCommandMeasurePaddingDp = viewerInlineCommandDisplayInsetDp * 2
+	viewerModeTabFilenameMaxRunes       = 64
+	viewerModeTabActionWidthDp          = 20
+	viewerModeTabOuterInsetDp           = 5
+	viewerModeTabMarkerGapDp            = 5
+	viewerModeTabLabelGapDp             = 3
+	viewerModeTabInterGapDp             = 2
 	fileViewerOverlayEdgeInsetXDp       = 4
 	fileViewerOverlayEdgeInsetYDp       = 2
 	fileViewerTooltipEdgeInsetDp        = 4
@@ -210,6 +217,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	ui.handleFileViewerFindInput(gtx, st)
+	historyActionClicked := st.historyClick.Clicked(gtx)
 	if st.modeFileClick.Clicked(gtx) {
 		st.tabAnim.setPulse("file", gtx.Now)
 		ui.setFileViewerMode("file", gtx.Now)
@@ -220,9 +228,13 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		ui.setFileViewerMode("hex", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	if st.modeCmdClick.Clicked(gtx) {
+	if st.modeCmdClick.Clicked(gtx) && !historyActionClicked {
 		st.tabAnim.setPulse("command", gtx.Now)
 		ui.setFileViewerMode("command", gtx.Now)
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if st.editToggleClick.Clicked(gtx) {
+		ui.toggleFileViewerEdit(gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	if st.mode == "file" && st.detectedImagePreview {
@@ -257,7 +269,7 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		}
 		ui.handleFileViewerTOCClicks(gtx, st)
 	}
-	if st.mode == "file" && !st.detectedImagePreview {
+	if st.mode == "file" && !st.detectedImagePreview && !st.editMode {
 		if st.encodingMenuClick.Clicked(gtx) {
 			if st.encodingMenuOpen {
 				st.closeEncodingMenu()
@@ -292,24 +304,29 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		ui.toggleFileViewerAutoRefresh(gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	if st.historyClick.Clicked(gtx) {
-		prevTab := st.activeTabKey()
-		if st.commandEditOn {
-			ui.cancelViewerCommandEdit()
+	if historyActionClicked {
+		if st.editMode {
+			st.status = "finish editing before opening history"
+		} else {
+			prevTab := st.activeTabKey()
+			if st.commandEditOn {
+				ui.cancelViewerCommandEdit()
+			}
+			st.historyOpen = !st.historyOpen
+			if nextTab := st.activeTabKey(); nextTab != prevTab {
+				st.tabPrev = prevTab
+				st.tabAnimAt = gtx.Now
+			}
+			st.tabAnim.setPulse("history", gtx.Now)
 		}
-		st.historyOpen = !st.historyOpen
-		if nextTab := st.activeTabKey(); nextTab != prevTab {
-			st.tabPrev = prevTab
-			st.tabAnimAt = gtx.Now
-		}
-		st.tabAnim.setPulse("history", gtx.Now)
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	for st.backdropClick.Clicked(gtx) {
 	}
 	if st.closeClick.Clicked(gtx) {
 		ui.closeFileViewer()
-		return layout.Dimensions{}
+		gtx.Execute(op.InvalidateCmd{})
+		return ui.layoutFilePanes(th, gtx)
 	}
 	if st.loading {
 		// Keep frames ticking while background load is running, otherwise
@@ -381,6 +398,9 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 											}
 											return ui.layoutImageOutputView(th, gtx, st)
 										}
+										if st.editMode && st.mode == "file" {
+											return ui.layoutFileViewerTextEditor(th, gtx, st)
+										}
 										return ui.layoutStreamOutputView(th, gtx, st)
 									}),
 									layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -398,11 +418,14 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 		)
 		ui.handleFileViewerRootPointerEvents(gtx, st)
 		ui.layoutFileViewerContextMenu(th, gtx, st)
-		ui.applyFileViewerHeaderCursor(gtx, st)
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		pass := pointer.PassOp{}.Push(gtx.Ops)
 		event.Op(gtx.Ops, &st.rootPointerTag)
 		pass.Pop()
+		if st.modeSwitchPrompt.open {
+			ui.layoutFileViewerModeSwitchModal(th, gtx, st)
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		}
 		if st.menuOpen {
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		}
@@ -449,6 +472,9 @@ func (ui *UI) handleFileViewerRootPointerEvents(gtx layout.Context, st *fileView
 			}
 		}
 		if ui.editorMenuOpenID != "" {
+			if pe.Buttons.Contain(pointer.ButtonSecondary) && ui.editorMenuOpenID == "viewer-file-edit" {
+				continue
+			}
 			ui.closeEditorContextMenu()
 			gtx.Execute(op.InvalidateCmd{})
 			continue
@@ -521,6 +547,9 @@ func (ui *UI) handleFileViewerPointerEvents(gtx layout.Context, st *fileViewerSt
 			}
 			if pe.Buttons.Contain(pointer.ButtonSecondary) {
 				st.setHistoryOpen(false, gtx.Now)
+				if st.editMode && st.mode == "file" {
+					continue
+				}
 				st.openContextMenu(pos, gtx.Now)
 				continue
 			}
@@ -679,21 +708,6 @@ func (ui *UI) applyFileViewerScrollCursor(gtx layout.Context, st *fileViewerStat
 	}
 }
 
-func (ui *UI) applyFileViewerHeaderCursor(gtx layout.Context, st *fileViewerState) {
-	if st == nil {
-		return
-	}
-	if st.modeFileClick.Hovered() ||
-		st.modeHexClick.Hovered() ||
-		st.modeCmdClick.Hovered() ||
-		st.historyClick.Hovered() ||
-		st.commandClick.Hovered() ||
-		st.autoRefreshClick.Hovered() ||
-		st.closeClick.Hovered() {
-		pointer.CursorPointer.Add(gtx.Ops)
-	}
-}
-
 func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
 	if st == nil || !st.menuOpen {
 		return layout.Dimensions{}
@@ -702,8 +716,14 @@ func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context
 		_ = ui.copyFileViewerText(gtx, true)
 		st.closeContextMenu()
 	}
+	if st.copyTextToggle.Clicked(gtx) {
+		_ = ui.copyFileViewerHex(gtx, true, true)
+		st.closeContextMenu()
+	}
 	if st.wrapToggle.Clicked(gtx) {
-		ui.toggleViewerWordWrap()
+		if st.mode != "hex" {
+			ui.toggleViewerWordWrap()
+		}
 		st.closeContextMenu()
 	}
 	for {
@@ -758,23 +778,50 @@ func (ui *UI) layoutFileViewerContextMenu(th *material.Theme, gtx layout.Context
 	return layout.Dimensions{Size: gtx.Constraints.Max}
 }
 
-func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Context, st *fileViewerState, alpha float32) layout.Dimensions {
-	theme := ui.filePanePopupTheme()
-	items := []struct {
-		click  *widget.Clickable
-		item   fileContextMenuItem
-		active bool
-	}{
+type fileViewerContextMenuRow struct {
+	click  *widget.Clickable
+	item   fileContextMenuItem
+	active bool
+}
+
+func fileViewerContextMenuRows(st *fileViewerState) []fileViewerContextMenuRow {
+	if st == nil {
+		return nil
+	}
+	items := []fileViewerContextMenuRow{
 		{
 			click: &st.copyToggle,
-			item:  fileContextMenuItem{ID: "viewer-copy", Label: "Copy"},
-		},
-		{
-			click:  &st.wrapToggle,
-			item:   fileContextMenuItem{ID: "viewer-word-wrap", Label: viewerWordWrapMenuLabel(st.wrapEnabled)},
-			active: st.wrapEnabled,
+			item: fileContextMenuItem{
+				ID:    "viewer-copy",
+				Label: "Copy",
+			},
 		},
 	}
+	if st.mode == "hex" {
+		items[0].item.Label = "Copy as Hex"
+		items = append(items, fileViewerContextMenuRow{
+			click: &st.copyTextToggle,
+			item: fileContextMenuItem{
+				ID:    "viewer-copy-text",
+				Label: "Copy as Text",
+			},
+		})
+	} else {
+		items = append(items, fileViewerContextMenuRow{
+			click: &st.wrapToggle,
+			item: fileContextMenuItem{
+				ID:    "viewer-word-wrap",
+				Label: viewerWordWrapMenuLabel(st.wrapEnabled),
+			},
+			active: st.wrapEnabled,
+		})
+	}
+	return items
+}
+
+func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Context, st *fileViewerState, alpha float32) layout.Dimensions {
+	theme := ui.filePanePopupTheme()
+	items := fileViewerContextMenuRows(st)
 	width := gtx.Dp(unit.Dp(96))
 	for _, row := range items {
 		lbl := material.Body2(th, row.item.Label)
@@ -831,6 +878,12 @@ func (ui *UI) layoutFileViewerContextMenuCard(th *material.Theme, gtx layout.Con
 }
 
 func (ui *UI) layoutFileViewerHeader(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
+	return layoutClippedToDimensions(gtx, func(gtx layout.Context) layout.Dimensions {
+		return ui.layoutFileViewerHeaderContent(th, gtx, st)
+	})
+}
+
+func (ui *UI) layoutFileViewerHeaderContent(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
 	history := ui.viewerHistoryCommands(st.command)
 	stripH := ui.viewerHeaderStripHeight(gtx)
 	row := layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1470,6 +1523,9 @@ func (ui *UI) fileViewerHeaderTitle(st *fileViewerState) string {
 		return "viewer"
 	}
 	if st.name != "" {
+		if st.editDirty {
+			return st.name + " *"
+		}
 		return st.name
 	}
 	if st.path != "" {
@@ -1495,6 +1551,8 @@ func (ui *UI) fileViewerBaseStatusText(st *fileViewerState) (string, color.NRGBA
 	statusColor := theme.Hint
 	switch st.status {
 	case "", "ready":
+	case "editing":
+	case "modified":
 	case "loading...":
 		statusText = "loading"
 		statusColor = theme.StatusWarn
@@ -1826,15 +1884,243 @@ func (ui *UI) layoutFileViewerHeaderSegment(th *material.Theme, gtx layout.Conte
 	})
 }
 
-func viewerModeTabTitle(st *fileViewerState, mode, label string) string {
-	if st == nil || st.historyOpen || normalizeViewerMode(st.mode) != mode {
-		return label
+func viewerFilenameRailTitle(st *fileViewerState) string {
+	if st == nil {
+		return ""
 	}
 	name := strings.TrimSpace(st.name)
 	if name == "" {
-		return label
+		name = strings.TrimSpace(st.path)
 	}
-	return label + " - " + name
+	if name == "" {
+		return "viewer"
+	}
+	name = middleTruncateRunes(name, viewerModeTabFilenameMaxRunes)
+	if st.editDirty {
+		return name + " *"
+	}
+	return name
+}
+
+func middleTruncateRunes(value string, maxRunes int) string {
+	runes := []rune(value)
+	if maxRunes <= 0 {
+		return ""
+	}
+	if len(runes) <= maxRunes {
+		return value
+	}
+	if maxRunes == 1 {
+		return "…"
+	}
+	left := (maxRunes - 1 + 1) / 2
+	right := maxRunes - 1 - left
+	return string(runes[:left]) + "…" + string(runes[len(runes)-right:])
+}
+
+type viewerModeTabSpec struct {
+	label        string
+	active       bool
+	click        *widget.Clickable
+	actionIcon   *widget.Icon
+	actionClick  *widget.Clickable
+	reserveSides bool
+	index        int
+}
+
+func (ui *UI) viewerModeTabWidth(th *material.Theme, gtx layout.Context, item viewerModeTabSpec) int {
+	face := ui.tabStripTypeface()
+	size := ui.tabStripTextSize()
+	markerW := tabStripTitleTextWidth(th, gtx, face, size, "█")
+	labelW := 0
+	for _, label := range [...]string{"File", "Hex", "Cmd"} {
+		labelW = max(labelW, tabStripTitleTextWidth(th, gtx, face, size, label))
+	}
+	width := gtx.Dp(unit.Dp(viewerModeTabOuterInsetDp*2+viewerModeTabMarkerGapDp)) + markerW + labelW
+	if item.reserveSides {
+		width += gtx.Dp(unit.Dp((viewerModeTabActionWidthDp + viewerModeTabLabelGapDp) * 2))
+	}
+	minW := gtx.Dp(unit.Dp(38))
+	if width < minW {
+		width = minW
+	}
+	return width
+}
+
+func (ui *UI) layoutFileViewerModeAction(gtx layout.Context, click *widget.Clickable, icon *widget.Icon, fg color.NRGBA) layout.Dimensions {
+	if click == nil || icon == nil {
+		return layout.Dimensions{}
+	}
+	return fixedWidth(gtx, gtx.Dp(unit.Dp(viewerModeTabActionWidthDp)), func(gtx layout.Context) layout.Dimensions {
+		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			pointer.CursorPointer.Add(gtx.Ops)
+			highlighted := click.Hovered() || click.Pressed()
+			ui.drawFileViewerModeActionSpot(gtx, highlighted)
+			iconColor := fg
+			iconColor.A = 255
+			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				iconSize := gtx.Dp(unit.Dp(14))
+				if iconSize < 10 {
+					iconSize = 10
+				}
+				iconGtx := gtx
+				iconGtx.Constraints = layout.Exact(image.Pt(iconSize, iconSize))
+				icon.Layout(iconGtx, iconColor)
+				return layout.Dimensions{Size: image.Pt(iconSize, iconSize)}
+			})
+		})
+	})
+}
+
+func (ui *UI) drawFileViewerModeActionSpot(gtx layout.Context, highlighted bool) {
+	size := gtx.Constraints.Max
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	// Reserve the bottom rows for the tab's ASCII underline.
+	bottom := size.Y - gtx.Dp(unit.Dp(3))
+	if bottom < 1 {
+		bottom = 1
+	}
+	palette := filePanePaletteFromConfig(ui.fmCfg)
+	bg := mixNRGBA(palette.PaneBg, color.NRGBA{R: 82, G: 88, B: 104, A: 255}, 0.52)
+	bg.A = 54
+	if highlighted {
+		bg = mixNRGBA(palette.PaneBg, color.NRGBA{R: 43, G: 129, B: 157, A: 255}, 0.76)
+		bg.A = 220
+	}
+	paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rect(0, 0, size.X, bottom)).Op())
+	separator := ui.tabStripSeparatorColor()
+	separator.A = 96
+	separatorTop := bottom / 4
+	separatorBottom := bottom - bottom/4
+	if separatorBottom > separatorTop {
+		paint.FillShape(gtx.Ops, separator, clip.Rect(image.Rect(0, separatorTop, 1, separatorBottom)).Op())
+	}
+}
+
+func (ui *UI) layoutFileViewerModeTab(th *material.Theme, gtx layout.Context, st *fileViewerState, item viewerModeTabSpec) layout.Dimensions {
+	if item.click == nil {
+		return layout.Dimensions{}
+	}
+	return item.click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		bg, fg := ui.tabStripColors(item.active, item.click.Hovered(), item.index)
+		palette := filePanePaletteFromConfig(ui.fmCfg)
+		if item.active {
+			bg = mixNRGBA(palette.PaneBg, palette.HoverBg, 0.38)
+			bg.A = 138
+			if item.click.Hovered() {
+				bg = mixNRGBA(palette.PaneBg, palette.HoverBg, 0.58)
+				bg.A = 184
+			}
+		} else if item.click.Hovered() {
+			bg = mixNRGBA(palette.PaneBg, palette.HoverBg, 0.82)
+			bg.A = 194
+		}
+		if bg.A != 0 {
+			paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
+		}
+		contentDims := layout.Inset{
+			Left:   unit.Dp(viewerModeTabOuterInsetDp),
+			Right:  unit.Dp(viewerModeTabOuterInsetDp),
+			Top:    unit.Dp(1),
+			Bottom: unit.Dp(1),
+		}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			children := []layout.FlexChild{
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					marker := "░"
+					markerColor := fg
+					markerColor.A = 132
+					if item.active {
+						marker = "█"
+						markerColor = fg
+						markerColor.A = 255
+					}
+					lbl := material.Body2(th, marker)
+					lbl.Font.Typeface = ui.tabStripTypeface()
+					lbl.Font.Weight = font.Bold
+					lbl.TextSize = ui.tabStripTextSize()
+					lbl.Color = markerColor
+					lbl.MaxLines = 1
+					return layoutVCenteredLabel(gtx, lbl)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(viewerModeTabMarkerGapDp)}.Layout),
+			}
+			if item.reserveSides {
+				children = append(children,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						if item.actionIcon == nil || item.actionClick == nil {
+							return layout.Spacer{Width: unit.Dp(viewerModeTabActionWidthDp)}.Layout(gtx)
+						}
+						return ui.layoutFileViewerModeAction(gtx, item.actionClick, item.actionIcon, fg)
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(viewerModeTabLabelGapDp)}.Layout),
+				)
+			}
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, item.label)
+				lbl.Font.Typeface = ui.tabStripTypeface()
+				lbl.Font.Weight = font.Medium
+				lbl.TextSize = ui.tabStripTextSize()
+				lbl.Color = fg
+				lbl.MaxLines = 1
+				return layoutVCenteredLabel(gtx, lbl)
+			}))
+			if item.reserveSides {
+				children = append(children,
+					layout.Rigid(layout.Spacer{Width: unit.Dp(viewerModeTabLabelGapDp)}.Layout),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(viewerModeTabActionWidthDp)}.Layout),
+				)
+			}
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+		})
+		if item.active && item.index < 3 {
+			ui.layoutFileViewerModeASCIIUnderline(th, gtx, item, fg)
+		}
+		return contentDims
+	})
+}
+
+func (ui *UI) layoutFileViewerModeASCIIUnderline(th *material.Theme, gtx layout.Context, item viewerModeTabSpec, fg color.NRGBA) {
+	markerW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "█")
+	x := gtx.Dp(unit.Dp(viewerModeTabOuterInsetDp+viewerModeTabMarkerGapDp)) + markerW
+	availableW := gtx.Constraints.Max.X - x
+	if availableW <= 0 {
+		return
+	}
+	probe := material.Body2(th, "_")
+	probe.Font.Typeface = ui.tabStripTypeface()
+	probe.Font.Weight = font.Medium
+	probe.TextSize = ui.tabStripTextSize()
+	probe.Color = fg
+	probe.Color.A = 224
+	probe.MaxLines = 1
+	charW := measureLabelUnconstrained(gtx, probe).Size.X
+	if charW < 1 {
+		charW = 1
+	}
+	count := availableW/charW + 1
+	if count < 1 {
+		return
+	}
+	underline := material.Body2(th, strings.Repeat("_", count))
+	underline.Font = probe.Font
+	underline.TextSize = probe.TextSize
+	underline.Color = probe.Color
+	underline.MaxLines = 1
+	underlineDims := measureLabelUnconstrained(gtx, underline)
+	y := gtx.Constraints.Max.Y - underlineDims.Size.Y + gtx.Dp(unit.Dp(1))
+	if y < 0 {
+		y = 0
+	}
+	offset := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
+	underlineClip := clip.Rect(image.Rect(0, 0, availableW, max(0, gtx.Constraints.Max.Y-y))).Push(gtx.Ops)
+	underlineGtx := gtx
+	underlineGtx.Constraints = layout.Exact(underlineDims.Size)
+	underline.Layout(underlineGtx)
+	underlineClip.Pop()
+	offset.Pop()
 }
 
 func (ui *UI) layoutFileViewerModeTabs(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
@@ -1842,74 +2128,247 @@ func (ui *UI) layoutFileViewerModeTabs(th *material.Theme, gtx layout.Context, s
 		return layout.Dimensions{}
 	}
 	historyActive := st.historyOpen
-	items := []appTabItem{
-		{title: viewerModeTabTitle(st, "file", "File"), active: !historyActive && st.mode == "file"},
-		{title: viewerModeTabTitle(st, "hex", "Hex"), active: !historyActive && st.mode == "hex"},
-		{title: viewerModeTabTitle(st, "command", "Cmd"), active: !historyActive && st.mode == "command"},
+	items := []viewerModeTabSpec{
+		{label: "File", active: !historyActive && st.mode == "file", click: &st.modeFileClick, reserveSides: true, index: 0},
+		{label: "Hex", active: !historyActive && st.mode == "hex", click: &st.modeHexClick, reserveSides: true, index: 1},
+		{
+			label:        "Cmd",
+			active:       historyActive || st.mode == "command",
+			click:        &st.modeCmdClick,
+			reserveSides: true,
+			index:        2,
+		},
 	}
-	clicks := []*widget.Clickable{&st.modeFileClick, &st.modeHexClick, &st.modeCmdClick}
-	widths := ui.tabStripWidths(th, gtx, ui.fmCfg, items)
 	for i := range items {
 		if !items[i].active {
 			continue
 		}
-		fullTitleW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), items[i].title) + gtx.Dp(unit.Dp(18))
-		if widths[i] < fullTitleW {
-			widths[i] = fullTitleW
+		if i == 2 {
+			items[i].actionClick = &st.historyClick
+			if historyActive {
+				items[i].actionIcon = uitheme.EditModeIcon()
+			} else {
+				items[i].actionIcon = uitheme.ViewModeIcon()
+			}
+		} else if st.editMode {
+			items[i].actionClick = &st.editToggleClick
+			items[i].actionIcon = uitheme.EditModeIcon()
+		} else {
+			items[i].actionClick = &st.editToggleClick
+			items[i].actionIcon = uitheme.ViewModeIcon()
 		}
-	}
-	separatorW := tabStripSeparatorWidth(gtx)
-	historyW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "..") + gtx.Dp(unit.Dp(14))
-	if minW := tabStripControlWidth(gtx); historyW < minW {
-		historyW = minW
 	}
 
 	starts := make([]int, len(items))
+	widths := make([]int, len(items))
+	gapW := gtx.Dp(unit.Dp(viewerModeTabInterGapDp))
+	terminatorMarkerW := tabStripTitleTextWidth(th, gtx, ui.tabStripTypeface(), ui.tabStripTextSize(), "░")
+	terminatorW := gtx.Dp(unit.Dp(viewerModeTabOuterInsetDp)) + terminatorMarkerW
 	totalW := 0
-	for i, width := range widths {
+	for i, item := range items {
 		starts[i] = totalW
-		totalW += width + separatorW
+		widths[i] = ui.viewerModeTabWidth(th, gtx, item)
+		totalW += widths[i]
+		totalW += gapW
 	}
-	historyX := totalW
-	totalW += historyW
+	totalW += terminatorW
 
 	activeIdx := 0
 	switch {
 	case historyActive:
-		st.activeTabRect = image.Rect(historyX, 0, historyX+historyW, stripH)
+		activeIdx = 2
 	case st.mode == "hex":
 		activeIdx = 1
 	case st.mode == "command":
 		activeIdx = 2
 	}
-	if !historyActive {
-		st.activeTabRect = image.Rect(starts[activeIdx], 0, starts[activeIdx]+widths[activeIdx], stripH)
-	}
+	st.activeTabRect = image.Rect(starts[activeIdx], 0, starts[activeIdx]+widths[activeIdx], stripH)
 
 	return fixedWidth(gtx, totalW, func(gtx layout.Context) layout.Dimensions {
 		return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
 			children := make([]layout.FlexChild, 0, len(items)*2+1)
 			for i := range items {
 				idx := i
-				children = append(children,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return fixedWidth(gtx, widths[idx], func(gtx layout.Context) layout.Dimensions {
-							return ui.layoutTabStripTab(th, gtx, items[idx], clicks[idx], nil, idx, false)
-						})
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutTabStripSeparator(gtx)
-					}),
-				)
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, widths[idx], func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerModeTab(th, gtx, st, items[idx])
+					})
+				}))
+				children = append(children, layout.Rigid(layout.Spacer{Width: unit.Dp(viewerModeTabInterGapDp)}.Layout))
 			}
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return fixedWidth(gtx, historyW, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutTabStripTab(th, gtx, appTabItem{title: "..", active: historyActive}, &st.historyClick, nil, 3, false)
+				return fixedWidth(gtx, terminatorW, func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(viewerModeTabOuterInsetDp)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						markerColor := ui.fileViewerTheme().Muted
+						markerColor.A = 180
+						lbl := material.Body2(th, "░")
+						lbl.Font.Typeface = ui.tabStripTypeface()
+						lbl.Font.Weight = font.Bold
+						lbl.TextSize = ui.tabStripTextSize()
+						lbl.Color = markerColor
+						lbl.MaxLines = 1
+						return layoutVCenteredLabel(gtx, lbl)
+					})
 				})
 			}))
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
 		})
 	})
+}
+
+func (ui *UI) layoutFileViewerASCIIRail(th *material.Theme, gtx layout.Context, railColor color.NRGBA, align layout.Direction) layout.Dimensions {
+	return layoutASCIIRail(th, gtx, railColor, align, ui.tabStripTypeface(), ui.tabStripTextSize())
+}
+
+func layoutASCIIRail(th *material.Theme, gtx layout.Context, railColor color.NRGBA, align layout.Direction, typeface font.Typeface, textSize unit.Sp) layout.Dimensions {
+	w := gtx.Constraints.Max.X
+	if w <= 0 {
+		return layout.Dimensions{}
+	}
+	probe := material.Body2(th, "-")
+	probe.Font.Typeface = typeface
+	probe.Font.Weight = font.Normal
+	probe.TextSize = textSize
+	probe.Color = railColor
+	probe.MaxLines = 1
+	charW := measureLabelUnconstrained(gtx, probe).Size.X
+	if charW < 1 {
+		charW = 1
+	}
+	count := w / charW
+	if count < 1 {
+		return layout.Dimensions{Size: image.Pt(w, 0)}
+	}
+	rail := probe
+	rail.Text = strings.Repeat("-", count)
+	rail.Truncator = ""
+	textW := measureLabelUnconstrained(gtx, rail).Size.X
+	for count > 0 && textW > w {
+		count--
+		rail.Text = strings.Repeat("-", count)
+		textW = measureLabelUnconstrained(gtx, rail).Size.X
+	}
+	x := 0
+	if align == layout.E {
+		x = w - textW
+	}
+	defer clip.Rect(image.Rect(0, 0, w, max(1, gtx.Constraints.Max.Y))).Push(gtx.Ops).Pop()
+	offset := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+	childGtx := gtx
+	childGtx.Constraints.Min.X = 0
+	childGtx.Constraints.Max.X = textW
+	dims := rail.Layout(childGtx)
+	offset.Pop()
+	dims.Size.X = w
+	return dims
+}
+
+func fitViewerFilenameLabel(gtx layout.Context, label material.LabelStyle, maxWidth int) (material.LabelStyle, int) {
+	if maxWidth <= 0 {
+		label.Text = ""
+		label.Truncator = ""
+		return label, 0
+	}
+	label.Truncator = ""
+	if width := measureLabelUnconstrained(gtx, label).Size.X; width <= maxWidth {
+		return label, width
+	}
+	original := label.Text
+	for runeCount := len([]rune(original)) - 1; runeCount > 0; runeCount-- {
+		label.Text = middleTruncateRunes(original, runeCount)
+		width := measureLabelUnconstrained(gtx, label).Size.X
+		if width <= maxWidth {
+			return label, width
+		}
+	}
+	label.Text = ""
+	return label, 0
+}
+
+func viewerFilenameRailSideWidths(railWidth, titleCenterX, groupWidth, minRailWidth int) (left, right int) {
+	minRailWidth = min(max(0, minRailWidth), railWidth/2)
+	maxGroupWidth := max(0, railWidth-2*minRailWidth)
+	groupWidth = min(max(0, groupWidth), maxGroupWidth)
+	left = titleCenterX - groupWidth/2
+	left = min(max(minRailWidth, left), railWidth-minRailWidth-groupWidth)
+	right = max(0, railWidth-left-groupWidth)
+	return left, right
+}
+
+func (ui *UI) layoutFileViewerFilenameRail(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH, titleCenterX int) layout.Dimensions {
+	title := viewerFilenameRailTitle(st)
+	theme := ui.fileViewerTheme()
+	return fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
+		return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			capColor := theme.Muted
+			capColor.A = 182
+			titleColor := theme.HeaderText
+			if st != nil && st.editDirty {
+				titleColor = theme.ModifiedText
+			}
+			leftCap := material.Body2(th, "[")
+			leftCap.Font.Typeface = ui.tabStripTypeface()
+			leftCap.Font.Weight = font.Normal
+			leftCap.TextSize = ui.tabStripTextSize()
+			leftCap.Color = capColor
+			leftCap.MaxLines = 1
+			rightCap := material.Body2(th, "]")
+			rightCap.Font = leftCap.Font
+			rightCap.TextSize = leftCap.TextSize
+			rightCap.Color = capColor
+			rightCap.MaxLines = 1
+			titleLabel := material.Body2(th, title)
+			titleLabel.Font.Typeface = ui.tabStripTypeface()
+			titleLabel.Font.Weight = font.Medium
+			titleLabel.TextSize = ui.tabStripTextSize()
+			titleLabel.Color = titleColor
+			titleLabel.MaxLines = 1
+			titleLabel.Alignment = text.Middle
+
+			leftCapW := measureLabelUnconstrained(gtx, leftCap).Size.X
+			rightCapW := measureLabelUnconstrained(gtx, rightCap).Size.X
+			railW := gtx.Constraints.Max.X
+			titleCenterX = min(max(0, titleCenterX), railW)
+			hyphenProbe := leftCap
+			hyphenProbe.Text = "-"
+			hyphenW := max(1, measureLabelUnconstrained(gtx, hyphenProbe).Size.X)
+			maxTitleW := max(0, railW-leftCapW-rightCapW-2*hyphenW)
+			titleLabel, titleW := fitViewerFilenameLabel(gtx, titleLabel, maxTitleW)
+			groupW := leftCapW + titleW + rightCapW
+			leftRailW, rightRailW := viewerFilenameRailSideWidths(railW, titleCenterX, groupW, hyphenW)
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, leftRailW, func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerASCIIRail(th, gtx, capColor, layout.E)
+					})
+				}),
+				layout.Rigid(leftCap.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if titleW == 0 {
+						return layout.Dimensions{}
+					}
+					return fixedWidth(gtx, titleW, titleLabel.Layout)
+				}),
+				layout.Rigid(rightCap.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedWidth(gtx, rightRailW, func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutFileViewerASCIIRail(th, gtx, capColor, layout.W)
+					})
+				}),
+			)
+		})
+	})
+}
+
+func viewerHeaderFilenameRailBounds(width, leftWidth, rightWidth, gap int) (start, railWidth, titleCenterX int) {
+	if width <= 0 {
+		return 0, 0, 0
+	}
+	start = min(width, leftWidth+max(0, gap))
+	end := max(start, width-rightWidth)
+	railWidth = end - start
+	titleCenterX = min(max(0, width/2-start), railWidth)
+	return start, railWidth, titleCenterX
 }
 
 func (ui *UI) layoutFileViewerHeaderRow(th *material.Theme, gtx layout.Context, st *fileViewerState, stripH int) layout.Dimensions {
@@ -1926,29 +2385,50 @@ func (ui *UI) layoutFileViewerHeaderRow(th *material.Theme, gtx layout.Context, 
 	}
 	m := op.Record(gtx.Ops)
 	dims := layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		children := []layout.FlexChild{
+		rowW := gtx.Constraints.Max.X
+		if rowW < 0 {
+			rowW = 0
+		}
+		childGtx := gtx
+		childGtx.Constraints.Min.X = 0
+		childGtx.Constraints.Min.Y = 0
+
+		leftRecord := op.Record(gtx.Ops)
+		leftChildren := []layout.FlexChild{
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return ui.layoutFileViewerModeTabs(th, gtx, st, stripH)
 			}),
 		}
 		if st.mode == "command" {
-			children = append(children,
+			leftChildren = append(leftChildren,
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutFileViewerInlineCommand(th, gtx, st, stripH)
 				}),
 			)
 		}
-		children = append(children,
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, stripH)}
-			}),
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutFileViewerInfoButtons(th, gtx, st, stripH)
-			}),
-		)
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+		leftDims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(childGtx, leftChildren...)
+		leftCall := leftRecord.Stop()
+
+		rightRecord := op.Record(gtx.Ops)
+		rightDims := ui.layoutFileViewerInfoButtons(th, childGtx, st, stripH)
+		rightCall := rightRecord.Stop()
+
+		railStart, railW, titleCenterX := viewerHeaderFilenameRailBounds(rowW, leftDims.Size.X, rightDims.Size.X, 0)
+		railRecord := op.Record(gtx.Ops)
+		railGtx := childGtx
+		railGtx.Constraints = layout.Exact(image.Pt(railW, stripH))
+		ui.layoutFileViewerFilenameRail(th, railGtx, st, stripH, titleCenterX)
+		railCall := railRecord.Stop()
+
+		railOffset := op.Offset(image.Pt(railStart, 0)).Push(gtx.Ops)
+		railCall.Add(gtx.Ops)
+		railOffset.Pop()
+		leftCall.Add(gtx.Ops)
+		rightOffset := op.Offset(image.Pt(max(0, rowW-rightDims.Size.X), 0)).Push(gtx.Ops)
+		rightCall.Add(gtx.Ops)
+		rightOffset.Pop()
+		return layout.Dimensions{Size: image.Pt(rowW, stripH)}
 	})
 	call := m.Stop()
 	ui.paintFileViewerHeaderDivider(gtx, dims.Size, st)

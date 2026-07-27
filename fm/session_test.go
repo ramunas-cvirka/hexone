@@ -32,6 +32,9 @@ func TestSessionNormalizePaneDefaults(t *testing.T) {
 	if !s.Panes[0].SortDescending {
 		t.Fatal("SortDescending should preserve true")
 	}
+	if got, want := s.Panes[0].Filter, "*.*"; got != want {
+		t.Fatalf("Filter=%q, want %q", got, want)
+	}
 }
 
 func TestSessionNormalizePaneAliases(t *testing.T) {
@@ -65,7 +68,7 @@ func TestSessionNormalizeFilePaneTabs(t *testing.T) {
 			{
 				Active: 5,
 				Tabs: []SessionPane{
-					{Dir: " /tmp/one ", SortKey: "date", Mode: "brief"},
+					{Dir: " /tmp/one ", SortKey: "date", Mode: "brief", Filter: " *.go "},
 					{Dir: " /tmp/two ", SortKey: "bad", Mode: "bad"},
 				},
 			},
@@ -87,6 +90,9 @@ func TestSessionNormalizeFilePaneTabs(t *testing.T) {
 	}
 	if got, want := group.Tabs[0].Mode, "brief"; got != want {
 		t.Fatalf("tab0 mode=%q want %q", got, want)
+	}
+	if got, want := group.Tabs[0].Filter, "*.go"; got != want {
+		t.Fatalf("tab0 filter=%q want %q", got, want)
 	}
 	if got, want := group.Tabs[1].SortKey, "name"; got != want {
 		t.Fatalf("tab1 sort=%q want %q", got, want)

@@ -200,6 +200,10 @@ type terminalSession struct {
 	pastePendingAt      time.Time
 
 	inputMu          sync.Mutex
+	commandDraft     []rune
+	commandCursor    int
+	lastCommand      string
+	commandReliable  bool
 	keyRepeatActive  bool
 	keyRepeatKey     key.Name
 	keyRepeatStarted time.Time
@@ -232,8 +236,9 @@ func newTerminalSession(invalidate func(), preferredRows ...int) *terminalSessio
 		rows = fm.NormalizeTerminalHeightRows(preferredRows[0])
 	}
 	st := &terminalSession{
-		rows: rows,
-		cols: terminalDefaultCols,
+		rows:            rows,
+		cols:            terminalDefaultCols,
+		commandReliable: true,
 		modes: terminalModes{
 			eraseTemplate: headlessterm.NewCellTemplate(),
 		},
@@ -715,6 +720,8 @@ func (ui *UI) toggleTerminal() bool {
 		ui.closeFunctionBarPopups()
 		ui.resetKeys()
 		st.focusKeyboard()
+	} else {
+		ui.closeTerminalSnippetMenu()
 	}
 	return true
 }
@@ -888,7 +895,7 @@ func (ui *UI) terminalPointerOnTerminalSurface(gtx layout.Context, pos image.Poi
 	}
 	height, _, ok := ui.terminal.paneMetrics()
 	if !ok {
-		height = terminalPaneHeight(gtx, 16, terminalConfiguredRows(ui.fmCfg))
+		height = ui.terminalPaneHeightWithTabs(gtx, 16, terminalConfiguredRows(ui.fmCfg))
 	}
 	if height <= 0 {
 		return false
@@ -1284,6 +1291,7 @@ func (s *terminalSession) write(data []byte) {
 	if proc == nil || !running {
 		return
 	}
+	s.trackCommandInput(data)
 	s.writeMu.Lock()
 	_, err := proc.Write(data)
 	s.writeMu.Unlock()
@@ -2117,10 +2125,17 @@ func (ui *UI) handleTerminalClipboardEvents(gtx layout.Context) {
 }
 
 func (ui *UI) registerTerminalClipboardTarget(gtx layout.Context) {
-	if ui == nil || ui.terminal == nil || !ui.terminal.pasteReadPending(gtx.Now) {
+	if ui == nil || ui.terminal == nil {
 		return
 	}
-	event.Op(gtx.Ops, &ui.terminal.pasteTag)
+	pending, deadline := ui.terminal.pasteReadState(gtx.Now)
+	if !pending {
+		return
+	}
+	registerPointerTransparentEventTarget(gtx, &ui.terminal.pasteTag)
+	if !deadline.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: deadline})
+	}
 }
 
 func (s *terminalSession) beginPasteRead(now time.Time) {
@@ -2149,16 +2164,26 @@ func (s *terminalSession) setPastePending(pending bool) {
 }
 
 func (s *terminalSession) pasteReadPending(now time.Time) bool {
+	pending, _ := s.pasteReadState(now)
+	return pending
+}
+
+func (s *terminalSession) pasteReadState(now time.Time) (bool, time.Time) {
 	if s == nil {
-		return false
+		return false, time.Time{}
 	}
 	s.viewMu.Lock()
 	defer s.viewMu.Unlock()
-	if s.pastePending && !s.pastePendingAt.IsZero() && !now.IsZero() && now.Sub(s.pastePendingAt) > terminalPasteReadTimeout {
+	deadline := time.Time{}
+	if !s.pastePendingAt.IsZero() {
+		deadline = s.pastePendingAt.Add(terminalPasteReadTimeout)
+	}
+	if s.pastePending && !deadline.IsZero() && !now.IsZero() && !now.Before(deadline) {
 		s.pastePending = false
 		s.pastePendingAt = time.Time{}
+		deadline = time.Time{}
 	}
-	return s.pastePending
+	return s.pastePending, deadline
 }
 
 func (s *terminalSession) writePastedText(text string) bool {
@@ -3648,6 +3673,15 @@ func terminalPaneHeight(gtx layout.Context, cellH int, preferredRows ...int) int
 	return terminalPaneHeightForRows(gtx, cellH, rows)
 }
 
+func (ui *UI) terminalPaneHeightWithTabs(gtx layout.Context, cellH int, preferredRows ...int) int {
+	height := terminalPaneHeight(gtx, cellH, preferredRows...)
+	height += ui.tabStripHeight(gtx) - gtx.Dp(unit.Dp(tabStripHeightDp))
+	if maxHeight := terminalMaxPaneHeight(gtx); maxHeight > 0 && height > maxHeight {
+		height = maxHeight
+	}
+	return height
+}
+
 func terminalRowsForPaneHeight(gtx layout.Context, cellH, height int) int {
 	if cellH <= 0 || height <= 0 {
 		return 0
@@ -3657,6 +3691,11 @@ func terminalRowsForPaneHeight(gtx layout.Context, cellH, height int) int {
 		return 0
 	}
 	return terminalClampPaneRows(gtx, cellH, rows)
+}
+
+func (ui *UI) terminalRowsForPaneHeightWithTabs(gtx layout.Context, cellH, height int) int {
+	height -= ui.tabStripHeight(gtx) - gtx.Dp(unit.Dp(tabStripHeightDp))
+	return terminalRowsForPaneHeight(gtx, cellH, height)
 }
 
 func terminalPaneCols(width int, cellW int) int {
@@ -3685,7 +3724,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 	if cellH <= 0 {
 		cellH = 16
 	}
-	h := terminalPaneHeight(gtx, cellH, terminalConfiguredRows(ui.fmCfg))
+	h := ui.terminalPaneHeightWithTabs(gtx, cellH, terminalConfiguredRows(ui.fmCfg))
 	if ui.terminalMaximized() {
 		h = gtx.Constraints.Max.Y
 	}
@@ -3718,7 +3757,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		padX := gtx.Dp(unit.Dp(6))
 		padTop := gtx.Dp(unit.Dp(4))
 		padBottom := gtx.Dp(unit.Dp(4))
-		tabH := gtx.Dp(unit.Dp(tabStripHeightDp))
+		tabH := ui.tabStripHeight(gtx)
 		tabRect := image.Rect(padX, padTop, size.X-padX, padTop+tabH)
 		contentTop := tabRect.Max.Y + gtx.Dp(unit.Dp(3))
 		content := image.Rect(padX, contentTop, size.X-padX, size.Y-padBottom)
@@ -3766,6 +3805,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 			off := op.Offset(tabRect.Min).Push(gtx.Ops)
 			ui.layoutTerminalTabStrip(th, tabGtx)
 			off.Pop()
+			ui.drawTerminalTabRail(gtx, tabRect)
 		}
 		if !terminalFocused {
 			if shade := filePaneInactiveShadeColor(ui.fmCfg, terminalBG); shade.A != 0 {
@@ -3776,6 +3816,40 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 
 		return layout.Dimensions{Size: size}
 	})
+}
+
+func (ui *UI) drawTerminalTabRail(gtx layout.Context, tabRect image.Rectangle) {
+	if ui == nil || tabRect.Dx() <= 0 {
+		return
+	}
+	stroke := gtx.Dp(unit.Dp(1))
+	if stroke < 1 {
+		stroke = 1
+	}
+	y := tabRect.Max.Y
+	w := tabRect.Dx()
+	geometry := ui.terminalTabs.geometry
+	railColor := filePanePathFrameColor(filePanePaletteFromConfig(ui.fmCfg))
+	if !geometry.activeVisible {
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(tabRect.Min.X, y, tabRect.Max.X, y+stroke)).Op())
+		return
+	}
+	activeMin := max(0, min(w, geometry.activeMinX))
+	activeMax := max(activeMin, min(w, geometry.activeMaxX))
+	legH := gtx.Dp(unit.Dp(4))
+	if legH < stroke {
+		legH = stroke
+	}
+	if activeMin > 0 {
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(tabRect.Min.X, y, tabRect.Min.X+activeMin, y+stroke)).Op())
+		leftX := tabRect.Min.X + activeMin - stroke
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(leftX, y-legH, leftX+stroke, y+stroke)).Op())
+	}
+	if activeMax < w {
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(tabRect.Min.X+activeMax, y, tabRect.Max.X, y+stroke)).Op())
+		rightX := tabRect.Min.X + activeMax
+		paint.FillShape(gtx.Ops, railColor, clip.Rect(image.Rect(rightX, y-legH, rightX+stroke, y+stroke)).Op())
+	}
 }
 
 func terminalGridContentRect(content image.Rectangle, cellH int) (image.Rectangle, int) {
@@ -3837,14 +3911,14 @@ func (ui *UI) terminalResizeHandleGeometry(th *material.Theme, gtx layout.Contex
 	}
 	st := ui.terminal
 	h, cellH, ok := st.paneMetrics()
-	rows := terminalRowsForPaneHeight(gtx, cellH, h)
+	rows := ui.terminalRowsForPaneHeightWithTabs(gtx, cellH, h)
 	if !ok || rows <= 0 {
 		_, cellH = ui.terminalCellSize(th, gtx)
 		if cellH <= 0 {
 			cellH = 16
 		}
 		rows = terminalConfiguredRows(ui.fmCfg)
-		h = terminalPaneHeight(gtx, cellH, rows)
+		h = ui.terminalPaneHeightWithTabs(gtx, cellH, rows)
 	}
 	if h <= 0 || gtx.Constraints.Max.X <= 0 || gtx.Constraints.Max.Y <= 0 {
 		return image.Rectangle{}, 0, 0, false

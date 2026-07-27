@@ -97,6 +97,108 @@ func TestFilePaneFullOrEmptyUsesMeasuredWidth(t *testing.T) {
 	}
 }
 
+func TestFilePaneBriefTextWidthUsesLongestUntruncatedDisplayName(t *testing.T) {
+	model := &filePaneModel{
+		cfg: fm.DefaultConfig(),
+		entries: []filesys.Entry{
+			{Name: "mobilogix", DisplayName: "mobilogix", Kind: filesys.EntryDir},
+			{Name: "devonthink_index.applescript", DisplayName: "devonthink_index.applescript", Kind: filesys.EntryFile},
+			{Name: "README.md", DisplayName: "README.md", Kind: filesys.EntryFile},
+		},
+	}
+	model.setTextMeasurer(func(text string) int {
+		return len([]rune(text)) * 7
+	})
+
+	want := len([]rune("devonthink_index.applescript")) * 7
+	if got := model.BriefColumnTextWidthPx(); got != want {
+		t.Fatalf("brief text width=%d want longest display-name width %d", got, want)
+	}
+}
+
+func TestFilePaneBriefTextWidthIncludesSymlinkTarget(t *testing.T) {
+	model := &filePaneModel{
+		cfg: fm.DefaultConfig(),
+		entries: []filesys.Entry{{
+			Name:        "current",
+			DisplayName: "current",
+			IsSymlink:   true,
+			LinkTarget:  "releases/2026-07-17",
+			Kind:        filesys.EntryFile,
+		}},
+	}
+	model.setTextMeasurer(func(text string) int {
+		return len([]rune(text)) * 6
+	})
+
+	want := len([]rune("current -> releases/2026-07-17")) * 6
+	if got := model.BriefColumnTextWidthPx(); got != want {
+		t.Fatalf("brief text width=%d want name-and-target width %d", got, want)
+	}
+}
+
+func TestFilePaneBriefTextWidthRecomputesAfterEntriesChange(t *testing.T) {
+	model := &filePaneModel{cfg: fm.DefaultConfig()}
+	model.setTextMeasurer(func(text string) int {
+		return len([]rune(text)) * 5
+	})
+	model.setEntries([]filesys.Entry{{
+		Name:        "short.txt",
+		DisplayName: "short.txt",
+		Kind:        filesys.EntryFile,
+	}})
+	if got, want := model.BriefColumnTextWidthPx(), len([]rune("short.txt"))*5; got != want {
+		t.Fatalf("initial brief text width=%d want %d", got, want)
+	}
+
+	model.setEntries([]filesys.Entry{{
+		Name:        "devonthink_index.applescript",
+		DisplayName: "devonthink_index.applescript",
+		Kind:        filesys.EntryFile,
+	}})
+	if got, want := model.BriefColumnTextWidthPx(), len([]rune("devonthink_index.applescript"))*5; got != want {
+		t.Fatalf("updated brief text width=%d want %d", got, want)
+	}
+}
+
+func TestFilePaneStyledTextMeasureCachePersistsAcrossFrames(t *testing.T) {
+	model := &filePaneModel{cfg: fm.DefaultConfig()}
+	key := filePaneTextMeasureKey{
+		typeface: font.Typeface("test"),
+		textSize: unit.Sp(15),
+		pxPerDp:  1,
+		pxPerSp:  1,
+	}
+	measures := 0
+	measure := func(text string) int {
+		measures++
+		return len(text) * 7
+	}
+
+	model.setTextMeasurerForStyle(key, measure)
+	if got, ok := model.measuredTextWidth("cached.txt"); !ok || got != 70 {
+		t.Fatalf("first width=(%d,%v) want (70,true)", got, ok)
+	}
+	model.setTextMeasurerForStyle(key, nil)
+	model.setTextMeasurerForStyle(key, measure)
+	if got, ok := model.measuredTextWidth("cached.txt"); !ok || got != 70 {
+		t.Fatalf("cached width=(%d,%v) want (70,true)", got, ok)
+	}
+	if measures != 1 {
+		t.Fatalf("same-style frame measured %d times want 1", measures)
+	}
+
+	changedKey := key
+	changedKey.pxPerSp = 2
+	model.setTextMeasurerForStyle(changedKey, measure)
+	if _, ok := model.measuredTextWidth("cached.txt"); !ok {
+		t.Fatal("changed-style width was not measured")
+	}
+	if measures != 2 {
+		t.Fatalf("style change measured %d times want 2", measures)
+	}
+}
+
 func TestFilePaneModelDisplaysSymlinkTarget(t *testing.T) {
 	model := &filePaneModel{
 		entries: []filesys.Entry{{
