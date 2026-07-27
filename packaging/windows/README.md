@@ -81,8 +81,10 @@ with `Add-AppxPackage`. Do not use the `_dev.msix` package for Store submission.
 ## Publish Store updates from GitHub
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`. The workflow builds the
-Store MSIX on Windows, attaches it to the GitHub release, and submits the same
-package to Partner Center when Store credentials are configured.
+Store MSIX on Windows and submits it to Partner Center when Store credentials
+are configured. The MSIX is kept as a one-day GitHub Actions artifact only to
+transfer it between the build and Store publishing jobs; it is not attached to
+the public GitHub release.
 
 Add these four repository secrets under **Settings → Secrets and variables →
 Actions**:

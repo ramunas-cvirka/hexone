@@ -178,13 +178,13 @@ jobs:
         with:
           name: hexone-windows-amd64-msix
           path: dist/hexone_windows_amd64.msix
+          retention-days: 1
 
   release:
     runs-on: ubuntu-latest
     needs:
       - build-linux-windows
       - build-macos
-      - build-windows-store
 
     steps:
       - name: Checkout
@@ -192,10 +192,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download packaged release archives
+      - name: Download Linux AppImage
         uses: actions/download-artifact@v4
         with:
-          path: dist/assets
+          name: hexone-linux-amd64-appimage
+          path: dist/assets/hexone-linux-amd64-appimage
+
+      - name: Download macOS app disk image
+        uses: actions/download-artifact@v4
+        with:
+          name: hexone-macos-arm64-dmg
+          path: dist/assets/hexone-macos-arm64-dmg
+
+      - name: Download Windows portable release archive
+        uses: actions/download-artifact@v4
+        with:
+          name: hexone-windows-amd64-portable-zip
+          path: dist/assets/hexone-windows-amd64-portable-zip
 
       - name: Extract changelog section for this tag
         run: |
@@ -222,7 +235,6 @@ jobs:
           files: |
             dist/assets/hexone-linux-amd64-appimage/hexone_linux_amd64.AppImage
             dist/assets/hexone-macos-arm64-dmg/hexone_macos_arm64.dmg
-            dist/assets/hexone-windows-amd64-msix/hexone_windows_amd64.msix
             dist/assets/hexone-windows-amd64-portable-zip/hexone_windows_amd64_portable.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -252,7 +264,7 @@ jobs:
           $configured = @($values | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
           if ($configured -eq 0) {
             "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Host "Microsoft Store publishing is not configured; the MSIX remains available on the GitHub release."
+            Write-Host "Microsoft Store publishing is not configured; skipping MSIX submission."
             exit 0
           }
           if ($configured -ne $values.Count) {

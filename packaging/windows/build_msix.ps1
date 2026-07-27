@@ -84,12 +84,13 @@ try {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\..\NOTICE") -Destination $stageDir
     Copy-Item -Path (Join-Path $assetsPath "*.png") -Destination (Join-Path $stageDir "Assets")
 
-    $manifest = Get-Content -Raw -LiteralPath $manifestTemplate
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false, $true)
+    $manifest = [System.IO.File]::ReadAllText($manifestTemplate, $utf8NoBom)
     $manifest = $manifest.Replace("@HEXONE_MSIX_IDENTITY_NAME@", [System.Security.SecurityElement]::Escape($IdentityName))
     $manifest = $manifest.Replace("@HEXONE_MSIX_PUBLISHER@", [System.Security.SecurityElement]::Escape($Publisher))
     $manifest = $manifest.Replace("@HEXONE_MSIX_VERSION@", [System.Security.SecurityElement]::Escape($Version))
     $manifestPath = Join-Path $stageDir "AppxManifest.xml"
-    [System.IO.File]::WriteAllText($manifestPath, $manifest, [System.Text.UTF8Encoding]::new($false))
+    [System.IO.File]::WriteAllText($manifestPath, $manifest, $utf8NoBom)
 
     $priConfig = Join-Path $stageDir "priconfig.xml"
     $priPath = Join-Path $stageDir "resources.pri"
