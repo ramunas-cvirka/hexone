@@ -37,6 +37,15 @@ const (
 	remoteIndicatorWidthDp = 11
 )
 
+func (ui *UI) tabStripHeight(gtx layout.Context) int {
+	height := gtx.Dp(unit.Dp(tabStripHeightDp))
+	textHeight := gtx.Sp(ui.tabStripTextSize()) + gtx.Dp(unit.Dp(8))
+	if textHeight > height {
+		height = textHeight
+	}
+	return height
+}
+
 type appTabStripGeometry struct {
 	activeMinX    int
 	activeMaxX    int
@@ -615,7 +624,7 @@ func (ui *UI) layoutAppTabStrip(
 		plan = tabStripPlanWithMin(widths, minWidths, available, controlW, *scroll)
 	}
 
-	dims := fixedHeight(gtx, gtx.Dp(unit.Dp(tabStripHeightDp)), func(gtx layout.Context) layout.Dimensions {
+	dims := fixedHeight(gtx, ui.tabStripHeight(gtx), func(gtx layout.Context) layout.Dimensions {
 		children := make([]layout.FlexChild, 0, len(items)+4)
 		x := 0
 		if plan.overflow {
@@ -1047,7 +1056,7 @@ func (ui *UI) deferRemoteTabTooltip(th *material.Theme, gtx layout.Context, indi
 		return
 	}
 	m := op.Record(gtx.Ops)
-	offset := op.Offset(image.Pt(-gtx.Dp(unit.Dp(4)), gtx.Dp(unit.Dp(tabStripHeightDp+3))))
+	offset := op.Offset(image.Pt(-gtx.Dp(unit.Dp(4)), ui.tabStripHeight(gtx)+gtx.Dp(unit.Dp(3))))
 	offset.Add(gtx.Ops)
 	tipGtx := gtx
 	tipGtx.Constraints.Min = image.Point{}

@@ -461,6 +461,32 @@ func TestTabStripUsesConfiguredFont(t *testing.T) {
 	}
 }
 
+func TestTabStripHeightGrowsWithConfiguredFont(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	ui := NewUI(cfg)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(640, 120)},
+	}
+	if got, want := ui.tabStripHeight(gtx), tabStripHeightDp; got != want {
+		t.Fatalf("default tab height=%d want compact minimum %d", got, want)
+	}
+
+	cfg.Tabs.FontSizeSp = 24
+	if got, want := ui.tabStripHeight(gtx), 32; got != want {
+		t.Fatalf("large-font tab height=%d want font height plus padding %d", got, want)
+	}
+
+	pane := newFilePaneState(t.TempDir(), cfg)
+	pane.cancelPendingLoad()
+	ui.filePanes = []*filePaneState{pane}
+	ui.filePaneTabs = []filePaneTabSet{{tabs: []*filePaneState{pane}}}
+	if dims := ui.layoutFilePaneTabStrip(material.NewTheme(), gtx, 0); dims.Size.Y != 32 {
+		t.Fatalf("laid-out large-font tab strip height=%d want 32", dims.Size.Y)
+	}
+}
+
 func TestFlatCloseButtonUsesCompactTabStyleGeometry(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	var click widget.Clickable

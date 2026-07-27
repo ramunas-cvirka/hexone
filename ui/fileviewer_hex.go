@@ -1373,6 +1373,19 @@ func hexSelectionByteAtPoint(v *hexViewerState, pos image.Point) (int64, bool) {
 	return hexByteAtPoint(v, pos)
 }
 
+func hexEditASCIIAtPoint(v *hexViewerState, pos image.Point) bool {
+	if v == nil {
+		return false
+	}
+	if viewerPointInRect(pos, v.textRect) {
+		return true
+	}
+	if viewerPointInRect(pos, v.hexRect) {
+		return false
+	}
+	return pos.X >= v.hexRect.Max.X+(v.textRect.Min.X-v.hexRect.Max.X)/2
+}
+
 func (ui *UI) ensureHexViewer(st *fileViewerState) *hexViewerState {
 	if st == nil {
 		return nil
@@ -1843,6 +1856,16 @@ func hexEditNibbleActiveAt(v *hexViewerState, byteOffset int64) bool {
 	return v.editCaret == byteOffset
 }
 
+func hexEditASCIIActiveAt(v *hexViewerState, byteOffset int64) bool {
+	if v == nil || !v.editASCII {
+		return false
+	}
+	if v.selectionLen > 1 {
+		return byteOffset >= v.selectionStart && byteOffset < v.selectionEnd()
+	}
+	return v.editCaret == byteOffset
+}
+
 func (ui *UI) drawHexASCIIline(th *material.Theme, gtx layout.Context, st *fileViewerState, lineStart int64, data []byte, fg, modified color.NRGBA) {
 	if st == nil || st.hex == nil {
 		return
@@ -1861,7 +1884,7 @@ func (ui *UI) drawHexASCIIline(th *material.Theme, gtx layout.Context, st *fileV
 		if _, changed := v.edits[byteOffset]; changed {
 			byteColor = modified
 		}
-		if st.editMode && v.editASCII && v.editCaret == byteOffset {
+		if st.editMode && hexEditASCIIActiveAt(v, byteOffset) {
 			byteColor = activeColor
 		}
 		ui.drawMonoCell(th, gtx, image.Pt(x, 0), v.charW, v.lineH, ch, byteColor)
@@ -1877,7 +1900,22 @@ func (ui *UI) drawHexLineSelections(gtx layout.Context, th *material.Theme, st *
 		return
 	}
 	theme := ui.fileViewerTheme()
-	ui.drawHexLineRangeHighlight(gtx, th, st, line, lineLen, v.selectionStart, v.selectionEnd(), theme.HexSelection, theme.HexStrongSelection, true)
+	hexSelection, textSelection := hexSelectionLaneColors(theme, v, st.editMode && st.mode == "hex")
+	ui.drawHexLineRangeHighlight(gtx, th, st, line, lineLen, v.selectionStart, v.selectionEnd(), hexSelection, textSelection, true)
+}
+
+func hexSelectionLaneColors(theme fileViewerTheme, v *hexViewerState, editMode bool) (color.NRGBA, color.NRGBA) {
+	hexSelection := theme.HexSelection
+	textSelection := theme.HexStrongSelection
+	if editMode && v != nil {
+		textSelection = theme.HexSelection
+		if v.editASCII {
+			textSelection = theme.EditCursorBg
+		} else {
+			hexSelection = theme.EditCursorBg
+		}
+	}
+	return hexSelection, textSelection
 }
 
 func (ui *UI) drawHexLineFindMatch(gtx layout.Context, th *material.Theme, st *fileViewerState, line int64, lineLen int) {
@@ -2173,6 +2211,8 @@ func (ui *UI) handleHexViewerEvents(gtx layout.Context, st *fileViewerState) {
 					v.setSelectionFromAnchor(v.dragAnchor, byteOff)
 					if st.editMode {
 						v.editCaret = v.clampByteOffset(byteOff)
+						v.editNibble = 0
+						v.editASCII = hexEditASCIIAtPoint(v, pos)
 					}
 				}
 				v.updateAutoScroll(pos, gtx.Now)

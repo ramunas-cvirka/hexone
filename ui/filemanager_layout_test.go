@@ -464,6 +464,7 @@ func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	th := material.NewTheme()
 	pane := newFilePaneState(".", ui.fmCfg)
+	pane.tabHeight = 34
 	pane.headerHeight = 20
 	pane.sortControlWidth = 18
 	pane.sortControlRightInset = 28
@@ -475,7 +476,7 @@ func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
 		Constraints: layout.Constraints{Max: image.Pt(640, 360)},
 	}
 	pane.driveSegmentRect = ui.filePaneDriveSegmentBounds(th, gtx, pane, image.Pt(18, 18))
-	if got, want := pane.driveSegmentRect.Min.Y, tabStripHeightDp+filePaneTabConnectorHeightDp+1; got != want {
+	if got, want := pane.driveSegmentRect.Min.Y, pane.tabHeight+filePaneTabConnectorHeightDp+1; got != want {
 		t.Fatalf("drive label top=%d want header-local top %d", got, want)
 	}
 
@@ -484,7 +485,7 @@ func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
 	if got, want := sortRect.Max.X, 640-pane.sortControlRightInset; got != want {
 		t.Fatalf("sort menu right edge=%d want control right edge %d", got, want)
 	}
-	if got, want := sortRect.Min.Y, tabStripHeightDp+pane.headerHeight+2; got != want {
+	if got, want := sortRect.Min.Y, pane.tabHeight+pane.headerHeight+2; got != want {
 		t.Fatalf("sort menu top=%d want below header at %d", got, want)
 	}
 
@@ -493,7 +494,7 @@ func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
 	if got, want := favoriteRect.Max.X, 640-pane.favoriteControlRightInset; got != want {
 		t.Fatalf("favorite menu right edge=%d want control right edge %d", got, want)
 	}
-	if got, want := favoriteRect.Min.Y, tabStripHeightDp+pane.headerHeight+2; got != want {
+	if got, want := favoriteRect.Min.Y, pane.tabHeight+pane.headerHeight+2; got != want {
 		t.Fatalf("favorite menu top=%d want below header at %d", got, want)
 	}
 
@@ -501,7 +502,7 @@ func TestFilePaneHeaderMenusAnchorBelowTheirControls(t *testing.T) {
 	if got, want := driveAnchor.X, pane.driveSegmentRect.Min.X; got != want {
 		t.Fatalf("drive menu left edge=%d want drive label left edge %d", got, want)
 	}
-	if got, want := driveAnchor.Y, tabStripHeightDp+pane.headerHeight+2; got != want {
+	if got, want := driveAnchor.Y, pane.tabHeight+pane.headerHeight+2; got != want {
 		t.Fatalf("drive menu top=%d want below header at %d", got, want)
 	}
 }

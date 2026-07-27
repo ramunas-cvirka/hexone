@@ -7,11 +7,11 @@ import (
 	"encoding/hex"
 	resources "hexone"
 	"hexone/protocols"
-	uitheme "hexone/ui/theme"
 	"image"
 	"image/color"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -32,7 +32,7 @@ func newTab2State(typeface font.Typeface) *tab2State {
 		typeface = font.Typeface(resources.BundledFontFamilyFiraCodeNerdFontMono)
 	}
 	st := &tab2State{
-		list:            layout.List{Axis: layout.Vertical},
+		scrollList:      widget.List{List: layout.List{Axis: layout.Vertical}},
 		clicks:          map[string]*widget.Clickable{},
 		typeface:        typeface,
 		selectPressHeld: map[string]bool{},
@@ -83,6 +83,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 		st.lastRes = protocols.Result{}
 		st.lastBytes = nil
 		st.selectedHint = nil
+		st.scrollList.Position = layout.Position{}
 		for k := range st.selectPressHeld {
 			delete(st.selectPressHeld, k)
 		}
@@ -102,9 +103,7 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 		}
 	}
 
-	inset := layout.UniformInset(unit.Dp(10))
-	gap := unit.Dp(10)
-
+	inset := layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(5), Bottom: unit.Dp(5)}
 	return inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		hoverSeen := false
 
@@ -114,243 +113,447 @@ func (ui *UI) layoutTab2(th *material.Theme, gtx layout.Context) layout.Dimensio
 		st.hoverRowID = ""
 		st.hoverFromBytes = false
 
-		dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-
-			// Row 1: editor + floating combobox
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		treeRows := analyzerTreeRows(st)
+		widgets := []layout.Widget{
+			func(gtx layout.Context) layout.Dimensions {
 				return ui.row1InputAndProtocol(th, gtx, st, &hoverSeen)
-			}),
-
-			layout.Rigid(layout.Spacer{Height: gap}.Layout),
-
-			// Error
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				msg := st.lastErr
-				if msg == "" && len(st.lastRes.Errors) > 0 {
-					msg = st.lastRes.Errors[0]
-				}
-				if msg == "" {
-					return layout.Dimensions{}
-				}
-				lbl := material.Body2(th, msg)
-				lbl.Font.Typeface = st.typeface
-				lbl.Color = color.NRGBA{R: 240, G: 90, B: 90, A: 255}
-				lbl.MaxLines = 2
-				return lbl.Layout(gtx)
-			}),
-
-			layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
-
-			// Row 2: hex grid. Paint card bg before cells to avoid recording-layer ordering issues.
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return func(gtx layout.Context) layout.Dimensions {
-					const row2Sp = 18
-					// Estimate card height: measure one text line height.
-					sampleLbl := material.Body1(th, "00")
-					sampleLbl.TextSize = scaleThemeFontSize(th, row2Sp)
-					sampleLbl.Font.Typeface = st.typeface
-					sampleLbl.MaxLines = 1
-					lineH := measureLabelUnconstrained(gtx, sampleLbl).Size.Y + gtx.Dp(unit.Dp(8)) // +padding
-					padV := gtx.Dp(unit.Dp(10))
-					padH := gtx.Dp(unit.Dp(16))
-					fullW := gtx.Constraints.Max.X
-					numLines := 1
-					if b := st.lastBytes; len(b) > 0 {
-						// measure tokenW same way as buildRow2HexLines
-						tok := material.Body1(th, "00 ")
-						tok.TextSize = scaleThemeFontSize(th, row2Sp)
-						tok.Font.Typeface = st.typeface
-						tok.MaxLines = 1
-						tokenW := measureLabelUnconstrained(gtx, tok).Size.X
-						if tokenW < 1 {
-							tokenW = 14
-						}
-						innerW := fullW - padH*2
-						if innerW < 1 {
-							innerW = 1
-						}
-						bpl := innerW / tokenW
-						if bpl < 1 {
-							bpl = 1
-						}
-						numLines = (len(b) + bpl - 1) / bpl
-					}
-					cardH := padV*2 + numLines*lineH
-
-					// Paint card bg + border FIRST (directly into ops, no recording).
-					rect := image.Rect(0, 0, fullW, cardH)
-					rr := clip.UniformRRect(rect, gtx.Dp(unit.Dp(14)))
-					paint.FillShape(gtx.Ops, color.NRGBA{R: 18, G: 22, B: 30, A: 255}, rr.Op(gtx.Ops))
-					paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 18},
-						clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1}.Op())
-
-					// Render hex cells on top (events + drawing).
-					inset := layout.Inset{
-						Left: unit.Dp(16), Right: unit.Dp(16),
-						Top: unit.Dp(10), Bottom: unit.Dp(10),
-					}
-					inset.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						lines := buildRow2HexLines(th, gtx, st, &hoverSeen)
-						if len(lines) == 0 {
-							lbl := material.Body1(th, "(no data)")
-							lbl.Font.Typeface = st.typeface
-							lbl.Color = txtColor
-							lbl.MaxLines = 1
-							return lbl.Layout(gtx)
-						}
-						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-							func() []layout.FlexChild {
-								fc := make([]layout.FlexChild, len(lines))
-								for i, ln := range lines {
-									line := ln
-									fc[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-										return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, line...)
-									})
-								}
-								return fc
-							}()...)
-					})
-
-					return layout.Dimensions{Size: image.Pt(fullW, cardH)}
-				}(gtx)
-			}),
-
-			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-
-			// Hint
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				sp := currentHintSpan(st)
-				return hintCardFixed(th, gtx, st, st.typeface, sp)
-			}),
-
-			layout.Rigid(layout.Spacer{Height: gap}.Layout),
-
-			// Row 3 list
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				return card(gtx, func(gtx layout.Context) layout.Dimensions {
-					return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						flat := flattenAllWithKeys(st.lastRes.Spans)
-
-						sort.Slice(flat, func(i, j int) bool {
-							if flat[i].Span.Start == flat[j].Span.Start {
-								if flat[i].Span.End == flat[j].Span.End {
-									return flat[i].Key < flat[j].Key
-								}
-								return flat[i].Span.End < flat[j].Span.End
-							}
-							return flat[i].Span.Start < flat[j].Span.Start
-						})
-
-						// Filter out container spans that have decoded children —
-						// they are structural only (like "payload"), not real fields.
-						filtered := flat[:0:0]
-						for _, f := range flat {
-							if len(f.Span.Children) > 0 {
-								continue // skip containers that were decoded into sub-fields
-							}
-							filtered = append(filtered, f)
-						}
-						flat = filtered
-
-						if len(flat) == 0 {
-							lbl := material.Body1(th, "No decoded fields.")
-							lbl.Font.Typeface = st.typeface
-							lbl.Color = txtColor
-							lbl.MaxLines = 1
-							return lbl.Layout(gtx)
-						}
-
-						// Scroll to the selected row once, and keep hovered rows visible.
-						if st.selectedRowID != "" && st.selectedRowID != st.lastScrolledRowID {
-							if idx := findFlatRowIndex(flat, st.selectedRowID); idx >= 0 {
-								st.list.Position.First = idx
-								st.list.Position.Offset = 0
-							}
-							st.lastScrolledRowID = st.selectedRowID
-						}
-						if st.hoverRowID != "" {
-							if idx := findFlatRowIndex(flat, st.hoverRowID); idx >= 0 && !rowIndexVisible(st.list.Position, idx, len(flat)) {
-								st.list.Position.First = idx
-								st.list.Position.Offset = 0
-							}
-						}
-
-						listDims := st.list.Layout(gtx, len(flat), func(gtx layout.Context, i int) layout.Dimensions {
-							it := flat[i]
-							rowID := it.Key
-							spanKey := rangeKey(it.Span.Start, it.Span.End)
-
-							click := st.click("row3:" + rowID)
-
-							return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								st.handleSelectTogglePress("row3:"+rowID, click, spanKey, rowID, it.Span)
-								if click.Hovered() {
-									// Last item that reports Hovered() wins (bottom-most under cursor).
-									st.hoverRowID = rowID
-									st.hoverSpanKey = spanKey
-									st.hoverSpan = it.Span
-									st.hoverFromBytes = false
-									hoverSeen = true
-								}
-
-								isSel := st.selectedRowID != "" && rowID == st.selectedRowID
-								isHover := st.hoverRowID != "" && rowID == st.hoverRowID
-
-								bg := color.NRGBA{A: 0}
-								if isSel {
-									bg = color.NRGBA{R: 80, G: 120, B: 220, A: 45}
-								} else if isHover {
-									bg = color.NRGBA{R: 255, G: 255, B: 255, A: 12}
-								}
-
-								prefix := strings.Repeat("  ", it.Depth)
-								sp := it.Span
-								line := prefix + formatListOffset(sp.Start)
-								if sp.Value != "" {
-									line += "  " + sp.Value
-								}
-								line += "  " + sp.Name
-
-								rowW := gtx.Constraints.Max.X
-								if rowW < 1 {
-									rowW = 1
-								}
-								return fixedWidth(gtx, rowW, func(gtx layout.Context) layout.Dimensions {
-									return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-										return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-											lbl := material.Body2(th, line)
-											lbl.Font.Typeface = st.typeface
-											lbl.TextSize = scaleThemeFontSize(th, 12)
-											lbl.Color = colorForSpanText(it.Span, st.lastRes.Spans)
-											lbl.MaxLines = 1
-											lbl.Font.Weight = font.Medium
-											return lbl.Layout(gtx)
-										})
-									})
-								})
-							})
-						})
-						return listDims
-					})
+			},
+			func(gtx layout.Context) layout.Dimensions {
+				return layoutAnalyzerStatus(th, gtx, st)
+			},
+			func(gtx layout.Context) layout.Dimensions {
+				return layoutAnalyzerSectionHeader(th, gtx, st.typeface, "BYTE MAP", analyzerByteCount(st), nil)
+			},
+			func(gtx layout.Context) layout.Dimensions {
+				return layoutAnalyzerByteMap(th, gtx, st, &hoverSeen)
+			},
+			func(gtx layout.Context) layout.Dimensions {
+				return hintCardFixed(th, gtx, st, st.typeface, currentHintSpan(st))
+			},
+			func(gtx layout.Context) layout.Dimensions {
+				return layoutAnalyzerSectionHeader(th, gtx, st.typeface, "PARSED DECODE TREE", analyzerFieldCount(st), nil)
+			},
+		}
+		if len(treeRows) == 0 {
+			widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+				return layoutAnalyzerEmptyDecodeTree(th, gtx, st)
+			})
+		} else {
+			for _, item := range treeRows {
+				row := item
+				widgets = append(widgets, func(gtx layout.Context) layout.Dimensions {
+					return layoutAnalyzerDecodeTreeRow(th, gtx, st, &hoverSeen, row)
 				})
-			}),
-		)
+			}
+		}
 
-		return dims
+		return fillAnalyzerSurface(gtx, func(gtx layout.Context) layout.Dimensions {
+			style := protocolAnalyzerListStyle(th, &st.scrollList)
+			return style.LayoutWidgets(gtx, widgets...)
+		})
 	})
 }
 
-// ---------- Row 1: editor + floating combobox (NO layout shift) ----------
+var (
+	analyzerSurfaceBg = color.NRGBA{R: 13, G: 17, B: 23, A: 255}
+	analyzerHeaderBg  = analyzerSurfaceBg
+	analyzerBodyBg    = analyzerSurfaceBg
+	analyzerRule      = color.NRGBA{R: 116, G: 157, B: 175, A: 132}
+	analyzerAccent    = color.NRGBA{R: 92, G: 206, B: 226, A: 255}
+	analyzerOK        = color.NRGBA{R: 126, G: 220, B: 160, A: 255}
+	analyzerError     = color.NRGBA{R: 255, G: 112, B: 112, A: 255}
+)
+
+func protocolAnalyzerListStyle(th *material.Theme, list *widget.List) material.ListStyle {
+	style := material.List(th, list)
+	style.AnchorStrategy = material.Overlay
+	style.Track.MajorPadding = unit.Dp(1)
+	style.Track.MinorPadding = unit.Dp(1)
+	style.Track.Color = color.NRGBA{R: 20, G: 38, B: 48, A: 170}
+	style.Indicator.MajorMinLen = unit.Dp(24)
+	style.Indicator.MinorWidth = unit.Dp(6)
+	style.Indicator.CornerRadius = 0
+	style.Indicator.Color = color.NRGBA{R: 92, G: 206, B: 226, A: 175}
+	style.Indicator.HoverColor = analyzerAccent
+	return style
+}
+
+func fillAnalyzerSurface(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := m.Stop()
+	fullW := gtx.Constraints.Max.X
+	if fullW < dims.Size.X {
+		fullW = dims.Size.X
+	}
+	if fullW < 1 {
+		fullW = 1
+	}
+	fullH := dims.Size.Y
+	if fullH < 1 {
+		fullH = 1
+	}
+	rect := image.Rect(0, 0, fullW, fullH)
+	paint.FillShape(gtx.Ops, analyzerSurfaceBg, clip.Rect(rect).Op())
+	drawRectBorder(gtx, image.Pt(fullW, fullH), analyzerRule, 1)
+	call.Add(gtx.Ops)
+	return layout.Dimensions{Size: image.Pt(fullW, fullH)}
+}
+
+func fillAnalyzerBody(gtx layout.Context, bg color.NRGBA, w layout.Widget) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := m.Stop()
+	fullW := gtx.Constraints.Max.X
+	if fullW < dims.Size.X {
+		fullW = dims.Size.X
+	}
+	if fullW < 1 {
+		fullW = 1
+	}
+	if dims.Size.Y < 1 {
+		dims.Size.Y = 1
+	}
+	paint.FillShape(gtx.Ops, bg, clip.Rect{Max: image.Pt(fullW, dims.Size.Y)}.Op())
+	paint.FillShape(gtx.Ops, analyzerAccent, clip.Rect{Max: image.Pt(1, dims.Size.Y)}.Op())
+	paint.FillShape(gtx.Ops, analyzerRule, clip.Rect{Min: image.Pt(fullW-1, 0), Max: image.Pt(fullW, dims.Size.Y)}.Op())
+	call.Add(gtx.Ops)
+	return layout.Dimensions{Size: image.Pt(fullW, dims.Size.Y)}
+}
+
+func layoutAnalyzerSectionHeader(th *material.Theme, gtx layout.Context, typeface font.Typeface, title, rightText string, right layout.Widget) layout.Dimensions {
+	titleLabel := material.Body2(th, "[ "+title+" ]")
+	titleLabel.Font.Typeface = typeface
+	titleLabel.Font.Weight = font.SemiBold
+	titleLabel.TextSize = scaleThemeFontSize(th, 11)
+	titleLabel.Color = analyzerAccent
+	titleLabel.MaxLines = 1
+
+	var rightWidget layout.Widget
+	if right != nil {
+		rightWidget = right
+	} else if rightText != "" {
+		rightWidget = func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, "[ "+rightText+" ]")
+			lbl.Font.Typeface = typeface
+			lbl.Font.Weight = font.Medium
+			lbl.TextSize = scaleThemeFontSize(th, 10)
+			lbl.Color = hintColor
+			lbl.MaxLines = 1
+			return lbl.Layout(gtx)
+		}
+	}
+
+	mask := func(w layout.Widget) layout.Widget {
+		return func(gtx layout.Context) layout.Dimensions {
+			return fillBgExact(gtx, analyzerHeaderBg, w)
+		}
+	}
+
+	return fillAnalyzerHeader(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			children := []layout.FlexChild{
+				layout.Rigid(mask(titleLabel.Layout)),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					w := gtx.Constraints.Max.X
+					if w < 1 {
+						w = 1
+					}
+					return layout.Dimensions{Size: image.Pt(w, 1)}
+				}),
+			}
+			if rightWidget != nil {
+				children = append(children, layout.Rigid(mask(rightWidget)))
+			}
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+		})
+	})
+}
+
+func fillAnalyzerHeader(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	dims := w(gtx)
+	call := m.Stop()
+	fullW := gtx.Constraints.Max.X
+	if fullW < dims.Size.X {
+		fullW = dims.Size.X
+	}
+	if fullW < 1 {
+		fullW = 1
+	}
+	minH := gtx.Dp(unit.Dp(23))
+	if dims.Size.Y < minH {
+		dims.Size.Y = minH
+	}
+	paint.FillShape(gtx.Ops, analyzerHeaderBg, clip.Rect{Max: image.Pt(fullW, dims.Size.Y)}.Op())
+	lineY := dims.Size.Y / 2
+	paint.FillShape(gtx.Ops, analyzerRule, clip.Rect{Min: image.Pt(0, lineY), Max: image.Pt(fullW, lineY+1)}.Op())
+	paint.FillShape(gtx.Ops, analyzerRule, clip.Rect{Min: image.Pt(fullW-1, 0), Max: image.Pt(fullW, dims.Size.Y)}.Op())
+	paint.FillShape(gtx.Ops, analyzerAccent, clip.Rect{Max: image.Pt(1, dims.Size.Y)}.Op())
+	call.Add(gtx.Ops)
+	return layout.Dimensions{Size: image.Pt(fullW, dims.Size.Y)}
+}
+
+func layoutAnalyzerStatus(th *material.Theme, gtx layout.Context, st *tab2State) layout.Dimensions {
+	msg, status, statusColor := analyzerStatus(st)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutAnalyzerSectionHeader(th, gtx, st.typeface, "ERROR / STATUS", "", func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, "[ "+status+" ]")
+				lbl.Font.Typeface = st.typeface
+				lbl.Font.Weight = font.SemiBold
+				lbl.TextSize = scaleThemeFontSize(th, 10)
+				lbl.Color = statusColor
+				lbl.MaxLines = 1
+				return lbl.Layout(gtx)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fillAnalyzerBody(gtx, analyzerBodyBg, func(gtx layout.Context) layout.Dimensions {
+				return minHeight(gtx, gtx.Dp(unit.Dp(30)), func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(11), Right: unit.Dp(11), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						lbl := material.Body2(th, msg)
+						lbl.Font.Typeface = st.typeface
+						lbl.TextSize = scaleThemeFontSize(th, 11)
+						lbl.Color = statusColor
+						lbl.MaxLines = 2
+						return lbl.Layout(gtx)
+					})
+				})
+			})
+		}),
+	)
+}
+
+func analyzerStatus(st *tab2State) (msg, status string, statusColor color.NRGBA) {
+	if st == nil {
+		return "Analyzer state unavailable.", "× OFFLINE", analyzerError
+	}
+	msg = st.lastErr
+	if msg == "" && len(st.lastRes.Errors) > 0 {
+		msg = st.lastRes.Errors[0]
+	}
+	if msg != "" {
+		return "×  " + msg, "× PARSE FAIL", analyzerError
+	}
+	if len(st.lastBytes) == 0 {
+		return "·  Waiting for a hex stream.", "○ IDLE", hintColor
+	}
+	return "✓  Frame decoded. Hover or select a byte range to inspect its field.", "✓ DECODE OK", analyzerOK
+}
+
+func analyzerByteCount(st *tab2State) string {
+	if st == nil || len(st.lastBytes) == 0 {
+		return "NO BYTES"
+	}
+	if len(st.lastBytes) == 1 {
+		return "1 BYTE"
+	}
+	return itoa(len(st.lastBytes)) + " BYTES"
+}
+
+func analyzerLeafRows(st *tab2State) []flatSpan {
+	if st == nil {
+		return nil
+	}
+	flat := flattenAllWithKeys(st.lastRes.Spans)
+	sort.Slice(flat, func(i, j int) bool {
+		if flat[i].Span.Start == flat[j].Span.Start {
+			if flat[i].Span.End == flat[j].Span.End {
+				return flat[i].Key < flat[j].Key
+			}
+			return flat[i].Span.End < flat[j].Span.End
+		}
+		return flat[i].Span.Start < flat[j].Span.Start
+	})
+	filtered := flat[:0:0]
+	for _, f := range flat {
+		if f.Span != nil && len(f.Span.Children) == 0 {
+			filtered = append(filtered, f)
+		}
+	}
+	return filtered
+}
+
+type analyzerTreeRow struct {
+	Span         *protocols.Span
+	Key          string
+	Last         bool
+	AncestorLast []bool
+	Container    bool
+}
+
+func analyzerTreeRows(st *tab2State) []analyzerTreeRow {
+	if st == nil {
+		return nil
+	}
+	var rows []analyzerTreeRow
+	var walk func(spans []*protocols.Span, path string, ancestorLast []bool)
+	walk = func(spans []*protocols.Span, path string, ancestorLast []bool) {
+		for i, sp := range spans {
+			if sp == nil {
+				continue
+			}
+			last := true
+			for j := i + 1; j < len(spans); j++ {
+				if spans[j] != nil {
+					last = false
+					break
+				}
+			}
+			key := path + itoa(i) + "/" + sp.Name + ":" + rangeKey(sp.Start, sp.End)
+			rows = append(rows, analyzerTreeRow{
+				Span:         sp,
+				Key:          key,
+				Last:         last,
+				AncestorLast: append([]bool(nil), ancestorLast...),
+				Container:    len(sp.Children) > 0,
+			})
+			if len(sp.Children) > 0 {
+				nextAncestors := append(append([]bool(nil), ancestorLast...), last)
+				walk(sp.Children, key+"/", nextAncestors)
+			}
+		}
+	}
+	walk(st.lastRes.Spans, "", nil)
+	return rows
+}
+
+func analyzerFieldCount(st *tab2State) string {
+	n := len(analyzerLeafRows(st))
+	if n == 1 {
+		return "1 FIELD"
+	}
+	return itoa(n) + " FIELDS"
+}
+
+func layoutAnalyzerByteMap(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool) layout.Dimensions {
+	return fillAnalyzerBody(gtx, analyzerBodyBg, func(gtx layout.Context) layout.Dimensions {
+		return minHeight(gtx, gtx.Dp(unit.Dp(38)), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(11), Right: unit.Dp(11), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lines := buildRow2HexLines(th, gtx, st, hoverSeen)
+				if len(lines) == 0 {
+					lbl := material.Body1(th, "│  ··· waiting for bytes ···")
+					lbl.Font.Typeface = st.typeface
+					lbl.TextSize = scaleThemeFontSize(th, 12)
+					lbl.Color = hintColor
+					lbl.MaxLines = 1
+					return lbl.Layout(gtx)
+				}
+				children := make([]layout.FlexChild, len(lines))
+				for i, ln := range lines {
+					line := ln
+					children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return layout.Flex{Axis: layout.Horizontal}.Layout(gtx, line...)
+					})
+				}
+				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			})
+		})
+	})
+}
+
+func layoutAnalyzerEmptyDecodeTree(th *material.Theme, gtx layout.Context, st *tab2State) layout.Dimensions {
+	return fillAnalyzerBody(gtx, analyzerBodyBg, func(gtx layout.Context) layout.Dimensions {
+		return minHeight(gtx, gtx.Dp(unit.Dp(34)), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body1(th, "│\n└─── no decoded fields yet")
+				lbl.Font.Typeface = st.typeface
+				lbl.TextSize = scaleThemeFontSize(th, 11)
+				lbl.Color = hintColor
+				lbl.MaxLines = 2
+				return lbl.Layout(gtx)
+			})
+		})
+	})
+}
+
+func layoutAnalyzerDecodeTreeRow(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool, it analyzerTreeRow) layout.Dimensions {
+	rowID := it.Key
+	spanKey := rangeKey(it.Span.Start, it.Span.End)
+
+	return fillAnalyzerBody(gtx, analyzerBodyBg, func(gtx layout.Context) layout.Dimensions {
+		render := func(gtx layout.Context) layout.Dimensions {
+			click := st.click("row3:" + rowID)
+			if !it.Container {
+				st.handleSelectTogglePress("row3:"+rowID, click, spanKey, rowID, it.Span)
+				if click.Hovered() {
+					st.hoverRowID = rowID
+					st.hoverSpanKey = spanKey
+					st.hoverSpan = it.Span
+					st.hoverFromBytes = false
+					*hoverSeen = true
+				}
+			}
+
+			isSel := st.selectedRowID != "" && rowID == st.selectedRowID
+			isHover := st.hoverRowID != "" && rowID == st.hoverRowID
+			bg := color.NRGBA{A: 0}
+			if isSel {
+				bg = color.NRGBA{R: 48, G: 105, B: 136, A: 110}
+			} else if isHover {
+				bg = color.NRGBA{R: 255, G: 255, B: 255, A: 12}
+			}
+
+			var connector strings.Builder
+			for _, ancestorLast := range it.AncestorLast {
+				if ancestorLast {
+					connector.WriteString("   ")
+				} else {
+					connector.WriteString("│  ")
+				}
+			}
+			if it.Last {
+				connector.WriteString("└")
+			} else {
+				connector.WriteString("├")
+			}
+			switch {
+			case it.Container:
+				connector.WriteString("──┬─")
+			case it.Span.IsError:
+				connector.WriteString("──×─")
+			default:
+				connector.WriteString("────")
+			}
+
+			line := connector.String() + formatListOffset(it.Span.Start)
+			if it.Span.Value != "" {
+				line += "  " + it.Span.Value
+			}
+			line += "  " + it.Span.Name
+
+			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(13), Right: unit.Dp(10), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, line)
+					lbl.Font.Typeface = st.typeface
+					lbl.TextSize = scaleThemeFontSize(th, 11)
+					lbl.Color = colorForSpanText(it.Span, st.lastRes.Spans)
+					if it.Container && !it.Span.IsError {
+						lbl.Color = analyzerAccent
+					}
+					lbl.MaxLines = 1
+					lbl.Font.Weight = font.Medium
+					if it.Container {
+						lbl.Font.Weight = font.SemiBold
+					}
+					return lbl.Layout(gtx)
+				})
+			})
+		}
+		if it.Container {
+			return render(gtx)
+		}
+		return st.click("row3:"+rowID).Layout(gtx, render)
+	})
+}
+
+// ---------- Input + floating protocol combobox (NO layout shift) ----------
 
 func (ui *UI) row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool) layout.Dimensions {
-	// We need btnDims for popup anchoring, so lay out the base row first.
-	// The popup is deferred so it paints on top of everything.
-
 	var (
-		btnLeft int
-		btnTop  int
-		btnH    int
 		btnW    int
+		headerH int
 	)
 
 	// Consume option clicks before backdrop clicks, so item selection wins.
@@ -373,45 +576,40 @@ func (ui *UI) row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *t
 		}
 	}
 
-	// Base row.
-	dims := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			ed := material.Editor(th, &st.hexEd, "Paste hex (spaces/commas ok)")
-			ed.TextSize = scaleThemeFontSize(th, 14)
-			ed.Font.Typeface = st.typeface
-			ed.Font.Weight = font.Medium
-			ed.Color = txtColor
-			ed.HintColor = hintColor
-			return ui.layoutEditorWithContextMenu(th, gtx, "tab2-hex", &st.hexEd, true, ed.Layout)
-		}),
-		layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+	dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			// Record offset of the button so we can anchor popup.
-			// In Gio there is no direct "get current offset" API, but since
-			// we are last in the flex, we can compute it: left = total_width - btnW.
-			d := ui.protocolDropdownButton(th, gtx, st, hoverSeen)
-			btnH = d.Size.Y
-			btnW = d.Size.X
-			_ = btnTop // will be 0 relative to row
+			d := layoutAnalyzerSectionHeader(th, gtx, st.typeface, "INPUT · HEX STREAM", "", func(gtx layout.Context) layout.Dimensions {
+				btnDims := ui.protocolDropdownButton(th, gtx, st, hoverSeen)
+				btnW = btnDims.Size.X
+				return btnDims
+			})
+			headerH = d.Size.Y
 			return d
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fillAnalyzerBody(gtx, analyzerBodyBg, func(gtx layout.Context) layout.Dimensions {
+				return minHeight(gtx, gtx.Dp(unit.Dp(36)), func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layoutAnalyzerHexInputField(th, gtx, ui, st)
+					})
+				})
+			})
 		}),
 	)
 
-	btnLeft = dims.Size.X - btnW
-
 	if st.protoDropOpen {
-		// Defer renders after all children — proper overlay.
 		m := op.Record(gtx.Ops)
 
-		// Backdrop hit area.
 		back := st.click("proto:backdrop")
 		_ = back.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Dimensions{Size: gtx.Constraints.Max}
 		})
 
-		// Popup positioned below the button.
-		popupX := btnLeft
-		popupY := btnTop + btnH + gtx.Dp(unit.Dp(4))
+		popupX := dims.Size.X - gtx.Dp(unit.Dp(7)) - btnW
+		if popupX < 0 {
+			popupX = 0
+		}
+		popupY := headerH
 		offset := op.Offset(image.Pt(popupX, popupY))
 		offset.Add(gtx.Ops)
 		ui.protocolDropdownPopup(th, gtx, st, hoverSeen, btnW)
@@ -421,6 +619,66 @@ func (ui *UI) row1InputAndProtocol(th *material.Theme, gtx layout.Context, st *t
 	}
 
 	return dims
+}
+
+func layoutAnalyzerHexInputField(th *material.Theme, gtx layout.Context, ui *UI, st *tab2State) layout.Dimensions {
+	focused := gtx.Focused(&st.hexEd)
+	prompt := material.Body2(th, "HEX >")
+	prompt.Font.Typeface = st.typeface
+	prompt.Font.Weight = font.SemiBold
+	prompt.TextSize = scaleThemeFontSize(th, 11)
+	prompt.Color = analyzerAccent
+	prompt.MaxLines = 1
+
+	return layoutAnalyzerInputStrip(gtx, focused, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(prompt.Layout),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(10)}.Layout),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				ed := material.Editor(th, &st.hexEd, "78 78 0D 01 …  ·  paste hex here")
+				ed.TextSize = scaleThemeFontSize(th, 13)
+				ed.Font.Typeface = st.typeface
+				ed.Font.Weight = font.Medium
+				ed.Color = txtColor
+				ed.HintColor = hintColor
+				return ui.layoutEditorWithContextMenu(th, gtx, "tab2-hex", &st.hexEd, true, ed.Layout)
+			}),
+		)
+	})
+}
+
+func layoutAnalyzerInputStrip(gtx layout.Context, focused bool, inner layout.Widget) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	dims := layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, inner)
+	call := m.Stop()
+
+	fullW := gtx.Constraints.Max.X
+	if fullW < dims.Size.X {
+		fullW = dims.Size.X
+	}
+	if fullW < 1 {
+		fullW = 1
+	}
+	if dims.Size.Y < 1 {
+		dims.Size.Y = 1
+	}
+	bg := color.NRGBA{R: 17, G: 25, B: 33, A: 255}
+	border := color.NRGBA{R: 116, G: 157, B: 175, A: 105}
+	underline := analyzerRule
+	underlineH := 1
+	if focused {
+		bg = color.NRGBA{R: 19, G: 30, B: 39, A: 255}
+		border = color.NRGBA{R: 92, G: 206, B: 226, A: 145}
+		underline = analyzerAccent
+		underlineH = 2
+	}
+
+	rect := image.Rect(0, 0, fullW, dims.Size.Y)
+	paint.FillShape(gtx.Ops, bg, clip.Rect(rect).Op())
+	drawRectBorder(gtx, image.Pt(fullW, dims.Size.Y), border, 1)
+	paint.FillShape(gtx.Ops, underline, clip.Rect{Min: image.Pt(0, dims.Size.Y-underlineH), Max: image.Pt(fullW, dims.Size.Y)}.Op())
+	call.Add(gtx.Ops)
+	return layout.Dimensions{Size: image.Pt(fullW, dims.Size.Y)}
 }
 
 func (ui *UI) protocolDropdownButton(th *material.Theme, gtx layout.Context, st *tab2State, hoverSeen *bool) layout.Dimensions {
@@ -435,37 +693,55 @@ func (ui *UI) protocolDropdownButton(th *material.Theme, gtx layout.Context, st 
 	}
 
 	label := protocolLabel(st.protoChoice.Value)
-	txt := label + "  ▾"
+	txt := strings.ToUpper(label)
 
 	w := ui.protocolDropdownWidth(th, gtx, st)
 	popupTheme := ui.filePanePopupTheme()
 	return fixedWidth(gtx, w, func(gtx layout.Context) layout.Dimensions {
-		return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			if btn.Hovered() {
-				*hoverSeen = true
+		bracket := func(text string) layout.Widget {
+			return func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, text)
+				lbl.Font.Typeface = st.typeface
+				lbl.TextSize = scaleThemeFontSize(th, 11)
+				lbl.Color = txtColor
+				lbl.MaxLines = 1
+				lbl.Font.Weight = font.Medium
+				return lbl.Layout(gtx)
 			}
-			bg := popupTheme.ButtonBg
-			bd := popupTheme.ButtonBorder
-			fg := popupTheme.Text
-			if st.protoDropOpen {
-				bg = popupTheme.ActiveBg
-				fg = popupTheme.ActiveText
-			} else if btn.Hovered() {
-				bg = popupTheme.HoverBg
-				fg = popupTheme.HoverText
-			}
-			return fillRoundedBox(gtx, gtx.Dp(unit.Dp(10)), bg, bd, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, txt)
-					lbl.Font.Typeface = st.typeface
-					lbl.TextSize = ui.functionBarTextSize()
-					lbl.Color = fg
-					lbl.MaxLines = 1
-					lbl.Font.Weight = font.Medium
-					return lbl.Layout(gtx)
+		}
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(bracket("[ ")),
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					if btn.Hovered() {
+						*hoverSeen = true
+					}
+					bg := color.NRGBA{A: 0}
+					fg := txtColor
+					if st.protoDropOpen {
+						bg = popupTheme.ActiveBg
+						fg = popupTheme.ActiveText
+					} else if btn.Hovered() {
+						bg = popupTheme.HoverBg
+						fg = popupTheme.HoverText
+					}
+					return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(th, txt)
+								lbl.Font.Typeface = st.typeface
+								lbl.TextSize = scaleThemeFontSize(th, 11)
+								lbl.Color = fg
+								lbl.MaxLines = 1
+								lbl.Font.Weight = font.Medium
+								return lbl.Layout(gtx)
+							})
+						})
+					})
 				})
-			})
-		})
+			}),
+			layout.Rigid(bracket(" ]")),
+		)
 	})
 }
 
@@ -487,7 +763,7 @@ func (ui *UI) protocolDropdownPopup(th *material.Theme, gtx layout.Context, st *
 	}
 	return fixedWidth(gtx2, width, func(gtx layout.Context) layout.Dimensions {
 		defer op.Offset(image.Pt(0, offsetY)).Push(gtx.Ops).Pop()
-		return fillRoundedClipBox(gtx, gtx.Dp(unit.Dp(10)), scaleColorAlpha(popupTheme.Bg, alpha), scaleColorAlpha(popupTheme.Border, alpha), func(gtx layout.Context) layout.Dimensions {
+		return fillRoundedClipBox(gtx, 0, scaleColorAlpha(popupTheme.Bg, alpha), scaleColorAlpha(popupTheme.Border, alpha), func(gtx layout.Context) layout.Dimensions {
 			children := make([]layout.FlexChild, 0, len(opts))
 			for _, opt := range opts {
 				opt := opt
@@ -505,9 +781,9 @@ func (ui *UI) protocolDropdownWidth(th *material.Theme, gtx layout.Context, st *
 	opts := protocolOptions(st)
 	maxTextW := 0
 	for _, opt := range opts {
-		lbl := material.Body2(th, opt.Label+"  ▾")
+		lbl := material.Body2(th, strings.ToUpper(opt.Label))
 		lbl.Font.Typeface = st.typeface
-		lbl.TextSize = ui.functionBarTextSize()
+		lbl.TextSize = scaleThemeFontSize(th, 11)
 		lbl.MaxLines = 1
 		w := measureLabelUnconstrained(gtx, lbl).Size.X
 		if w > maxTextW {
@@ -515,14 +791,18 @@ func (ui *UI) protocolDropdownWidth(th *material.Theme, gtx layout.Context, st *
 		}
 	}
 	if maxTextW == 0 {
-		lbl := material.Body2(th, protocolLabel(st.protoChoice.Value)+"  ▾")
+		lbl := material.Body2(th, strings.ToUpper(protocolLabel(st.protoChoice.Value)))
 		lbl.Font.Typeface = st.typeface
-		lbl.TextSize = ui.functionBarTextSize()
+		lbl.TextSize = scaleThemeFontSize(th, 11)
 		lbl.MaxLines = 1
 		maxTextW = measureLabelUnconstrained(gtx, lbl).Size.X
 	}
-	w := maxTextW + gtx.Dp(unit.Dp(24)) // button horizontal inset
-	minW := gtx.Dp(unit.Dp(96))
+	brackets := material.Body2(th, "[  ]")
+	brackets.Font.Typeface = st.typeface
+	brackets.TextSize = scaleThemeFontSize(th, 11)
+	brackets.MaxLines = 1
+	w := maxTextW + measureLabelUnconstrained(gtx, brackets).Size.X + gtx.Dp(unit.Dp(12))
+	minW := gtx.Dp(unit.Dp(84))
 	if w < minW {
 		w = minW
 	}
@@ -616,10 +896,14 @@ func (ui *UI) dropdownItem(th *material.Theme, gtx layout.Context, typeface font
 			fg = scaleColorAlpha(popupTheme.HoverText, alpha)
 		}
 		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(12), Right: unit.Dp(12), Top: unit.Dp(8), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, label)
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				prefix := "  "
+				if selected {
+					prefix = "> "
+				}
+				lbl := material.Body2(th, prefix+strings.ToUpper(label))
 				lbl.Font.Typeface = typeface
-				lbl.TextSize = ui.functionBarTextSize()
+				lbl.TextSize = scaleThemeFontSize(th, 11)
 				lbl.Color = fg
 				lbl.MaxLines = 1
 				lbl.Font.Weight = font.Medium
@@ -649,7 +933,7 @@ func buildRow2HexLines(th *material.Theme, gtx layout.Context, st *tab2State, ho
 		return nil
 	}
 
-	const row2Sp = 18 // bigger font
+	const row2Sp = 16
 
 	// measure "00 " cell width
 	token := material.Body1(th, "00 ")
@@ -820,16 +1104,12 @@ func buildRow2HexLines(th *material.Theme, gtx layout.Context, st *tab2State, ho
 						lbl.Color = color.NRGBA{R: 255, G: 120, B: 120, A: 255}
 					}
 
-					// Center the text inside the colored block so each segment has
-					// some visual breathing room on both sides.
+					// Every segment shares the same left-aligned token grid.
+					// Centering individual spans shifts bytes at color boundaries
+					// because the final token intentionally reserves trailing space.
 					txtDims := measureLabelUnconstrained(gtx, lbl)
-					txtW := txtDims.Size.X
-					vPad := gtx.Dp(unit.Dp(4))
+					vPad := gtx.Dp(unit.Dp(2))
 					cellH := txtDims.Size.Y + vPad*2
-					txtX := (cellW - txtW) / 2
-					if txtX < 0 {
-						txtX = 0
-					}
 
 					// Paint bg FIRST — self-contained shape, no clip stack interaction.
 					if bg.A != 0 {
@@ -838,10 +1118,10 @@ func buildRow2HexLines(th *material.Theme, gtx layout.Context, st *tab2State, ho
 					}
 
 					// Paint text on top — into real ops.
-					textOff := op.Offset(image.Pt(txtX, vPad)).Push(gtx.Ops)
+					textOff := op.Offset(image.Pt(0, vPad)).Push(gtx.Ops)
 					gtx2 := gtx
 					gtx2.Constraints.Min = image.Point{}
-					gtx2.Constraints.Max = image.Pt(cellW-txtX, txtDims.Size.Y)
+					gtx2.Constraints.Max = image.Pt(cellW, txtDims.Size.Y)
 					lbl.Layout(gtx2)
 					textOff.Pop()
 
@@ -930,128 +1210,108 @@ func drawDottedBorder(gtx layout.Context, sz image.Point, c color.NRGBA) {
 // ---------- Hint ----------
 
 func hintCardFixed(th *material.Theme, gtx layout.Context, st *tab2State, typeface font.Typeface, sp *protocols.Span) layout.Dimensions {
-	return card(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			title := "Hover a field"
-			line2 := ""
-			line3 := ""
+	copyBtn := st.click("hint:copy")
+	for copyBtn.Clicked(gtx) {
+		text := hintClipboardText(sp)
+		if text != "" {
+			gtx.Execute(clipboard.WriteCmd{
+				Type: "application/text",
+				Data: io.NopCloser(strings.NewReader(text)),
+			})
+			st.hintCopyPulseAt = gtx.Now
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
+	copyWidget := func(gtx layout.Context) layout.Dimensions {
+		const pulseDur = 220 * time.Millisecond
+		pulseAge := gtx.Now.Sub(st.hintCopyPulseAt)
+		pulseActive := pulseAge >= 0 && pulseAge < pulseDur
+		if pulseActive || copyBtn.Hovered() || copyBtn.Pressed() {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		return copyBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			bg := color.NRGBA{A: 0}
+			fg := hintColor
 			if sp != nil {
-				title = sp.Name
-				line2 = formatRange(sp.Start, sp.End)
-				if sp.Value != "" {
-					line2 += "   " + sp.Value
-				}
-				line3 = sp.Desc
+				fg = txtColor
 			}
-
-			l1 := material.Body2(th, title)
-			l1.Font.Typeface = typeface
-			l1.TextSize = scaleThemeFontSize(th, 12)
-			l1.MaxLines = 1
-			l1.Color = txtColor
-			if sp == nil {
-				l1.Color = hintColor
+			if copyBtn.Hovered() {
+				bg = color.NRGBA{R: 46, G: 83, B: 104, A: 150}
+				fg = analyzerAccent
 			}
-
-			l2 := material.Caption(th, line2)
-			l2.Font.Typeface = typeface
-			l2.TextSize = scaleThemeFontSize(th, 11)
-			l2.MaxLines = 1
-			l2.Color = hintColor
-
-			l3 := material.Caption(th, line3)
-			l3.Font.Typeface = typeface
-			l3.TextSize = scaleThemeFontSize(th, 11)
-			l3.MaxLines = 2
-			l3.Color = txtColor
-
-			copyBtn := st.click("hint:copy")
-			for copyBtn.Clicked(gtx) {
-				text := hintClipboardText(sp)
-				if text != "" {
-					gtx.Execute(clipboard.WriteCmd{
-						Type: "application/text",
-						Data: io.NopCloser(strings.NewReader(text)),
-					})
-					st.hintCopyPulseAt = gtx.Now
-					gtx.Execute(op.InvalidateCmd{})
-				}
+			if copyBtn.Pressed() || pulseActive {
+				bg = color.NRGBA{R: 54, G: 111, B: 139, A: 220}
+				fg = color.NRGBA{R: 235, G: 252, B: 255, A: 255}
 			}
-
-			copyGlyph := func(gtx layout.Context) layout.Dimensions {
-				const pulseDur = 220 * time.Millisecond
-				pulseAge := gtx.Now.Sub(st.hintCopyPulseAt)
-				pulseActive := pulseAge >= 0 && pulseAge < pulseDur
-				if pulseActive || copyBtn.Hovered() || copyBtn.Pressed() {
-					gtx.Execute(op.InvalidateCmd{})
-				}
-
-				return fixedWidth(gtx, gtx.Dp(unit.Dp(34)), func(gtx layout.Context) layout.Dimensions {
-					return copyBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
-						border := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
-						iconColor := txtColor
-
-						if sp == nil {
-							iconColor = hintColor
-						}
-						if copyBtn.Hovered() {
-							bg = color.NRGBA{R: 28, G: 38, B: 56, A: 255}
-							border = color.NRGBA{R: 130, G: 170, B: 255, A: 100}
-						}
-						if copyBtn.Pressed() {
-							bg = color.NRGBA{R: 55, G: 80, B: 130, A: 255}
-							border = color.NRGBA{R: 160, G: 200, B: 255, A: 170}
-						}
-						if pulseActive {
-							bg = color.NRGBA{R: 58, G: 88, B: 148, A: 255}
-							border = color.NRGBA{R: 175, G: 210, B: 255, A: 190}
-						}
-
-						return fillRoundedBox(gtx, gtx.Dp(unit.Dp(8)), bg, border, func(gtx layout.Context) layout.Dimensions {
-							return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								size := gtx.Dp(unit.Dp(16))
-								if size < 1 {
-									size = 1
-								}
-								return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									if ic := uitheme.CopyIcon(); ic != nil {
-										iconGtx := gtx
-										iconGtx.Constraints = layout.Exact(image.Pt(size, size))
-										ic.Layout(iconGtx, iconColor)
-									}
-									return layout.Dimensions{Size: image.Pt(size, size)}
-								})
-							})
-						})
-					})
+			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Body2(th, "[ COPY ]")
+					lbl.Font.Typeface = typeface
+					lbl.Font.Weight = font.SemiBold
+					lbl.TextSize = scaleThemeFontSize(th, 10)
+					lbl.Color = fg
+					lbl.MaxLines = 1
+					return lbl.Layout(gtx)
 				})
-			}
-
-			return minHeight(gtx, gtx.Dp(unit.Dp(60)), func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-							layout.Flexed(1, l1.Layout),
-							layout.Rigid(copyGlyph),
-						)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						if line2 == "" {
-							return layout.Dimensions{}
-						}
-						return l2.Layout(gtx)
-					}),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						if line3 == "" {
-							return layout.Dimensions{}
-						}
-						return l3.Layout(gtx)
-					}),
-				)
 			})
 		})
-	})
+	}
+
+	title := "NO FIELD SELECTED"
+	meta := "│  hover the byte map or decode tree to inspect a field"
+	desc := "└─ click a field to lock the inspector"
+	titleColor := hintColor
+	if sp != nil {
+		title = strings.ToUpper(sp.Name)
+		length := sp.End - sp.Start
+		meta = "│  OFFSET 0x" + strings.ToUpper(strconv.FormatInt(int64(sp.Start), 16)) +
+			"  ·  LENGTH " + itoa(length) + " " + byteWord(length)
+		if sp.Value != "" {
+			meta += "  ·  VALUE " + sp.Value
+		}
+		desc = "└─ " + sp.Desc
+		if sp.Desc == "" {
+			desc = "└─ decoded field"
+		}
+		titleColor = colorForSpanText(sp, st.lastRes.Spans)
+	}
+
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutAnalyzerSectionHeader(th, gtx, typeface, "FIELD INSPECTOR · "+title, "", copyWidget)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fillAnalyzerBody(gtx, analyzerBodyBg, func(gtx layout.Context) layout.Dimensions {
+				return minHeight(gtx, gtx.Dp(unit.Dp(42)), func(gtx layout.Context) layout.Dimensions {
+					return layout.Inset{Left: unit.Dp(11), Right: unit.Dp(11), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						metaLabel := material.Body2(th, meta)
+						metaLabel.Font.Typeface = typeface
+						metaLabel.TextSize = scaleThemeFontSize(th, 11)
+						metaLabel.Color = titleColor
+						metaLabel.MaxLines = 1
+
+						descLabel := material.Caption(th, desc)
+						descLabel.Font.Typeface = typeface
+						descLabel.TextSize = scaleThemeFontSize(th, 10)
+						descLabel.Color = hintColor
+						descLabel.MaxLines = 2
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(metaLabel.Layout),
+							layout.Rigid(descLabel.Layout),
+						)
+					})
+				})
+			})
+		}),
+	)
+}
+
+func byteWord(n int) string {
+	if n == 1 {
+		return "BYTE"
+	}
+	return "BYTES"
 }
 
 func currentHintSpan(st *tab2State) *protocols.Span {
@@ -1114,15 +1374,6 @@ func flattenAllWithKeys(spans []*protocols.Span) []flatSpan {
 	}
 	walk(spans, 0, "")
 	return out
-}
-
-func findFlatRowIndex(rows []flatSpan, rowID string) int {
-	for i, row := range rows {
-		if row.Key == rowID {
-			return i
-		}
-	}
-	return -1
 }
 
 func rowIndexVisible(pos layout.Position, idx, total int) bool {

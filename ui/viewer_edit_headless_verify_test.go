@@ -21,6 +21,7 @@ import (
 	"gioui.org/font/gofont"
 	"gioui.org/gpu/headless"
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -261,9 +262,23 @@ func TestHeadlessViewerEditModes(t *testing.T) {
 	})
 	shoot("viewer-hex-edit.png", hexImage)
 
-	hexState.setSelectionRange(3, 5)
-	hexState.editCaret = 3
-	hexState.editNibble = 0
+	for range 4 {
+		if !hexUI.handleFileViewerHexEditKey(viewState, key.Event{
+			Name:      key.NameRightArrow,
+			Modifiers: key.ModShift,
+			State:     key.Press,
+		}) {
+			t.Fatal("keyboard HEX selection was not handled")
+		}
+	}
+	if hexState.selectionStart != 3 || hexState.selectionLen != 5 || hexState.editCaret != 7 {
+		t.Fatalf(
+			"keyboard HEX selection=(%d,%d) caret=%d want (3,5), caret 7",
+			hexState.selectionStart,
+			hexState.selectionLen,
+			hexState.editCaret,
+		)
+	}
 	hexSelectionImage := frame(func(gtx layout.Context) {
 		hexUI.layoutHexOutputView(th, gtx, viewState)
 	})
@@ -273,6 +288,54 @@ func TestHeadlessViewerEditModes(t *testing.T) {
 		hexUI.layoutHexOutputView(th, gtx, viewState)
 	})
 	shoot("viewer-hex-edit-selection-low.png", hexSelectionLowImage)
+
+	hexDragStart := f32.Pt(
+		float32(hexState.hexRect.Min.X+hexState.hexByteLeft(3)+hexState.charW),
+		float32(hexState.lineH/2),
+	)
+	asciiDragEnd := f32.Pt(
+		float32(hexState.textRect.Min.X+7*hexState.charW+hexState.charW/2),
+		float32(hexState.lineH/2),
+	)
+	router.Queue(pointer.Event{
+		Kind:      pointer.Press,
+		Source:    pointer.Mouse,
+		PointerID: 11,
+		Buttons:   pointer.ButtonPrimary,
+		Position:  hexDragStart,
+	})
+	frame(func(gtx layout.Context) {
+		hexUI.layoutHexOutputView(th, gtx, viewState)
+	})
+	router.Queue(pointer.Event{
+		Kind:      pointer.Move,
+		Source:    pointer.Mouse,
+		PointerID: 11,
+		Buttons:   pointer.ButtonPrimary,
+		Position:  asciiDragEnd,
+	})
+	asciiSelectionImage := frame(func(gtx layout.Context) {
+		hexUI.layoutHexOutputView(th, gtx, viewState)
+	})
+	if !hexState.editASCII || hexState.selectionStart != 3 || hexState.selectionLen != 5 || hexState.editCaret != 7 {
+		t.Fatalf(
+			"cross-lane drag ascii=%v selection=(%d,%d) caret=%d want true, (3,5), caret 7",
+			hexState.editASCII,
+			hexState.selectionStart,
+			hexState.selectionLen,
+			hexState.editCaret,
+		)
+	}
+	shoot("viewer-ascii-edit-selection.png", asciiSelectionImage)
+	router.Queue(pointer.Event{
+		Kind:      pointer.Release,
+		Source:    pointer.Mouse,
+		PointerID: 11,
+		Position:  asciiDragEnd,
+	})
+	frame(func(gtx layout.Context) {
+		hexUI.layoutHexOutputView(th, gtx, viewState)
+	})
 
 	setHexViewerEditCaret(hexState, 3, true)
 	asciiImage := frame(func(gtx layout.Context) {

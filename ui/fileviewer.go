@@ -465,7 +465,7 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			key.NamePageUp, key.NamePageDown, key.NameHome, key.NameEnd,
 		}
 		for _, name := range hexKeys {
-			filters = append(filters, key.Filter{Name: name})
+			filters = append(filters, key.Filter{Name: name, Optional: key.ModShift})
 		}
 	}
 	if !editorFocused {

@@ -1025,12 +1025,35 @@ func (ui *UI) handleFileViewerHexEditKey(st *fileViewerState, ke key.Event) bool
 	if ke.Modifiers&^key.ModShift != 0 {
 		return false
 	}
+	extend := ke.Modifiers.Contain(key.ModShift)
+	selectionStart, selectionEnd := v.selectionStart, v.selectionEnd()
+	selectionAnchor := v.editCaret
+	if extend && v.selectionLen > 1 {
+		switch v.editCaret {
+		case selectionStart:
+			selectionAnchor = selectionEnd - 1
+		case selectionEnd - 1:
+			selectionAnchor = selectionStart
+		default:
+			selectionAnchor = selectionStart
+		}
+	}
+
+	target := v.editCaret
 	step := int64(0)
 	switch ke.Name {
 	case key.NameLeftArrow:
-		step = -1
+		if !extend && v.selectionLen > 1 {
+			target = selectionStart
+		} else {
+			step = -1
+		}
 	case key.NameRightArrow:
-		step = 1
+		if !extend && v.selectionLen > 1 {
+			target = selectionEnd - 1
+		} else {
+			step = 1
+		}
 	case key.NameUpArrow:
 		step = -int64(max(1, v.bytesPerLine))
 	case key.NameDownArrow:
@@ -1040,16 +1063,19 @@ func (ui *UI) handleFileViewerHexEditKey(st *fileViewerState, ke key.Event) bool
 	case key.NamePageDown:
 		step = int64(max(1, v.bytesPerLine) * max(1, v.visibleLines))
 	case key.NameHome:
-		v.editCaret -= v.editCaret % int64(max(1, v.bytesPerLine))
+		target -= target % int64(max(1, v.bytesPerLine))
 	case key.NameEnd:
-		lineEnd := v.editCaret - v.editCaret%int64(max(1, v.bytesPerLine)) + int64(max(1, v.bytesPerLine)-1)
-		v.editCaret = v.clampByteOffset(lineEnd)
+		target = target - target%int64(max(1, v.bytesPerLine)) + int64(max(1, v.bytesPerLine)-1)
 	default:
 		return false
 	}
-	v.editCaret = v.clampByteOffset(v.editCaret + step)
+	v.editCaret = v.clampByteOffset(target + step)
 	v.editNibble = 0
-	v.setSelectionRange(v.editCaret, 1)
+	if extend {
+		v.setSelectionFromAnchor(selectionAnchor, v.editCaret)
+	} else {
+		v.setSelectionRange(v.editCaret, 1)
+	}
 	v.revealByte(v.editCaret)
 	return true
 }

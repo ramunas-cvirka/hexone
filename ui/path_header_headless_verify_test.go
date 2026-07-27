@@ -94,6 +94,15 @@ func TestHeadlessPathHeader(t *testing.T) {
 	}
 
 	render("path-header-default.png", image.Pt(1100, 620))
+	ui.fmCfg.Tabs.FontSizeSp = 24
+	render("path-header-large-tabs.png", image.Pt(1100, 620))
+	if left.tabHeight <= tabStripHeightDp {
+		t.Fatalf("large tab font kept compact strip height %d", left.tabHeight)
+	}
+	left.openSortMenu(time.Now().Add(-time.Second))
+	render("path-header-large-tabs-popup.png", image.Pt(1100, 620))
+	left.closeSortMenu()
+	ui.fmCfg.Tabs.FontSizeSp = 10
 	fontVariants := []struct {
 		name   string
 		family string

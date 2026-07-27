@@ -404,6 +404,7 @@ type filePaneState struct {
 	favoriteOrderPos          image.Point
 	favoriteOrderRect         image.Rectangle
 	favoriteOrderClicks       [2]widget.Clickable
+	tabHeight                 int
 	headerHeight              int
 	ctxPointerTag             uiEventTag
 	ctxMenuClicks             map[string]*widget.Clickable

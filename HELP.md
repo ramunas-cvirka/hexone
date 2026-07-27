@@ -229,9 +229,11 @@ Useful viewer keys:
 - supported PDFs open as a rendered page preview inside `file` mode
 - `hex` mode is better for binary files, mixed data, or damaged content
 - in hex edit mode, click the hex columns to enter hexadecimal nibbles or the text column to enter ASCII bytes; two hex digits complete a byte and advance, and held keys repeat across following bytes
-- drag in either Hex edit lane to select multiple bytes; Hex input applies its first digit to every selected high nibble and its second digit to every selected low nibble, while ASCII input applies the character to every selected byte
-- the active HEX byte uses a three-character background with the current nibble in cyan; ASCII entry highlights one character the same way, while unsaved modified bytes appear in red in both columns
+- drag in either Hex edit lane to select multiple bytes; the cyan-tinted edit background marks the active input lane, and crossing between the HEX and text columns while dragging switches the input mode
+- Hex input applies its first digit to every selected high nibble and its second digit to every selected low nibble, while ASCII input applies the character to every selected byte
+- the active HEX byte uses a three-character background with the current nibble in cyan; ASCII entry colors every selected character cyan, while unsaved modified bytes appear in red in both columns
 - arrow, paging, Home, and End keys move the active byte; saving clears all modified-byte markers
+- hold `Shift` with those navigation keys to extend the byte selection from the active caret
 - moving away after entering one hex digit keeps the changed high nibble and preserves the byte's original low nibble
 - the Hex context menu offers `Copy as Hex` and `Copy as Text`; text copy preserves printable ASCII and writes other bytes as `\xNN` escapes
 - text saves preserve the detected UTF-8, UTF-16, or CP437 encoding, BOM, and CRLF line endings

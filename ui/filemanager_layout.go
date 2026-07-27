@@ -632,6 +632,13 @@ func (ui *UI) filePaneVolumeBadgesHidden(gtx layout.Context) bool {
 	return ui.terminalVisuallyFocused(gtx)
 }
 
+func filePaneTabHeight(gtx layout.Context, pane *filePaneState) int {
+	if pane != nil && pane.tabHeight > 0 {
+		return pane.tabHeight
+	}
+	return gtx.Dp(unit.Dp(tabStripHeightDp))
+}
+
 func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
 	active := idx == ui.activeFilePane && !ui.terminalVisuallyFocused(gtx)
 	palette := filePanePaletteFromConfig(ui.fmCfg)
@@ -649,7 +656,9 @@ func (ui *UI) layoutFilePane(th *material.Theme, gtx layout.Context, idx int, pa
 									layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 										return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-												return ui.layoutFilePaneTabStrip(th, gtx, idx)
+												dims := ui.layoutFilePaneTabStrip(th, gtx, idx)
+												pane.tabHeight = dims.Size.Y
+												return dims
 											}),
 											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 												dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -2388,7 +2397,7 @@ func filePaneSortMenuBaseRect(gtx layout.Context, pane *filePaneState, size imag
 	}
 	anchor := image.Point{
 		X: right - size.X,
-		Y: gtx.Dp(unit.Dp(tabStripHeightDp)) + pane.headerHeight + gtx.Dp(unit.Dp(2)) + slideY,
+		Y: filePaneTabHeight(gtx, pane) + pane.headerHeight + gtx.Dp(unit.Dp(2)) + slideY,
 	}
 	anchor = clampFilePaneMenuPoint(anchor, size, gtx.Constraints.Max)
 	return image.Rectangle{Min: anchor, Max: anchor.Add(size)}
@@ -3277,7 +3286,7 @@ func (ui *UI) layoutFilePaneDriveMenu(th *material.Theme, gtx layout.Context, id
 func (ui *UI) filePaneDriveSegmentBounds(th *material.Theme, gtx layout.Context, pane *filePaneState, size image.Point) image.Rectangle {
 	_, textSize := ui.filePaneHeaderTextStyle(pane)
 	x := gtx.Dp(unit.Dp(2)) + ui.filePaneFrameEdgeWidth(th, gtx, pane) + filePaneFrameBracketWidth(gtx, textSize)
-	y := gtx.Dp(unit.Dp(tabStripHeightDp + filePaneTabConnectorHeightDp + 1))
+	y := filePaneTabHeight(gtx, pane) + gtx.Dp(unit.Dp(filePaneTabConnectorHeightDp+1))
 	return image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+size.X, y+size.Y)}
 }
 
@@ -3293,7 +3302,7 @@ func (ui *UI) filePaneDriveMenuBasePoint(th *material.Theme, gtx layout.Context,
 	if pane != nil {
 		headerH = pane.headerHeight
 	}
-	y := gtx.Dp(unit.Dp(tabStripHeightDp)) + headerH + gtx.Dp(unit.Dp(2))
+	y := filePaneTabHeight(gtx, pane) + headerH + gtx.Dp(unit.Dp(2))
 	return clampFilePaneMenuPoint(image.Pt(x, y), size, gtx.Constraints.Max)
 }
 
@@ -4006,7 +4015,7 @@ func (ui *UI) filePaneFavoriteMenuBaseRect(gtx layout.Context, pane *filePaneSta
 	}
 	anchor := image.Point{
 		X: right - size.X,
-		Y: gtx.Dp(unit.Dp(tabStripHeightDp)) + pane.headerHeight + gtx.Dp(unit.Dp(2)) + slideY,
+		Y: filePaneTabHeight(gtx, pane) + pane.headerHeight + gtx.Dp(unit.Dp(2)) + slideY,
 	}
 	anchor = clampFilePaneMenuPoint(anchor, size, gtx.Constraints.Max)
 	return image.Rectangle{Min: anchor, Max: anchor.Add(size)}

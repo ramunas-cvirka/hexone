@@ -895,7 +895,7 @@ func (ui *UI) terminalPointerOnTerminalSurface(gtx layout.Context, pos image.Poi
 	}
 	height, _, ok := ui.terminal.paneMetrics()
 	if !ok {
-		height = terminalPaneHeight(gtx, 16, terminalConfiguredRows(ui.fmCfg))
+		height = ui.terminalPaneHeightWithTabs(gtx, 16, terminalConfiguredRows(ui.fmCfg))
 	}
 	if height <= 0 {
 		return false
@@ -3673,6 +3673,15 @@ func terminalPaneHeight(gtx layout.Context, cellH int, preferredRows ...int) int
 	return terminalPaneHeightForRows(gtx, cellH, rows)
 }
 
+func (ui *UI) terminalPaneHeightWithTabs(gtx layout.Context, cellH int, preferredRows ...int) int {
+	height := terminalPaneHeight(gtx, cellH, preferredRows...)
+	height += ui.tabStripHeight(gtx) - gtx.Dp(unit.Dp(tabStripHeightDp))
+	if maxHeight := terminalMaxPaneHeight(gtx); maxHeight > 0 && height > maxHeight {
+		height = maxHeight
+	}
+	return height
+}
+
 func terminalRowsForPaneHeight(gtx layout.Context, cellH, height int) int {
 	if cellH <= 0 || height <= 0 {
 		return 0
@@ -3682,6 +3691,11 @@ func terminalRowsForPaneHeight(gtx layout.Context, cellH, height int) int {
 		return 0
 	}
 	return terminalClampPaneRows(gtx, cellH, rows)
+}
+
+func (ui *UI) terminalRowsForPaneHeightWithTabs(gtx layout.Context, cellH, height int) int {
+	height -= ui.tabStripHeight(gtx) - gtx.Dp(unit.Dp(tabStripHeightDp))
+	return terminalRowsForPaneHeight(gtx, cellH, height)
 }
 
 func terminalPaneCols(width int, cellW int) int {
@@ -3710,7 +3724,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 	if cellH <= 0 {
 		cellH = 16
 	}
-	h := terminalPaneHeight(gtx, cellH, terminalConfiguredRows(ui.fmCfg))
+	h := ui.terminalPaneHeightWithTabs(gtx, cellH, terminalConfiguredRows(ui.fmCfg))
 	if ui.terminalMaximized() {
 		h = gtx.Constraints.Max.Y
 	}
@@ -3743,7 +3757,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		padX := gtx.Dp(unit.Dp(6))
 		padTop := gtx.Dp(unit.Dp(4))
 		padBottom := gtx.Dp(unit.Dp(4))
-		tabH := gtx.Dp(unit.Dp(tabStripHeightDp))
+		tabH := ui.tabStripHeight(gtx)
 		tabRect := image.Rect(padX, padTop, size.X-padX, padTop+tabH)
 		contentTop := tabRect.Max.Y + gtx.Dp(unit.Dp(3))
 		content := image.Rect(padX, contentTop, size.X-padX, size.Y-padBottom)
@@ -3897,14 +3911,14 @@ func (ui *UI) terminalResizeHandleGeometry(th *material.Theme, gtx layout.Contex
 	}
 	st := ui.terminal
 	h, cellH, ok := st.paneMetrics()
-	rows := terminalRowsForPaneHeight(gtx, cellH, h)
+	rows := ui.terminalRowsForPaneHeightWithTabs(gtx, cellH, h)
 	if !ok || rows <= 0 {
 		_, cellH = ui.terminalCellSize(th, gtx)
 		if cellH <= 0 {
 			cellH = 16
 		}
 		rows = terminalConfiguredRows(ui.fmCfg)
-		h = terminalPaneHeight(gtx, cellH, rows)
+		h = ui.terminalPaneHeightWithTabs(gtx, cellH, rows)
 	}
 	if h <= 0 || gtx.Constraints.Max.X <= 0 || gtx.Constraints.Max.Y <= 0 {
 		return image.Rectangle{}, 0, 0, false

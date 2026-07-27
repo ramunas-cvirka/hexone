@@ -754,7 +754,7 @@ func (ui *UI) layoutTerminalSnippetMenuPopup(th *material.Theme, gtx layout.Cont
 	anchorY := gtx.Constraints.Max.Y - card.Size.Y - gtx.Dp(unit.Dp(30)) - slideY
 	if ui.terminal != nil {
 		if paneHeight, _, ok := ui.terminal.paneMetrics(); ok {
-			anchorY = gtx.Constraints.Max.Y - paneHeight + gtx.Dp(unit.Dp(4+tabStripHeightDp+3)) + slideY
+			anchorY = gtx.Constraints.Max.Y - paneHeight + gtx.Dp(unit.Dp(4)) + ui.tabStripHeight(gtx) + gtx.Dp(unit.Dp(3)) + slideY
 		}
 	}
 	anchor := image.Pt(

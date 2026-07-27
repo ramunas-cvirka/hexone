@@ -47,6 +47,7 @@ func TestHeadlessTerminalTabRail(t *testing.T) {
 
 	cfg := fm.DefaultConfig()
 	cfg.Terminal.HeightRows = 6
+	cfg.Tabs.FontSizeSp = 24
 	ui := NewUI(cfg)
 	sessions := make([]*terminalSession, len(dirs))
 	for i, dir := range dirs {
@@ -92,7 +93,7 @@ func TestHeadlessTerminalTabRail(t *testing.T) {
 	if err := win.Screenshot(img); err != nil {
 		t.Fatal(err)
 	}
-	file, err := os.Create(filepath.Join(outDir, "terminal-tabs-open-rail.png"))
+	file, err := os.Create(filepath.Join(outDir, "terminal-tabs-large-font.png"))
 	if err != nil {
 		t.Fatal(err)
 	}

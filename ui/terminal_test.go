@@ -2044,6 +2044,23 @@ func TestTerminalPaneHeightUsesConfiguredRows(t *testing.T) {
 	}
 }
 
+func TestTerminalPaneHeightIncludesGrowingTabStrip(t *testing.T) {
+	gtx := testTerminalPaneHeightContext(image.Pt(1200, 800))
+	cfg := fm.DefaultConfig()
+	cfg.Tabs.FontSizeSp = 24
+	ui := NewUI(cfg)
+	cellH := 20
+	rows := 18
+	base := terminalPaneHeight(gtx, cellH, rows)
+	got := ui.terminalPaneHeightWithTabs(gtx, cellH, rows)
+	if want := base + (32 - tabStripHeightDp); got != want {
+		t.Fatalf("large-font terminal height=%d want %d", got, want)
+	}
+	if gotRows := ui.terminalRowsForPaneHeightWithTabs(gtx, cellH, got); gotRows != rows {
+		t.Fatalf("rows recovered from large-font terminal height=%d want %d", gotRows, rows)
+	}
+}
+
 func TestTerminalGridContentUsesWholeRowsAtBottom(t *testing.T) {
 	content := image.Rect(6, 31, 494, 140)
 	got, rows := terminalGridContentRect(content, 20)

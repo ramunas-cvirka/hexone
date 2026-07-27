@@ -97,11 +97,8 @@ type tab2State struct {
 	hoverRowID    string
 	selectedRowID string
 
-	// scroll-to-selected: tracks which rowID we last scrolled to.
-	lastScrolledRowID string
-
-	list   layout.List
-	clicks map[string]*widget.Clickable
+	scrollList widget.List
+	clicks     map[string]*widget.Clickable
 
 	selectPressHeld map[string]bool
 

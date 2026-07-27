@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hexone/fm"
 	"image"
+	"image/color"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -575,6 +576,32 @@ func TestHexEditNibbleHighlightCoversSelectedBytes(t *testing.T) {
 	}
 }
 
+func TestHexEditASCIIHighlightCoversSelectedBytes(t *testing.T) {
+	v := newHexViewerState()
+	v.fileSize = 8
+	v.editCaret = 4
+	v.editASCII = true
+	v.setSelectionRange(2, 3)
+
+	for off := int64(0); off < v.fileSize; off++ {
+		want := off >= 2 && off < 5
+		if got := hexEditASCIIActiveAt(v, off); got != want {
+			t.Fatalf("selected ASCII highlight at byte %d=%v want %v", off, got, want)
+		}
+	}
+
+	v.editASCII = false
+	if hexEditASCIIActiveAt(v, 3) {
+		t.Fatal("ASCII text highlight should be disabled in the HEX lane")
+	}
+
+	v.editASCII = true
+	v.setSelectionRange(4, 1)
+	if !hexEditASCIIActiveAt(v, 4) || hexEditASCIIActiveAt(v, 3) {
+		t.Fatal("single-byte ASCII highlight should follow only the edit caret")
+	}
+}
+
 func TestFileViewerHexEditPreservesExistingSelectionOnEntry(t *testing.T) {
 	v := newHexViewerState()
 	v.fileSize = 4
@@ -646,6 +673,105 @@ func TestFileViewerHexEditMouseDragCreatesSelection(t *testing.T) {
 	}
 	if v.editCaret != 3 || v.editASCII {
 		t.Fatalf("drag edit caret=%d ascii=%v want Hex byte 3", v.editCaret, v.editASCII)
+	}
+}
+
+func TestFileViewerHexEditMouseDragSwitchesInputLane(t *testing.T) {
+	v := newHexViewerState()
+	v.fileSize = 4
+	v.buffer = []byte{0x10, 0x20, 0x30, 0x40}
+	v.bytesPerLine = 4
+	v.visibleLines = 1
+	v.charW = 10
+	v.lineH = 16
+	v.hexByteX = []int{0, 30, 60, 90}
+	v.hexRect = image.Rect(20, 0, 130, 16)
+	v.textRect = image.Rect(150, 0, 190, 16)
+	st := &fileViewerState{mode: "hex", editMode: true, hex: v}
+	ui := NewUI(fm.DefaultConfig())
+	router := new(input.Router)
+
+	frame := func() {
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Constraints: layout.Exact(image.Pt(240, 80)),
+			Now:         time.Now(),
+		}
+		ui.handleHexViewerEvents(gtx, st)
+		pass := pointer.PassOp{}.Push(&ops)
+		event.Op(&ops, &v.pointerTag)
+		pass.Pop()
+		router.Frame(&ops)
+	}
+
+	frame()
+	router.Queue(pointer.Event{
+		Kind:      pointer.Press,
+		Source:    pointer.Mouse,
+		PointerID: 1,
+		Buttons:   pointer.ButtonPrimary,
+		Position:  f32.Pt(21, 8),
+	})
+	frame()
+	if v.editASCII {
+		t.Fatal("press in the HEX lane should activate hexadecimal input")
+	}
+
+	router.Queue(pointer.Event{
+		Kind:      pointer.Move,
+		Source:    pointer.Mouse,
+		PointerID: 1,
+		Buttons:   pointer.ButtonPrimary,
+		Position:  f32.Pt(185, 8),
+	})
+	frame()
+	if !v.editASCII {
+		t.Fatal("dragging into the text lane should activate ASCII input")
+	}
+	if v.selectionStart != 0 || v.selectionLen != 4 || v.editCaret != 3 {
+		t.Fatalf("text-lane drag selection=(%d,%d) caret=%d want (0,4), caret 3", v.selectionStart, v.selectionLen, v.editCaret)
+	}
+
+	router.Queue(pointer.Event{
+		Kind:      pointer.Move,
+		Source:    pointer.Mouse,
+		PointerID: 1,
+		Buttons:   pointer.ButtonPrimary,
+		Position:  f32.Pt(51, 8),
+	})
+	frame()
+	if v.editASCII {
+		t.Fatal("dragging back into the HEX lane should reactivate hexadecimal input")
+	}
+}
+
+func TestHexSelectionLaneColorsFollowEditInputLane(t *testing.T) {
+	regular := color.NRGBA{R: 1, G: 2, B: 3, A: 4}
+	strong := color.NRGBA{R: 5, G: 6, B: 7, A: 8}
+	edit := color.NRGBA{R: 9, G: 10, B: 11, A: 12}
+	theme := fileViewerTheme{
+		HexSelection:       regular,
+		HexStrongSelection: strong,
+		EditCursorBg:       edit,
+	}
+	v := newHexViewerState()
+
+	hexSelection, textSelection := hexSelectionLaneColors(theme, v, true)
+	if hexSelection != edit || textSelection != regular {
+		t.Fatalf("HEX input colors=(%v,%v) want (%v,%v)", hexSelection, textSelection, edit, regular)
+	}
+
+	v.editASCII = true
+	hexSelection, textSelection = hexSelectionLaneColors(theme, v, true)
+	if hexSelection != regular || textSelection != edit {
+		t.Fatalf("ASCII input colors=(%v,%v) want (%v,%v)", hexSelection, textSelection, regular, edit)
+	}
+
+	hexSelection, textSelection = hexSelectionLaneColors(theme, v, false)
+	if hexSelection != regular || textSelection != strong {
+		t.Fatalf("read-only colors=(%v,%v) want (%v,%v)", hexSelection, textSelection, regular, strong)
 	}
 }
 
@@ -889,6 +1015,68 @@ func TestFileViewerHexNavigationCommitsPartialByteAndMoves(t *testing.T) {
 	}
 }
 
+func TestFileViewerHexShiftNavigationExtendsAndReversesSelection(t *testing.T) {
+	v := newHexViewerState()
+	v.fileSize = 8
+	v.buffer = []byte{0, 1, 2, 3, 4, 5, 6, 7}
+	v.bytesPerLine = 4
+	v.visibleLines = 2
+	setHexViewerEditCaret(v, 2, false)
+	st := &fileViewerState{mode: "hex", editMode: true, hex: v}
+	ui := NewUI(fm.DefaultConfig())
+	shiftPress := func(name key.Name) {
+		t.Helper()
+		if !ui.handleFileViewerHexEditKey(st, key.Event{Name: name, Modifiers: key.ModShift, State: key.Press}) {
+			t.Fatalf("%s was not handled", name)
+		}
+	}
+
+	shiftPress(key.NameRightArrow)
+	shiftPress(key.NameRightArrow)
+	if v.selectionStart != 2 || v.selectionLen != 3 || v.editCaret != 4 {
+		t.Fatalf("extended selection=(%d,%d) caret=%d want (2,3), caret 4", v.selectionStart, v.selectionLen, v.editCaret)
+	}
+
+	shiftPress(key.NameLeftArrow)
+	shiftPress(key.NameLeftArrow)
+	shiftPress(key.NameLeftArrow)
+	if v.selectionStart != 1 || v.selectionLen != 2 || v.editCaret != 1 {
+		t.Fatalf("reversed selection=(%d,%d) caret=%d want (1,2), caret 1", v.selectionStart, v.selectionLen, v.editCaret)
+	}
+
+	shiftPress(key.NameDownArrow)
+	if v.selectionStart != 2 || v.selectionLen != 4 || v.editCaret != 5 {
+		t.Fatalf("vertical selection=(%d,%d) caret=%d want (2,4), caret 5", v.selectionStart, v.selectionLen, v.editCaret)
+	}
+}
+
+func TestFileViewerHexPlainHorizontalNavigationCollapsesSelection(t *testing.T) {
+	v := newHexViewerState()
+	v.fileSize = 8
+	v.buffer = []byte{0, 1, 2, 3, 4, 5, 6, 7}
+	v.bytesPerLine = 4
+	v.setSelectionRange(2, 4)
+	v.editCaret = 5
+	st := &fileViewerState{mode: "hex", editMode: true, hex: v}
+	ui := NewUI(fm.DefaultConfig())
+
+	if !ui.handleFileViewerHexEditKey(st, key.Event{Name: key.NameLeftArrow, State: key.Press}) {
+		t.Fatal("left arrow was not handled")
+	}
+	if v.selectionStart != 2 || v.selectionLen != 1 || v.editCaret != 2 {
+		t.Fatalf("left collapse selection=(%d,%d) caret=%d want (2,1), caret 2", v.selectionStart, v.selectionLen, v.editCaret)
+	}
+
+	v.setSelectionRange(2, 4)
+	v.editCaret = 2
+	if !ui.handleFileViewerHexEditKey(st, key.Event{Name: key.NameRightArrow, State: key.Press}) {
+		t.Fatal("right arrow was not handled")
+	}
+	if v.selectionStart != 5 || v.selectionLen != 1 || v.editCaret != 5 {
+		t.Fatalf("right collapse selection=(%d,%d) caret=%d want (5,1), caret 5", v.selectionStart, v.selectionLen, v.editCaret)
+	}
+}
+
 func TestHexViewerFullBufferDoesNotPrefetchAtFileEdges(t *testing.T) {
 	v := newHexViewerState()
 	v.fileSize = 4
@@ -961,6 +1149,13 @@ func TestViewerEditKeysOverrideStaleTerminalFocus(t *testing.T) {
 	}
 	if v.editCaret != 0 {
 		t.Fatalf("routed left arrow caret=%d want 0", v.editCaret)
+	}
+
+	router.Event(key.Filter{Name: key.NameRightArrow, Optional: key.ModShift})
+	router.Queue(key.Event{Name: key.NameRightArrow, Modifiers: key.ModShift, State: key.Press})
+	frame()
+	if v.selectionStart != 0 || v.selectionLen != 2 || v.editCaret != 1 {
+		t.Fatalf("routed Shift+Right selection=(%d,%d) caret=%d want (0,2), caret 1", v.selectionStart, v.selectionLen, v.editCaret)
 	}
 
 	router.Event(key.Filter{Name: key.NameF3, Optional: ^key.Modifiers(0)})
