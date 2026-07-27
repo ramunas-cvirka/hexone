@@ -8,6 +8,12 @@ HEADER_GOCACHE := $(abspath .cache/go-build)
 comma := ,
 
 ifeq ($(OS),Windows_NT)
+# Git for Windows can put bash in SHELL even when make is launched from
+# PowerShell. The Windows recipes below use cmd.exe syntax, and letting bash
+# expand their PowerShell snippets also strips variables such as $null.
+SHELL := cmd.exe
+.SHELLFLAGS := /D /C
+
 APP_VERSION := $(strip $(shell powershell -NoProfile -Command "$$raw = $$env:HEXONE_VERSION; if ([string]::IsNullOrWhiteSpace($$raw)) { $$raw = git describe --tags --dirty --always --match 'v*' 2>$$null; if ($$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($$raw)) { $$raw = 'dev' } }; $$raw.Trim()"))
 APP_TAG_VERSION := $(strip $(shell powershell -NoProfile -Command "$$tag = $$env:HEXONE_TAG_VERSION; if ([string]::IsNullOrWhiteSpace($$tag)) { $$tag = git describe --tags --abbrev=0 --match 'v*' 2>$$null; if ($$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($$tag)) { $$tag = 'v0.0.0' } }; $$tag.Trim()"))
 APP_COMMIT := $(strip $(shell powershell -NoProfile -Command "$$commit = $$env:HEXONE_COMMIT; if ([string]::IsNullOrWhiteSpace($$commit)) { $$commit = git rev-parse --short HEAD 2>$$null; if ($$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($$commit)) { $$commit = 'unknown' } }; $$commit.Trim()"))
