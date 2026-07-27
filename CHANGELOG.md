@@ -78,7 +78,7 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Changed Enter to open regular files with their system-associated application while continuing to open directories and archives inside Hexone.
 - Added a Microsoft Store MSIX distribution. Store installations keep configuration and session data in the package's `LocalState` folder, while Windows portable builds continue to keep configuration beside `hexone.exe`.
 
-## v1.1.0 - Unreleased
+## v1.1.0 - 2026-07-27
 
 - File and Hex viewer modes now support editing. Changes can be saved or discarded. Hex mode accepts HEX and ASCII input. A selection can overwrite several bytes. Changed bytes are highlighted and saved in place.
 - Redesigned the internal viewer. Separate File, Hex, and Cmd tabs share a persistent filename rail. The viewer now has its own function bar with viewer-specific actions.
