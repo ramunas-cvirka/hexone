@@ -118,6 +118,9 @@ func TestFunctionBarToolSpecsFollowActiveWorkspace(t *testing.T) {
 	ui.Tabs.Value = "tab2"
 	assertActive("protocol")
 
+	ui.Tabs.Value = "tab3"
+	assertActive("http")
+
 	ui.settingsModal = &settingsModalState{}
 	assertActive("settings")
 }
@@ -126,8 +129,8 @@ func TestFunctionBarToolsExposeCompactShortcutHint(t *testing.T) {
 	ui := &UI{}
 
 	items := ui.functionBarToolSpecs()
-	if len(items) != 5 {
-		t.Fatalf("tool count=%d want 5", len(items))
+	if len(items) != 6 {
+		t.Fatalf("tool count=%d want 6", len(items))
 	}
 	if items[0].key == "files" {
 		t.Fatal("redundant file-manager entry should not be present")
@@ -138,10 +141,13 @@ func TestFunctionBarToolsExposeCompactShortcutHint(t *testing.T) {
 	if items[1].key != "ssh" || items[1].shortcut != "Ctrl+F" {
 		t.Fatalf("second tool=%#v want SSH Setup with Ctrl+F", items[1])
 	}
-	if items[4].key != "settings" {
-		t.Fatalf("last tool=%q want settings", items[4].key)
+	if items[4].key != "http" {
+		t.Fatalf("fifth tool=%q want HTTP Client", items[4].key)
 	}
-	if got := items[4].shortcut; got != "Ctrl+S" {
+	if items[5].key != "settings" {
+		t.Fatalf("last tool=%q want settings", items[5].key)
+	}
+	if got := items[5].shortcut; got != "Ctrl+S" {
 		t.Fatalf("settings shortcut=%q want %q", got, "Ctrl+S")
 	}
 }
@@ -546,8 +552,8 @@ func TestFunctionBarToolKeyboardSelectionWrapsAndActivates(t *testing.T) {
 	if !ui.moveFunctionBarToolSelection(-1) {
 		t.Fatal("up should wrap selection to the last tool")
 	}
-	if got := ui.functionBarToolsSelected; got != 4 {
-		t.Fatalf("selected tool=%d want 4", got)
+	if got := ui.functionBarToolsSelected; got != 5 {
+		t.Fatalf("selected tool=%d want 5", got)
 	}
 	if !ui.activateSelectedFunctionBarTool(now) {
 		t.Fatal("enter should activate the selected tool")

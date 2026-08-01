@@ -27,6 +27,7 @@ var (
 	disconnectIcon     *widget.Icon
 	viewModeIcon       *widget.Icon
 	editModeIcon       *widget.Icon
+	saveIcon           *widget.Icon
 )
 
 func CloseIcon() *widget.Icon {
@@ -102,6 +103,11 @@ func EditModeIcon() *widget.Icon {
 	return editModeIcon
 }
 
+func SaveIcon() *widget.Icon {
+	initIcons()
+	return saveIcon
+}
+
 func initIcons() {
 	iconsOnce.Do(func() {
 		closeIconRef = mustIcon(widget.NewIcon(mdicons.NavigationClose))
@@ -119,6 +125,7 @@ func initIcons() {
 		disconnectIcon = mustIcon(widget.NewIcon(mdicons.ActionPowerSettingsNew))
 		viewModeIcon = mustIcon(widget.NewIcon(mdicons.ActionVisibility))
 		editModeIcon = mustIcon(widget.NewIcon(mdicons.EditorModeEdit))
+		saveIcon = mustIcon(widget.NewIcon(mdicons.ContentSave))
 	})
 }
 

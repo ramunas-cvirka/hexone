@@ -1,0 +1,240 @@
+// Copyright 2026 Ramunas Cvirka
+// SPDX-License-Identifier: Apache-2.0
+
+//go:build uiverify
+
+package ui
+
+import (
+	"fmt"
+	"hexone/fm"
+	"hexone/httpclient"
+	"image"
+	"image/png"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"gioui.org/f32"
+	"gioui.org/gpu/headless"
+	"gioui.org/io/input"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/text"
+	"gioui.org/unit"
+	"gioui.org/widget/material"
+)
+
+func TestHeadlessHTTPClient(t *testing.T) {
+	outDir := os.Getenv("HTTP_UI_VERIFY_OUT")
+	if outDir == "" {
+		outDir = t.TempDir()
+	}
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	scale := 1
+	if value := os.Getenv("HTTP_UI_VERIFY_SCALE"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			scale = parsed
+		}
+	}
+	width, height := 1200*scale, 700*scale
+	win, err := headless.NewWindow(width, height)
+	if err != nil {
+		t.Fatalf("headless window: %v", err)
+	}
+	defer win.Release()
+
+	th := material.NewTheme()
+	th.Shaper = text.NewShaper(text.WithCollection(pathHeaderVerifyFontCollection(t)))
+	ui := NewUI(fm.DefaultConfig())
+	ui.httpCollectionsPath = filepath.Join(t.TempDir(), "hexone-http.yaml")
+	ui.Tabs.Value = "tab3"
+	router := new(input.Router)
+	st := ui.ensureHTTPClientState()
+	st.selectRequest(httpRequestRef{collection: 0, folder: 0, request: 1})
+
+	render := func(name string) {
+		var screenshot *image.RGBA
+		base := time.Now()
+		for frame := range 4 {
+			var ops op.Ops
+			gtx := layout.Context{
+				Ops:         &ops,
+				Metric:      unit.Metric{PxPerDp: float32(scale), PxPerSp: float32(scale)},
+				Constraints: layout.Exact(image.Pt(width, height)),
+				Now:         base.Add(time.Duration(frame) * 50 * time.Millisecond),
+				Source:      router.Source(),
+			}
+			ui.Layout(th, gtx)
+			router.Frame(&ops)
+			if err := win.Frame(&ops); err != nil {
+				t.Fatalf("render frame: %v", err)
+			}
+			screenshot = image.NewRGBA(image.Rect(0, 0, width, height))
+			if err := win.Screenshot(screenshot); err != nil {
+				t.Fatalf("screenshot: %v", err)
+			}
+		}
+		path := filepath.Join(outDir, name)
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := png.Encode(file, screenshot); err != nil {
+			_ = file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("wrote %s", path)
+	}
+
+	render("http-client-workbench.png")
+	if st.requestSplitY < height/3 {
+		t.Fatalf("request/response split y=%d is above the response rail", st.requestSplitY)
+	}
+	selectedRequest := st.currentRequest()
+	originalMethod := selectedRequest.Method
+	selectedRequest.Method = "PATCH"
+	st.method = "PATCH"
+	render("http-client-patch-method.png")
+	selectedRequest.Method = originalMethod
+	st.method = originalMethod
+	var selectedRequestRow httpCollectionRow
+	for _, row := range st.collectionRows() {
+		if row.kind == "request" && row.ref == st.selected {
+			selectedRequestRow = row
+			break
+		}
+	}
+	if !st.beginTreeRename(selectedRequestRow) {
+		t.Fatal("could not start request rename verification")
+	}
+	render("http-client-request-rename.png")
+	originalRequestName, _ := st.treeRenameName(selectedRequestRow.kind, selectedRequestRow.ref)
+	st.treeRenameEd.SetText("discarded by selection")
+	healthRowY := 104
+	healthRowX := 150
+	if scale > 1 {
+		healthRowX = 300
+		healthRowY = 212
+	}
+	router.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(float32(healthRowX), float32(healthRowY))},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(float32(healthRowX), float32(healthRowY))},
+	)
+	render("http-client-rename-cancel-selection.png")
+	if st.treeRenameActive || st.selected == selectedRequestRow.ref {
+		t.Fatalf("different request click left rename active=%t selected=%#v", st.treeRenameActive, st.selected)
+	}
+	if got, _ := st.treeRenameName(selectedRequestRow.kind, selectedRequestRow.ref); got != originalRequestName {
+		t.Fatalf("different request click committed name %q want %q", got, originalRequestName)
+	}
+	st.selectRequest(selectedRequestRow.ref)
+	collectionRow := st.collectionRows()[0]
+	if !st.beginTreeRename(collectionRow) {
+		t.Fatal("could not start collection rename verification")
+	}
+	render("http-client-collection-rename.png")
+	st.finishTreeRename(false)
+	var folderRow httpCollectionRow
+	for _, row := range st.collectionRows() {
+		if row.kind == "folder" {
+			folderRow = row
+			break
+		}
+	}
+	if !st.beginTreeRename(folderRow) {
+		t.Fatal("could not start folder rename verification")
+	}
+	render("http-client-folder-rename.png")
+	st.finishTreeRename(false)
+	for index, row := range st.collectionRows() {
+		if row.kind == "request" && row.ref == selectedRequestRow.ref {
+			st.treeMenuRow = row
+			st.treeMenuRowIndex = index
+			break
+		}
+	}
+	st.treeMenuOpen = true
+	render("http-client-tree-context-menu.png")
+	st.treeMenuOpen = false
+	if !st.activateRequestTab(0) {
+		t.Fatal("could not activate first request tab for seam verification")
+	}
+	render("http-client-first-tab-seam.png")
+	if !st.activateRequestTab(1) {
+		t.Fatal("could not restore second request tab after seam verification")
+	}
+	router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(240*scale), float32(41*scale))})
+	render("http-client-action-tooltip.png")
+	router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(12*scale), float32(180*scale))})
+	st.methodMenuOpen = true
+	render("http-client-method-menu.png")
+	st.methodMenuOpen = false
+	st.envMenuOpen = true
+	render("http-client-environment-menu.png")
+	st.envMenuOpen = false
+	if !st.openEnvironmentEditor(0, true) {
+		t.Fatal("could not open environment editor verification")
+	}
+	st.envEditorVarsEd.SetText("base_url=http://localhost:8080\ntoken=local-secret\nregion=eu-central")
+	render("http-client-environment-editor.png")
+	st.closeEnvironmentEditor()
+	st.response = httpclient.Response{
+		StatusCode: 201,
+		Status:     "201 Created",
+		Headers: []httpclient.KeyValue{
+			{Name: "Content-Type", Value: "application/json"},
+			{Name: "X-Request-ID", Value: "req-1042"},
+		},
+		Body:     []byte(`{"id":1042,"name":"Ada Lovelace","status":"active"}`),
+		Duration: 42 * time.Millisecond,
+		Size:     364,
+	}
+	st.status = "201 Created · 42 ms · 364 B"
+	st.updateResponseEditor()
+	render("http-client-response.png")
+	st.detailMode = httpDetailAuth
+	st.authEd.SetText("Bearer {{token}}")
+	render("http-client-auth.png")
+	st.detailMode = httpDetailHeaders
+	if !st.addCollection() || !st.addFolderToSelection() || !st.addRequestToSelection() {
+		t.Fatal("could not build collection-action verification hierarchy")
+	}
+	render("http-client-collection-actions.png")
+
+	for index := 0; index < 36; index++ {
+		st.file.Collections[0].Folders[0].Requests = append(st.file.Collections[0].Folders[0].Requests, httpclient.Request{
+			Name:   fmt.Sprintf("Generated request %02d", index+1),
+			Method: "GET",
+			URL:    "{{base_url}}/generated",
+		})
+	}
+	var body strings.Builder
+	body.WriteString("{\n")
+	for index := 0; index < 48; index++ {
+		fmt.Fprintf(&body, "  \"field_%02d\": \"value_%02d\",\n", index, index)
+	}
+	body.WriteString("  \"done\": true\n}")
+	st.bodyEd.SetText(body.String())
+	st.detailMode = httpDetailBody
+	st.response.Body = []byte(body.String())
+	st.updateResponseEditor()
+	st.collectionWidth = 360
+	st.requestRatio = 0.30
+	render("http-client-resized-scrollbars.png")
+
+	ui.functionBarToolsOpen = true
+	ui.functionBarToolsOpenedAt = time.Now().Add(-time.Second)
+	ui.functionBarToolsSelected = 4
+	render("http-client-tools-menu.png")
+}

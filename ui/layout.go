@@ -122,7 +122,7 @@ func registerPointerTransparentEventTarget(gtx layout.Context, tag event.Tag) {
 }
 
 type UI struct {
-	Tabs widget.Enum // selected tab key: "tab0" / "tab1" / "tab2"
+	Tabs widget.Enum // selected tab key: "tab0" / "tab1" / "tab2" / "tab3"
 
 	LeftEd  widget.Editor
 	RightEd widget.Editor
@@ -137,6 +137,7 @@ type UI struct {
 	held           map[string]bool // key glyph -> isDown
 
 	tab2State *tab2State
+	httpState *httpClientState
 
 	// Tab buttons
 	tab0, tab1, tab2             widget.Clickable
@@ -182,6 +183,7 @@ type UI struct {
 	filePanes                    []*filePaneState
 	fmCfg                        *fm.Config
 	configPath                   string
+	httpCollectionsPath          string
 	typeface                     font.Typeface
 	textSize                     unit.Sp
 	invalidate                   func()
@@ -247,6 +249,7 @@ func NewUI(cfg *fm.Config) *UI {
 	ui := &UI{
 		fmCfg:                      cfg,
 		configPath:                 resolveUIConfigPath(),
+		httpCollectionsPath:        resolveHTTPCollectionsPath(),
 		typeface:                   font.Typeface(cfg.General.Typeface),
 		textSize:                   fontSizeFromConfig(cfg),
 		runtimeTerminalShell:       fm.NormalizeViewerShell(cfg.Viewer.Shell),
@@ -794,6 +797,7 @@ func (ui *UI) syncThemeRuntime(th *material.Theme) {
 func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.syncThemeRuntime(th)
 	ui.handleFunctionBarModifierKeys(gtx)
+	ui.handleHTTPClientKeys(gtx)
 	ui.handleGlobalFunctionKeys(gtx)
 	ui.handleTerminalSnippetShortcut(gtx)
 	ui.handleTerminalSnippetMenuKeys(gtx)
@@ -838,6 +842,10 @@ func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 						ui.closeFileViewer()
 						ui.resetKeys()
 						return ui.layoutTab2(th, gtx)
+					case "tab3":
+						ui.closeFileViewer()
+						ui.resetKeys()
+						return ui.layoutTab3(th, gtx)
 					default:
 						ui.wantFocusTable = true
 						return ui.layoutTab1(th, gtx)

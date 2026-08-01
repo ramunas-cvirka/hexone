@@ -30,6 +30,10 @@ func SessionPath() string {
 	return dataFilePath(sessionFileName)
 }
 
+func HTTPCollectionsPath() string {
+	return dataFilePath(httpCollectionsFileName)
+}
+
 func ProtocolPath() string {
 	return dataFilePath(protocolsFileName)
 }

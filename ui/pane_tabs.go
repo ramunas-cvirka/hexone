@@ -4,6 +4,7 @@
 package ui
 
 import (
+	resources "hexone"
 	"hexone/fm"
 	uitheme "hexone/ui/theme"
 	"image"
@@ -1430,6 +1431,9 @@ func tabStripTitleTextWidth(th *material.Theme, gtx layout.Context, face font.Ty
 
 func (ui *UI) tabStripTypeface() font.Typeface {
 	if ui == nil || ui.fmCfg == nil || ui.fmCfg.Tabs.Typeface == "" {
+		return ui.mainTypeface()
+	}
+	if !resources.IsBundledFontFamily(ui.fmCfg.Tabs.Typeface) {
 		return ui.mainTypeface()
 	}
 	return font.Typeface(ui.fmCfg.Tabs.Typeface)

@@ -83,7 +83,7 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F6` moves or renames.
 - `F7` creates a file or folder.
 - `F8` or `Delete` deletes selected items. In **Settings → File panes → Other**, deletion can use the local system Trash / Recycle Bin and can optionally skip confirmation. SSH deletions are always permanent.
-- `F9` opens the Tools menu (`Multi-Rename`, `Hex to ASCII`, `Protocol Analyzer`, `Settings`).
+- `F9` opens the Tools menu (`Multi-Rename`, `Hex to ASCII`, `Protocol Analyzer`, `HTTP Client`, `Settings`).
 - `Ctrl+M` / `Cmd+M` opens Multi-Rename for the current file-pane selection.
 - `F10` exits the app.
 - `F11` hides or shows the function key bar.
@@ -427,6 +427,23 @@ Notes:
 - `word_wrap` controls File and Cmd text and can also be toggled from their right-click menu
 - `command_auto_refresh` matters most for non-streaming command mode
 - Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling, line numbers, and viewer auto-hide
+
+## HTTP Client
+
+Open **F9 → HTTP Client** for a compact request workbench.
+
+- The left pane lists collections, folders, and saved requests from `hexone-http.yaml`. Use the connected `[ + ]` menu to add a request, folder, or collection to the selected part of the tree; click collection or folder rows to collapse or expand them.
+- Drag the vertical collection separator or the horizontal request/response separator to resize the panes. The collection width stays fixed when the application window width changes; the request column absorbs the change. Collections, request content, and responses scroll independently and show compact scrollbars when their content overflows.
+- Selecting a request opens it in the connected request-tab strip. Use `x` to close a view without deleting the saved request, or `+` to create a new request in the `Scratch requests` collection.
+- Click the compact method or environment selector to move to the next available value.
+- Edit query parameters as `name=value` lines and headers as `Name: value` lines. Prefix a line with `#` to keep it saved but disabled.
+- Request bodies are stored as plain multi-line text.
+- `Enter` in the URL field sends the current request. `Ctrl+Enter` or `Cmd+Enter` sends it from elsewhere in the workbench.
+- `Ctrl+S` or `Cmd+S` saves all collection changes atomically. Replacing an existing file also creates `hexone-http.yaml.bak`.
+- Response views include pretty JSON, the raw body, and ordered response headers.
+- Environment values can be referenced as `{{variable_name}}` in URLs, query parameters, headers, and bodies.
+
+Hexone creates `hexone-http.yaml` beside `hexone.yaml` the first time the HTTP Client opens. Collection headers and query parameters use YAML lists so duplicate names and display order are preserved.
 
 ## Protocol Analyzer
 
