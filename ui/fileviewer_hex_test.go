@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -124,6 +125,88 @@ func TestCopyFileViewerTextRejectsHexSelectionOverLimit(t *testing.T) {
 	}
 	if got, want := st.status, "hex copy is limited to 1 MiB"; got != want {
 		t.Fatalf("status = %q, want %q", got, want)
+	}
+}
+
+func TestCopyFileViewerHexUsesRemoteFindMatchBeforeChunkLoads(t *testing.T) {
+	oldWriteNow := writeFileViewerClipboardNow
+	writeFileViewerClipboardNow = func(string) error { return nil }
+	t.Cleanup(func() { writeFileViewerClipboardNow = oldWriteNow })
+
+	for _, tc := range []struct {
+		name     string
+		query    string
+		hexInput bool
+		asText   bool
+		want     string
+	}{
+		{name: "text query as hex", query: "needle", want: "6E6565646C65"},
+		{name: "text query as text", query: "needle", asText: true, want: "needle"},
+		{name: "hex query as hex", query: "DE AD BE EF", hexInput: true, want: "DEADBEEF"},
+		{name: "hex query as text", query: "DE AD BE EF", hexInput: true, asText: true, want: `\xDE\xAD\xBE\xEF`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newHexViewerState()
+			v.fileSize = 4096
+			v.buffer = []byte("old")
+			v.setSelectionRange(0, 3)
+			st := &fileViewerState{
+				mode:   "hex",
+				hex:    v,
+				remote: &paneSSHSession{},
+			}
+			st.find.open = true
+			st.find.hexInput = tc.hexInput
+			st.find.currentValid = true
+			st.find.currentStart = 2048
+			pattern, errText := viewerFindPatternBytes(tc.query, tc.hexInput)
+			if errText != "" {
+				t.Fatalf("test query is invalid: %s", errText)
+			}
+			st.find.currentLen = int64(len(pattern))
+			st.find.editor.SetText(tc.query)
+			ui := NewUI(fm.DefaultConfig())
+			ui.fileViewer = st
+			router := new(input.Router)
+			gtx := layout.Context{Ops: new(op.Ops), Source: router.Source()}
+
+			if !ui.copyFileViewerHex(gtx, false, tc.asText) {
+				t.Fatalf("copy failed: status=%q", st.status)
+			}
+			_, got, ok := router.WriteClipboard()
+			if !ok || string(got) != tc.want {
+				t.Fatalf("clipboard=(%t, %q), want (true, %q)", ok, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFileViewerCopyUsesPlatformShortcut(t *testing.T) {
+	oldWriteNow := writeFileViewerClipboardNow
+	writeFileViewerClipboardNow = func(string) error { return nil }
+	t.Cleanup(func() { writeFileViewerClipboardNow = oldWriteNow })
+
+	v := newHexViewerState()
+	v.fileSize = 3
+	v.buffer = []byte{0xCA, 0xFE, 0x01}
+	v.setSelectionRange(0, 3)
+	st := &fileViewerState{mode: "hex", hex: v}
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	router := new(input.Router)
+	gtx := layout.Context{Ops: new(op.Ops), Source: router.Source()}
+	frame := func() {
+		gtx.Ops.Reset()
+		ui.handleFileViewerKeys(gtx)
+		router.Frame(gtx.Ops)
+	}
+	frame()
+	router.Queue(key.Event{Name: "c", Modifiers: key.ModShortcut, State: key.Press})
+	frame()
+
+	_, got, ok := router.WriteClipboard()
+	if !ok || string(got) != "CAFE01" {
+		t.Fatalf("clipboard=(%t, %q), want (true, %q)", ok, got, "CAFE01")
 	}
 }
 

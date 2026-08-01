@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hexone/filesys"
 	"hexone/fm"
+	"hexone/ui/platform"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -699,10 +700,7 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 			st.status = "nothing to copy"
 			return false
 		}
-		gtx.Execute(clipboard.WriteCmd{
-			Type: "application/text",
-			Data: io.NopCloser(strings.NewReader(text)),
-		})
+		writeFileViewerClipboard(gtx, text)
 		st.err = ""
 		return true
 	}
@@ -718,10 +716,7 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 		return false
 	}
 	text = viewerClipboardContent(st, text)
-	gtx.Execute(clipboard.WriteCmd{
-		Type: "application/text",
-		Data: io.NopCloser(strings.NewReader(text)),
-	})
+	writeFileViewerClipboard(gtx, text)
 	st.err = ""
 	return true
 }
@@ -733,7 +728,10 @@ func (ui *UI) copyFileViewerHex(gtx layout.Context, fallbackAll, asText bool) bo
 	}
 	v := st.hex
 	var start, length int64
+	copyingFindMatch := st.find.open && st.find.currentValid && st.find.currentLen > 0
 	switch {
+	case copyingFindMatch:
+		start, length = st.find.currentStart, st.find.currentLen
 	case v.hasSelection():
 		start, length = v.selectionStart, v.selectionLen
 	case fallbackAll && len(v.buffer) > 0:
@@ -746,14 +744,20 @@ func (ui *UI) copyFileViewerHex(gtx layout.Context, fallbackAll, asText bool) bo
 		st.status = "hex copy is limited to 1 MiB"
 		return false
 	}
-	data := make([]byte, length)
-	for i := int64(0); i < length; i++ {
-		value, ok := v.byteAt(start + i)
-		if !ok {
-			st.status = "selection is not loaded"
-			return false
+	data, loaded := copyHexViewerBytes(v, start, length)
+	if !loaded && copyingFindMatch {
+		// Remote-find results can arrive before the SFTP viewport chunk. The
+		// matched bytes are the exact search pattern, so copying need not wait
+		// for that second network round trip.
+		pattern, errText := viewerFindPatternBytes(st.find.editor.Text(), st.find.hexInput)
+		if errText == "" && int64(len(pattern)) == length {
+			data = pattern
+			loaded = true
 		}
-		data[i] = value
+	}
+	if !loaded {
+		st.status = "selection is not loaded"
+		return false
 	}
 	if len(data) == 0 {
 		st.status = "nothing to copy"
@@ -763,12 +767,42 @@ func (ui *UI) copyFileViewerHex(gtx layout.Context, fallbackAll, asText bool) bo
 	if asText {
 		text = formatHexSelectionTextCopy(data)
 	}
+	writeFileViewerClipboard(gtx, text)
+	if asText {
+		st.status = "copied as text"
+	} else {
+		st.status = "copied as hex"
+	}
+	st.err = ""
+	return true
+}
+
+func copyHexViewerBytes(v *hexViewerState, start, length int64) ([]byte, bool) {
+	if v == nil || start < 0 || length < 0 {
+		return nil, false
+	}
+	data := make([]byte, int(length))
+	for i := int64(0); i < length; i++ {
+		value, ok := v.byteAt(start + i)
+		if !ok {
+			return nil, false
+		}
+		data[int(i)] = value
+	}
+	return data, true
+}
+
+var writeFileViewerClipboardNow = platform.WriteClipboardTextNow
+
+func writeFileViewerClipboard(gtx layout.Context, text string) {
+	// Keep Gio's portable command for every platform. On Windows, the
+	// synchronous writer adds retries because Gio silently drops a clipboard
+	// write when its one OpenClipboard attempt loses a race.
+	_ = writeFileViewerClipboardNow(text)
 	gtx.Execute(clipboard.WriteCmd{
 		Type: "application/text",
 		Data: io.NopCloser(strings.NewReader(text)),
 	})
-	st.err = ""
-	return true
 }
 
 func (ui *UI) startFileViewer(idx int, now time.Time) {

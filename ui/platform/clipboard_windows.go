@@ -44,3 +44,50 @@ func ReadClipboardTextNow() (string, error) {
 
 	return windows.UTF16PtrToString((*uint16)(unsafe.Pointer(ptr))), nil
 }
+
+// WriteClipboardTextNow writes Unicode text with the same retry behavior used
+// by the native file clipboard. Gio's Windows clipboard writer makes a single
+// OpenClipboard attempt and silently drops the write when another process has
+// the clipboard open.
+func WriteClipboardTextNow(text string) error {
+	u16, err := windows.UTF16FromString(text)
+	if err != nil {
+		return fmt.Errorf("encode clipboard text: %w", err)
+	}
+
+	bytes := len(u16) * 2
+	mem, _, callErr := procGlobalAlloc.Call(clipboardGMEMMoveable|clipboardGMEMZeroInit, uintptr(bytes))
+	if mem == 0 {
+		return fmt.Errorf("allocate clipboard text: %w", callErr)
+	}
+	owned := true
+	defer func() {
+		if owned {
+			procGlobalFree.Call(mem)
+		}
+	}()
+
+	ptr, _, callErr := procGlobalLock.Call(mem)
+	if ptr == 0 {
+		return fmt.Errorf("lock clipboard text: %w", callErr)
+	}
+	copy(unsafe.Slice((*uint16)(unsafe.Pointer(ptr)), len(u16)), u16)
+	procGlobalUnlock.Call(mem)
+
+	owner, _, _ := procGetActiveWindow.Call()
+	if owner == 0 {
+		owner, _, _ = procGetForegroundWindow.Call()
+	}
+	if err := openSystemClipboard(owner); err != nil {
+		return err
+	}
+	defer procCloseClipboard.Call()
+	if ok, _, callErr := procEmptyClipboard.Call(); ok == 0 {
+		return fmt.Errorf("empty clipboard: %w", callErr)
+	}
+	if ok, _, callErr := procSetClipboardData.Call(clipboardCFUnicodeText, mem); ok == 0 {
+		return fmt.Errorf("set clipboard text: %w", callErr)
+	}
+	owned = false
+	return nil
+}
