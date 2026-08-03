@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -31,6 +32,12 @@ import (
 )
 
 var dialogDividerColor = color.NRGBA{R: 255, G: 255, B: 255, A: 30}
+
+const (
+	fileOverwriteConnectorWidthDp = unit.Dp(12)
+	fileOverwriteConnectorGapDp   = unit.Dp(7)
+	fileOverwriteCellInsetDp      = unit.Dp(12)
+)
 
 type fileCopyState struct {
 	pane    int
@@ -60,8 +67,11 @@ type fileCopyState struct {
 	progress filesys.CopyProgress
 	lastErr  string
 
-	srcInfo fileCopyPathInfo
-	dstInfo fileCopyPathInfo
+	srcInfo       fileCopyPathInfo
+	dstInfo       fileCopyPathInfo
+	conflicts     []fileOverwriteConflict
+	conflictCount int
+	conflictList  widget.List
 
 	progressCh    chan filesys.CopyProgress
 	doneCh        chan error
@@ -127,12 +137,14 @@ type fileCopyPathInfo struct {
 }
 
 type fileCopyPreviewResult struct {
-	id      uint64
-	raw     string
-	dstPath string
-	srcInfo fileCopyPathInfo
-	dstInfo fileCopyPathInfo
-	err     error
+	id            uint64
+	raw           string
+	dstPath       string
+	srcInfo       fileCopyPathInfo
+	dstInfo       fileCopyPathInfo
+	conflicts     []fileOverwriteConflict
+	conflictCount int
+	err           error
 }
 
 type segmentedAnimState struct {
@@ -744,7 +756,7 @@ func (st *fileCopyState) confirmLabel() string {
 	if st.running {
 		return "Copying..."
 	}
-	if st.dstInfo.Exists && !st.multiSource() {
+	if (!st.multiSource() && st.dstInfo.Exists) || (st.multiSource() && st.conflictCount > 0) {
 		return "Overwrite"
 	}
 	return "Copy"
@@ -756,6 +768,8 @@ func (st *fileCopyState) refreshPreview() {
 	}
 	raw := strings.TrimSpace(st.dstEdit.Text())
 	st.dstRaw = raw
+	st.conflicts = nil
+	st.conflictCount = 0
 	if raw == "" {
 		if st.previewCancel != nil {
 			st.previewCancel()
@@ -765,6 +779,8 @@ func (st *fileCopyState) refreshPreview() {
 		st.previewing = false
 		st.dstPath = ""
 		st.dstInfo = fileCopyPathInfo{}
+		st.conflicts = nil
+		st.conflictCount = 0
 		return
 	}
 
@@ -781,6 +797,8 @@ func (st *fileCopyState) refreshPreview() {
 		st.previewing = true
 		st.srcInfo = fileCopyPathInfo{}
 		st.dstInfo = fileCopyPathInfo{}
+		st.conflicts = nil
+		st.conflictCount = 0
 		if dstPath, err := st.dstEndpoint.normalizePath(raw); err == nil {
 			st.dstPath = dstPath
 		} else {
@@ -791,6 +809,7 @@ func (st *fileCopyState) refreshPreview() {
 		srcEndpoint := st.srcEndpoint
 		dstEndpoint := st.dstEndpoint
 		srcPath := st.srcPath
+		sources := append([]fileCopySource(nil), st.sources...)
 		multi := st.multiSource()
 		go func() {
 			timer := time.NewTimer(fileCopyRemotePreviewDebounce)
@@ -803,6 +822,9 @@ func (st *fileCopyState) refreshPreview() {
 			res := fileCopyPreviewResult{id: id, raw: raw}
 			if multi {
 				res.dstPath, res.dstInfo, res.err = inspectCopyDestinationDir(dstEndpoint, raw)
+				if res.err == nil {
+					res.conflicts, res.conflictCount, res.err = inspectFileOverwriteConflicts(srcEndpoint, sources, dstEndpoint, res.dstPath)
+				}
 			} else {
 				res.dstPath, res.srcInfo, res.dstInfo, res.err = inspectCopyPaths(srcEndpoint, srcPath, dstEndpoint, raw)
 			}
@@ -820,6 +842,7 @@ func (st *fileCopyState) refreshPreview() {
 		st.dstPath = effectiveDst
 		st.dstInfo = dstInfo
 		st.srcInfo = fileCopyPathInfo{}
+		st.conflicts, st.conflictCount, _ = inspectFileOverwriteConflicts(st.srcEndpoint, st.sources, st.dstEndpoint, effectiveDst)
 		return
 	}
 
@@ -831,6 +854,8 @@ func (st *fileCopyState) refreshPreview() {
 	st.dstPath = effectiveDst
 	st.srcInfo = srcInfo
 	st.dstInfo = dstInfo
+	st.conflicts = nil
+	st.conflictCount = 0
 }
 
 func (st *fileCopyState) pumpPreview() {
@@ -852,6 +877,8 @@ func (st *fileCopyState) pumpPreview() {
 			st.dstPath = res.dstPath
 			st.srcInfo = res.srcInfo
 			st.dstInfo = res.dstInfo
+			st.conflicts = res.conflicts
+			st.conflictCount = res.conflictCount
 		default:
 			return
 		}
@@ -868,6 +895,29 @@ func (ui *UI) submitFileCopyDialog(now time.Time) {
 	if dst == "" {
 		st.lastErr = "destination path is empty"
 		return
+	}
+	if st.multiSource() {
+		effectiveDst, dstInfo, err := inspectCopyDestinationDir(st.dstEndpoint, dst)
+		if err != nil {
+			st.lastErr = err.Error()
+			return
+		}
+		conflicts, conflictCount, err := inspectFileOverwriteConflicts(st.srcEndpoint, st.sources, st.dstEndpoint, effectiveDst)
+		if err != nil {
+			st.lastErr = err.Error()
+			return
+		}
+		previewMatches := sameFileOverwriteConflictPreview(st.conflicts, st.conflictCount, conflicts, conflictCount)
+		st.dstPath = effectiveDst
+		st.dstInfo = dstInfo
+		st.conflicts = conflicts
+		st.conflictCount = conflictCount
+		if conflictCount > 0 && !previewMatches {
+			// A collision appeared or changed since the preview was rendered.
+			// Require another explicit click now that the comparison is visible.
+			st.lastErr = ""
+			return
+		}
 	}
 
 	st.dstRaw = dst
@@ -1369,7 +1419,11 @@ func (ui *UI) layoutFileCopyDialog(th *material.Theme, gtx layout.Context) layou
 		defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
 		paint.FillShape(gtx.Ops, color.NRGBA{A: 120}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
-		width := gtx.Dp(ui.scaleInterfaceDp(unit.Dp(500)))
+		dialogWidth := unit.Dp(500)
+		if !st.running && ((!st.multiSource() && st.dstInfo.Exists) || st.conflictCount > 0) {
+			dialogWidth = unit.Dp(620)
+		}
+		width := gtx.Dp(ui.scaleInterfaceDp(dialogWidth))
 		maxWidth := gtx.Constraints.Max.X - gtx.Dp(unit.Dp(16))
 		if width > maxWidth {
 			width = maxWidth
@@ -1445,6 +1499,8 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 	overwriteLabel := ""
 	if !st.running && st.dstInfo.Exists && !st.multiSource() {
 		overwriteLabel = "Destination exists. Overwrite will replace it."
+	} else if !st.running && st.multiSource() && st.conflictCount > 0 {
+		overwriteLabel = fmt.Sprintf("%d existing %s will be overwritten.", st.conflictCount, pluralizeFileDestinations(st.conflictCount))
 	}
 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -1500,7 +1556,14 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			if st.running || !st.dstInfo.Exists || st.multiSource() {
+			if st.running {
+				return layout.Dimensions{}
+			}
+			gtx = fileOpDialogReserveFooter(gtx)
+			if st.multiSource() {
+				return ui.layoutFileOverwriteConflicts(th, gtx, st.conflicts, st.conflictCount, &st.conflictList)
+			}
+			if !st.dstInfo.Exists {
 				return layout.Dimensions{}
 			}
 			return ui.layoutFileCopyOverwriteInfo(th, gtx, st)
@@ -1556,6 +1619,13 @@ func (ui *UI) layoutFileCopyDialogBody(th *material.Theme, gtx layout.Context, s
 	)
 }
 
+func fileOpDialogReserveFooter(gtx layout.Context) layout.Context {
+	const footerHeight = unit.Dp(64)
+	gtx.Constraints.Min.Y = 0
+	gtx.Constraints.Max.Y = max(1, gtx.Constraints.Max.Y-gtx.Dp(footerHeight))
+	return gtx
+}
+
 type fileCopyProgressDisplay struct {
 	Indeterminate  bool
 	PrimaryLabel   string
@@ -1598,161 +1668,418 @@ func (ui *UI) layoutFileCopyOverwriteInfo(th *material.Theme, gtx layout.Context
 	return ui.layoutFileOverwriteDiffInfo(th, gtx, "Overwrite Details", st.srcInfo, st.dstInfo)
 }
 
-type fileOverwriteDiffPart struct {
-	Text      string
-	Highlight bool
-}
-
-type fileOverwriteDiffRow struct {
-	Prefix string
-	Size   fileOverwriteDiffPart
-	Date   fileOverwriteDiffPart
-	Time   fileOverwriteDiffPart
+func pluralizeFileDestinations(count int) string {
+	if count == 1 {
+		return "destination"
+	}
+	return "destinations"
 }
 
 type fileOverwriteDiffStyle struct {
-	Title       color.NRGBA
-	Text        color.NRGBA
-	Muted       color.NRGBA
-	HighlightBg color.NRGBA
-	HighlightFg color.NRGBA
-	HighlightBr color.NRGBA
-}
-
-type fileOverwriteDiffColumns struct {
-	Size int
-	Date int
-	Time int
+	Title color.NRGBA
+	Text  color.NRGBA
+	Muted color.NRGBA
+	Newer color.NRGBA
+	Older color.NRGBA
+	Same  color.NRGBA
 }
 
 func (ui *UI) layoutFileOverwriteDiffInfo(th *material.Theme, gtx layout.Context, title string, srcInfo, dstInfo fileCopyPathInfo) layout.Dimensions {
+	name := path.Base(filepath.ToSlash(srcInfo.Path))
+	if name == "." || name == "/" || strings.TrimSpace(name) == "" {
+		name = "item"
+	}
+	return ui.layoutFileOverwriteConflictPanel(th, gtx, title, []fileOverwriteConflict{{
+		Name: name, SrcInfo: srcInfo, DstInfo: dstInfo,
+	}}, nil)
+}
+
+func (ui *UI) layoutFileOverwriteConflicts(th *material.Theme, gtx layout.Context, conflicts []fileOverwriteConflict, total int, listState *widget.List) layout.Dimensions {
+	if total <= 0 || len(conflicts) == 0 {
+		return layout.Dimensions{}
+	}
+	title := fmt.Sprintf("Overwrite Details • %d %s", total, pluralizeFileDestinations(total))
+	return ui.layoutFileOverwriteConflictPanel(th, gtx, title, conflicts, listState)
+}
+
+func (ui *UI) layoutFileOverwriteConflictPanel(th *material.Theme, gtx layout.Context, title string, conflicts []fileOverwriteConflict, listState *widget.List) layout.Dimensions {
+	if len(conflicts) == 0 {
+		return layout.Dimensions{}
+	}
+	if listState == nil {
+		listState = &widget.List{}
+	}
+	listState.Axis = layout.Vertical
 	panelBg := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
 	panelBorder := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
 	style := ui.fileOverwriteDiffStyle(panelBg)
-	rows := fileOverwriteDiffRows(srcInfo, dstInfo)
-	columns := ui.fileOverwriteDiffColumns(th, gtx, rows)
+	weights := ui.fileOverwriteLedgerWeightsFor(th, gtx, conflicts)
+	olderCount := fileOverwriteOlderSourceCount(conflicts)
+	entry := func(gtx layout.Context, index int) layout.Dimensions {
+		return ui.layoutFileOverwriteLedgerEntry(th, gtx, conflicts[index], style, weights)
+	}
+	measure := op.Record(gtx.Ops)
+	entryDims := entry(gtx, 0)
+	measure.Stop()
+	visibleCount := min(fileOverwriteConflictVisibleLimit, len(conflicts))
+	viewportHeight := entryDims.Size.Y * visibleCount
+
 	return fillFlatBox(
 		gtx,
 		panelBg,
 		panelBorder,
 		func(gtx layout.Context) layout.Dimensions {
 			return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				children := make([]layout.FlexChild, 0, 2+len(rows))
-				children = append(children,
+				children := []layout.FlexChild{
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 						lbl := material.Caption(th, title)
 						lbl.Font.Typeface = ui.interfaceTypeface()
-						lbl.TextSize = ui.scaleDialogFontSize(9)
+						lbl.TextSize = ui.fileOpDialogTextSize()
 						lbl.Color = style.Title
 						return lbl.Layout(gtx)
 					}),
-				)
-				children = append(children, layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout))
-				for _, row := range rows {
-					row := row
-					children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileOverwriteDiffRow(th, gtx, row, columns, style)
-					}))
 				}
+				if olderCount > 0 {
+					children = append(children,
+						layout.Rigid(layout.Spacer{Height: unit.Dp(2)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							warning := fmt.Sprintf("⚠ %d older %s will replace newer destination data", olderCount, fileOpItemWord(olderCount))
+							lbl := material.Caption(th, warning)
+							lbl.Font.Typeface = ui.interfaceTypeface()
+							lbl.TextSize = ui.fileOpDialogTextSize()
+							lbl.Color = style.Older
+							lbl.MaxLines = 1
+							lbl.Truncator = "…"
+							return lbl.Layout(gtx)
+						}),
+					)
+				}
+				children = append(children,
+					layout.Rigid(layout.Spacer{Height: unit.Dp(3)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						height := min(viewportHeight, gtx.Constraints.Max.Y)
+						return ui.layoutFileOverwriteLedger(th, gtx, conflicts, style, weights, listState, height, entryDims.Size.Y, entry)
+					}),
+				)
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 			})
 		},
 	)
 }
 
-func (ui *UI) fileOverwriteDiffColumns(th *material.Theme, gtx layout.Context, rows []fileOverwriteDiffRow) fileOverwriteDiffColumns {
-	cellWidth := func(part fileOverwriteDiffPart) int {
-		if part.Text == "" {
-			return 0
-		}
-		lbl := material.Caption(th, part.Text)
-		lbl.Font.Typeface = ui.interfaceTypeface()
-		lbl.TextSize = ui.scaleDialogFontSize(9)
-		lbl.MaxLines = 1
-		width := measureLabelUnconstrained(gtx, lbl).Size.X
-		return width + gtx.Dp(unit.Dp(6))
+func fileOpItemWord(count int) string {
+	if count == 1 {
+		return "source"
 	}
-	cols := fileOverwriteDiffColumns{}
-	for _, row := range rows {
-		if w := cellWidth(row.Size); w > cols.Size {
-			cols.Size = w
-		}
-		if w := cellWidth(row.Date); w > cols.Date {
-			cols.Date = w
-		}
-		if w := cellWidth(row.Time); w > cols.Time {
-			cols.Time = w
-		}
-	}
-	return cols
+	return "sources"
 }
 
-func (ui *UI) layoutFileOverwriteDiffRow(th *material.Theme, gtx layout.Context, row fileOverwriteDiffRow, columns fileOverwriteDiffColumns, style fileOverwriteDiffStyle) layout.Dimensions {
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+func (ui *UI) layoutFileOverwriteLedgerEntry(th *material.Theme, gtx layout.Context, conflict fileOverwriteConflict, style fileOverwriteDiffStyle, weights [5]float32) layout.Dimensions {
+	// The destination is the value being replaced (OLD); the source is the
+	// incoming replacement (NEW). STAT therefore compares NEW against OLD.
+	status, relation := fileOverwriteDiffStatus(conflict.SrcInfo.ModTime, conflict.DstInfo.ModTime)
+	statusColor := style.Same
+	boldOld := false
+	boldNew := false
+	switch relation {
+	case fileOverwriteSourceNewer:
+		statusColor = style.Newer
+		boldNew = true
+	case fileOverwriteSourceOlder:
+		statusColor = style.Older
+		boldOld = true
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return fixedWidth(gtx, gtx.Dp(unit.Dp(24)), func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Caption(th, row.Prefix)
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleDialogFontSize(9)
-				lbl.Color = style.Muted
-				lbl.MaxLines = 1
-				return lbl.Layout(gtx)
-			})
+			return ui.layoutFileOverwriteLedgerPairCells(gtx, [5]layout.Widget{
+				ui.fileOverwriteTableFilename(th, conflict.Name, style.Text),
+				ui.fileOverwriteLedgerPair(
+					ui.fileOverwriteTableText(th, "OLD", style.Muted, false),
+					ui.fileOverwriteTableText(th, "NEW", style.Muted, false),
+				),
+				ui.fileOverwriteLedgerPairValue(
+					th,
+					fileOverwriteSizeText(conflict.DstInfo),
+					fileOverwriteSizeText(conflict.SrcInfo),
+					style.Text,
+					style.Muted,
+					boldOld,
+					boldNew,
+				),
+				ui.fileOverwriteLedgerPairValue(
+					th,
+					fileOverwriteTimestampText(conflict.DstInfo.ModTime),
+					fileOverwriteTimestampText(conflict.SrcInfo.ModTime),
+					style.Text,
+					style.Muted,
+					boldOld,
+					boldNew,
+				),
+				ui.fileOverwriteLedgerPair(
+					ui.fileOverwriteTableText(th, "", style.Text, false),
+					ui.fileOverwriteTableText(th, status, statusColor, false),
+				),
+			}, weights)
 		}),
-		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			defer clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Push(gtx.Ops).Pop()
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, columns.Size, func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileOverwriteDiffPart(th, gtx, row.Size, style)
-					})
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, columns.Date, func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileOverwriteDiffPart(th, gtx, row.Date, style)
-					})
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(4)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return fixedWidth(gtx, columns.Time, func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutFileOverwriteDiffPart(th, gtx, row.Time, style)
-					})
-				}),
-			)
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFileOverwriteRule(gtx, style.Muted)
+			})
 		}),
 	)
 }
 
-func (ui *UI) layoutFileOverwriteDiffPart(th *material.Theme, gtx layout.Context, part fileOverwriteDiffPart, style fileOverwriteDiffStyle) layout.Dimensions {
-	if part.Text == "" {
-		return layout.Dimensions{}
+func (ui *UI) layoutFileOverwriteLedgerPairCells(gtx layout.Context, cells [5]layout.Widget, weights [5]float32) layout.Dimensions {
+	children := make([]layout.FlexChild, 0, len(cells))
+	for i := range cells {
+		i := i
+		children = append(children, layout.Flexed(weights[i], func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(4)}.Layout(gtx, cells[i])
+		}))
 	}
-	label := func(gtx layout.Context, col color.NRGBA) layout.Dimensions {
-		lbl := material.Caption(th, part.Text)
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
+func (ui *UI) fileOverwriteLedgerPair(top, bottom layout.Widget) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, top)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, bottom)
+			}),
+		)
+	}
+}
+
+// fileOverwriteLedgerPairValue draws one continuous old-to-new
+// connector. Keeping it as vector geometry avoids gaps and alignment changes
+// between fonts that render box-drawing and return-arrow glyphs differently.
+func (ui *UI) fileOverwriteLedgerPairValue(th *material.Theme, oldValue, newValue string, textColor, connectorColor color.NRGBA, boldOld, boldNew bool) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		cellWidth := gtx.Constraints.Max.X
+		connectorWidth := gtx.Dp(fileOverwriteConnectorWidthDp)
+		connectorInset := fileOverwriteConnectorWidthDp + fileOverwriteConnectorGapDp
+		macro := op.Record(gtx.Ops)
+		contentGtx := gtx
+		contentGtx.Constraints.Min.X = 0
+		dims := ui.fileOverwriteLedgerPair(
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Right: connectorInset}.Layout(gtx, ui.fileOverwriteTableText(th, oldValue, textColor, boldOld))
+			},
+			func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Right: connectorInset}.Layout(gtx, ui.fileOverwriteTableText(th, newValue, textColor, boldNew))
+			},
+		)(contentGtx)
+		content := macro.Stop()
+		content.Add(gtx.Ops)
+
+		if dims.Size.X <= connectorWidth || dims.Size.Y < 4 {
+			dims.Size.X = cellWidth
+			return dims
+		}
+		x := float32(dims.Size.X) - 1.5
+		arm := float32(max(4, connectorWidth-3))
+		topY := float32(dims.Size.Y) * 0.25
+		bottomY := float32(dims.Size.Y) * 0.75
+		arrow := float32(min(3, max(2, connectorWidth/4)))
+		var connector clip.Path
+		connector.Begin(gtx.Ops)
+		connector.MoveTo(f32.Pt(x-arm, topY))
+		connector.LineTo(f32.Pt(x, topY))
+		connector.LineTo(f32.Pt(x, bottomY))
+		connector.LineTo(f32.Pt(x-arm, bottomY))
+		connector.MoveTo(f32.Pt(x-arm+arrow, bottomY-arrow))
+		connector.LineTo(f32.Pt(x-arm, bottomY))
+		connector.LineTo(f32.Pt(x-arm+arrow, bottomY+arrow))
+		paint.FillShape(gtx.Ops, connectorColor, clip.Stroke{Path: connector.End(), Width: 1}.Op())
+		dims.Size.X = cellWidth
+		return dims
+	}
+}
+
+func (ui *UI) fileOverwriteLedgerWeightsFor(th *material.Theme, gtx layout.Context, conflicts []fileOverwriteConflict) [5]float32 {
+	const (
+		baseFile = float32(0.16)
+		maxFile  = float32(0.38)
+		state    = float32(0.10)
+		stat     = float32(0.14)
+		minSize  = float32(0.12)
+		minTime  = float32(0.24)
+	)
+	maxNameWidth := 0
+	maxSizeWidth := 0
+	maxTimeWidth := 0
+	measureValue := func(text string) int {
+		lbl := material.Caption(th, text)
 		lbl.Font.Typeface = ui.interfaceTypeface()
-		lbl.TextSize = ui.scaleDialogFontSize(9)
-		lbl.Color = col
+		lbl.Font.Weight = font.Bold
+		lbl.TextSize = ui.fileOpDialogTextSize()
+		lbl.MaxLines = 1
+		return measureLabelUnconstrained(gtx, lbl).Size.X
+	}
+	for _, conflict := range conflicts {
+		lbl := material.Caption(th, conflict.Name)
+		lbl.Font.Typeface = ui.interfaceTypeface()
+		lbl.TextSize = ui.fileOpDialogTextSize()
+		lbl.MaxLines = 1
+		if width := measureLabelUnconstrained(gtx, lbl).Size.X; width > maxNameWidth {
+			maxNameWidth = width
+		}
+		for _, value := range []string{fileOverwriteSizeText(conflict.DstInfo), fileOverwriteSizeText(conflict.SrcInfo)} {
+			if width := measureValue(value); width > maxSizeWidth {
+				maxSizeWidth = width
+			}
+		}
+		for _, value := range []string{fileOverwriteTimestampText(conflict.DstInfo.ModTime), fileOverwriteTimestampText(conflict.SrcInfo.ModTime)} {
+			if width := measureValue(value); width > maxTimeWidth {
+				maxTimeWidth = width
+			}
+		}
+	}
+	tableWidth := max(1, gtx.Constraints.Max.X)
+	file := float32(maxNameWidth+gtx.Dp(unit.Dp(16))) / float32(tableWidth)
+	if file < baseFile {
+		file = baseFile
+	}
+	if file > maxFile {
+		file = maxFile
+	}
+	// Include breathing room for flex rounding and for the scrollbar that is
+	// present when the conflict list exceeds five entries.
+	valueChrome := gtx.Dp(fileOverwriteCellInsetDp + fileOverwriteConnectorWidthDp + fileOverwriteConnectorGapDp + unit.Dp(10))
+	size := max(minSize, float32(maxSizeWidth+valueChrome)/float32(tableWidth))
+	modified := max(minTime, float32(maxTimeWidth+valueChrome)/float32(tableWidth))
+	if capacity := 1 - state - stat - size - modified; file > capacity {
+		file = max(baseFile, capacity)
+	}
+	if total := file + state + size + modified + stat; total < 1 {
+		modified += 1 - total
+	}
+	return [5]float32{file, state, size, modified, stat}
+}
+
+func (ui *UI) layoutFileOverwriteLedger(th *material.Theme, gtx layout.Context, conflicts []fileOverwriteConflict, style fileOverwriteDiffStyle, weights [5]float32, listState *widget.List, viewportHeight, entryHeight int, entry layout.ListElement) layout.Dimensions {
+	scrolling := len(conflicts) > fileOverwriteConflictVisibleLimit
+	scrollbarStyle := settingsScrollbarStyle(th, &listState.Scrollbar)
+	scrollbarWidth := 0
+	if scrolling {
+		scrollbarWidth = gtx.Dp(scrollbarStyle.Width())
+	}
+	tableWidth := max(1, gtx.Constraints.Max.X-scrollbarWidth)
+	header := func(gtx layout.Context) layout.Dimensions {
+		return fixedWidth(gtx, tableWidth, func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutFileOverwriteLedgerCells(gtx, [5]layout.Widget{
+				ui.fileOverwriteTableText(th, "FILE", style.Muted, false),
+				ui.fileOverwriteTableText(th, "STATE", style.Muted, false),
+				ui.fileOverwriteTableText(th, "SIZE", style.Muted, false),
+				ui.fileOverwriteTableText(th, "MODIFIED TIME", style.Muted, false),
+				ui.fileOverwriteTableText(th, "STAT", style.Muted, false),
+			}, weights)
+		})
+	}
+	measure := op.Record(gtx.Ops)
+	headerDims := header(gtx)
+	measure.Stop()
+	ruleHeight := 1
+	maxViewportHeight := gtx.Constraints.Max.Y - headerDims.Size.Y - ruleHeight
+	if maxViewportHeight < 1 {
+		maxViewportHeight = 1
+	}
+	viewportHeight = min(max(1, viewportHeight), maxViewportHeight)
+	if entryHeight > 0 && entryHeight <= maxViewportHeight {
+		viewportHeight = max(entryHeight, (viewportHeight/entryHeight)*entryHeight)
+	}
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(header),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, tableWidth, func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutFileOverwriteRule(gtx, style.Muted)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedHeight(gtx, viewportHeight, func(gtx layout.Context) layout.Dimensions {
+				if !scrolling {
+					return listState.List.Layout(gtx, len(conflicts), entry)
+				}
+				listStyle := material.List(th, listState)
+				listStyle.AnchorStrategy = material.Occupy
+				listStyle.ScrollbarStyle = scrollbarStyle
+				return listStyle.Layout(gtx, len(conflicts), entry)
+			})
+		}),
+	)
+}
+
+func (ui *UI) layoutFileOverwriteLedgerCells(gtx layout.Context, cells [5]layout.Widget, weights [5]float32) layout.Dimensions {
+	children := make([]layout.FlexChild, 0, len(cells))
+	for i := range cells {
+		i := i
+		children = append(children, layout.Flexed(weights[i], func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(4), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, cells[i])
+		}))
+	}
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+}
+
+func (ui *UI) layoutFileOverwriteRule(gtx layout.Context, ruleColor color.NRGBA) layout.Dimensions {
+	width := max(1, gtx.Constraints.Max.X)
+	paint.FillShape(gtx.Ops, ruleColor, clip.Rect(image.Rect(0, 0, width, 1)).Op())
+	return layout.Dimensions{Size: image.Pt(width, 1)}
+}
+
+func (ui *UI) fileOverwriteTableFilename(th *material.Theme, text string, textColor color.NRGBA) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		lbl := material.Caption(th, text)
+		lbl.Font.Typeface = ui.interfaceTypeface()
+		lbl.TextSize = ui.fileOpDialogTextSize()
+		lbl.Color = textColor
+		lbl.MaxLines = 1
+		lbl.Text = middleTruncateLabelToFit(gtx, lbl, text)
+		lbl.Truncator = ""
+		return lbl.Layout(gtx)
+	}
+}
+
+func middleTruncateLabelToFit(gtx layout.Context, lbl material.LabelStyle, text string) string {
+	maxWidth := gtx.Constraints.Max.X
+	if text == "" || maxWidth <= 0 {
+		return text
+	}
+	lbl.Text = text
+	if measureLabelUnconstrained(gtx, lbl).Size.X <= maxWidth {
+		return text
+	}
+	runes := []rune(text)
+	best := ""
+	lo, hi := 1, len(runes)
+	for lo <= hi {
+		mid := (lo + hi) / 2
+		candidate := middleTruncateRunes(text, mid)
+		lbl.Text = candidate
+		if measureLabelUnconstrained(gtx, lbl).Size.X <= maxWidth {
+			best = candidate
+			lo = mid + 1
+		} else {
+			hi = mid - 1
+		}
+	}
+	return best
+}
+
+func (ui *UI) fileOverwriteTableText(th *material.Theme, text string, textColor color.NRGBA, bold bool) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		lbl := material.Caption(th, text)
+		lbl.Font.Typeface = ui.interfaceTypeface()
+		if bold {
+			lbl.Font.Weight = font.Bold
+		}
+		lbl.TextSize = ui.fileOpDialogTextSize()
+		lbl.Color = textColor
 		lbl.MaxLines = 1
 		return lbl.Layout(gtx)
 	}
-	if !part.Highlight {
-		return layout.Inset{Left: unit.Dp(3), Right: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return label(gtx, style.Text)
-		})
-	}
-	return layout.Inset{Left: unit.Dp(1), Right: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return fillFlatBox(
-			gtx,
-			style.HighlightBg,
-			style.HighlightBr,
-			func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return label(gtx, style.HighlightFg)
-				})
-			},
-		)
-	})
 }
 
 func (ui *UI) fileOverwriteDiffStyle(panelBg color.NRGBA) fileOverwriteDiffStyle {
@@ -1762,47 +2089,61 @@ func (ui *UI) fileOverwriteDiffStyle(panelBg color.NRGBA) fileOverwriteDiffStyle
 	muted.A = 220
 	title := bestContrastColor(panelBg, popup.Title, text)
 
-	highlightBg := mixNRGBA(popup.ActiveBg, popup.HoverBg, 0.22)
-	highlightBg.A = 230
-	if contrastScore(panelBg, highlightBg) < 1.45 {
-		highlightBg = mixNRGBA(panelBg, contrastTextColor(panelBg), 0.30)
-		highlightBg.A = 230
-	}
-	highlightFg := bestContrastColor(highlightBg, popup.ActiveText, popup.HoverText, popup.Text, txtColor)
-	highlightBr := mixNRGBA(highlightBg, highlightFg, 0.28)
-	highlightBr.A = 150
-
 	return fileOverwriteDiffStyle{
-		Title:       title,
-		Text:        text,
-		Muted:       muted,
-		HighlightBg: highlightBg,
-		HighlightFg: highlightFg,
-		HighlightBr: highlightBr,
+		Title: title,
+		Text:  text,
+		Muted: muted,
+		Newer: color.NRGBA{R: 126, G: 210, B: 160, A: 255},
+		Older: color.NRGBA{R: 238, G: 194, B: 92, A: 255},
+		Same:  color.NRGBA{R: 255, G: 255, B: 255, A: 255},
 	}
 }
 
-func fileOverwriteDiffRows(srcInfo, dstInfo fileCopyPathInfo) []fileOverwriteDiffRow {
-	srcSize := fileOverwriteSizeText(srcInfo)
-	dstSize := fileOverwriteSizeText(dstInfo)
-	srcDate, srcTime := fileOverwriteDateTimeText(srcInfo.ModTime)
-	dstDate, dstTime := fileOverwriteDateTimeText(dstInfo.ModTime)
-	sizeDiff := srcSize != dstSize
-	dateDiff := srcDate != dstDate
-	timeDiff := srcTime != dstTime
-	return []fileOverwriteDiffRow{
-		fileOverwriteDiffRowFor("src:", srcSize, srcDate, srcTime, sizeDiff, dateDiff, timeDiff),
-		fileOverwriteDiffRowFor("dst:", dstSize, dstDate, dstTime, false, false, false),
+type fileOverwriteTimeRelation uint8
+
+const (
+	fileOverwriteTimeUnknown fileOverwriteTimeRelation = iota
+	fileOverwriteTimeSame
+	fileOverwriteSourceNewer
+	fileOverwriteSourceOlder
+)
+
+func fileOverwriteDiffStatus(newTime, oldTime time.Time) (string, fileOverwriteTimeRelation) {
+	if newTime.IsZero() || oldTime.IsZero() {
+		return "? UNKNOWN", fileOverwriteTimeUnknown
 	}
+	if newTime.After(oldTime) {
+		return "▲ NEWER", fileOverwriteSourceNewer
+	}
+	if newTime.Before(oldTime) {
+		return "▼ OLDER", fileOverwriteSourceOlder
+	}
+	return "● SAME", fileOverwriteTimeSame
 }
 
-func fileOverwriteDiffRowFor(prefix, sizeText, dateText, timeText string, sizeDiff, dateDiff, timeDiff bool) fileOverwriteDiffRow {
-	return fileOverwriteDiffRow{
-		Prefix: prefix,
-		Size:   fileOverwriteDiffPart{Text: sizeText, Highlight: sizeDiff},
-		Date:   fileOverwriteDiffPart{Text: dateText, Highlight: dateDiff},
-		Time:   fileOverwriteDiffPart{Text: timeText, Highlight: timeDiff},
+func fileOverwriteClockText(t time.Time) string {
+	if t.IsZero() {
+		return "n/a"
 	}
+	return t.Format("15:04")
+}
+
+func fileOverwriteTimestampText(t time.Time) string {
+	if t.IsZero() {
+		return "n/a"
+	}
+	return t.Format("2006-01-02 15:04:05")
+}
+
+func fileOverwriteOlderSourceCount(conflicts []fileOverwriteConflict) int {
+	count := 0
+	for _, conflict := range conflicts {
+		_, relation := fileOverwriteDiffStatus(conflict.SrcInfo.ModTime, conflict.DstInfo.ModTime)
+		if relation == fileOverwriteSourceOlder {
+			count++
+		}
+	}
+	return count
 }
 
 func fileOverwriteSizeText(info fileCopyPathInfo) string {
@@ -1813,13 +2154,6 @@ func fileOverwriteSizeText(info fileCopyPathInfo) string {
 		return "dir"
 	}
 	return formatCopySize(info.Size)
-}
-
-func fileOverwriteDateTimeText(t time.Time) (dateText, timeText string) {
-	if t.IsZero() {
-		return "n/a", ""
-	}
-	return t.Format("2006-01-02"), t.Format("15:04:05")
 }
 
 func (ui *UI) layoutDialogActionSegment(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, hoverFill, pulseFill float32, segW, stripH int, roundLeft, roundRight, disabled bool, state dialogActionVisualState) layout.Dimensions {

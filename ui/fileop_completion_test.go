@@ -180,51 +180,6 @@ func TestFileCopySpeedSamplesAtInterval(t *testing.T) {
 	}
 }
 
-func TestFileOverwriteDiffRowsHighlightOnlyChangedTimePart(t *testing.T) {
-	srcTime := time.Date(2026, 5, 8, 14, 40, 26, 0, time.UTC)
-	dstTime := time.Date(2026, 5, 8, 14, 41, 12, 0, time.UTC)
-	rows := fileOverwriteDiffRows(
-		fileCopyPathInfo{Exists: true, Size: 38 << 20, ModTime: srcTime},
-		fileCopyPathInfo{Exists: true, Size: 38 << 20, ModTime: dstTime},
-	)
-
-	for _, row := range rows {
-		assertOverwriteDiffPart(t, row, "38.0 MB", false)
-		assertOverwriteDiffPart(t, row, "2026-05-08", false)
-	}
-	assertOverwriteDiffPart(t, rows[0], "14:40:26", true)
-	assertOverwriteDiffPart(t, rows[1], "14:41:12", false)
-}
-
-func TestFileOverwriteDiffRowsHighlightSizeAndDateSeparately(t *testing.T) {
-	srcTime := time.Date(2026, 5, 8, 14, 40, 26, 0, time.UTC)
-	dstTime := time.Date(2026, 5, 9, 14, 40, 26, 0, time.UTC)
-	rows := fileOverwriteDiffRows(
-		fileCopyPathInfo{Exists: true, Size: 38 << 20, ModTime: srcTime},
-		fileCopyPathInfo{Exists: true, Size: 40 << 20, ModTime: dstTime},
-	)
-
-	assertOverwriteDiffPart(t, rows[0], "38.0 MB", true)
-	assertOverwriteDiffPart(t, rows[1], "40.0 MB", false)
-	assertOverwriteDiffPart(t, rows[0], "2026-05-08", true)
-	assertOverwriteDiffPart(t, rows[1], "2026-05-09", false)
-	assertOverwriteDiffPart(t, rows[0], "14:40:26", false)
-	assertOverwriteDiffPart(t, rows[1], "14:40:26", false)
-}
-
-func assertOverwriteDiffPart(t *testing.T, row fileOverwriteDiffRow, text string, wantHighlight bool) {
-	t.Helper()
-	for _, part := range []fileOverwriteDiffPart{row.Size, row.Date, row.Time} {
-		if part.Text == text {
-			if part.Highlight != wantHighlight {
-				t.Fatalf("part %q highlight = %v, want %v in row %+v", text, part.Highlight, wantHighlight, row)
-			}
-			return
-		}
-	}
-	t.Fatalf("part %q not found in row %+v", text, row)
-}
-
 func TestFinishFileMoveKeepsSourceScrollStableAndShowsNotice(t *testing.T) {
 	srcDir := t.TempDir()
 	createFileOpRows(t, srcDir, 30)

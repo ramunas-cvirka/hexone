@@ -37,9 +37,12 @@ type fileMoveState struct {
 	srcName string
 	srcInfo fileCopyPathInfo
 
-	dstRaw  string
-	dstPath string
-	dstInfo fileCopyPathInfo
+	dstRaw        string
+	dstPath       string
+	dstInfo       fileCopyPathInfo
+	conflicts     []fileOverwriteConflict
+	conflictCount int
+	conflictList  widget.List
 
 	endpoint copyEndpoint
 	remote   *paneSSHSession
@@ -342,6 +345,8 @@ func (st *fileMoveState) refreshPreview() {
 	st.dstRaw = raw
 	st.dstPath = ""
 	st.dstInfo = fileCopyPathInfo{}
+	st.conflicts = nil
+	st.conflictCount = 0
 	if raw == "" {
 		return
 	}
@@ -352,6 +357,7 @@ func (st *fileMoveState) refreshPreview() {
 		}
 		st.dstPath = dstDir
 		st.dstInfo = dstInfo
+		st.conflicts, st.conflictCount, _ = inspectFileOverwriteConflicts(st.endpoint, moveSourcesForConflictPreview(st.sources), st.endpoint, dstDir)
 		return
 	}
 
@@ -393,10 +399,23 @@ func (ui *UI) submitFileMoveDialog(now time.Time) {
 			st.lastErr = err.Error()
 			return
 		}
+		conflicts, conflictCount, err := inspectFileOverwriteConflicts(st.endpoint, moveSourcesForConflictPreview(st.sources), st.endpoint, dstDir)
+		if err != nil {
+			st.lastErr = err.Error()
+			return
+		}
+		previewMatches := sameFileOverwriteConflictPreview(st.conflicts, st.conflictCount, conflicts, conflictCount)
 		st.dstRaw = raw
 		st.dstPath = dstDir
 		st.dstInfo = dstInfo
+		st.conflicts = conflicts
+		st.conflictCount = conflictCount
 		st.lastErr = ""
+		if conflictCount > 0 && !previewMatches {
+			// A collision appeared or changed since the preview was rendered.
+			// Require another explicit click now that the comparison is visible.
+			return
+		}
 		st.running = true
 		st.doneCh = make(chan error, 1)
 
@@ -404,6 +423,10 @@ func (ui *UI) submitFileMoveDialog(now time.Time) {
 		doneCh := st.doneCh
 		go func(plans []fileMovePlan) {
 			for _, plan := range plans {
+				if err := removeEndpointPathIfExists(st.endpoint, plan.dstPath); err != nil {
+					doneCh <- err
+					return
+				}
 				if remote != nil {
 					client := remote.sftpClient()
 					if client == nil {
@@ -458,6 +481,10 @@ func (ui *UI) submitFileMoveDialog(now time.Time) {
 	remote := st.remote
 	doneCh := st.doneCh
 	go func() {
+		if err := removeEndpointPathIfExists(st.endpoint, dstPath); err != nil {
+			doneCh <- err
+			return
+		}
 		if remote != nil {
 			client := remote.sftpClient()
 			if client == nil {
@@ -807,8 +834,14 @@ func (ui *UI) layoutFileMoveDialog(th *material.Theme, gtx layout.Context) layou
 		paint.FillShape(gtx.Ops, color.NRGBA{A: 120}, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 
 		paneRect := ui.filePaneRectForOverlay(gtx, st.pane)
-		width := gtx.Dp(ui.scaleInterfaceDp(unit.Dp(390)))
+		wideOverwrite := !st.running && ((st.multiSource() && st.conflictCount > 0) || (!st.multiSource() && st.dstInfo.Exists && !st.previewSameTarget()))
+		dialogWidth := unit.Dp(430)
 		maxWidth := paneRect.Dx() - gtx.Dp(unit.Dp(16))
+		if wideOverwrite {
+			dialogWidth = unit.Dp(620)
+			maxWidth = gtx.Constraints.Max.X - gtx.Dp(unit.Dp(16))
+		}
+		width := gtx.Dp(ui.scaleInterfaceDp(dialogWidth))
 		if maxWidth < 220 {
 			maxWidth = 220
 		}
@@ -836,6 +869,9 @@ func (ui *UI) layoutFileMoveDialog(th *material.Theme, gtx layout.Context) layou
 		call := m.Stop()
 
 		x := paneRect.Min.X + (paneRect.Dx()-dialog.Size.X)/2
+		if wideOverwrite {
+			x = (gtx.Constraints.Max.X - dialog.Size.X) / 2
+		}
 		y := paneRect.Min.Y + (paneRect.Dy()-dialog.Size.Y)/2
 		if x < 0 {
 			x = 0
@@ -945,6 +981,10 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			gtx = fileOpDialogReserveFooter(gtx)
+			if st.multiSource() {
+				return ui.layoutFileOverwriteConflicts(th, gtx, st.conflicts, st.conflictCount, &st.conflictList)
+			}
 			if showTargetDiff {
 				return ui.layoutFileOverwriteDiffInfo(th, gtx, "Target Details", st.srcInfo, st.dstInfo)
 			}
@@ -957,13 +997,17 @@ func (ui *UI) layoutFileMoveDialogBody(th *material.Theme, gtx layout.Context, s
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if st.lastErr == "" {
 				actionLabel, runningLabel := st.actionLabels()
-				if !st.running && (!st.dstInfo.Exists || sameTarget || st.multiSource()) {
+				if !st.running && ((!st.dstInfo.Exists || sameTarget) && st.conflictCount == 0) {
 					return layout.Dimensions{}
 				}
 				if st.running {
 					return ui.layoutFileOpTextRow(th, gtx, "Status", runningLabel, hintColor)
 				}
-				lbl := material.Caption(th, "Destination for "+strings.ToLower(actionLabel)+" already exists.")
+				status := "Destination for " + strings.ToLower(actionLabel) + " already exists."
+				if st.multiSource() && st.conflictCount > 0 {
+					status = fmt.Sprintf("%d existing %s will be overwritten.", st.conflictCount, pluralizeFileDestinations(st.conflictCount))
+				}
+				lbl := material.Caption(th, status)
 				lbl.Font.Typeface = ui.interfaceTypeface()
 				lbl.TextSize = ui.scaleDialogFontSize(9)
 				lbl.Color = color.NRGBA{R: 196, G: 196, B: 196, A: 255}
@@ -1034,11 +1078,17 @@ func (st *fileMoveState) actionLabels() (label string, running string) {
 		return "Move", "Moving..."
 	}
 	if st.multiSource() {
+		if st.conflictCount > 0 {
+			return "Overwrite", "Moving..."
+		}
 		return "Move", "Moving..."
 	}
 	dst := st.resolvedDestinationPath()
 	if dst == "" {
 		return "Move", "Moving..."
+	}
+	if st.dstInfo.Exists && !st.endpoint.samePath(st.srcPath, dst) {
+		return "Overwrite", "Moving..."
 	}
 	srcDir := st.endpoint.dirName(st.srcPath)
 	dstDir := st.endpoint.dirName(dst)
@@ -1080,13 +1130,6 @@ func (st *fileMoveState) buildMovePlans(raw string) (string, fileCopyPathInfo, [
 		dstPath := st.endpoint.join(dstDir, st.endpoint.baseName(srcPath))
 		if st.endpoint.samePath(srcPath, dstPath) {
 			return "", fileCopyPathInfo{}, nil, errors.New("source and destination are the same")
-		}
-		if existing, err := endpointLstat(st.endpoint, dstPath); err == nil && existing != nil {
-			label := st.endpoint.baseName(dstPath)
-			if strings.TrimSpace(label) == "" {
-				label = dstPath
-			}
-			return "", fileCopyPathInfo{}, nil, fmt.Errorf("destination already exists: %s", label)
 		}
 		plans = append(plans, fileMovePlan{
 			srcPath: srcPath,
