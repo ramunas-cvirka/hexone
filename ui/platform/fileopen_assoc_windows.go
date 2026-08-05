@@ -7,10 +7,16 @@ package platform
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/windows"
 )
+
+var shellExecuteFile = shellExecuteFileWindows
 
 func OpenFileWithConfiguredApp(appPath, filePath string) error {
 	appPath = strings.TrimSpace(appPath)
@@ -29,9 +35,28 @@ func OpenFileWithSystemAssociation(filePath string) error {
 	if filePath == "" {
 		return errors.New("file path is empty")
 	}
-	cmd := exec.Command("cmd", "/c", "start", "", filePath)
-	configureViewerCommandProcess(cmd)
-	return cmd.Start()
+	absolutePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return fmt.Errorf("resolve file path: %w", err)
+	}
+	absolutePath = filepath.Clean(absolutePath)
+	return shellExecuteFile(absolutePath, filepath.Dir(absolutePath))
+}
+
+func shellExecuteFileWindows(filePath, workingDirectory string) error {
+	verb, err := windows.UTF16PtrFromString("open")
+	if err != nil {
+		return err
+	}
+	target, err := windows.UTF16PtrFromString(filePath)
+	if err != nil {
+		return err
+	}
+	directory, err := windows.UTF16PtrFromString(workingDirectory)
+	if err != nil {
+		return err
+	}
+	return windows.ShellExecute(0, verb, target, nil, directory, windows.SW_SHOWNORMAL)
 }
 
 func configureViewerCommandProcess(cmd *exec.Cmd) {
