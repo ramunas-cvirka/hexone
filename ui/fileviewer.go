@@ -1644,6 +1644,9 @@ func (ui *UI) scheduleFileViewerWatch(gtx layout.Context) {
 		}
 		if st.watchChanged() {
 			st.nextWatchCheck = time.Time{}
+			if st.remote == nil {
+				ui.refreshLocalFilePanesForPath(st.path)
+			}
 			ui.startFileViewerLoad(gtx.Now)
 			gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
 			return

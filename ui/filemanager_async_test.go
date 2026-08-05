@@ -69,6 +69,35 @@ func TestFilePaneLoadingHintVisibleAfterDelay(t *testing.T) {
 	}
 }
 
+func TestFilePaneDirWatchDetectsSelectedFileMetadataChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.txt")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("create empty file: %v", err)
+	}
+	listing, err := filesys.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%q): %v", dir, err)
+	}
+	pane := newFilePaneState(dir, nil)
+	pane.applyListing(listing, path, "", 0)
+	if pane.selectedLocalEntryMetadataChanged() {
+		t.Fatal("unchanged selected file should match its listing metadata")
+	}
+	if pane.dirWatchChanged() {
+		t.Fatal("first directory watch pass should only capture baseline state")
+	}
+	if err := os.WriteFile(path, []byte("updated"), 0o644); err != nil {
+		t.Fatalf("update selected file: %v", err)
+	}
+	if !pane.selectedLocalEntryMetadataChanged() {
+		t.Fatal("selected file size change should invalidate the pane listing")
+	}
+	if !pane.dirWatchChanged() {
+		t.Fatal("directory watcher should detect selected file metadata changes")
+	}
+}
+
 func TestPumpFilePaneLocalRefreshUpdatesAddDeleteRenameWithoutLosingViewState(t *testing.T) {
 	dir := t.TempDir()
 	alphaPath := filepath.Join(dir, "alpha.txt")

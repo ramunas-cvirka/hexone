@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"hexone/filesys"
 	"hexone/fm"
 	"image"
 	"image/color"
@@ -229,6 +230,70 @@ func TestFileViewerTextSaveWritesAndClearsDirtyState(t *testing.T) {
 	}
 	if string(got) != "beta\r\n" {
 		t.Fatalf("saved bytes=%q want CRLF", got)
+	}
+}
+
+func TestFileViewerTextSaveRefreshesPaneFileSize(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.txt")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatalf("create empty file: %v", err)
+	}
+	listing, err := filesys.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%q): %v", dir, err)
+	}
+	pane := newFilePaneState(dir, nil)
+	pane.applyListing(listing, path, "", 0)
+	row := pane.findEntryPathIndex(path)
+	if row < 0 || pane.model.Entry(row).SizeBytes != 0 {
+		t.Fatalf("initial empty-file row = %#v", pane.model.Entry(row))
+	}
+
+	st := &fileViewerState{
+		pane:             0,
+		mode:             "file",
+		path:             path,
+		name:             "empty.txt",
+		detectedEncoding: fm.ViewerFileEncodingUTF8,
+		editMode:         true,
+		editDirty:        true,
+		saveCh:           make(chan fileViewerSaveResult, 1),
+	}
+	st.contentEditor.SetText("updated")
+	ui := NewUI(fm.DefaultConfig())
+	ui.filePanes = []*filePaneState{pane}
+	ui.filePaneTabs = nil
+	ui.fileViewer = st
+
+	if !ui.startFileViewerSave(time.Now()) {
+		t.Fatal("startFileViewerSave should start a dirty save")
+	}
+	gtx := layout.Context{Ops: new(op.Ops), Now: time.Now()}
+	deadline := time.Now().Add(2 * time.Second)
+	for st.saving && time.Now().Before(deadline) {
+		gtx.Now = time.Now()
+		ui.pumpFileViewerSaveState(gtx, st)
+		time.Sleep(time.Millisecond)
+	}
+	if st.saving {
+		t.Fatal("save did not complete")
+	}
+	if !pane.loading {
+		t.Fatal("successful viewer save should schedule a pane refresh")
+	}
+	for pane.loading && time.Now().Before(deadline) {
+		gtx.Now = time.Now()
+		ui.pumpFilePaneLoads(gtx)
+		time.Sleep(time.Millisecond)
+	}
+	if pane.loading {
+		t.Fatal("pane refresh did not complete")
+	}
+	row = pane.findEntryPathIndex(path)
+	entry := pane.model.Entry(row)
+	if entry == nil || entry.SizeBytes != int64(len("updated")) || entry.SizeText == "0 B" {
+		t.Fatalf("refreshed entry = %#v, want size %d", entry, len("updated"))
 	}
 }
 

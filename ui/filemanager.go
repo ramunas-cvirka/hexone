@@ -2001,13 +2001,33 @@ func (p *filePaneState) dirWatchChanged() bool {
 		(p.dirWatch.dir != target ||
 			!p.dirWatch.modTime.Equal(modTime) ||
 			p.dirWatch.size != size ||
-			p.dirWatch.errText != errText)
+			p.dirWatch.errText != errText ||
+			p.selectedLocalEntryMetadataChanged())
 	p.dirWatch.dir = target
 	p.dirWatch.modTime = modTime
 	p.dirWatch.size = size
 	p.dirWatch.errText = errText
 	p.dirWatch.ready = true
 	return changed
+}
+
+func (p *filePaneState) selectedLocalEntryMetadataChanged() bool {
+	if p == nil || p.remoteConnected() || p.archiveBrowsing() {
+		return false
+	}
+	entry := p.selectedEntry()
+	if entry == nil || entry.Path == "" {
+		return false
+	}
+	switch entry.Kind {
+	case filesys.EntryDir, filesys.EntryParent:
+		return false
+	}
+	info, err := os.Lstat(entry.Path)
+	if err != nil {
+		return true
+	}
+	return entry.SizeBytes != info.Size() || !entry.ModTime.Equal(info.ModTime())
 }
 
 func (p *filePaneState) pathBaseName(raw string) string {
@@ -3313,6 +3333,23 @@ func startLocalPaneBackgroundRefresh(pane *filePaneState) bool {
 		restoreAnchor: pane.visibleAnchorPath(),
 		background:    true,
 	}, true)
+}
+
+func (ui *UI) refreshLocalFilePanesForPath(filePath string) bool {
+	if ui == nil || strings.TrimSpace(filePath) == "" || filesys.ArchiveMemberPath(filePath) {
+		return false
+	}
+	targetDir := filepath.Dir(filepath.Clean(filePath))
+	started := false
+	for _, pane := range ui.allFilePaneTabPanes() {
+		if pane == nil || pane.remoteConnected() || pane.archiveBrowsing() || !samePath(pane.dir, targetDir) {
+			continue
+		}
+		if startLocalPaneBackgroundRefresh(pane) {
+			started = true
+		}
+	}
+	return started
 }
 
 func startLocalPaneLoadRequest(pane *filePaneState, dir string, req filePaneLoadResult, quiet bool) bool {

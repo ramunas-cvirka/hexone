@@ -836,6 +836,9 @@ func (ui *UI) pumpFileViewerSaveState(gtx layout.Context, st *fileViewerState) {
 			} else {
 				st.status = "saved"
 			}
+			if st.remote == nil {
+				ui.refreshLocalFilePanesForPath(st.path)
+			}
 			st.captureWatchState()
 			ui.finishFileViewerModeSwitchSave(st, true, gtx.Now)
 			gtx.Execute(op.InvalidateCmd{})
