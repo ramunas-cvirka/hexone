@@ -405,6 +405,37 @@ func TestTerminalPreviewRangeNormalizesOffsets(t *testing.T) {
 	}
 }
 
+func TestViewerPreviewRangeDefaultsAndNormalizesOffsets(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Viewer.PreviewStart != 0 || cfg.Viewer.PreviewEnd != 2 {
+		t.Fatalf("default viewer preview range=%d..%d want 0..2", cfg.Viewer.PreviewStart, cfg.Viewer.PreviewEnd)
+	}
+	if cfg.Viewer.HexPreviewRows != 2 {
+		t.Fatalf("default viewer hex preview rows=%d want 2", cfg.Viewer.HexPreviewRows)
+	}
+	if got := NormalizeViewerHexPreviewRows(99); got != 8 {
+		t.Fatalf("clamped viewer hex preview rows=%d want 8", got)
+	}
+	if start, end := NormalizeViewerPreviewRange(-2, 4); start != -2 || end != 4 {
+		t.Fatalf("viewer preview range=%d..%d want -2..4", start, end)
+	}
+	if start, end := NormalizeViewerPreviewRange(-99, 99); start != -8 || end != 8 {
+		t.Fatalf("clamped viewer preview range=%d..%d want -8..8", start, end)
+	}
+
+	var decoded Config
+	if err := yaml.Unmarshal([]byte("general:\n  font_size_sp: 16\n"), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decoded.normalize()
+	if decoded.Viewer.PreviewStart != 0 || decoded.Viewer.PreviewEnd != 2 {
+		t.Fatalf("omitted viewer preview range=%d..%d want 0..2", decoded.Viewer.PreviewStart, decoded.Viewer.PreviewEnd)
+	}
+	if decoded.Viewer.HexPreviewRows != 2 {
+		t.Fatalf("omitted viewer hex preview rows=%d want 2", decoded.Viewer.HexPreviewRows)
+	}
+}
+
 func TestConfigNormalizesTerminalHeightAndSortPerDir(t *testing.T) {
 	raw := `
 sort:

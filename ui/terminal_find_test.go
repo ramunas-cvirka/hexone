@@ -51,6 +51,24 @@ func TestTerminalFindResultLimit(t *testing.T) {
 	}
 }
 
+func TestTerminalFindHighlightTracksEachOccurrenceAndExpandedTabs(t *testing.T) {
+	matches := terminalFindMatches([]string{"\tport port"}, "port", 10)
+	if len(matches) != 2 {
+		t.Fatalf("matches=%d want 2", len(matches))
+	}
+	firstLine, firstHit := terminalFindHighlightedText(matches[0])
+	secondLine, secondHit := terminalFindHighlightedText(matches[1])
+	if firstLine != "    port port" || secondLine != firstLine {
+		t.Fatalf("formatted lines=%q and %q", firstLine, secondLine)
+	}
+	if got := firstLine[firstHit.Start:firstHit.End]; got != "port" || firstHit.Start != 4 {
+		t.Fatalf("first highlight=%q at %+v", got, firstHit)
+	}
+	if got := secondLine[secondHit.Start:secondHit.End]; got != "port" || secondHit.Start != 9 {
+		t.Fatalf("second highlight=%q at %+v", got, secondHit)
+	}
+}
+
 func TestTerminalFindPreviewPreservesIndentation(t *testing.T) {
 	lines := []string{"service:", "\tport: 7031", "  enabled: true"}
 	matches := terminalFindMatches(lines, "7031", 10)

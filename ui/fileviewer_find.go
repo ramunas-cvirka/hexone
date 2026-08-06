@@ -35,30 +35,37 @@ import (
 )
 
 const (
-	viewerFindChunkBytes       = 256 << 10
-	viewerFindBarInsetDp       = 6
-	viewerFindBarRowHeightDp   = 22
-	viewerFindStatusMaxDp      = 120
-	viewerFindFieldChars       = 42
-	viewerFindFieldMinChars    = 18
-	viewerFindSearchingDelay   = 220 * time.Millisecond
-	viewerRemoteSearchMaxBytes = 8 << 10
-	viewerFindPanelMaxDp       = 168
-	viewerFindRowHeightDp      = 28
-	viewerHexFindResultLimit   = 200
+	viewerFindChunkBytes        = 256 << 10
+	viewerFindBarInsetDp        = 6
+	viewerFindBarRowHeightDp    = 22
+	viewerFindStatusMaxDp       = 120
+	viewerFindFieldChars        = 42
+	viewerFindFieldMinChars     = 18
+	viewerFindSearchingDelay    = 220 * time.Millisecond
+	viewerRemoteSearchMaxBytes  = 8 << 10
+	viewerFindMaxRows           = 7
+	viewerFindRowHeightDp       = 24
+	viewerHexFindResultLimit    = 200
+	viewerHexPreviewBytesPerRow = 12
+	viewerHexPreviewMaxRows     = 8
 )
 
 type viewerFindMatch struct {
-	Start   int
-	End     int
-	Line    int
-	Snippet string
+	Start             int
+	End               int
+	Line              int
+	Snippet           string
+	SnippetHighlight  compactFindHighlight
+	Preview           []string
+	PreviewFocus      int
+	PreviewHighlights []compactFindHighlight
 }
 
 type viewerHexFindMatch struct {
 	Start        int64
 	Length       int64
 	PreviewBytes []byte
+	PreviewMatch int
 	TextPreview  string
 	HexPreview   string
 }
@@ -66,10 +73,14 @@ type viewerHexFindMatch struct {
 // viewerPDFFindMatch keeps character offsets in the extracted page text so
 // selecting a result can both scroll to and precisely highlight the hit.
 type viewerPDFFindMatch struct {
-	Page    int
-	Start   int
-	End     int
-	Snippet string
+	Page              int
+	Start             int
+	End               int
+	Snippet           string
+	SnippetHighlight  compactFindHighlight
+	Preview           []string
+	PreviewFocus      int
+	PreviewHighlights []compactFindHighlight
 }
 
 type viewerPDFFindResult struct {
@@ -109,6 +120,9 @@ type fileViewerFindState struct {
 	previewButtonRect image.Rectangle
 	status            string
 	searchStartedAt   time.Time
+	previewIndex      int
+	previewAt         time.Time
+	cursorAnim        compactFindCursorAnim
 
 	matches    []viewerFindMatch
 	index      int
@@ -328,6 +342,11 @@ func (ui *UI) openFileViewerFind(now time.Time) {
 	}
 	st.setHistoryOpen(false, now)
 	st.closeEncodingMenu()
+	if !st.find.open {
+		st.find.previewIndex = -1
+		st.find.previewAt = time.Time{}
+		st.find.cursorAnim.reset()
+	}
 	st.find.open = true
 	st.find.focus = true
 	ui.ensureFileViewerFindSearchSource(now, st)
@@ -356,6 +375,9 @@ func (ui *UI) closeFileViewerFind() {
 	st.find.pdfSearched = 0
 	st.find.pdfTotalPages = 0
 	st.find.pdfAnchorPage = 0
+	st.find.previewIndex = -1
+	st.find.previewAt = time.Time{}
+	st.find.cursorAnim.reset()
 	st.find.sourceButtonRect = image.Rectangle{}
 	st.find.findByButtonRect = image.Rectangle{}
 	st.find.previewButtonRect = image.Rectangle{}
@@ -461,6 +483,9 @@ func (ui *UI) prepareFileViewerFindMode(st *fileViewerState) {
 	st.find.currentStart = 0
 	st.find.currentLen = 0
 	st.find.status = ""
+	st.find.previewIndex = -1
+	st.find.previewAt = time.Time{}
+	st.find.cursorAnim.reset()
 }
 
 func (ui *UI) refreshPDFFileViewerFind(now time.Time, query string, preserve bool) {
@@ -497,6 +522,7 @@ func (ui *UI) refreshPDFFileViewerFind(now time.Time, query string, preserve boo
 	st.find.requestSeq++
 	requestSeq := st.find.requestSeq
 	pageCount := st.find.pdfTotalPages
+	previewStart, previewEnd := ui.fileViewerFindPreviewRange()
 	localPath, data := pdfDocRenderSource(st)
 	backend := viewerPDFPreviewBackend
 	ch := st.find.pdfResultCh
@@ -519,7 +545,7 @@ func (ui *UI) refreshPDFFileViewerFind(now time.Time, query string, preserve boo
 				return
 			}
 			res.pageText = &text
-			res.matches = viewerPDFFindPageMatches(text, query)
+			res.matches = viewerPDFFindPageMatchesWithPreview(text, query, previewStart, previewEnd)
 			if !sendViewerPDFFindResult(ctx, ch, res) {
 				return
 			}
@@ -537,6 +563,10 @@ func (ui *UI) refreshPDFFileViewerFind(now time.Time, query string, preserve boo
 }
 
 func viewerPDFFindPageMatches(text viewerPDFPageText, query string) []viewerPDFFindMatch {
+	return viewerPDFFindPageMatchesWithPreview(text, query, 0, 2)
+}
+
+func viewerPDFFindPageMatchesWithPreview(text viewerPDFPageText, query string, previewStart, previewEnd int) []viewerPDFFindMatch {
 	queryRunes := []rune(query)
 	if len(text.Chars) == 0 || len(queryRunes) == 0 || len(queryRunes) > len(text.Chars) {
 		return nil
@@ -545,6 +575,16 @@ func viewerPDFFindPageMatches(text viewerPDFPageText, query string) []viewerPDFF
 	for i, r := range queryRunes {
 		needle[i] = unicode.ToLower(r)
 	}
+	pageRunes := make([]rune, len(text.Chars))
+	pageRows := make([]int, len(text.Chars)+1)
+	for i, ch := range text.Chars {
+		pageRunes[i] = ch.Rune
+		pageRows[i+1] = pageRows[i]
+		if ch.Rune == '\n' {
+			pageRows[i+1]++
+		}
+	}
+	pageLines := strings.Split(string(pageRunes), "\n")
 	matches := make([]viewerPDFFindMatch, 0, 4)
 	for start := 0; start+len(needle) <= len(text.Chars); start++ {
 		matched := true
@@ -558,17 +598,38 @@ func viewerPDFFindPageMatches(text viewerPDFPageText, query string) []viewerPDFF
 			continue
 		}
 		end := start + len(needle)
+		row := pageRows[start]
+		preview, previewFocus := compactFindPreviewWindow(pageLines, row, previewStart, previewEnd)
+		snippet, snippetHighlight := viewerPDFFindSnippetWithHighlight(text.Chars, start, end)
+		rowStart := start
+		for rowStart > 0 && text.Chars[rowStart-1].Rune != '\n' {
+			rowStart--
+		}
+		rowEnd := end
+		for rowEnd < len(text.Chars) && text.Chars[rowEnd].Rune != '\n' {
+			rowEnd++
+		}
+		previewHighlights := compactFindPreviewRuneHighlights(preview, previewFocus, start-rowStart, min(end, rowEnd)-rowStart)
 		matches = append(matches, viewerPDFFindMatch{
-			Page:    text.Page,
-			Start:   start,
-			End:     end,
-			Snippet: viewerPDFFindSnippet(text.Chars, start, end),
+			Page:              text.Page,
+			Start:             start,
+			End:               end,
+			Snippet:           snippet,
+			SnippetHighlight:  snippetHighlight,
+			Preview:           preview,
+			PreviewFocus:      previewFocus,
+			PreviewHighlights: previewHighlights,
 		})
 	}
 	return matches
 }
 
 func viewerPDFFindSnippet(chars []viewerPDFTextChar, start, end int) string {
+	snippet, _ := viewerPDFFindSnippetWithHighlight(chars, start, end)
+	return snippet
+}
+
+func viewerPDFFindSnippetWithHighlight(chars []viewerPDFTextChar, start, end int) (string, compactFindHighlight) {
 	const contextRunes = 34
 	from := start - contextRunes
 	if from < 0 {
@@ -582,14 +643,21 @@ func viewerPDFFindSnippet(chars []viewerPDFTextChar, start, end int) string {
 	for _, ch := range chars[from:to] {
 		runes = append(runes, ch.Rune)
 	}
-	snippet := strings.Join(strings.Fields(string(runes)), " ")
+	raw := string(runes)
+	matchStartByte := compactFindRuneByteOffset(raw, start-from)
+	matchEndByte := compactFindRuneByteOffset(raw, end-from)
+	snippet, highlight := compactFindCollapsedTextHighlight(raw, matchStartByte, matchEndByte)
 	if from > 0 {
 		snippet = "…" + snippet
+		if highlight.Start >= 0 {
+			highlight.Start += len("…")
+			highlight.End += len("…")
+		}
 	}
 	if to < len(chars) {
 		snippet += "…"
 	}
-	return snippet
+	return snippet, highlight
 }
 
 func (ui *UI) refreshStreamFileViewerFind(now time.Time, query string, preserve bool) {
@@ -607,7 +675,8 @@ func (ui *UI) refreshStreamFileViewerFind(now time.Time, query string, preserve 
 		st.find.status = ""
 		return
 	}
-	matches := viewerFindTextMatches(st.content, query)
+	previewStart, previewEnd := ui.fileViewerFindPreviewRange()
+	matches := viewerFindTextMatchesWithPreview(st.content, query, previewStart, previewEnd)
 	st.find.matches = matches
 	st.find.textClicks = make([]widget.Clickable, len(matches))
 	if len(matches) == 0 {
@@ -702,21 +771,27 @@ func viewerBufferedHexFindMatches(buffer []byte, bufferStart int64, pattern []by
 			break
 		}
 		idx += cursor
-		from := idx - 8
+		from := idx - viewerHexPreviewBytesPerRow
 		if from < 0 {
 			from = 0
 		}
-		to := idx + len(pattern) + 12
+		to := from + viewerHexPreviewBytesPerRow*viewerHexPreviewMaxRows
+		if minimum := idx + len(pattern) + viewerHexPreviewBytesPerRow; to < minimum {
+			to = minimum
+		}
 		if to > len(buffer) {
 			to = len(buffer)
 		}
 		preview := append([]byte(nil), buffer[from:to]...)
+		previewMatch := idx - from
+		compact := viewerHexCompactPreviewBytes(viewerHexFindMatch{Length: int64(len(pattern)), PreviewBytes: preview, PreviewMatch: previewMatch})
 		matches = append(matches, viewerHexFindMatch{
 			Start:        bufferStart + int64(idx),
 			Length:       int64(len(pattern)),
 			PreviewBytes: preview,
-			TextPreview:  viewerHexTextSnippet(preview),
-			HexPreview:   viewerHexBytesSnippet(preview),
+			PreviewMatch: previewMatch,
+			TextPreview:  viewerHexTextSnippet(compact),
+			HexPreview:   viewerHexBytesSnippet(compact),
 		})
 		if len(matches) >= limit {
 			break
@@ -1149,10 +1224,15 @@ func (ui *UI) invalidateFromWorker() {
 }
 
 func viewerFindTextMatches(content, query string) []viewerFindMatch {
+	return viewerFindTextMatchesWithPreview(content, query, 0, 2)
+}
+
+func viewerFindTextMatchesWithPreview(content, query string, previewStart, previewEnd int) []viewerFindMatch {
 	if content == "" || query == "" {
 		return nil
 	}
 	matches := make([]viewerFindMatch, 0, 8)
+	lines := strings.Split(content, "\n")
 	line := 1
 	lineScan := 0
 	for off := 0; off <= len(content)-len(query); {
@@ -1164,20 +1244,44 @@ func viewerFindTextMatches(content, query string) []viewerFindMatch {
 		line += strings.Count(content[lineScan:start], "\n")
 		lineScan = start
 		end := start + len(query)
+		preview, previewFocus := compactFindPreviewWindow(lines, line-1, previewStart, previewEnd)
+		snippet, snippetHighlight := viewerFindTextSnippetWithHighlight(content, start, end)
+		lineStart := strings.LastIndex(content[:start], "\n") + 1
+		lineEnd := len(content)
+		if at := strings.IndexByte(content[start:], '\n'); at >= 0 {
+			lineEnd = start + at
+		}
+		previewHighlights := compactFindPreviewByteHighlights(preview, previewFocus, start-lineStart, min(end, lineEnd)-lineStart)
 		matches = append(matches, viewerFindMatch{
-			Start:   start,
-			End:     end,
-			Line:    line,
-			Snippet: viewerFindTextSnippet(content, start, end),
+			Start:             start,
+			End:               end,
+			Line:              line,
+			Snippet:           snippet,
+			SnippetHighlight:  snippetHighlight,
+			Preview:           preview,
+			PreviewFocus:      previewFocus,
+			PreviewHighlights: previewHighlights,
 		})
 		off = start + 1
 	}
 	return matches
 }
 
+func (ui *UI) fileViewerFindPreviewRange() (int, int) {
+	if ui == nil || ui.fmCfg == nil {
+		return fm.NormalizeViewerPreviewRange(0, 2)
+	}
+	return fm.NormalizeViewerPreviewRange(ui.fmCfg.Viewer.PreviewStart, ui.fmCfg.Viewer.PreviewEnd)
+}
+
 func viewerFindTextSnippet(content string, start, end int) string {
+	snippet, _ := viewerFindTextSnippetWithHighlight(content, start, end)
+	return snippet
+}
+
+func viewerFindTextSnippetWithHighlight(content string, start, end int) (string, compactFindHighlight) {
 	if start < 0 || end < start || start > len(content) {
-		return ""
+		return "", compactFindHighlight{Start: -1, End: -1}
 	}
 	if end > len(content) {
 		end = len(content)
@@ -1195,15 +1299,40 @@ func viewerFindTextSnippet(content string, start, end int) string {
 	if to-end > 76 {
 		to = end + 76
 	}
-	snippet := strings.ToValidUTF8(content[from:to], "")
-	snippet = strings.Join(strings.Fields(snippet), " ")
+	raw := strings.ToValidUTF8(content[from:to], "")
+	snippet, highlight := compactFindCollapsedTextHighlight(raw, start-from, end-from)
 	if from > lineStart {
 		snippet = "…" + snippet
+		if highlight.Start >= 0 {
+			highlight.Start += len("…")
+			highlight.End += len("…")
+		}
 	}
 	if to < lineEnd {
 		snippet += "…"
 	}
-	return snippet
+	return snippet, highlight
+}
+
+func compactFindPreviewByteHighlights(lines []string, focus, startByte, endByte int) []compactFindHighlight {
+	highlights := make([]compactFindHighlight, len(lines))
+	for i := range highlights {
+		highlights[i] = compactFindHighlight{Start: -1, End: -1}
+	}
+	if focus < 0 || focus >= len(lines) {
+		return highlights
+	}
+	_, highlights[focus] = compactFindTabbedTextHighlight(lines[focus], startByte, endByte)
+	return highlights
+}
+
+func compactFindPreviewRuneHighlights(lines []string, focus, startRune, endRune int) []compactFindHighlight {
+	if focus < 0 || focus >= len(lines) {
+		return compactFindPreviewByteHighlights(lines, focus, 0, 0)
+	}
+	startByte := compactFindRuneByteOffset(lines[focus], startRune)
+	endByte := compactFindRuneByteOffset(lines[focus], endRune)
+	return compactFindPreviewByteHighlights(lines, focus, startByte, endByte)
 }
 
 func viewerFindTextMatchIndexAtOrAfter(matches []viewerFindMatch, anchor int) int {
@@ -1590,11 +1719,14 @@ func populateViewerHexFindPreviews(src viewerFindChunkSource, matches []viewerHe
 	}
 	for i := 0; i < limit; i++ {
 		match := &matches[i]
-		start := match.Start - 8
+		start := match.Start - viewerHexPreviewBytesPerRow
 		if start < 0 {
 			start = 0
 		}
-		end := match.Start + match.Length + 12
+		end := start + int64(viewerHexPreviewBytesPerRow*viewerHexPreviewMaxRows)
+		if minimum := match.Start + match.Length + viewerHexPreviewBytesPerRow; end < minimum {
+			end = minimum
+		}
 		if end > src.size {
 			end = src.size
 		}
@@ -1606,8 +1738,10 @@ func populateViewerHexFindPreviews(src viewerFindChunkSource, matches []viewerHe
 			continue
 		}
 		match.PreviewBytes = append(match.PreviewBytes[:0], data...)
-		match.TextPreview = viewerHexTextSnippet(match.PreviewBytes)
-		match.HexPreview = viewerHexBytesSnippet(match.PreviewBytes)
+		match.PreviewMatch = int(match.Start - start)
+		compact := viewerHexCompactPreviewBytes(*match)
+		match.TextPreview = viewerHexTextSnippet(compact)
+		match.HexPreview = viewerHexBytesSnippet(compact)
 	}
 }
 
@@ -1625,10 +1759,11 @@ func redecodeViewerHexFindPreviews(st *fileViewerState) {
 		if len(match.PreviewBytes) == 0 {
 			continue
 		}
+		compact := viewerHexCompactPreviewBytes(*match)
 		if st.find.hexPreview {
-			match.HexPreview = viewerHexBytesSnippet(match.PreviewBytes)
+			match.HexPreview = viewerHexBytesSnippet(compact)
 		} else {
-			match.TextPreview = viewerHexTextSnippet(match.PreviewBytes)
+			match.TextPreview = viewerHexTextSnippet(compact)
 		}
 	}
 }
@@ -2688,6 +2823,25 @@ func (ui *UI) layoutFileViewerFindResults(th *material.Theme, gtx layout.Context
 	if st == nil || width <= 0 || (count == 0 && !viewerFindPendingPanel(st)) {
 		return layout.Dimensions{}
 	}
+	if hovered := fileViewerFindHoveredIndex(st); hovered >= 0 {
+		st.find.previewIndex = hovered
+		st.find.previewAt = gtx.Now
+	} else if st.find.previewIndex >= 0 && !st.find.previewAt.IsZero() {
+		const hoverBridge = 140 * time.Millisecond
+		expires := st.find.previewAt.Add(hoverBridge)
+		if !gtx.Now.Before(expires) {
+			st.find.previewIndex = -1
+			st.find.previewAt = time.Time{}
+		} else {
+			gtx.Execute(op.InvalidateCmd{At: expires})
+		}
+	}
+	cursorIndex := st.find.index
+	if st.find.previewIndex >= 0 {
+		cursorIndex = st.find.previewIndex
+	}
+	st.find.cursorAnim.setTarget(gtx.Now, cursorIndex)
+	preview := ui.fileViewerFindPreviewForIndex(st, st.find.previewIndex)
 	listState := &st.find.textList
 	if viewerPDFPreviewActive(st) {
 		listState = &st.find.pdfList
@@ -2699,53 +2853,236 @@ func (ui *UI) layoutFileViewerFindResults(th *material.Theme, gtx layout.Context
 	bg.A = 248
 	border := mixNRGBA(theme.Divider, theme.HeaderText, 0.18)
 	border.A = 84
-	maxH := gtx.Dp(unit.Dp(viewerFindPanelMaxDp))
-	rowCount := count
-	if rowCount == 0 {
-		rowCount = 1
+	rows := min(count, viewerFindMaxRows)
+	if rows == 0 {
+		rows = 1
 	}
-	wantH := rowCount * gtx.Dp(unit.Dp(viewerFindRowHeightDp))
-	if wantH < maxH {
-		maxH = wantH
+	resultsHeight := rows * gtx.Dp(unit.Dp(viewerFindRowHeightDp))
+	previewHeight := compactFindPreviewHeight(gtx, preview)
+	height := resultsHeight + previewHeight
+	if available := gtx.Constraints.Max.Y - gtx.Dp(unit.Dp(48)); height > available {
+		height = available
 	}
-	if available := gtx.Constraints.Max.Y - gtx.Dp(unit.Dp(48)); maxH > available {
-		maxH = available
-	}
-	if maxH < 1 {
+	if height < 1 {
 		return layout.Dimensions{}
 	}
-	gtx.Constraints.Max.Y = maxH
-	gtx.Constraints.Min.Y = maxH
+	gtx.Constraints.Max.Y = height
+	gtx.Constraints.Min.Y = height
 	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
 		return fillRoundedClipBox(gtx, 0, bg, border, func(gtx layout.Context) layout.Dimensions {
-			if count == 0 {
-				return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, "Searching…")
-					lbl.Font.Typeface = ui.viewerTypeface()
-					lbl.TextSize = scaleThemeFontSize(th, 10)
-					lbl.Color = theme.Hint
-					lbl.MaxLines = 1
-					return layoutVCenteredLabel(gtx, lbl)
-				})
-			}
-			list := material.List(th, listState)
-			list.AnchorStrategy = material.Occupy
-			list.ScrollbarStyle.Track.MajorPadding = 0
-			list.ScrollbarStyle.Track.MinorPadding = unit.Dp(1)
-			list.ScrollbarStyle.Track.Color = color.NRGBA{}
-			list.ScrollbarStyle.Indicator.MajorMinLen = unit.Dp(18)
-			list.ScrollbarStyle.Indicator.MinorWidth = unit.Dp(3)
-			list.ScrollbarStyle.Indicator.CornerRadius = 0
-			list.ScrollbarStyle.Indicator.Color = theme.ScrollThumb
-			list.ScrollbarStyle.Indicator.HoverColor = theme.ScrollThumbHover
-			return list.Layout(gtx, count, func(gtx layout.Context, index int) layout.Dimensions {
-				if index < 0 || index >= count {
-					return layout.Dimensions{}
-				}
-				return ui.layoutFileViewerFindResult(th, gtx, st, index)
-			})
+			availablePreviewHeight := max(0, height-resultsHeight)
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return fixedHeight(gtx, min(resultsHeight, height), func(gtx layout.Context) layout.Dimensions {
+						if count == 0 {
+							return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body2(th, "Searching…")
+								lbl.Font.Typeface = ui.viewerTypeface()
+								lbl.TextSize = scaleThemeFontSize(th, 10)
+								lbl.Color = theme.Hint
+								lbl.MaxLines = 1
+								return layoutVCenteredLabel(gtx, lbl)
+							})
+						}
+						list := material.List(th, listState)
+						list.AnchorStrategy = material.Occupy
+						list.ScrollbarStyle.Track.MajorPadding = 0
+						list.ScrollbarStyle.Track.MinorPadding = unit.Dp(1)
+						list.ScrollbarStyle.Track.Color = color.NRGBA{}
+						list.ScrollbarStyle.Indicator.MajorMinLen = unit.Dp(18)
+						list.ScrollbarStyle.Indicator.MinorWidth = unit.Dp(3)
+						list.ScrollbarStyle.Indicator.CornerRadius = 0
+						list.ScrollbarStyle.Indicator.Color = theme.ScrollThumb
+						list.ScrollbarStyle.Indicator.HoverColor = theme.ScrollThumbHover
+						return list.Layout(gtx, count, func(gtx layout.Context, index int) layout.Dimensions {
+							if index < 0 || index >= count {
+								return layout.Dimensions{}
+							}
+							return ui.layoutFileViewerFindResult(th, gtx, st, index)
+						})
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if availablePreviewHeight <= 0 {
+						return layout.Dimensions{}
+					}
+					return fixedHeight(gtx, availablePreviewHeight, func(gtx layout.Context) layout.Dimensions {
+						return layoutCompactFindDockedPreview(th, gtx, theme, ui.viewerTypeface(), scaleThemeFontSize(th, 9), preview)
+					})
+				}),
+			)
 		})
 	})
+}
+
+func fileViewerFindHoveredIndex(st *fileViewerState) int {
+	if st == nil {
+		return -1
+	}
+	clicks := st.find.textClicks
+	if viewerPDFPreviewActive(st) {
+		clicks = st.find.pdfClicks
+	} else if st.mode == "hex" {
+		clicks = st.find.hexClicks
+	}
+	for i := range clicks {
+		if clicks[i].Hovered() {
+			return i
+		}
+	}
+	return -1
+}
+
+func (ui *UI) fileViewerFindPreviewForIndex(st *fileViewerState, index int) compactFindPreview {
+	if st == nil || index < 0 {
+		return compactFindPreview{}
+	}
+	if viewerPDFPreviewActive(st) {
+		if index >= len(st.find.pdfMatches) {
+			return compactFindPreview{}
+		}
+		match := st.find.pdfMatches[index]
+		return compactFindPreview{Lines: viewerFindPreviewLines(match.Preview), Focus: match.PreviewFocus, Highlights: match.PreviewHighlights}
+	}
+	if st.mode == "hex" {
+		if index >= len(st.find.hexMatches) {
+			return compactFindPreview{}
+		}
+		rows := fm.NormalizeViewerHexPreviewRows(ui.fmCfg.Viewer.HexPreviewRows)
+		return viewerHexFindPreview(st, st.find.hexMatches[index], rows)
+	}
+	if index >= len(st.find.matches) {
+		return compactFindPreview{}
+	}
+	match := st.find.matches[index]
+	return compactFindPreview{Lines: viewerFindPreviewLines(match.Preview), Focus: match.PreviewFocus, Highlights: match.PreviewHighlights}
+}
+
+func viewerFindPreviewLines(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = strings.ReplaceAll(line, "\t", "    ")
+	}
+	return out
+}
+
+func viewerHexFindPreviewLines(st *fileViewerState, match viewerHexFindMatch) []string {
+	return viewerHexFindPreview(st, match, fm.NormalizeViewerHexPreviewRows(0)).Lines
+}
+
+type viewerHexPreviewLine struct {
+	data  []byte
+	start int
+}
+
+func viewerHexFindPreview(st *fileViewerState, match viewerHexFindMatch, rows int) compactFindPreview {
+	rows = fm.NormalizeViewerHexPreviewRows(rows)
+	data := match.PreviewBytes
+	if len(data) == 0 {
+		if context, ok := viewerHexFindContext(st, match); ok {
+			data = context
+		}
+	}
+	if len(data) == 0 {
+		return compactFindPreview{}
+	}
+	if st != nil && st.find.hexPreview {
+		matchOffset := min(max(match.PreviewMatch, 0), len(data))
+		dataStart := match.Start - int64(matchOffset)
+		rowStart := int((match.Start/int64(viewerHexPreviewBytesPerRow))*int64(viewerHexPreviewBytesPerRow) - dataStart)
+		if rowStart < 0 || rowStart >= len(data) {
+			rowStart = (matchOffset / viewerHexPreviewBytesPerRow) * viewerHexPreviewBytesPerRow
+		}
+		preview := compactFindPreview{Focus: 0}
+		matchEnd := matchOffset + int(match.Length)
+		for from := rowStart; from < len(data) && len(preview.Lines) < rows; from += viewerHexPreviewBytesPerRow {
+			to := min(len(data), from+viewerHexPreviewBytesPerRow)
+			line := viewerHexBytesSnippet(data[from:to])
+			preview.Lines = append(preview.Lines, line)
+			hitFrom := max(from, matchOffset)
+			hitTo := min(to, matchEnd)
+			highlight := compactFindHighlight{Start: -1, End: -1}
+			if hitFrom < hitTo {
+				highlight.Start = (hitFrom - from) * 3
+				highlight.End = (hitTo-from)*3 - 1
+			}
+			preview.Highlights = append(preview.Highlights, highlight)
+		}
+		return preview
+	}
+	lines := viewerHexDetectedPreviewLineData(data)
+	if len(lines) < 2 {
+		return compactFindPreview{}
+	}
+	matchOffset := min(max(match.PreviewMatch, 0), len(data))
+	focus := 0
+	for i, line := range lines {
+		if matchOffset >= line.start && matchOffset <= line.start+len(line.data) {
+			focus = i
+			break
+		}
+	}
+	end := min(len(lines), focus+rows)
+	start := focus
+	if end-start < rows {
+		start = max(0, end-rows)
+	}
+	preview := compactFindPreview{Focus: focus - start}
+	matchEnd := matchOffset + int(match.Length)
+	for _, line := range lines[start:end] {
+		localStart := max(0, matchOffset-line.start)
+		localEnd := max(0, min(len(line.data), matchEnd-line.start))
+		before, hit, after := viewerHexTextParts(line.data, localStart, max(0, localEnd-localStart))
+		preview.Lines = append(preview.Lines, before+hit+after)
+		highlight := compactFindHighlight{Start: -1, End: -1}
+		if hit != "" {
+			highlight.Start = len(before)
+			highlight.End = len(before) + len(hit)
+		}
+		preview.Highlights = append(preview.Highlights, highlight)
+	}
+	return preview
+}
+
+func viewerHexDetectedPreviewLines(data []byte) [][]byte {
+	lineData := viewerHexDetectedPreviewLineData(data)
+	lines := make([][]byte, len(lineData))
+	for i := range lineData {
+		lines[i] = lineData[i].data
+	}
+	return lines
+}
+
+func viewerHexDetectedPreviewLineData(data []byte) []viewerHexPreviewLine {
+	if len(data) == 0 || !bytes.Contains(data, []byte{'\n'}) {
+		return nil
+	}
+	raw := make([]viewerHexPreviewLine, 0, bytes.Count(data, []byte{'\n'})+1)
+	start := 0
+	for start <= len(data) {
+		end := bytes.IndexByte(data[start:], '\n')
+		if end < 0 {
+			end = len(data)
+		} else {
+			end += start
+		}
+		line := bytes.TrimSuffix(data[start:end], []byte{'\r'})
+		raw = append(raw, viewerHexPreviewLine{data: line, start: start})
+		if end == len(data) {
+			break
+		}
+		start = end + 1
+	}
+	for len(raw) > 0 && len(raw[0].data) == 0 {
+		raw = raw[1:]
+	}
+	for len(raw) > 0 && len(raw[len(raw)-1].data) == 0 {
+		raw = raw[:len(raw)-1]
+	}
+	if len(raw) < 2 {
+		return nil
+	}
+	return raw
 }
 
 func (ui *UI) layoutFileViewerFindResult(th *material.Theme, gtx layout.Context, st *fileViewerState, index int) layout.Dimensions {
@@ -2760,8 +3097,9 @@ func (ui *UI) layoutFileViewerFindResult(th *material.Theme, gtx layout.Context,
 		rowBg = mixNRGBA(theme.PanelBg, theme.StrongSelection, 0.34)
 		rowBg.A = 224
 	} else if click.Hovered() {
-		rowBg = mixNRGBA(theme.PanelBg, theme.HeaderText, 0.08)
-		rowBg.A = 238
+		progress := compactFindHoverProgress(&st.find.cursorAnim, gtx.Now, index)
+		rowBg = mixNRGBA(theme.PanelBg, theme.HeaderText, 0.03+0.05*progress)
+		rowBg.A = uint8(205 + 33*progress)
 	}
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
@@ -2770,31 +3108,55 @@ func (ui *UI) layoutFileViewerFindResult(th *material.Theme, gtx layout.Context,
 				return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(6), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return layoutCompactFindCursor(th, gtx, ui.viewerTypeface(), scaleThemeFontSize(th, 10), theme.StatusAccent, &st.find.cursorAnim, index)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							page := material.Body2(th, marker)
 							page.Font.Typeface = ui.viewerTypeface()
 							page.Font.Weight = font.Bold
-							page.TextSize = scaleThemeFontSize(th, 9)
+							page.TextSize = scaleThemeFontSize(th, 10)
 							page.Color = theme.StatusAccent
 							page.MaxLines = 1
 							return fixedWidth(gtx, gtx.Dp(unit.Dp(markerWidth)), func(gtx layout.Context) layout.Dimensions {
-								return layoutVCenteredLabel(gtx, page)
+								return layout.E.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return layoutVCenteredLabel(gtx, page)
+								})
 							})
 						}),
-						layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(9)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							label := material.Body2(th, snippet)
-							label.Font.Typeface = ui.viewerTypeface()
-							label.TextSize = scaleThemeFontSize(th, 10)
-							label.Color = theme.HeaderText
-							label.MaxLines = 1
-							label.Truncator = "…"
-							return layoutVCenteredLabel(gtx, label)
+							value, highlight := fileViewerFindResultHighlight(st, index, snippet)
+							return layoutCompactFindHighlightedText(th, gtx, theme, ui.viewerTypeface(), scaleThemeFontSize(th, 10), value, highlight, true)
 						}),
 					)
 				})
 			})
 		})
 	})
+}
+
+func fileViewerFindResultHighlight(st *fileViewerState, index int, fallback string) (string, compactFindHighlight) {
+	if st == nil || index < 0 {
+		return fallback, compactFindHighlight{Start: -1, End: -1}
+	}
+	if viewerPDFPreviewActive(st) {
+		if index < len(st.find.pdfMatches) {
+			match := st.find.pdfMatches[index]
+			return match.Snippet, match.SnippetHighlight
+		}
+		return fallback, compactFindHighlight{Start: -1, End: -1}
+	}
+	if st.mode == "hex" {
+		if index < len(st.find.hexMatches) {
+			return viewerHexFindHighlightedSnippet(st, st.find.hexMatches[index])
+		}
+		return fallback, compactFindHighlight{Start: -1, End: -1}
+	}
+	if index < len(st.find.matches) {
+		match := st.find.matches[index]
+		return match.Snippet, match.SnippetHighlight
+	}
+	return fallback, compactFindHighlight{Start: -1, End: -1}
 }
 
 func (ui *UI) fileViewerFindResultPresentation(st *fileViewerState, index int) (marker, snippet string, click *widget.Clickable, markerWidth int) {
@@ -2806,7 +3168,7 @@ func (ui *UI) fileViewerFindResultPresentation(st *fileViewerState, index int) (
 			return "", "", nil, 0
 		}
 		match := st.find.pdfMatches[index]
-		return strconv.Itoa(match.Page+1) + "p", match.Snippet, &st.find.pdfClicks[index], 28
+		return strconv.Itoa(match.Page + 1), match.Snippet, &st.find.pdfClicks[index], 34
 	}
 	if st.mode == "hex" {
 		if index >= len(st.find.hexMatches) || index >= len(st.find.hexClicks) {
@@ -2819,15 +3181,16 @@ func (ui *UI) fileViewerFindResultPresentation(st *fileViewerState, index int) (
 		return "", "", nil, 0
 	}
 	match := st.find.matches[index]
-	return strconv.Itoa(match.Line) + "l", match.Snippet, &st.find.textClicks[index], 34
+	return strconv.Itoa(match.Line), match.Snippet, &st.find.textClicks[index], 34
 }
 
 func viewerHexFindSnippet(st *fileViewerState, match viewerHexFindMatch) string {
 	if len(match.PreviewBytes) > 0 {
+		compact := viewerHexCompactPreviewBytes(match)
 		if st != nil && st.find.hexPreview {
-			return viewerHexBytesSnippet(match.PreviewBytes)
+			return viewerHexBytesSnippet(compact)
 		}
-		return viewerHexTextSnippet(match.PreviewBytes)
+		return viewerHexTextSnippet(compact)
 	}
 	if st != nil && st.find.hexPreview && match.HexPreview != "" {
 		return match.HexPreview
@@ -2843,6 +3206,39 @@ func viewerHexFindSnippet(st *fileViewerState, match viewerHexFindMatch) string 
 		return viewerHexBytesSnippet(data)
 	}
 	return viewerHexTextSnippet(data)
+}
+
+func viewerHexCompactPreviewBytes(match viewerHexFindMatch) []byte {
+	data, _ := viewerHexCompactPreview(match)
+	return data
+}
+
+func viewerHexCompactPreview(match viewerHexFindMatch) ([]byte, int) {
+	if len(match.PreviewBytes) == 0 {
+		return nil, 0
+	}
+	hit := min(max(match.PreviewMatch, 0), len(match.PreviewBytes))
+	from := max(0, hit-8)
+	to := min(len(match.PreviewBytes), hit+int(match.Length)+12)
+	if to <= from {
+		return match.PreviewBytes, hit
+	}
+	return match.PreviewBytes[from:to], hit - from
+}
+
+func viewerHexFindHighlightedSnippet(st *fileViewerState, match viewerHexFindMatch) (string, compactFindHighlight) {
+	data, hit := viewerHexCompactPreview(match)
+	if len(data) == 0 {
+		value := viewerHexFindPatternSnippet(st)
+		return value, compactFindHighlight{Start: 0, End: len(value)}
+	}
+	hitLen := min(int(match.Length), len(data)-hit)
+	if st != nil && st.find.hexPreview {
+		value := viewerHexBytesSnippet(data)
+		return value, compactFindHighlight{Start: hit * 3, End: (hit+hitLen)*3 - 1}
+	}
+	before, found, after := viewerHexTextParts(data, hit, hitLen)
+	return before + found + after, compactFindHighlight{Start: len(before), End: len(before) + len(found)}
 }
 
 func viewerHexFindContext(st *fileViewerState, match viewerHexFindMatch) ([]byte, bool) {
@@ -2889,6 +3285,28 @@ func viewerHexTextSnippet(data []byte) string {
 		}
 	}
 	return strings.Join(strings.Fields(text.String()), " ")
+}
+
+func viewerHexTextParts(data []byte, hitStart, hitLen int) (before, hit, after string) {
+	hitStart = min(max(hitStart, 0), len(data))
+	hitEnd := min(len(data), hitStart+max(hitLen, 0))
+	format := func(part []byte) string {
+		var text strings.Builder
+		for _, b := range part {
+			switch {
+			case b >= 0x20 && b <= 0x7E:
+				text.WriteByte(b)
+			case b == '\t':
+				text.WriteRune('⇥')
+			case b == '\r' || b == '\n':
+				text.WriteByte(' ')
+			default:
+				text.WriteByte('.')
+			}
+		}
+		return text.String()
+	}
+	return format(data[:hitStart]), format(data[hitStart:hitEnd]), format(data[hitEnd:])
 }
 
 func viewerHexFindPatternSnippet(st *fileViewerState) string {

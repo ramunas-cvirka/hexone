@@ -894,6 +894,7 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.find.textList.Axis = layout.Vertical
 	st.find.hexList.Axis = layout.Vertical
 	st.find.index = -1
+	st.find.previewIndex = -1
 	st.saveCh = make(chan fileViewerSaveResult, 1)
 	st.wordSelectRE, st.wordSelectExpr = viewerWordSelectRegexp(ui.fmCfg)
 	st.hex = newHexViewerState()

@@ -42,6 +42,10 @@ const (
 	minTerminalHeightRows       = 4
 	defaultTerminalPreviewStart = 0
 	defaultTerminalPreviewEnd   = 2
+	defaultViewerPreviewStart   = 0
+	defaultViewerPreviewEnd     = 2
+	defaultViewerHexPreviewRows = 2
+	maxViewerHexPreviewRows     = 8
 	minTerminalPreviewOffset    = -8
 	maxTerminalPreviewOffset    = 8
 	// This is only a malformed-config safety limit. The interactive terminal
@@ -375,6 +379,21 @@ func NormalizeTerminalHeightRows(rows int) int {
 }
 
 func NormalizeTerminalPreviewRange(start, end int) (int, int) {
+	return normalizeFindPreviewRange(start, end)
+}
+
+func NormalizeViewerPreviewRange(start, end int) (int, int) {
+	return normalizeFindPreviewRange(start, end)
+}
+
+func NormalizeViewerHexPreviewRows(rows int) int {
+	if rows < 1 {
+		return defaultViewerHexPreviewRows
+	}
+	return min(rows, maxViewerHexPreviewRows)
+}
+
+func normalizeFindPreviewRange(start, end int) (int, int) {
 	if start < minTerminalPreviewOffset {
 		start = minTerminalPreviewOffset
 	}
@@ -588,6 +607,9 @@ type ViewerConfig struct {
 	CommandAutoRefresh      bool                `yaml:"command_auto_refresh"`
 	CommandRefreshMs        int                 `yaml:"command_refresh_ms"`
 	HideFunctionBarWhenOpen bool                `yaml:"hide_function_bar_when_open"`
+	PreviewStart            int                 `yaml:"preview_start"`
+	PreviewEnd              int                 `yaml:"preview_end"`
+	HexPreviewRows          int                 `yaml:"hex_preview_rows"`
 }
 
 type SSHSetup struct {
@@ -680,6 +702,9 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		Viewer: ViewerConfig{
 			SmoothScrolling: true,
 			ShowLineNumbers: true,
+			PreviewStart:    defaultViewerPreviewStart,
+			PreviewEnd:      defaultViewerPreviewEnd,
+			HexPreviewRows:  defaultViewerHexPreviewRows,
 		},
 	}
 	if err := node.Decode(&raw); err != nil {
@@ -819,6 +844,9 @@ func DefaultConfig() *Config {
 			CommandAutoRefresh:      true,
 			CommandRefreshMs:        1500,
 			HideFunctionBarWhenOpen: true,
+			PreviewStart:            defaultViewerPreviewStart,
+			PreviewEnd:              defaultViewerPreviewEnd,
+			HexPreviewRows:          defaultViewerHexPreviewRows,
 		},
 		SSH: SSHConfig{
 			Setups: []SSHSetup{},
@@ -1084,6 +1112,8 @@ func (c *Config) normalize() {
 	c.Sort.PerDir = NormalizeSortPerDir(c.Sort.PerDir, c.Sort)
 	c.Terminal.HeightRows = NormalizeTerminalHeightRows(c.Terminal.HeightRows)
 	c.Terminal.PreviewStart, c.Terminal.PreviewEnd = NormalizeTerminalPreviewRange(c.Terminal.PreviewStart, c.Terminal.PreviewEnd)
+	c.Viewer.PreviewStart, c.Viewer.PreviewEnd = NormalizeViewerPreviewRange(c.Viewer.PreviewStart, c.Viewer.PreviewEnd)
+	c.Viewer.HexPreviewRows = NormalizeViewerHexPreviewRows(c.Viewer.HexPreviewRows)
 	c.Tabs.WidthMode = NormalizeTabWidthMode(c.Tabs.WidthMode)
 	c.Tabs.MinWidthDp = NormalizeTabWidthDp(c.Tabs.MinWidthDp, defaultTabMinWidthDp)
 	c.Tabs.FixedWidthDp = NormalizeTabWidthDp(c.Tabs.FixedWidthDp, defaultTabFixedWidthDp)

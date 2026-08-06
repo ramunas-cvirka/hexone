@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -88,6 +89,12 @@ func TestViewerFindTextMatchesAllowsOverlaps(t *testing.T) {
 	if got[1].Start != 3 || got[1].End != 6 {
 		t.Fatalf("second match=%+v want {Start:3 End:6}", got[1])
 	}
+	if hit := got[0].Snippet[got[0].SnippetHighlight.Start:got[0].SnippetHighlight.End]; hit != "ana" || got[0].SnippetHighlight.Start != 1 {
+		t.Fatalf("first snippet highlight=%q at %+v", hit, got[0].SnippetHighlight)
+	}
+	if hit := got[1].Snippet[got[1].SnippetHighlight.Start:got[1].SnippetHighlight.End]; hit != "ana" || got[1].SnippetHighlight.Start != 3 {
+		t.Fatalf("second snippet highlight=%q at %+v", hit, got[1].SnippetHighlight)
+	}
 }
 
 func TestViewerFindTextMatchesIncludesLineAndCompactSnippet(t *testing.T) {
@@ -100,6 +107,23 @@ func TestViewerFindTextMatchesIncludesLineAndCompactSnippet(t *testing.T) {
 	}
 	if got[0].Snippet != "second needle with context" {
 		t.Fatalf("snippet=%q", got[0].Snippet)
+	}
+}
+
+func TestViewerFindTextPreviewUsesConfiguredInclusiveRange(t *testing.T) {
+	content := "zero\none\ntwo needle\nthree\nfour\nfive"
+	matches := viewerFindTextMatchesWithPreview(content, "needle", -1, 2)
+	if len(matches) != 1 {
+		t.Fatalf("matches=%d want 1", len(matches))
+	}
+	want := []string{"one", "two needle", "three", "four"}
+	if !slices.Equal(matches[0].Preview, want) || matches[0].PreviewFocus != 1 {
+		t.Fatalf("preview=%q focus=%d want %q focus=1", matches[0].Preview, matches[0].PreviewFocus, want)
+	}
+	hit := matches[0].PreviewHighlights[matches[0].PreviewFocus]
+	rendered := viewerFindPreviewLines(matches[0].Preview)[matches[0].PreviewFocus]
+	if got := rendered[hit.Start:hit.End]; got != "needle" {
+		t.Fatalf("preview highlight=%q at %+v", got, hit)
 	}
 }
 
@@ -184,6 +208,62 @@ func TestViewerHexFindPreviewSwitchesBetweenTextAndHex(t *testing.T) {
 	}
 }
 
+func TestViewerHexFindHighlightTracksMatchedBytesInTextAndHex(t *testing.T) {
+	match := viewerHexFindMatch{
+		Length:       3,
+		PreviewBytes: []byte("before needle after"),
+		PreviewMatch: 7,
+	}
+	st := &fileViewerState{}
+	textValue, textHit := viewerHexFindHighlightedSnippet(st, match)
+	if got := textValue[textHit.Start:textHit.End]; got != "nee" {
+		t.Fatalf("text highlight=%q in %q want nee", got, textValue)
+	}
+	st.find.hexPreview = true
+	hexValue, hexHit := viewerHexFindHighlightedSnippet(st, match)
+	if got := hexValue[hexHit.Start:hexHit.End]; got != "6E 65 65" {
+		t.Fatalf("hex highlight=%q in %q want 6E 65 65", got, hexValue)
+	}
+	preview := viewerHexFindPreview(st, match, 2)
+	if len(preview.Lines) == 0 || len(preview.Highlights) == 0 {
+		t.Fatalf("hex preview=%+v want highlighted rows", preview)
+	}
+	previewHit := preview.Highlights[0]
+	if got := preview.Lines[0][previewHit.Start:previewHit.End]; got != "6E 65 65" {
+		t.Fatalf("hex preview highlight=%q in %q want 6E 65 65", got, preview.Lines[0])
+	}
+}
+
+func TestViewerHexDockedPreviewRequiresMultipleDetectedLines(t *testing.T) {
+	st := &fileViewerState{}
+	single := viewerHexFindMatch{PreviewBytes: []byte("one uninterrupted byte window")}
+	if preview := viewerHexFindPreviewLines(st, single); len(preview) != 0 {
+		t.Fatalf("single-line hex window preview=%q want none", preview)
+	}
+	trailingNewline := viewerHexFindMatch{PreviewBytes: []byte("one line only\n")}
+	if preview := viewerHexFindPreviewLines(st, trailingNewline); len(preview) != 0 {
+		t.Fatalf("single line with trailing newline preview=%q want none", preview)
+	}
+	st.find.hexPreview = true
+	hexRows := viewerHexFindPreviewLines(st, single)
+	if len(hexRows) != 2 || hexRows[0] != "6F 6E 65 20 75 6E 69 6E 74 65 72 72" {
+		t.Fatalf("newline-free Hex preview rows=%q", hexRows)
+	}
+	st.find.hexPreview = false
+
+	multiline := viewerHexFindMatch{PreviewBytes: []byte("first context\r\nsecond needle\nthird context")}
+	preview := viewerHexFindPreviewLines(st, multiline)
+	want := []string{"first context", "second needle"}
+	if !slices.Equal(preview, want) {
+		t.Fatalf("text preview=%q want %q", preview, want)
+	}
+	st.find.hexPreview = true
+	hexPreview := viewerHexFindPreviewLines(st, multiline)
+	if len(hexPreview) < 2 || hexPreview[0] != "66 69 72 73 74 20 63 6F 6E 74 65 78" {
+		t.Fatalf("hex preview=%q", hexPreview)
+	}
+}
+
 func TestViewerBufferedHexFindMatchesAreImmediatelyPreviewable(t *testing.T) {
 	buffer := []byte("before needle between needle after")
 	matches := viewerBufferedHexFindMatches(buffer, 4096, []byte("needle"), 20)
@@ -245,6 +325,29 @@ func TestViewerPDFFindPageMatchesIsCaseInsensitiveAndOverlapping(t *testing.T) {
 	}
 	if matches[1].Start != 3 || matches[1].End != 6 {
 		t.Fatalf("second match=%+v", matches[1])
+	}
+	if hit := matches[0].Snippet[matches[0].SnippetHighlight.Start:matches[0].SnippetHighlight.End]; hit != "ANA" || matches[0].SnippetHighlight.Start != 1 {
+		t.Fatalf("first PDF snippet highlight=%q at %+v", hit, matches[0].SnippetHighlight)
+	}
+	if hit := matches[1].Snippet[matches[1].SnippetHighlight.Start:matches[1].SnippetHighlight.End]; hit != "ANa" || matches[1].SnippetHighlight.Start != 3 {
+		t.Fatalf("second PDF snippet highlight=%q at %+v", hit, matches[1].SnippetHighlight)
+	}
+}
+
+func TestViewerPDFFindPreviewUsesConfiguredInclusiveRange(t *testing.T) {
+	text := testPDFFindPage(2, "zero\none\ntwo needle\nthree\nfour")
+	matches := viewerPDFFindPageMatchesWithPreview(text, "needle", -1, 1)
+	if len(matches) != 1 {
+		t.Fatalf("matches=%d want 1", len(matches))
+	}
+	want := []string{"one", "two needle", "three"}
+	if !slices.Equal(matches[0].Preview, want) || matches[0].PreviewFocus != 1 {
+		t.Fatalf("preview=%q focus=%d want %q focus=1", matches[0].Preview, matches[0].PreviewFocus, want)
+	}
+	hit := matches[0].PreviewHighlights[matches[0].PreviewFocus]
+	rendered := viewerFindPreviewLines(matches[0].Preview)[matches[0].PreviewFocus]
+	if got := rendered[hit.Start:hit.End]; got != "needle" {
+		t.Fatalf("PDF preview highlight=%q at %+v", got, hit)
 	}
 }
 

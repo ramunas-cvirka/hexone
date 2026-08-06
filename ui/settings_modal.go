@@ -311,6 +311,12 @@ type settingsModalState struct {
 	viewSmoothScrollingBool      widget.Bool
 	viewShowLineNumbersBool      widget.Bool
 	viewHideFunctionBarBool      widget.Bool
+	viewPreviewStart             int
+	viewPreviewEnd               int
+	viewHexPreviewRows           int
+	viewPreviewStartStepper      settingsNumberStepperState
+	viewPreviewEndStepper        settingsNumberStepperState
+	viewHexPreviewRowsStepper    settingsNumberStepperState
 	generalTabList               widget.List
 	viewerTabList                widget.List
 	colorsTabList                widget.List
@@ -716,6 +722,8 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.loadPaneDateFormat(cfg.DateFormats)
 	st.terminalAcceleratedKeysBool.Value = cfg.Terminal.AcceleratedKeys
 	st.terminalPreviewStart, st.terminalPreviewEnd = fm.NormalizeTerminalPreviewRange(cfg.Terminal.PreviewStart, cfg.Terminal.PreviewEnd)
+	st.viewPreviewStart, st.viewPreviewEnd = fm.NormalizeViewerPreviewRange(cfg.Viewer.PreviewStart, cfg.Viewer.PreviewEnd)
+	st.viewHexPreviewRows = fm.NormalizeViewerHexPreviewRows(cfg.Viewer.HexPreviewRows)
 	st.interfaceFontPickerAnim = settingsChoiceAnim{}
 	st.paneFontPickerAnim = settingsChoiceAnim{}
 	st.tabsFontPickerAnim = settingsChoiceAnim{}
@@ -3345,6 +3353,8 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Viewer.SmoothScrolling = st.viewSmoothScrollingBool.Value
 	ui.fmCfg.Viewer.ShowLineNumbers = st.viewShowLineNumbersBool.Value
 	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value
+	ui.fmCfg.Viewer.PreviewStart, ui.fmCfg.Viewer.PreviewEnd = fm.NormalizeViewerPreviewRange(st.viewPreviewStart, st.viewPreviewEnd)
+	ui.fmCfg.Viewer.HexPreviewRows = fm.NormalizeViewerHexPreviewRows(st.viewHexPreviewRows)
 	ui.fmCfg.Viewer.CommandByTarget = viewerCommandTargetMap(st.viewTargetEntries)
 	ui.fmCfg.Viewer.CommandRules = fm.NormalizeViewerCommandRules(st.viewRuleEntries)
 	ui.fmCfg.Associations = fm.GroupViewerAssociations(st.viewAssocEntries)
@@ -4261,11 +4271,11 @@ func (ui *UI) layoutSettingsTerminalTab(th *material.Theme, gtx layout.Context, 
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsTerminalPreviewControl(th, gtx, st, "Start", &st.terminalPreviewStartStepper, st.terminalPreviewStart, settingsKeyboardFocusTerminalPreviewStart)
+					return ui.layoutSettingsPreviewOffsetControl(th, gtx, st, "Start", &st.terminalPreviewStartStepper, st.terminalPreviewStart, settingsKeyboardFocusTerminalPreviewStart)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSettingsTerminalPreviewControl(th, gtx, st, "End", &st.terminalPreviewEndStepper, st.terminalPreviewEnd, settingsKeyboardFocusTerminalPreviewEnd)
+					return ui.layoutSettingsPreviewOffsetControl(th, gtx, st, "End", &st.terminalPreviewEndStepper, st.terminalPreviewEnd, settingsKeyboardFocusTerminalPreviewEnd)
 				}),
 			)
 		}),
@@ -4280,7 +4290,7 @@ func (ui *UI) layoutSettingsTerminalTab(th *material.Theme, gtx layout.Context, 
 	)
 }
 
-func (ui *UI) layoutSettingsTerminalPreviewControl(th *material.Theme, gtx layout.Context, st *settingsModalState, label string, stepper *settingsNumberStepperState, value int, focus settingsKeyboardFocus) layout.Dimensions {
+func (ui *UI) layoutSettingsPreviewOffsetControl(th *material.Theme, gtx layout.Context, st *settingsModalState, label string, stepper *settingsNumberStepperState, value int, focus settingsKeyboardFocus) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			lbl := material.Body2(th, label)
@@ -4293,10 +4303,87 @@ func (ui *UI) layoutSettingsTerminalPreviewControl(th *material.Theme, gtx layou
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return fixedWidth(gtx, gtx.Dp(unit.Dp(74)), func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutSettingsFontSizeStepper(th, gtx, st, stepper, float32(value), focus)
+				return ui.layoutSettingsPreviewOffsetStepper(th, gtx, st, stepper, value, focus)
 			})
 		}),
 	)
+}
+
+func (ui *UI) layoutSettingsPreviewOffsetStepper(th *material.Theme, gtx layout.Context, st *settingsModalState, stepper *settingsNumberStepperState, value int, focus settingsKeyboardFocus) layout.Dimensions {
+	if st == nil || stepper == nil {
+		return layout.Dimensions{}
+	}
+	for stepper.valueClick.Clicked(gtx) {
+		st.setKeyboardFocus(focus)
+	}
+	for stepper.upClick.Clicked(gtx) {
+		st.setKeyboardFocus(focus)
+		st.stepFocusedNumber(1)
+		st.errText = ""
+	}
+	for stepper.downClick.Clicked(gtx) {
+		st.setKeyboardFocus(focus)
+		st.stepFocusedNumber(-1)
+		st.errText = ""
+	}
+	focused := st.focus == focus
+	height := gtx.Dp(unit.Dp(22))
+	if height < 18 {
+		height = 18
+	}
+	if stepper.valueClick.Hovered() || stepper.upClick.Hovered() || stepper.downClick.Hovered() {
+		pointer.CursorPointer.Add(gtx.Ops)
+	}
+	return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				return stepper.valueClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					bg := color.NRGBA{R: 34, G: 34, B: 34, A: 255}
+					border := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
+					fg := txtColor
+					if stepper.valueClick.Hovered() {
+						bg = color.NRGBA{R: 42, G: 42, B: 42, A: 255}
+						border = color.NRGBA{R: 255, G: 255, B: 255, A: 36}
+					}
+					if focused {
+						bg = color.NRGBA{R: 48, G: 48, B: 48, A: 255}
+						border = color.NRGBA{R: 160, G: 148, B: 122, A: 190}
+						fg = color.NRGBA{R: 244, G: 238, B: 225, A: 255}
+					}
+					return fillFlatBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							lbl := material.Body2(th, strconv.Itoa(value))
+							lbl.Font.Typeface = ui.interfaceTypeface()
+							lbl.Font.Weight = font.Medium
+							lbl.TextSize = ui.scaleModalFontSize(10)
+							lbl.Color = fg
+							lbl.MaxLines = 1
+							lbl.Alignment = text.Middle
+							return layoutVCenteredLabel(gtx, lbl)
+						})
+					})
+				})
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(2)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fixedWidth(gtx, gtx.Dp(unit.Dp(17)), func(gtx layout.Context) layout.Dimensions {
+					half := max(1, height/2)
+					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, half, func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutSettingsFontSizeButton(gtx, &stepper.upClick, uitheme.ArrowUpIcon(), focused)
+							})
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return fixedHeight(gtx, height-half, func(gtx layout.Context) layout.Dimensions {
+								return ui.layoutSettingsFontSizeButton(gtx, &stepper.downClick, uitheme.ArrowDownIcon(), focused)
+							})
+						}),
+					)
+				})
+			}),
+		)
+	})
 }
 
 func (ui *UI) layoutSettingsHelpIcon(th *material.Theme, gtx layout.Context, click *widget.Clickable, helpText string) layout.Dimensions {
@@ -5103,6 +5190,48 @@ func (ui *UI) layoutSettingsViewerTab(th *material.Theme, gtx layout.Context, st
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, noticeLabel(viewerRemoteSearchCommandNoticeText(), 6, ""))
+				}),
+			)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(rowLabel("Text/PDF search preview offsets (inclusive)", true)),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsPreviewOffsetControl(th, gtx, st, "Start", &st.viewPreviewStartStepper, st.viewPreviewStart, settingsKeyboardFocusViewerPreviewStart)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							return ui.layoutSettingsPreviewOffsetControl(th, gtx, st, "End", &st.viewPreviewEndStepper, st.viewPreviewEnd, settingsKeyboardFocusViewerPreviewEnd)
+						}),
+					)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(th, "0 is the matching line; negative values include lines before it.")
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(9)
+					lbl.Color = hintColor
+					return lbl.Layout(gtx)
+				}),
+			)
+		},
+		func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(rowLabel("Hex search preview", true)),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsPreviewOffsetControl(th, gtx, st, "Rows", &st.viewHexPreviewRowsStepper, st.viewHexPreviewRows, settingsKeyboardFocusViewerHexPreviewRows)
+				}),
+				layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					lbl := material.Caption(th, "Fixed 12-byte rows for hex; text preview still requires actual lines.")
+					lbl.Font.Typeface = ui.interfaceTypeface()
+					lbl.TextSize = ui.scaleModalFontSize(9)
+					lbl.Color = hintColor
+					return lbl.Layout(gtx)
 				}),
 			)
 		},

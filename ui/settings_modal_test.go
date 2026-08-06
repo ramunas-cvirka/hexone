@@ -839,6 +839,46 @@ func TestSettingsModalKeyboardStepsTerminalPreviewOffsets(t *testing.T) {
 	}
 }
 
+func TestSettingsModalLoadsSavesAndStepsViewerPreviewRange(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Viewer.PreviewStart = -1
+	cfg.Viewer.PreviewEnd = 3
+	cfg.Viewer.HexPreviewRows = 4
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if st.viewPreviewStart != -1 || st.viewPreviewEnd != 3 {
+		t.Fatalf("loaded viewer preview=%d..%d want -1..3", st.viewPreviewStart, st.viewPreviewEnd)
+	}
+	if st.viewHexPreviewRows != 4 {
+		t.Fatalf("loaded viewer hex preview rows=%d want 4", st.viewHexPreviewRows)
+	}
+	st.focus = settingsKeyboardFocusViewerPreviewStart
+	if !st.stepFocusedNumber(-1) || st.viewPreviewStart != -2 {
+		t.Fatalf("stepped viewer preview start=%d want -2", st.viewPreviewStart)
+	}
+	st.focus = settingsKeyboardFocusViewerPreviewEnd
+	if !st.stepFocusedNumber(1) || st.viewPreviewEnd != 4 {
+		t.Fatalf("stepped viewer preview end=%d want 4", st.viewPreviewEnd)
+	}
+	st.focus = settingsKeyboardFocusViewerHexPreviewRows
+	if !st.stepFocusedNumber(1) || st.viewHexPreviewRows != 5 {
+		t.Fatalf("stepped viewer hex preview rows=%d want 5", st.viewHexPreviewRows)
+	}
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+	saved := fm.LoadConfig(ui.configPath)
+	if saved.Viewer.PreviewStart != -2 || saved.Viewer.PreviewEnd != 4 {
+		t.Fatalf("saved viewer preview=%d..%d want -2..4", saved.Viewer.PreviewStart, saved.Viewer.PreviewEnd)
+	}
+	if saved.Viewer.HexPreviewRows != 5 {
+		t.Fatalf("saved viewer hex preview rows=%d want 5", saved.Viewer.HexPreviewRows)
+	}
+}
+
 func TestSettingsModalShellChangeRecreatesOpenTerminal(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	ui := NewUI(cfg)
@@ -874,6 +914,9 @@ func TestSettingsKeyboardFocusOrderIncludesViewerControls(t *testing.T) {
 		settingsKeyboardFocusViewerSmoothScrolling,
 		settingsKeyboardFocusViewerShowLineNumbers,
 		settingsKeyboardFocusViewerHideFunctionBar,
+		settingsKeyboardFocusViewerPreviewStart,
+		settingsKeyboardFocusViewerPreviewEnd,
+		settingsKeyboardFocusViewerHexPreviewRows,
 		settingsKeyboardFocusViewerTargetKey,
 		settingsKeyboardFocusViewerTargetBrowse,
 		settingsKeyboardFocusViewerTargetApply,

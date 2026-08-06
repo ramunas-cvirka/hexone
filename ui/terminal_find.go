@@ -16,8 +16,6 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -26,7 +24,6 @@ import (
 const (
 	terminalFindWidthDp      = 360
 	terminalFindRowHeightDp  = 24
-	terminalFindPreviewRowDp = 17
 	terminalFindMaxRows      = 7
 	terminalFindMaxResults   = 500
 	terminalFindPreviewLines = 3
@@ -62,6 +59,7 @@ type terminalFindState struct {
 	searching    bool
 	generation   uint64
 	results      chan terminalFindResult
+	cursorAnim   compactFindCursorAnim
 }
 
 func terminalFindKey(ev key.Event) bool {
@@ -101,6 +99,7 @@ func (s *terminalSession) closeFind() bool {
 	s.find.focus = false
 	s.find.searching = false
 	s.find.generation++
+	s.find.cursorAnim.reset()
 	s.wantFocus = true
 	return true
 }
@@ -116,6 +115,7 @@ func (s *terminalSession) startFindSearch(query string) {
 	find.index = 0
 	find.previewIndex = -1
 	find.previewAt = time.Time{}
+	find.cursorAnim.reset()
 	find.matches = nil
 	find.clicks = nil
 	if query == "" {
@@ -223,19 +223,7 @@ func terminalFindPreviewWindow(lines []string, row int) ([]string, int) {
 }
 
 func terminalFindPreviewWindowRange(lines []string, row, previewStart, previewEnd int) ([]string, int) {
-	if row < 0 || row >= len(lines) {
-		return nil, -1
-	}
-	previewStart, previewEnd = fm.NormalizeTerminalPreviewRange(previewStart, previewEnd)
-	start := row + previewStart
-	if start < 0 {
-		start = 0
-	}
-	end := row + previewEnd + 1
-	if end > len(lines) {
-		end = len(lines)
-	}
-	return append([]string(nil), lines[start:end]...), row - start
+	return compactFindPreviewWindow(lines, row, previewStart, previewEnd)
 }
 
 func (s *terminalSession) setFindPreviewRange(start, end int) bool {
@@ -496,6 +484,11 @@ func (ui *UI) layoutTerminalFindResults(th *material.Theme, gtx layout.Context, 
 			gtx.Execute(op.InvalidateCmd{At: expires})
 		}
 	}
+	cursorIndex := st.find.index
+	if st.find.previewIndex >= 0 {
+		cursorIndex = st.find.previewIndex
+	}
+	st.find.cursorAnim.setTarget(gtx.Now, cursorIndex)
 	previewMatch, hasPreview := terminalFindPreviewMatchForIndex(&st.find, st.find.previewIndex)
 	var preview []string
 	if hasPreview {
@@ -556,8 +549,9 @@ func (ui *UI) layoutTerminalFindResult(th *material.Theme, gtx layout.Context, s
 		rowBg = mixNRGBA(theme.PanelBg, theme.StrongSelection, 0.34)
 		rowBg.A = 224
 	} else if click.Hovered() {
-		rowBg = mixNRGBA(theme.PanelBg, theme.HeaderText, 0.08)
-		rowBg.A = 238
+		progress := compactFindHoverProgress(&st.find.cursorAnim, gtx.Now, index)
+		rowBg = mixNRGBA(theme.PanelBg, theme.HeaderText, 0.03+0.05*progress)
+		rowBg.A = uint8(205 + 33*progress)
 	}
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
@@ -566,22 +560,7 @@ func (ui *UI) layoutTerminalFindResult(th *material.Theme, gtx layout.Context, s
 				return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(6), Top: unit.Dp(2), Bottom: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							cursor := " "
-							cursorIndex := st.find.index
-							if st.find.previewIndex >= 0 {
-								cursorIndex = st.find.previewIndex
-							}
-							if index == cursorIndex {
-								cursor = ">"
-							}
-							marker := material.Body2(th, cursor)
-							marker.Font.Typeface = ui.terminalTypeface()
-							marker.Font.Weight = font.Bold
-							marker.TextSize = scaleThemeFontSize(th, 10)
-							marker.Color = theme.StatusAccent
-							return fixedWidth(gtx, gtx.Dp(unit.Dp(12)), func(gtx layout.Context) layout.Dimensions {
-								return layoutVCenteredLabel(gtx, marker)
-							})
+							return layoutCompactFindCursor(th, gtx, ui.terminalTypeface(), scaleThemeFontSize(th, 10), theme.StatusAccent, &st.find.cursorAnim, index)
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							lineNumber := material.Body2(th, strconv.Itoa(match.Row+1))
@@ -597,13 +576,8 @@ func (ui *UI) layoutTerminalFindResult(th *material.Theme, gtx layout.Context, s
 						}),
 						layout.Rigid(layout.Spacer{Width: unit.Dp(9)}.Layout),
 						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-							line := material.Body2(th, terminalFindPreviewText(match.Line))
-							line.Font.Typeface = ui.terminalTypeface()
-							line.TextSize = scaleThemeFontSize(th, 10)
-							line.Color = theme.HeaderText
-							line.MaxLines = 1
-							line.Truncator = "…"
-							return layoutVCenteredLabel(gtx, line)
+							line, highlight := terminalFindHighlightedText(match)
+							return layoutCompactFindHighlightedText(th, gtx, theme, ui.terminalTypeface(), scaleThemeFontSize(th, 10), line, highlight, true)
 						}),
 					)
 				})
@@ -640,92 +614,37 @@ func terminalFindPreviewMatchForIndex(find *terminalFindState, index int) (termi
 }
 
 func terminalFindDockedPreviewHeight(gtx layout.Context, preview []string) int {
-	if len(preview) == 0 {
-		return 0
-	}
-	return len(preview)*gtx.Dp(unit.Dp(terminalFindPreviewRowDp)) + gtx.Dp(unit.Dp(3))
+	return compactFindPreviewHeight(gtx, compactFindPreview{Lines: preview})
 }
 
 func terminalFindPreviewText(text string) string {
 	return strings.ReplaceAll(text, "\t", "    ")
 }
 
+func terminalFindHighlightedText(match terminalFindMatch) (string, compactFindHighlight) {
+	startByte := compactFindRuneByteOffset(match.Line, match.StartCol)
+	endByte := compactFindRuneByteOffset(match.Line, match.EndCol+1)
+	return compactFindTabbedTextHighlight(match.Line, startByte, endByte)
+}
+
 func (ui *UI) layoutTerminalFindDockedPreview(th *material.Theme, gtx layout.Context, theme fileViewerTheme, match terminalFindMatch, visible bool) layout.Dimensions {
 	if !visible || len(match.Preview) == 0 {
 		return layout.Dimensions{}
 	}
-	preview := match.Preview
-	height := terminalFindDockedPreviewHeight(gtx, preview)
-	return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
-		previewBG := mixNRGBA(theme.PanelBg, theme.Backdrop, 0.08)
-		return fillBgExact(gtx, previewBG, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutTerminalFindPreviewDivider(gtx, theme)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					children := make([]layout.FlexChild, 0, len(preview))
-					for index, text := range preview {
-						index := index
-						text := terminalFindPreviewText(text)
-						children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return fixedHeight(gtx, gtx.Dp(unit.Dp(terminalFindPreviewRowDp)), func(gtx layout.Context) layout.Dimensions {
-								return layout.Inset{Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											indicator := color.NRGBA{}
-											if index == match.PreviewFocus {
-												indicator = theme.StatusAccent
-											}
-											return fixedWidth(gtx, gtx.Dp(unit.Dp(2)), func(gtx layout.Context) layout.Dimensions {
-												return fillBgExact(gtx, indicator, func(gtx layout.Context) layout.Dimensions {
-													return layout.Dimensions{Size: gtx.Constraints.Max}
-												})
-											})
-										}),
-										layout.Rigid(layout.Spacer{Width: unit.Dp(5)}.Layout),
-										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-											label := material.Caption(th, text)
-											label.Font.Typeface = ui.terminalTypeface()
-											label.TextSize = scaleThemeFontSize(th, 9)
-											label.Color = theme.HeaderText
-											label.MaxLines = 1
-											label.Truncator = "…"
-											return layoutVCenteredLabel(gtx, label)
-										}),
-									)
-								})
-							})
-						}))
-					}
-					return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
-				}),
-				layout.Rigid(layout.Spacer{Height: unit.Dp(1)}.Layout),
-			)
-		})
+	lines := make([]string, len(match.Preview))
+	highlights := make([]compactFindHighlight, len(match.Preview))
+	for i, line := range match.Preview {
+		lines[i] = terminalFindPreviewText(line)
+		highlights[i] = compactFindHighlight{Start: -1, End: -1}
+	}
+	if match.PreviewFocus >= 0 && match.PreviewFocus < len(match.Preview) {
+		startByte := compactFindRuneByteOffset(match.Preview[match.PreviewFocus], match.StartCol)
+		endByte := compactFindRuneByteOffset(match.Preview[match.PreviewFocus], match.EndCol+1)
+		_, highlights[match.PreviewFocus] = compactFindTabbedTextHighlight(match.Preview[match.PreviewFocus], startByte, endByte)
+	}
+	return layoutCompactFindDockedPreview(th, gtx, theme, ui.terminalTypeface(), scaleThemeFontSize(th, 9), compactFindPreview{
+		Lines:      lines,
+		Focus:      match.PreviewFocus,
+		Highlights: highlights,
 	})
-}
-
-func layoutTerminalFindPreviewDivider(gtx layout.Context, theme fileViewerTheme) layout.Dimensions {
-	height := gtx.Dp(unit.Dp(1))
-	if height < 1 {
-		height = 1
-	}
-	width := gtx.Constraints.Max.X
-	line := mixNRGBA(theme.Divider, theme.StatusAccent, 0.28)
-	line.A = 188
-	dash := gtx.Dp(unit.Dp(5))
-	gap := gtx.Dp(unit.Dp(3))
-	if dash < 2 {
-		dash = 2
-	}
-	if gap < 1 {
-		gap = 1
-	}
-	for x := 0; x < width; x += dash + gap {
-		end := min(width, x+dash)
-		paint.FillShape(gtx.Ops, line, clip.Rect(image.Rect(x, 0, end, height)).Op())
-	}
-	return layout.Dimensions{Size: image.Pt(width, height)}
 }

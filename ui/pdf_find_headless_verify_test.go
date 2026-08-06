@@ -16,10 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/font/gofont"
 	"gioui.org/gpu/headless"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/text"
@@ -88,7 +90,10 @@ func TestHeadlessPDFViewerFind(t *testing.T) {
 	defer win.Release()
 	th := material.NewTheme()
 	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
-	ui := NewUI(fm.DefaultConfig())
+	cfg := fm.DefaultConfig()
+	cfg.Viewer.PreviewStart = -1
+	cfg.Viewer.PreviewEnd = 1
+	ui := NewUI(cfg)
 	router := new(input.Router)
 	frame := func() *image.RGBA {
 		var ops op.Ops
@@ -160,6 +165,24 @@ func TestHeadlessPDFViewerFind(t *testing.T) {
 	img = frame()
 	outPath := filepath.Join(outDir, "pdf-find-results.png")
 	f, err := os.Create(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("wrote %s", outPath)
+
+	router.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(850, 100)})
+	frame()
+	time.Sleep(110 * time.Millisecond)
+	img = frame()
+	outPath = filepath.Join(outDir, "pdf-find-hover-preview.png")
+	f, err = os.Create(outPath)
 	if err != nil {
 		t.Fatal(err)
 	}
