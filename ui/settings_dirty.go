@@ -59,7 +59,7 @@ func (st *settingsModalState) draftSignature() string {
 		PaneColumns: fmt.Sprintf("%v|%v|%t|%q",
 			st.paneFullChars, st.paneBriefChars, st.paneShowPermissions, st.panePermissionFormat),
 		PaneDates:  fmt.Sprintf("%q|%q", st.paneDateFormatEdit.Text(), st.paneDateFallbackFormats),
-		Terminal:   fmt.Sprintf("%t", st.terminalAcceleratedKeysBool.Value),
+		Terminal:   fmt.Sprintf("%t|%d|%d", st.terminalAcceleratedKeysBool.Value, st.terminalPreviewStart, st.terminalPreviewEnd),
 		ConfigYAML: st.configEdit.Text(),
 	}
 	return fmt.Sprintf("%#v", snapshot)

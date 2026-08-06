@@ -45,6 +45,18 @@ static BOOL hexoneIsFunctionKeyEvent(NSEvent *event) {
 	}
 }
 
+static BOOL hexoneIsTerminalInterruptEvent(NSEvent *event) {
+	if (event == nil || [event type] != NSEventTypeKeyDown) {
+		return NO;
+	}
+	NSEventModifierFlags mods = [event modifierFlags] & NSEventModifierFlagDeviceIndependentFlagsMask;
+	if (mods != NSEventModifierFlagControl && mods != NSEventModifierFlagCommand) {
+		return NO;
+	}
+	NSString *chars = [event charactersIgnoringModifiers];
+	return chars != nil && [chars caseInsensitiveCompare:@"c"] == NSOrderedSame;
+}
+
 @interface GioView (HexoneNoBeep)
 @end
 
@@ -72,6 +84,12 @@ static BOOL hexoneIsFunctionKeyEvent(NSEvent *event) {
 		return;
 	}
 	if (hexoneIsFunctionKeyEvent(NSApp.currentEvent)) {
+		return;
+	}
+	// A terminal-focused Ctrl/Cmd+C is delivered to Gio as byte 0x03. AppKit may
+	// still run its copy selector fallback afterwards; claim that pass so an
+	// interrupt never produces the system alert sound.
+	if (hexoneIsTerminalInterruptEvent(NSApp.currentEvent)) {
 		return;
 	}
 	[self hexone_doCommandBySelector:action];

@@ -74,6 +74,77 @@ func TestTerminalKeyBytesSpecialKeys(t *testing.T) {
 	}
 }
 
+func TestTerminalCtrlCInterruptsEvenWithSelection(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+	st.viewMu.Lock()
+	st.selectionActive = true
+	st.selectionStart = terminalPoint{Row: 0, Col: 0}
+	st.selectionEnd = terminalPoint{Row: 0, Col: 1}
+	st.viewMu.Unlock()
+
+	gtx, router := testKeyContext()
+	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+	router.Event(key.Filter{Focus: &st.keyTag, Optional: ^key.Modifiers(0)})
+	router.Queue(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl})
+
+	if !st.handleInput(gtx) {
+		t.Fatal("Ctrl+C should be handled by the terminal")
+	}
+	if got, want := proc.String(), "\x03"; got != want {
+		t.Fatalf("Ctrl+C input=%q want interrupt byte %q", got, want)
+	}
+}
+
+func TestTerminalCmdCInterruptsWithoutSelection(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testKeyContext()
+	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+	router.Event(key.Filter{Focus: &st.keyTag, Optional: ^key.Modifiers(0)})
+	router.Queue(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCommand})
+
+	if !st.handleInput(gtx) {
+		t.Fatal("Cmd+C should be handled by the terminal")
+	}
+	if got, want := proc.String(), "\x03"; got != want {
+		t.Fatalf("Cmd+C input=%q want interrupt byte %q", got, want)
+	}
+}
+
+func TestTerminalCtrlFOpenFindDoesNotReachShell(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testKeyContext()
+	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+	router.Event(key.Filter{Focus: &st.keyTag, Optional: ^key.Modifiers(0)})
+	router.Queue(key.Event{Name: "F", State: key.Press, Modifiers: key.ModCtrl})
+
+	if !st.handleInput(gtx) {
+		t.Fatal("Ctrl+F should be handled by the terminal")
+	}
+	if !st.find.open {
+		t.Fatal("Ctrl+F should open terminal find")
+	}
+	if got := proc.String(); got != "" {
+		t.Fatalf("Ctrl+F reached shell as %q", got)
+	}
+}
+
 func TestTerminalApplicationCursorKeys(t *testing.T) {
 	if got, want := string(terminalKeyBytesForMode(key.Event{Name: key.NameUpArrow, State: key.Press}, true)), "\x1bOA"; got != want {
 		t.Fatalf("application up=%q want %q", got, want)
@@ -433,14 +504,29 @@ func TestTerminalSelectAllKey(t *testing.T) {
 }
 
 func TestTerminalCopyKey(t *testing.T) {
-	if !terminalCopyKey(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl}) {
-		t.Fatal("Ctrl+C should copy terminal selection when one exists")
+	if terminalCopyKeyForGOOS(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl}, "linux") {
+		t.Fatal("plain Ctrl+C must remain available to interrupt the shell")
 	}
-	if !terminalCopyKey(key.Event{Name: "c", State: key.Press, Modifiers: key.ModShortcut}) {
-		t.Fatal("Shortcut+C should copy terminal selection when one exists")
+	if !terminalCopyKeyForGOOS(key.Event{Name: "c", State: key.Press, Modifiers: key.ModCtrl | key.ModShift}, "linux") {
+		t.Fatal("Ctrl+Shift+C should copy terminal selection on Linux")
+	}
+	if !terminalCopyKeyForGOOS(key.Event{Name: "c", State: key.Press, Modifiers: key.ModCommand}, "darwin") {
+		t.Fatal("Command+C should copy terminal selection on macOS")
 	}
 	if terminalCopyKey(key.Event{Name: "C", State: key.Press}) {
 		t.Fatal("plain C should not copy")
+	}
+}
+
+func TestTerminalInterruptKeyUsesMacShortcut(t *testing.T) {
+	if !terminalInterruptKeyForGOOS(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl}, "darwin") {
+		t.Fatal("Ctrl+C should interrupt on macOS")
+	}
+	if !terminalInterruptKeyForGOOS(key.Event{Name: "c", State: key.Press, Modifiers: key.ModCommand}, "darwin") {
+		t.Fatal("Cmd+C should interrupt on macOS when no selection is copied")
+	}
+	if terminalInterruptKeyForGOOS(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl | key.ModShift}, "darwin") {
+		t.Fatal("Ctrl+Shift+C should remain available as a distinct shortcut")
 	}
 }
 

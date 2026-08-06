@@ -37,6 +37,8 @@ const (
 	settingsKeyboardFocusFilePaneTimeStyle
 	settingsKeyboardFocusTerminalShell
 	settingsKeyboardFocusTerminalAcceleratedKeys
+	settingsKeyboardFocusTerminalPreviewStart
+	settingsKeyboardFocusTerminalPreviewEnd
 	settingsKeyboardFocusFontsInterfaceFont
 	settingsKeyboardFocusFontsInterfaceFontSize
 	settingsKeyboardFocusFontsCurrentDirFont
@@ -346,6 +348,8 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		order = append(order,
 			settingsKeyboardFocusTerminalShell,
 			settingsKeyboardFocusTerminalAcceleratedKeys,
+			settingsKeyboardFocusTerminalPreviewStart,
+			settingsKeyboardFocusTerminalPreviewEnd,
 		)
 	case "fonts":
 		if len(resources.BundledFontFamilies()) > 0 {
@@ -1563,7 +1567,30 @@ func (st *settingsModalState) stepFocusedNumber(step int) bool {
 	if st.stepFontSize(st.focus, step) {
 		return true
 	}
+	if st.stepTerminalPreviewOffset(st.focus, step) {
+		return true
+	}
 	return st.stepPaneChars(st.focus, step)
+}
+
+func (st *settingsModalState) stepTerminalPreviewOffset(focus settingsKeyboardFocus, step int) bool {
+	if st == nil || step == 0 {
+		return false
+	}
+	switch focus {
+	case settingsKeyboardFocusTerminalPreviewStart:
+		next, _ := fm.NormalizeTerminalPreviewRange(st.terminalPreviewStart+step, st.terminalPreviewEnd)
+		changed := next != st.terminalPreviewStart
+		st.terminalPreviewStart = next
+		return changed
+	case settingsKeyboardFocusTerminalPreviewEnd:
+		_, next := fm.NormalizeTerminalPreviewRange(st.terminalPreviewStart, st.terminalPreviewEnd+step)
+		changed := next != st.terminalPreviewEnd
+		st.terminalPreviewEnd = next
+		return changed
+	default:
+		return false
+	}
 }
 
 func (st *settingsModalState) stepColorScope(step int, now time.Time) bool {

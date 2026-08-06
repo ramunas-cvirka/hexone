@@ -27,19 +27,23 @@ const (
 	defaultFullColumnGapDp    = 12
 	// Brief mode already has left/right cell padding; keep the explicit
 	// inter-column gap at zero so the visible separation stays near 1ch.
-	defaultBriefGapDp         = 0
-	defaultNameIconReserveDp  = 14
-	defaultNameChars          = 20.0
-	defaultBriefChars         = 16.0
-	defaultNameMinWidthDp     = 52
-	defaultPermWidthChars     = 9.5
-	defaultOctalWidthChars    = 4.5
-	defaultSizeWidthChars     = 7.5
-	defaultDateWidthChars     = 15.0
-	defaultNameTextReserveDp  = defaultApproxCharPx/2 + 2
-	configBackupSuffix        = ".bak"
-	defaultTerminalHeightRows = 24
-	minTerminalHeightRows     = 4
+	defaultBriefGapDp           = 0
+	defaultNameIconReserveDp    = 14
+	defaultNameChars            = 20.0
+	defaultBriefChars           = 16.0
+	defaultNameMinWidthDp       = 52
+	defaultPermWidthChars       = 9.5
+	defaultOctalWidthChars      = 4.5
+	defaultSizeWidthChars       = 7.5
+	defaultDateWidthChars       = 15.0
+	defaultNameTextReserveDp    = defaultApproxCharPx/2 + 2
+	configBackupSuffix          = ".bak"
+	defaultTerminalHeightRows   = 24
+	minTerminalHeightRows       = 4
+	defaultTerminalPreviewStart = 0
+	defaultTerminalPreviewEnd   = 2
+	minTerminalPreviewOffset    = -8
+	maxTerminalPreviewOffset    = 8
 	// This is only a malformed-config safety limit. The interactive terminal
 	// ceiling is derived from 75% of the available pane height.
 	maxTerminalHeightRows  = 512
@@ -162,6 +166,8 @@ type TerminalConfig struct {
 	Typeface        string  `yaml:"typeface"`
 	FontSizeSp      float32 `yaml:"font_size_sp"`
 	AcceleratedKeys bool    `yaml:"accelerated_keys"`
+	PreviewStart    int     `yaml:"preview_start"`
+	PreviewEnd      int     `yaml:"preview_end"`
 	Maximized       bool    `yaml:"maximized"`
 }
 
@@ -366,6 +372,22 @@ func NormalizeTerminalHeightRows(rows int) int {
 		return maxTerminalHeightRows
 	}
 	return rows
+}
+
+func NormalizeTerminalPreviewRange(start, end int) (int, int) {
+	if start < minTerminalPreviewOffset {
+		start = minTerminalPreviewOffset
+	}
+	if start > 0 {
+		start = 0
+	}
+	if end < 0 {
+		end = 0
+	}
+	if end > maxTerminalPreviewOffset {
+		end = maxTerminalPreviewOffset
+	}
+	return start, end
 }
 
 func NormalizeTabWidthMode(raw string) string {
@@ -648,6 +670,8 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	}{
 		Terminal: TerminalConfig{
 			AcceleratedKeys: true,
+			PreviewStart:    defaultTerminalPreviewStart,
+			PreviewEnd:      defaultTerminalPreviewEnd,
 		},
 		General: GeneralConfig{
 			OpenFavoritesInNewTab: true,
@@ -717,6 +741,8 @@ func DefaultConfig() *Config {
 			Typeface:        resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp:      14,
 			AcceleratedKeys: true,
+			PreviewStart:    defaultTerminalPreviewStart,
+			PreviewEnd:      defaultTerminalPreviewEnd,
 		},
 		Tabs: TabsConfig{
 			WidthMode:    "variable",
@@ -1057,6 +1083,7 @@ func (c *Config) normalize() {
 	c.Sort.DefaultKey = NormalizeSortKey(c.Sort.DefaultKey)
 	c.Sort.PerDir = NormalizeSortPerDir(c.Sort.PerDir, c.Sort)
 	c.Terminal.HeightRows = NormalizeTerminalHeightRows(c.Terminal.HeightRows)
+	c.Terminal.PreviewStart, c.Terminal.PreviewEnd = NormalizeTerminalPreviewRange(c.Terminal.PreviewStart, c.Terminal.PreviewEnd)
 	c.Tabs.WidthMode = NormalizeTabWidthMode(c.Tabs.WidthMode)
 	c.Tabs.MinWidthDp = NormalizeTabWidthDp(c.Tabs.MinWidthDp, defaultTabMinWidthDp)
 	c.Tabs.FixedWidthDp = NormalizeTabWidthDp(c.Tabs.FixedWidthDp, defaultTabFixedWidthDp)

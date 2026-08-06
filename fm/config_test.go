@@ -343,6 +343,12 @@ func TestTerminalAcceleratedKeysDefaultsOnAndCanBeDisabled(t *testing.T) {
 	if cfg.Terminal.Maximized {
 		t.Fatal("default terminal should not be maximized")
 	}
+	if got, want := cfg.Terminal.PreviewStart, 0; got != want {
+		t.Fatalf("default terminal preview start=%d want %d", got, want)
+	}
+	if got, want := cfg.Terminal.PreviewEnd, 2; got != want {
+		t.Fatalf("default terminal preview end=%d want %d", got, want)
+	}
 
 	raw := `
 general:
@@ -355,6 +361,9 @@ general:
 	cfg.normalize()
 	if !cfg.Terminal.AcceleratedKeys {
 		t.Fatal("decoded config should keep terminal accelerated keys enabled when omitted")
+	}
+	if cfg.Terminal.PreviewStart != 0 || cfg.Terminal.PreviewEnd != 2 {
+		t.Fatalf("decoded config should keep default preview range, got %d..%d", cfg.Terminal.PreviewStart, cfg.Terminal.PreviewEnd)
 	}
 
 	raw = `
@@ -381,6 +390,18 @@ terminal:
 	cfg.normalize()
 	if !cfg.Terminal.Maximized {
 		t.Fatal("terminal maximized state should preserve explicit true")
+	}
+}
+
+func TestTerminalPreviewRangeNormalizesOffsets(t *testing.T) {
+	if start, end := NormalizeTerminalPreviewRange(-1, 3); start != -1 || end != 3 {
+		t.Fatalf("preview range=%d..%d want -1..3", start, end)
+	}
+	if start, end := NormalizeTerminalPreviewRange(-99, 99); start != -8 || end != 8 {
+		t.Fatalf("clamped preview range=%d..%d want -8..8", start, end)
+	}
+	if start, end := NormalizeTerminalPreviewRange(4, -3); start != 0 || end != 0 {
+		t.Fatalf("current-line invariant range=%d..%d want 0..0", start, end)
 	}
 }
 

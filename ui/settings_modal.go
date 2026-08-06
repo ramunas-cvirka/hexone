@@ -296,6 +296,10 @@ type settingsModalState struct {
 	paneSizeWeightClicks         [2]widget.Clickable
 	paneDateWeightClicks         [2]widget.Clickable
 	terminalAcceleratedKeysBool  widget.Bool
+	terminalPreviewStart         int
+	terminalPreviewEnd           int
+	terminalPreviewStartStepper  settingsNumberStepperState
+	terminalPreviewEndStepper    settingsNumberStepperState
 	generalDimInactiveBool       widget.Bool
 	generalFavoritesNewTabBool   widget.Bool
 	generalWheelMovesSelection   widget.Bool
@@ -711,6 +715,7 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.panePermissionFormatAnim = settingsChoiceAnim{}
 	st.loadPaneDateFormat(cfg.DateFormats)
 	st.terminalAcceleratedKeysBool.Value = cfg.Terminal.AcceleratedKeys
+	st.terminalPreviewStart, st.terminalPreviewEnd = fm.NormalizeTerminalPreviewRange(cfg.Terminal.PreviewStart, cfg.Terminal.PreviewEnd)
 	st.interfaceFontPickerAnim = settingsChoiceAnim{}
 	st.paneFontPickerAnim = settingsChoiceAnim{}
 	st.tabsFontPickerAnim = settingsChoiceAnim{}
@@ -3309,6 +3314,7 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.Terminal.Typeface = st.terminalFontFamily
 	ui.fmCfg.Terminal.FontSizeSp = terminalFontSize
 	ui.fmCfg.Terminal.AcceleratedKeys = st.terminalAcceleratedKeysBool.Value
+	ui.fmCfg.Terminal.PreviewStart, ui.fmCfg.Terminal.PreviewEnd = fm.NormalizeTerminalPreviewRange(st.terminalPreviewStart, st.terminalPreviewEnd)
 	ui.fmCfg.Viewer.Command = cmd
 	ui.fmCfg.Viewer.Shell = shell
 	ui.fmCfg.Viewer.RemoteSearchCommand = fm.NormalizeViewerRemoteSearchCommand(st.viewRemoteSearchCommandEdit.Text())
@@ -4249,6 +4255,47 @@ func (ui *UI) layoutSettingsTerminalTab(th *material.Theme, gtx layout.Context, 
 			st.applyPendingWidgetFocus(gtx, settingsKeyboardFocusTerminalAcceleratedKeys, &st.terminalAcceleratedKeysBool)
 			return dims
 		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(rowLabel("Search preview offsets (inclusive)")),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsTerminalPreviewControl(th, gtx, st, "Start", &st.terminalPreviewStartStepper, st.terminalPreviewStart, settingsKeyboardFocusTerminalPreviewStart)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutSettingsTerminalPreviewControl(th, gtx, st, "End", &st.terminalPreviewEndStepper, st.terminalPreviewEnd, settingsKeyboardFocusTerminalPreviewEnd)
+				}),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Caption(th, "0 is the matching line; negative values include lines before it.")
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(9)
+			lbl.Color = hintColor
+			return lbl.Layout(gtx)
+		}),
+	)
+}
+
+func (ui *UI) layoutSettingsTerminalPreviewControl(th *material.Theme, gtx layout.Context, st *settingsModalState, label string, stepper *settingsNumberStepperState, value int, focus settingsKeyboardFocus) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			lbl := material.Body2(th, label)
+			lbl.Font.Typeface = ui.interfaceTypeface()
+			lbl.TextSize = ui.scaleModalFontSize(10)
+			lbl.Color = txtColor
+			return fixedWidth(gtx, gtx.Dp(unit.Dp(44)), func(gtx layout.Context) layout.Dimensions {
+				return layoutVCenteredLabel(gtx, lbl)
+			})
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return fixedWidth(gtx, gtx.Dp(unit.Dp(74)), func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutSettingsFontSizeStepper(th, gtx, st, stepper, float32(value), focus)
+			})
+		}),
 	)
 }
 
@@ -4478,12 +4525,12 @@ func (ui *UI) layoutSettingsFontSizeStepper(th *material.Theme, gtx layout.Conte
 	}
 	for stepper.upClick.Clicked(gtx) {
 		st.setKeyboardFocus(focus)
-		st.stepFontSize(focus, 1)
+		st.stepFocusedNumber(1)
 		st.errText = ""
 	}
 	for stepper.downClick.Clicked(gtx) {
 		st.setKeyboardFocus(focus)
-		st.stepFontSize(focus, -1)
+		st.stepFocusedNumber(-1)
 		st.errText = ""
 	}
 	focused := st.focus == focus

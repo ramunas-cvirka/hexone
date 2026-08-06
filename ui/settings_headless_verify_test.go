@@ -102,6 +102,13 @@ func TestHeadlessSettingsConfig(t *testing.T) {
 	writePNG("viewer-line-numbers-on", render("viewer-line-numbers-on"))
 	ui.settingsModal.viewShowLineNumbersBool.Value = false
 	writePNG("viewer-line-numbers-dirty", render("viewer-line-numbers-dirty"))
+	ui = NewUI(fm.DefaultConfig())
+	ui.openSettingsModal()
+	ui.settingsModal.activeTab = "terminal"
+	ui.settingsModal.terminalPreviewStart = -1
+	ui.settingsModal.terminalPreviewEnd = 3
+	router = new(input.Router)
+	writePNG("terminal-preview-range", render("terminal-preview-range"))
 	for _, mode := range []string{"full", "brief", "other"} {
 		ui = NewUI(fm.DefaultConfig())
 		ui.openSettingsModal()

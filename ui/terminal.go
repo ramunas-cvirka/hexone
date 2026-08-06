@@ -209,6 +209,7 @@ type terminalSession struct {
 	keyRepeatStarted time.Time
 	keyRepeatNext    time.Time
 	keyRepeatPeriod  time.Duration
+	find             terminalFindState
 
 	invalidateMu sync.RWMutex
 	invalidate   func()
@@ -239,6 +240,11 @@ func newTerminalSession(invalidate func(), preferredRows ...int) *terminalSessio
 		rows:            rows,
 		cols:            terminalDefaultCols,
 		commandReliable: true,
+		find: terminalFindState{
+			previewIndex: -1,
+			previewStart: 0,
+			previewEnd:   2,
+		},
 		modes: terminalModes{
 			eraseTemplate: headlessterm.NewCellTemplate(),
 		},
@@ -722,6 +728,8 @@ func (ui *UI) toggleTerminal() bool {
 		st.focusKeyboard()
 	} else {
 		ui.closeTerminalSnippetMenu()
+		st.closeFind()
+		st.wantFocus = false
 	}
 	return true
 }
@@ -808,14 +816,21 @@ func (ui *UI) toggleTerminalKeyboardFocus(gtx layout.Context, terminalFocused bo
 }
 
 func (ui *UI) terminalFocused(gtx layout.Context) bool {
-	return ui != nil && ui.terminal != nil && ui.terminal.active() && gtx.Focused(&ui.terminal.keyTag)
+	return ui != nil && ui.terminal != nil && ui.terminal.active() && ui.terminal.keyboardFocused(gtx)
 }
 
 func (ui *UI) terminalVisuallyFocused(gtx layout.Context) bool {
 	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
 		return false
 	}
-	return ui.terminal.wantFocus || gtx.Focused(&ui.terminal.keyTag)
+	return ui.terminal.wantFocus || ui.terminal.keyboardFocused(gtx)
+}
+
+func (s *terminalSession) keyboardFocused(gtx layout.Context) bool {
+	if s == nil {
+		return false
+	}
+	return gtx.Focused(&s.keyTag) || (s.find.open && gtx.Focused(&s.find.editor))
 }
 
 func (ui *UI) releaseTerminalKeyboardFocus(gtx layout.Context) bool {
@@ -3738,7 +3753,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		if size.X <= 0 || size.Y <= 0 {
 			return layout.Dimensions{Size: size}
 		}
-		terminalFocused := gtx.Focused(&st.keyTag)
+		terminalFocused := st.keyboardFocused(gtx)
 		paint.FillShape(gtx.Ops, terminalBG, clip.Rect(image.Rectangle{Max: size}).Op())
 		paint.FillShape(gtx.Ops, terminalBorder, clip.Rect(image.Rect(0, 0, size.X, 1)).Op())
 		if st.resizeHandleActive() {
@@ -3769,12 +3784,18 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		content, rows := terminalGridContentRect(content, cellH)
 		st.resize(rows, cols)
 		st.start(ui.terminalStartDir(), ui.terminalShell())
+		if ui.fmCfg != nil {
+			st.setFindPreviewRange(ui.fmCfg.Terminal.PreviewStart, ui.fmCfg.Terminal.PreviewEnd)
+		}
 		st.layoutScrollbar(gtx, content)
 
 		if st.handlePointer(gtx, content, cellW, cellH) {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 		if st.handleInputWithAcceleratedKeys(gtx, ui.terminalAcceleratedKeysEnabled()) {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		if st.pumpFindResults() {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 		if st.runSelectionAutoScroll(gtx.Now, content, cellW, cellH) {
@@ -3807,6 +3828,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 			off.Pop()
 			ui.drawTerminalTabRail(gtx, tabRect)
 		}
+		ui.layoutTerminalFind(th, gtx, st, contentTop)
 		if !terminalFocused {
 			if shade := filePaneInactiveShadeColor(ui.fmCfg, terminalBG); shade.A != 0 {
 				paint.FillShape(gtx.Ops, shade, clip.Rect(image.Rectangle{Max: size}).Op())
@@ -5306,6 +5328,11 @@ func (s *terminalSession) handleInputWithAcceleratedKeys(gtx layout.Context, acc
 				continue
 			}
 			s.stopKeyRepeat("")
+			if terminalFindKey(ev) {
+				s.openFind(gtx)
+				handled = true
+				continue
+			}
 			if terminalClearBufferKey(ev) {
 				if s.clearBuffer() {
 					handled = true
@@ -5316,6 +5343,11 @@ func (s *terminalSession) handleInputWithAcceleratedKeys(gtx layout.Context, acc
 				if s.copyText(gtx, false) {
 					handled = true
 				}
+				continue
+			}
+			if terminalInterruptKey(ev) {
+				s.write([]byte{0x03})
+				handled = true
 				continue
 			}
 			if terminalPasteKey(ev) {
@@ -5442,10 +5474,31 @@ func terminalClearBufferKeyForGOOS(ev key.Event, goos string) bool {
 }
 
 func terminalCopyKey(ev key.Event) bool {
+	return terminalCopyKeyForGOOS(ev, runtime.GOOS)
+}
+
+func terminalCopyKeyForGOOS(ev key.Event, goos string) bool {
 	if ev.Name != "C" && ev.Name != "c" {
 		return false
 	}
-	return ev.Modifiers.Contain(key.ModCtrl) || ev.Modifiers.Contain(key.ModShortcut)
+	if goos == "darwin" {
+		return ev.Modifiers == key.ModCommand
+	}
+	return ev.Modifiers == key.ModCtrl|key.ModShift
+}
+
+func terminalInterruptKey(ev key.Event) bool {
+	return terminalInterruptKeyForGOOS(ev, runtime.GOOS)
+}
+
+func terminalInterruptKeyForGOOS(ev key.Event, goos string) bool {
+	if ev.Name != "C" && ev.Name != "c" {
+		return false
+	}
+	if ev.Modifiers == key.ModCtrl {
+		return true
+	}
+	return goos == "darwin" && ev.Modifiers == key.ModCommand
 }
 
 func terminalPasteKey(ev key.Event) bool {

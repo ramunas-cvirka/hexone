@@ -554,6 +554,8 @@ func TestSettingsKeyboardFocusOrderIncludesTerminalControls(t *testing.T) {
 		settingsKeyboardFocusNav,
 		settingsKeyboardFocusTerminalShell,
 		settingsKeyboardFocusTerminalAcceleratedKeys,
+		settingsKeyboardFocusTerminalPreviewStart,
+		settingsKeyboardFocusTerminalPreviewEnd,
 		settingsKeyboardFocusFooter,
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -789,6 +791,51 @@ func TestSettingsModalLoadsAndSavesTerminalAcceleratedKeys(t *testing.T) {
 	saved := fm.LoadConfig(ui.configPath)
 	if !saved.Terminal.AcceleratedKeys {
 		t.Fatal("saved terminal accelerated keys should be true")
+	}
+}
+
+func TestSettingsModalLoadsAndSavesTerminalPreviewRange(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.Terminal.PreviewStart = -1
+	cfg.Terminal.PreviewEnd = 3
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+
+	st := ui.settingsModal
+	if got, want := st.terminalPreviewStart, -1; got != want {
+		t.Fatalf("loaded preview start=%d want %d", got, want)
+	}
+	if got, want := st.terminalPreviewEnd, 3; got != want {
+		t.Fatalf("loaded preview end=%d want %d", got, want)
+	}
+	st.terminalPreviewStart = -2
+	st.terminalPreviewEnd = 4
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("save settings modal: %v", err)
+	}
+	saved := fm.LoadConfig(ui.configPath)
+	if got, want := saved.Terminal.PreviewStart, -2; got != want {
+		t.Fatalf("saved preview start=%d want %d", got, want)
+	}
+	if got, want := saved.Terminal.PreviewEnd, 4; got != want {
+		t.Fatalf("saved preview end=%d want %d", got, want)
+	}
+}
+
+func TestSettingsModalKeyboardStepsTerminalPreviewOffsets(t *testing.T) {
+	st := &settingsModalState{
+		activeTab:            "terminal",
+		terminalPreviewStart: 0,
+		terminalPreviewEnd:   2,
+	}
+	st.focus = settingsKeyboardFocusTerminalPreviewStart
+	if !st.stepFocusedNumber(-1) || st.terminalPreviewStart != -1 {
+		t.Fatalf("preview start=%d want -1", st.terminalPreviewStart)
+	}
+	st.focus = settingsKeyboardFocusTerminalPreviewEnd
+	if !st.stepFocusedNumber(1) || st.terminalPreviewEnd != 3 {
+		t.Fatalf("preview end=%d want 3", st.terminalPreviewEnd)
 	}
 }
 
