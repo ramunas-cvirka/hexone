@@ -2082,18 +2082,20 @@ func (s *terminalSession) pasteText(gtx layout.Context) bool {
 }
 
 func (s *terminalSession) pastePrimarySelectionOrClipboard(gtx layout.Context) bool {
-	if s == nil || !s.hasActiveSelection() {
-		return s.pasteText(gtx)
-	}
-	gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
-	data := terminalPasteBytes(s.selectedText(false), s.bracketedPasteMode())
-	if len(data) == 0 {
+	if s == nil {
 		return false
 	}
-	// The terminal selection acts as a primary-selection buffer. Keep it
-	// independent of the system clipboard and visible after it is pasted.
-	s.write(data)
-	return true
+	if s.hasActiveSelection() {
+		data := terminalPasteBytes(s.selectedText(false), s.bracketedPasteMode())
+		if len(data) > 0 {
+			gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
+			// The terminal selection acts as a primary-selection buffer. Keep it
+			// independent of the system clipboard and visible after it is pasted.
+			s.write(data)
+			return true
+		}
+	}
+	return s.pasteText(gtx)
 }
 
 func (s *terminalSession) handleClipboardEvents(gtx layout.Context) bool {
@@ -4935,13 +4937,9 @@ func (s *terminalSession) handlePointer(gtx layout.Context, content image.Rectan
 				continue
 			}
 			gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
-			if s.terminalMouseReporting() && viewerPointInRect(pos, content) {
-				if s.reportTerminalMousePress(pe, content, cellW, cellH) {
-					gtx.Execute(pointer.GrabCmd{Tag: &s.pointerTag, ID: pe.PointerID})
-					handled = true
-					continue
-				}
-			}
+			// Middle-click is always the terminal's primary-selection paste
+			// shortcut. Handle it before application mouse reporting so programs
+			// that enable mouse mode cannot swallow the paste gesture.
 			if pe.Buttons.Contain(pointer.ButtonTertiary) {
 				s.closeContextMenu()
 				if viewerPointInRect(pos, content) {
@@ -4949,6 +4947,13 @@ func (s *terminalSession) handlePointer(gtx layout.Context, content image.Rectan
 				}
 				handled = true
 				continue
+			}
+			if s.terminalMouseReporting() && viewerPointInRect(pos, content) {
+				if s.reportTerminalMousePress(pe, content, cellW, cellH) {
+					gtx.Execute(pointer.GrabCmd{Tag: &s.pointerTag, ID: pe.PointerID})
+					handled = true
+					continue
+				}
 			}
 			if pe.Buttons.Contain(pointer.ButtonSecondary) {
 				s.openContextMenu(pos, gtx.Now)

@@ -100,7 +100,11 @@ func TestTerminalCtrlCInterruptsEvenWithSelection(t *testing.T) {
 	}
 }
 
-func TestTerminalCmdCInterruptsWithoutSelection(t *testing.T) {
+func TestTerminalCmdCInterruptsWithoutSelectionOnDarwin(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Command+C is a macOS-only terminal shortcut")
+	}
+
 	st := newTerminalSession(nil)
 	proc := &terminalWriteProcess{}
 	st.procMu.Lock()
@@ -518,15 +522,31 @@ func TestTerminalCopyKey(t *testing.T) {
 	}
 }
 
-func TestTerminalInterruptKeyUsesMacShortcut(t *testing.T) {
-	if !terminalInterruptKeyForGOOS(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl}, "darwin") {
-		t.Fatal("Ctrl+C should interrupt on macOS")
+func TestTerminalInterruptKeyUsesPlatformShortcuts(t *testing.T) {
+	tests := []struct {
+		name string
+		goos string
+		mods key.Modifiers
+		want bool
+	}{
+		{name: "macOS Ctrl+C", goos: "darwin", mods: key.ModCtrl, want: true},
+		{name: "Linux Ctrl+C", goos: "linux", mods: key.ModCtrl, want: true},
+		{name: "Windows Ctrl+C", goos: "windows", mods: key.ModCtrl, want: true},
+		{name: "macOS Command+C", goos: "darwin", mods: key.ModCommand, want: true},
+		{name: "Linux Command+C", goos: "linux", mods: key.ModCommand, want: false},
+		{name: "Windows Command+C", goos: "windows", mods: key.ModCommand, want: false},
+		{name: "macOS Ctrl+Shift+C", goos: "darwin", mods: key.ModCtrl | key.ModShift, want: false},
+		{name: "Linux Ctrl+Shift+C", goos: "linux", mods: key.ModCtrl | key.ModShift, want: false},
+		{name: "Windows Ctrl+Shift+C", goos: "windows", mods: key.ModCtrl | key.ModShift, want: false},
 	}
-	if !terminalInterruptKeyForGOOS(key.Event{Name: "c", State: key.Press, Modifiers: key.ModCommand}, "darwin") {
-		t.Fatal("Cmd+C should interrupt on macOS when no selection is copied")
-	}
-	if terminalInterruptKeyForGOOS(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl | key.ModShift}, "darwin") {
-		t.Fatal("Ctrl+Shift+C should remain available as a distinct shortcut")
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := key.Event{Name: "C", State: key.Press, Modifiers: tc.mods}
+			if got := terminalInterruptKeyForGOOS(ev, tc.goos); got != tc.want {
+				t.Fatalf("terminalInterruptKeyForGOOS(%q)=%t want %t", tc.goos, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -1225,10 +1245,49 @@ func TestTerminalMiddleClickPrefersSelectionWithoutChangingClipboard(t *testing.
 	}
 }
 
-func TestTerminalMiddleClickReportsMouseWhenEnabled(t *testing.T) {
+func TestTerminalMiddleClickFallsBackToClipboardForStaleSelection(t *testing.T) {
 	oldRead := readTerminalClipboardText
 	readTerminalClipboardText = func() (string, error) {
-		return "should-not-paste", nil
+		return "clipboard fallback", nil
+	}
+	defer func() {
+		readTerminalClipboardText = oldRead
+	}()
+
+	st := newTerminalSession(nil)
+	st.writeOutput([]byte("visible text"))
+	st.viewMu.Lock()
+	st.selectionActive = true
+	st.selectionStart = terminalPoint{Row: 100, Col: 0}
+	st.selectionEnd = terminalPoint{Row: 100, Col: 5}
+	st.viewMu.Unlock()
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testPointerContext()
+	registerPointerTag(router, gtx.Ops, &st.pointerTag)
+	primePointerFilter(router, &st.pointerTag)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonTertiary,
+		Position: f32.Pt(40, 40),
+	})
+
+	if !st.handlePointer(gtx, image.Rect(0, 0, 240, 160), 8, 16) {
+		t.Fatal("middle click should be handled")
+	}
+	if got, want := proc.String(), "clipboard fallback"; got != want {
+		t.Fatalf("middle click pasted bytes=%q want %q", got, want)
+	}
+}
+
+func TestTerminalMiddleClickPastesClipboardWhenMouseReportingEnabled(t *testing.T) {
+	oldRead := readTerminalClipboardText
+	readTerminalClipboardText = func() (string, error) {
+		return "paste-not-report", nil
 	}
 	defer func() {
 		readTerminalClipboardText = oldRead
@@ -1252,10 +1311,10 @@ func TestTerminalMiddleClickReportsMouseWhenEnabled(t *testing.T) {
 	})
 
 	if !st.handlePointer(gtx, image.Rect(0, 0, 240, 160), 8, 16) {
-		t.Fatal("middle click mouse report should be handled")
+		t.Fatal("middle click paste should be handled")
 	}
-	if got, want := proc.String(), "\x1b[<1;3;2M"; got != want {
-		t.Fatalf("middle click mouse report=%q want %q", got, want)
+	if got, want := proc.String(), "paste-not-report"; got != want {
+		t.Fatalf("middle click pasted bytes=%q want %q", got, want)
 	}
 }
 
