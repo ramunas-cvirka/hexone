@@ -56,6 +56,7 @@ type appTabStripGeometry struct {
 type appTabStripStyle struct {
 	open             bool
 	activeBackground color.NRGBA
+	keyboardFocus    color.NRGBA
 }
 
 type filePaneTabSet struct {
@@ -87,11 +88,12 @@ type terminalTabSet struct {
 }
 
 type appTabItem struct {
-	title     string
-	active    bool
-	remoteKey string
-	remoteTip string
-	remote    *remoteIndicatorHover
+	title           string
+	active          bool
+	keyboardFocused bool
+	remoteKey       string
+	remoteTip       string
+	remote          *remoteIndicatorHover
 }
 
 type remoteIndicatorHover struct {
@@ -690,6 +692,13 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 		if style.open && item.active {
 			bg = style.activeBackground
 		}
+		focusColor := style.keyboardFocus
+		if focusColor.A == 0 {
+			focusColor = ui.tabStripAccentColor(idx)
+		}
+		if item.keyboardFocused {
+			fg = focusColor
+		}
 		if bg.A != 0 {
 			paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 		}
@@ -704,7 +713,7 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 		if !closable {
 			rightPad = unit.Dp(tabStripTitlePadDp)
 		}
-		return layout.Inset{Left: unit.Dp(tabStripTitlePadDp), Right: rightPad, Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		dimensions := layout.Inset{Left: unit.Dp(tabStripTitlePadDp), Right: rightPad, Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if item.remoteKey == "" {
@@ -745,6 +754,15 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 				}),
 			)
 		})
+		if item.keyboardFocused && dimensions.Size.X > 0 && dimensions.Size.Y > 0 {
+			indicatorHeight := max(1, gtx.Dp(unit.Dp(2)))
+			indicatorPad := gtx.Dp(unit.Dp(5))
+			if indicatorPad*2 >= dimensions.Size.X {
+				indicatorPad = 0
+			}
+			paint.FillShape(gtx.Ops, focusColor, clip.Rect(image.Rect(indicatorPad, dimensions.Size.Y-indicatorHeight, dimensions.Size.X-indicatorPad, dimensions.Size.Y)).Op())
+		}
+		return dimensions
 	})
 }
 

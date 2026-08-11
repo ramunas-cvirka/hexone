@@ -58,6 +58,41 @@ type httpRequestRef struct {
 	request    int
 }
 
+type httpKeyboardTarget struct {
+	kind  string
+	index int
+}
+
+const (
+	httpKeyEnvironmentGroup = "environment-group"
+	httpKeyTree             = "tree"
+	httpKeyRequestTab       = "request-tabs"
+	httpKeyMethod           = "method"
+	httpKeyURL              = "url"
+	httpKeyCommandGroup     = "command-group"
+	httpKeyDetailTab        = "detail-tabs"
+	httpKeyRequestAuthTab   = "request-auth-tabs"
+	httpKeyRequestAuthUser  = "request-auth-username"
+	httpKeyRequestAuthPass  = "request-auth-password"
+	httpKeyRequestAuthToken = "request-auth-token"
+	httpKeyRequestAuthKey   = "request-auth-key-name"
+	httpKeyRequestAuthLoc   = "request-auth-location"
+	httpKeyRequestAuthValue = "request-auth-value"
+	httpKeyResponseTab      = "response-tabs"
+	httpKeyTreeMenu         = "tree-menu"
+
+	httpKeyEnvName         = "env-name"
+	httpKeyEnvAuthTab      = "env-auth-tabs"
+	httpKeyEnvAuthUsername = "env-auth-username"
+	httpKeyEnvAuthPassword = "env-auth-password"
+	httpKeyEnvAuthToken    = "env-auth-token"
+	httpKeyEnvAuthKeyName  = "env-auth-key-name"
+	httpKeyEnvAuthLocation = "env-auth-location"
+	httpKeyEnvAuthValue    = "env-auth-value"
+	httpKeyEnvVariables    = "env-variables"
+	httpKeyEnvActions      = "env-actions"
+)
+
 type httpCollectionRow struct {
 	kind              string
 	label             string
@@ -226,6 +261,8 @@ type httpClientState struct {
 	addRequestClick      widget.Clickable
 	treeSelected         httpCollectionRow
 	hasTreeSelected      bool
+	treeKeyTag           byte
+	keyboardTarget       httpKeyboardTarget
 	collapsedCollections map[int]bool
 	collapsedFolders     map[[2]int]bool
 	methodClick          widget.Clickable
@@ -752,25 +789,421 @@ func formatHTTPBytes(size int64) string {
 	}
 }
 
+func (st *httpClientState) httpKeyboardTargets() []httpKeyboardTarget {
+	if st == nil {
+		return nil
+	}
+	if st.treeMenuOpen {
+		return []httpKeyboardTarget{{kind: httpKeyTreeMenu}}
+	}
+	if st.envEditorOpen {
+		targets := []httpKeyboardTarget{{kind: httpKeyEnvName}, {kind: httpKeyEnvAuthTab}}
+		switch st.environmentAuth.typeName {
+		case httpclient.AuthBasic:
+			targets = append(targets,
+				httpKeyboardTarget{kind: httpKeyEnvAuthUsername},
+				httpKeyboardTarget{kind: httpKeyEnvAuthPassword},
+			)
+		case httpclient.AuthBearer:
+			targets = append(targets, httpKeyboardTarget{kind: httpKeyEnvAuthToken})
+		case httpclient.AuthAPIKey:
+			targets = append(targets,
+				httpKeyboardTarget{kind: httpKeyEnvAuthKeyName},
+				httpKeyboardTarget{kind: httpKeyEnvAuthLocation},
+				httpKeyboardTarget{kind: httpKeyEnvAuthValue},
+			)
+		}
+		return append(targets,
+			httpKeyboardTarget{kind: httpKeyEnvVariables},
+			httpKeyboardTarget{kind: httpKeyEnvActions},
+		)
+	}
+
+	targets := []httpKeyboardTarget{
+		{kind: httpKeyEnvironmentGroup},
+		{kind: httpKeyTree},
+	}
+	if len(st.openTabs) > 0 {
+		targets = append(targets, httpKeyboardTarget{kind: httpKeyRequestTab})
+	}
+	targets = append(targets,
+		httpKeyboardTarget{kind: httpKeyMethod},
+		httpKeyboardTarget{kind: httpKeyURL},
+		httpKeyboardTarget{kind: httpKeyCommandGroup},
+		httpKeyboardTarget{kind: httpKeyDetailTab},
+	)
+	if st.detailMode == httpDetailAuth {
+		targets = append(targets, httpKeyboardTarget{kind: httpKeyRequestAuthTab})
+		switch st.requestAuth.typeName {
+		case httpclient.AuthBasic:
+			targets = append(targets,
+				httpKeyboardTarget{kind: httpKeyRequestAuthUser},
+				httpKeyboardTarget{kind: httpKeyRequestAuthPass},
+			)
+		case httpclient.AuthBearer:
+			targets = append(targets, httpKeyboardTarget{kind: httpKeyRequestAuthToken})
+		case httpclient.AuthAPIKey:
+			targets = append(targets,
+				httpKeyboardTarget{kind: httpKeyRequestAuthKey},
+				httpKeyboardTarget{kind: httpKeyRequestAuthLoc},
+				httpKeyboardTarget{kind: httpKeyRequestAuthValue},
+			)
+		}
+	}
+	return append(targets, httpKeyboardTarget{kind: httpKeyResponseTab})
+}
+
+func indexHTTPKeyboardTarget(targets []httpKeyboardTarget, target httpKeyboardTarget) int {
+	for index := range targets {
+		if targets[index].kind == target.kind {
+			return index
+		}
+	}
+	return -1
+}
+
+func (st *httpClientState) focusHTTPKeyboardTarget(gtx layout.Context, target httpKeyboardTarget) {
+	if st == nil {
+		return
+	}
+	switch target.kind {
+	case httpKeyEnvironmentGroup:
+		target.index = max(0, min(3, target.index))
+	case httpKeyRequestTab:
+		target.index = max(0, min(len(st.openTabs)-1, st.activeTab))
+	case httpKeyCommandGroup:
+		target.index = max(0, min(1, target.index))
+	case httpKeyDetailTab:
+		target.index = httpChoiceIndex([]string{httpDetailParams, httpDetailHeaders, httpDetailAuth, httpDetailBody}, st.detailMode)
+	case httpKeyRequestAuthTab:
+		target.index = httpChoiceIndex(httpAuthTypes, st.requestAuth.typeName)
+	case httpKeyRequestAuthLoc:
+		if st.requestAuth.apiKeyLocation() == httpclient.AuthInQuery {
+			target.index = 1
+		}
+	case httpKeyResponseTab:
+		target.index = httpChoiceIndex([]string{httpResponsePretty, httpResponseRaw, httpResponseHeaders}, st.responseMode)
+	case httpKeyTreeMenu:
+		target.index = max(0, min(st.httpTreeMenuActionCount()-1, target.index))
+	case httpKeyEnvAuthTab:
+		target.index = httpChoiceIndex(httpEnvironmentAuthTypes(), st.environmentAuth.typeName)
+	case httpKeyEnvAuthLocation:
+		if st.environmentAuth.apiKeyLocation() == httpclient.AuthInQuery {
+			target.index = 1
+		}
+	case httpKeyEnvActions:
+		target.index = 1
+		target.index = max(0, min(1, target.index))
+	}
+	st.keyboardTarget = target
+	switch target.kind {
+	case httpKeyURL:
+		gtx.Execute(key.FocusCmd{Tag: &st.urlEd})
+		return
+	case httpKeyEnvName:
+		gtx.Execute(key.FocusCmd{Tag: &st.envEditorNameEd})
+		return
+	case httpKeyRequestAuthUser:
+		gtx.Execute(key.FocusCmd{Tag: &st.requestAuth.usernameEd})
+		return
+	case httpKeyRequestAuthPass:
+		gtx.Execute(key.FocusCmd{Tag: &st.requestAuth.passwordEd})
+		return
+	case httpKeyRequestAuthToken:
+		gtx.Execute(key.FocusCmd{Tag: &st.requestAuth.tokenEd})
+		return
+	case httpKeyRequestAuthKey:
+		gtx.Execute(key.FocusCmd{Tag: &st.requestAuth.apiKeyNameEd})
+		return
+	case httpKeyRequestAuthValue:
+		gtx.Execute(key.FocusCmd{Tag: &st.requestAuth.apiKeyValueEd})
+		return
+	case httpKeyEnvAuthUsername:
+		gtx.Execute(key.FocusCmd{Tag: &st.environmentAuth.usernameEd})
+		return
+	case httpKeyEnvAuthPassword:
+		gtx.Execute(key.FocusCmd{Tag: &st.environmentAuth.passwordEd})
+		return
+	case httpKeyEnvAuthToken:
+		gtx.Execute(key.FocusCmd{Tag: &st.environmentAuth.tokenEd})
+		return
+	case httpKeyEnvAuthKeyName:
+		gtx.Execute(key.FocusCmd{Tag: &st.environmentAuth.apiKeyNameEd})
+		return
+	case httpKeyEnvAuthValue:
+		gtx.Execute(key.FocusCmd{Tag: &st.environmentAuth.apiKeyValueEd})
+		return
+	case httpKeyEnvVariables:
+		gtx.Execute(key.FocusCmd{Tag: &st.envEditorVarsEd})
+		return
+	}
+	if target.kind == httpKeyTree && !st.hasTreeSelected {
+		st.selectFirstKeyboardTreeRow()
+		st.collectionList.ScrollTo(0)
+	}
+	if target.kind == httpKeyRequestTab && target.index >= 0 && target.index < len(st.openTabs) {
+		st.tabScroll = tabScrollToActive(st.tabScroll, target.index)
+	}
+	gtx.Execute(key.FocusCmd{Tag: &st.treeKeyTag})
+}
+
+func (st *httpClientState) httpKeyboardTargetFocused(gtx layout.Context, kind string, index int) bool {
+	return st != nil && gtx.Focused(&st.treeKeyTag) && st.keyboardTarget == (httpKeyboardTarget{kind: kind, index: index})
+}
+
+func httpEnvironmentAuthTypes() []string {
+	return []string{httpclient.AuthNone, httpclient.AuthBasic, httpclient.AuthBearer, httpclient.AuthAPIKey}
+}
+
+func (st *httpClientState) httpTreeMenuActionCount() int {
+	count := 2 // Rename and Delete.
+	if st != nil && st.treeMenuRow.kind == "request" && st.file != nil {
+		count += len(st.file.Environments)
+	}
+	return count
+}
+
+func (st *httpClientState) currentHTTPKeyboardTarget(gtx layout.Context) httpKeyboardTarget {
+	if st == nil {
+		return httpKeyboardTarget{}
+	}
+	editors := []struct {
+		kind string
+		tag  *widget.Editor
+	}{
+		{httpKeyURL, &st.urlEd},
+		{httpKeyRequestAuthUser, &st.requestAuth.usernameEd},
+		{httpKeyRequestAuthPass, &st.requestAuth.passwordEd},
+		{httpKeyRequestAuthToken, &st.requestAuth.tokenEd},
+		{httpKeyRequestAuthKey, &st.requestAuth.apiKeyNameEd},
+		{httpKeyRequestAuthValue, &st.requestAuth.apiKeyValueEd},
+		{httpKeyEnvName, &st.envEditorNameEd},
+		{httpKeyEnvAuthUsername, &st.environmentAuth.usernameEd},
+		{httpKeyEnvAuthPassword, &st.environmentAuth.passwordEd},
+		{httpKeyEnvAuthToken, &st.environmentAuth.tokenEd},
+		{httpKeyEnvAuthKeyName, &st.environmentAuth.apiKeyNameEd},
+		{httpKeyEnvAuthValue, &st.environmentAuth.apiKeyValueEd},
+		{httpKeyEnvVariables, &st.envEditorVarsEd},
+	}
+	for _, editor := range editors {
+		if gtx.Focused(editor.tag) {
+			return httpKeyboardTarget{kind: editor.kind}
+		}
+	}
+	return st.keyboardTarget
+}
+
+func (ui *UI) stepHTTPKeyboardFocus(gtx layout.Context, st *httpClientState, backwards bool) {
+	targets := st.httpKeyboardTargets()
+	if len(targets) == 0 {
+		return
+	}
+	current := st.currentHTTPKeyboardTarget(gtx)
+	index := indexHTTPKeyboardTarget(targets, current)
+	if backwards {
+		if index < 0 {
+			index = 0
+		}
+		index = (index - 1 + len(targets)) % len(targets)
+	} else {
+		index = (index + 1) % len(targets)
+	}
+	st.focusHTTPKeyboardTarget(gtx, targets[index])
+}
+
+func (ui *UI) stepHTTPHorizontalGroup(gtx layout.Context, st *httpClientState, step int) bool {
+	if ui == nil || st == nil || step == 0 {
+		return false
+	}
+	target := st.keyboardTarget
+	switch target.kind {
+	case httpKeyEnvironmentGroup:
+		target.index = dialogWrappedIndex(target.index, 4, step)
+	case httpKeyRequestTab:
+		if len(st.openTabs) == 0 {
+			return false
+		}
+		target.index = dialogWrappedIndex(target.index, len(st.openTabs), step)
+		st.activateRequestTab(target.index)
+		st.tabScroll = tabScrollToActive(st.tabScroll, target.index)
+	case httpKeyMethod:
+		index := httpChoiceIndex(httpMethods, st.method)
+		st.method = httpMethods[dialogWrappedIndex(index, len(httpMethods), step)]
+	case httpKeyCommandGroup:
+		target.index = dialogWrappedIndex(target.index, 2, step)
+	case httpKeyDetailTab:
+		modes := []string{httpDetailParams, httpDetailHeaders, httpDetailAuth, httpDetailBody}
+		target.index = dialogWrappedIndex(target.index, len(modes), step)
+		st.detailMode = modes[target.index]
+	case httpKeyRequestAuthTab:
+		target.index = dialogWrappedIndex(target.index, len(httpAuthTypes), step)
+		st.requestAuth.typeName = httpAuthTypes[target.index]
+	case httpKeyRequestAuthLoc:
+		target.index = dialogWrappedIndex(target.index, 2, step)
+		if target.index == 1 {
+			st.requestAuth.location = httpclient.AuthInQuery
+		} else {
+			st.requestAuth.location = httpclient.AuthInHeader
+		}
+	case httpKeyResponseTab:
+		modes := []string{httpResponsePretty, httpResponseRaw, httpResponseHeaders}
+		target.index = dialogWrappedIndex(target.index, len(modes), step)
+		st.responseMode = modes[target.index]
+		st.updateResponseEditor()
+	case httpKeyEnvAuthTab:
+		types := httpEnvironmentAuthTypes()
+		target.index = dialogWrappedIndex(target.index, len(types), step)
+		st.environmentAuth.typeName = types[target.index]
+	case httpKeyEnvAuthLocation:
+		target.index = dialogWrappedIndex(target.index, 2, step)
+		if target.index == 1 {
+			st.environmentAuth.location = httpclient.AuthInQuery
+		} else {
+			st.environmentAuth.location = httpclient.AuthInHeader
+		}
+	case httpKeyEnvActions:
+		target.index = dialogWrappedIndex(target.index, 2, step)
+	default:
+		return false
+	}
+	st.keyboardTarget = target
+	gtx.Execute(key.FocusCmd{Tag: &st.treeKeyTag})
+	return true
+}
+
+func (st *httpClientState) stepHTTPTreeMenu(step int) bool {
+	if st == nil || st.keyboardTarget.kind != httpKeyTreeMenu {
+		return false
+	}
+	st.keyboardTarget.index = dialogWrappedIndex(st.keyboardTarget.index, st.httpTreeMenuActionCount(), step)
+	return true
+}
+
+func (ui *UI) activateHTTPKeyboardTarget(gtx layout.Context, st *httpClientState) {
+	if ui == nil || st == nil {
+		return
+	}
+	target := st.keyboardTarget
+	switch target.kind {
+	case httpKeyEnvironmentGroup:
+		switch target.index {
+		case 0:
+			if st.file != nil && len(st.file.Environments) > 0 {
+				st.environment = (st.environment + 1) % len(st.file.Environments)
+			}
+		case 1:
+			if st.addEnvironment() {
+				_ = ui.saveHTTPCollections()
+				st.openEnvironmentEditor(st.environment, true)
+			}
+		case 2:
+			if st.addCollection() {
+				st.beginTreeRename(st.treeSelected)
+				_ = ui.saveHTTPCollections()
+			}
+		case 3:
+			if st.addRequestToSelection() {
+				st.beginTreeRename(st.treeSelected)
+				_ = ui.saveHTTPCollections()
+			}
+		}
+	case httpKeyTree:
+		if index, changed := st.navigateCollectionTree(key.NameLeftArrow); changed {
+			st.collectionList.ScrollTo(index)
+		}
+	case httpKeyRequestTab:
+		st.activateRequestTab(target.index)
+	case httpKeyMethod:
+		index := httpChoiceIndex(httpMethods, st.method)
+		st.method = httpMethods[(index+1)%len(httpMethods)]
+	case httpKeyCommandGroup:
+		if target.index == 0 {
+			ui.startHTTPRequest()
+		} else {
+			_ = ui.saveHTTPCollections()
+		}
+	case httpKeyDetailTab:
+		modes := []string{httpDetailParams, httpDetailHeaders, httpDetailAuth, httpDetailBody}
+		if target.index >= 0 && target.index < len(modes) {
+			st.detailMode = modes[target.index]
+		}
+	case httpKeyResponseTab:
+		modes := []string{httpResponsePretty, httpResponseRaw, httpResponseHeaders}
+		if target.index >= 0 && target.index < len(modes) {
+			st.responseMode = modes[target.index]
+			st.updateResponseEditor()
+		}
+	case httpKeyTreeMenu:
+		row := st.treeMenuRow
+		st.treeMenuOpen = false
+		environmentCount := 0
+		if row.kind == "request" && st.file != nil {
+			environmentCount = len(st.file.Environments)
+		}
+		switch {
+		case target.index == 0:
+			st.beginTreeRename(row)
+		case target.index <= environmentCount:
+			environment := target.index - 1
+			if row.kind == "request" && st.requestAt(row.ref) != nil {
+				st.environment = environment
+				st.selectRequest(row.ref)
+				ui.startHTTPRequest()
+			}
+		case st.deleteTreeRow(row):
+			_ = ui.saveHTTPCollections()
+		}
+	case httpKeyEnvActions:
+		if target.index == 0 {
+			st.closeEnvironmentEditor()
+		} else {
+			ui.saveEnvironmentEditor(st)
+		}
+	}
+}
+
 func (ui *UI) handleHTTPClientKeys(gtx layout.Context) {
 	if ui == nil || ui.Tabs.Value != "tab3" || ui.helpModal != nil || ui.settingsModal != nil || ui.sshModal != nil {
 		return
 	}
-	if ui.httpState != nil && ui.httpState.envEditorOpen {
+	if ui.terminalVisuallyFocused(gtx) {
 		return
 	}
+	st := ui.ensureHTTPClientState()
+	if st == nil {
+		return
+	}
+	event.Op(gtx.Ops, &st.treeKeyTag)
 	anyMods := ^key.Modifiers(0)
 	for {
-		eventValue, ok := gtx.Event(
-			key.Filter{Name: key.NameEnter, Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Name: key.NameReturn, Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Name: key.NameEnter, Required: key.ModShortcut, Optional: anyMods},
-			key.Filter{Name: key.NameReturn, Required: key.ModShortcut, Optional: anyMods},
-			key.Filter{Name: "s", Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Name: "S", Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
-			key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
-		)
+		filters := []event.Filter{}
+		if !st.envEditorOpen {
+			filters = append(filters,
+				key.Filter{Name: key.NameEnter, Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: key.NameReturn, Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: key.NameEnter, Required: key.ModShortcut, Optional: anyMods},
+				key.Filter{Name: key.NameReturn, Required: key.ModShortcut, Optional: anyMods},
+				key.Filter{Name: "s", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "S", Required: key.ModCtrl, Optional: anyMods},
+				key.Filter{Name: "s", Required: key.ModShortcut, Optional: anyMods},
+				key.Filter{Name: "S", Required: key.ModShortcut, Optional: anyMods},
+			)
+		}
+		if !st.treeRenameActive {
+			filters = append(filters,
+				key.Filter{Name: key.NameTab, Optional: key.ModShift},
+				key.FocusFilter{Target: &st.treeKeyTag},
+				key.Filter{Focus: &st.treeKeyTag, Name: key.NameUpArrow},
+				key.Filter{Focus: &st.treeKeyTag, Name: key.NameDownArrow},
+				key.Filter{Focus: &st.treeKeyTag, Name: key.NameLeftArrow},
+				key.Filter{Focus: &st.treeKeyTag, Name: key.NameRightArrow},
+				key.Filter{Focus: &st.treeKeyTag, Name: key.NameEnter},
+				key.Filter{Focus: &st.treeKeyTag, Name: key.NameReturn},
+				key.Filter{Focus: &st.treeKeyTag, Name: key.NameSpace},
+				key.Filter{Focus: &st.treeKeyTag, Name: key.NameEscape},
+			)
+		}
+		eventValue, ok := gtx.Event(filters...)
 		if !ok {
 			return
 		}
@@ -779,8 +1212,54 @@ func (ui *UI) handleHTTPClientKeys(gtx layout.Context) {
 			continue
 		}
 		switch keyEvent.Name {
+		case key.NameTab:
+			if !st.treeMenuOpen {
+				st.closeHTTPChoiceMenus()
+			}
+			ui.stepHTTPKeyboardFocus(gtx, st, keyEvent.Modifiers == key.ModShift)
+		case key.NameUpArrow, key.NameDownArrow:
+			if st.treeMenuOpen {
+				step := 1
+				if keyEvent.Name == key.NameUpArrow {
+					step = -1
+				}
+				st.stepHTTPTreeMenu(step)
+			} else if st.keyboardTarget.kind == httpKeyTree {
+				st.closeHTTPChoiceMenus()
+				if index, changed := st.navigateCollectionTree(keyEvent.Name); changed {
+					st.collectionList.ScrollTo(index)
+				}
+			}
+		case key.NameLeftArrow, key.NameRightArrow:
+			if st.keyboardTarget.kind == httpKeyTree {
+				if index, changed := st.navigateCollectionTree(keyEvent.Name); changed {
+					st.collectionList.ScrollTo(index)
+				}
+			} else {
+				step := 1
+				if keyEvent.Name == key.NameLeftArrow {
+					step = -1
+				}
+				ui.stepHTTPHorizontalGroup(gtx, st, step)
+			}
+		case key.NameSpace:
+			ui.activateHTTPKeyboardTarget(gtx, st)
+		case key.NameEscape:
+			switch {
+			case st.treeMenuOpen:
+				st.treeMenuOpen = false
+				st.keyboardTarget = httpKeyboardTarget{kind: httpKeyTree}
+			case st.envEditorOpen:
+				st.closeEnvironmentEditor()
+			default:
+				st.closeHTTPChoiceMenus()
+			}
 		case key.NameEnter, key.NameReturn:
-			ui.startHTTPRequest()
+			if keyEvent.Modifiers == 0 && gtx.Focused(&st.treeKeyTag) {
+				ui.activateHTTPKeyboardTarget(gtx, st)
+			} else {
+				ui.startHTTPRequest()
+			}
 		case "s", "S":
 			_ = ui.saveHTTPCollections()
 		}
@@ -947,7 +1426,16 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 	flushHTTPEnvironmentSingleClick(gtx, st)
 	handleHTTPChoiceMenuDismissPresses(gtx, st)
 	handleHTTPSelectorSecondaryPresses(gtx, st)
-	handleHTTPAuthEditorClicks(gtx, &st.requestAuth, true)
+	previousRequestAuthType := st.requestAuth.typeName
+	previousRequestAuthLocation := st.requestAuth.apiKeyLocation()
+	if handleHTTPAuthEditorClicks(gtx, &st.requestAuth, true) {
+		switch {
+		case previousRequestAuthType != st.requestAuth.typeName:
+			st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyRequestAuthTab})
+		case previousRequestAuthLocation != st.requestAuth.apiKeyLocation():
+			st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyRequestAuthLoc})
+		}
+	}
 	for st.requestAuth.editEnvClick.Clicked(gtx) {
 		if st.file != nil && st.environment >= 0 && st.environment < len(st.file.Environments) {
 			st.openEnvironmentEditor(st.environment, false)
@@ -998,6 +1486,7 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 		}
 	}
 	for st.addEnvironmentClick.Clicked(gtx) {
+		st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyEnvironmentGroup, index: 1})
 		st.envCyclePending = false
 		if st.addEnvironment() {
 			_ = ui.saveHTTPCollections()
@@ -1005,18 +1494,21 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 		}
 	}
 	for st.addCollectionClick.Clicked(gtx) {
+		st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyEnvironmentGroup, index: 2})
 		if st.addCollection() {
 			st.beginTreeRename(st.treeSelected)
 			_ = ui.saveHTTPCollections()
 		}
 	}
 	for st.addRequestClick.Clicked(gtx) {
+		st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyEnvironmentGroup, index: 3})
 		if st.addRequestToSelection() {
 			st.beginTreeRename(st.treeSelected)
 			_ = ui.saveHTTPCollections()
 		}
 	}
 	for st.methodClick.Clicked(gtx) {
+		st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyMethod})
 		st.methodMenuOpen = false
 		index := 0
 		for i, method := range httpMethods {
@@ -1032,6 +1524,7 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 		if !ok {
 			break
 		}
+		st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyEnvironmentGroup, index: 0})
 		st.envMenuOpen = false
 		if st.file == nil || len(st.file.Environments) == 0 {
 			continue
@@ -1082,10 +1575,12 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 		}
 	}
 	for st.sendClick.Clicked(gtx) {
+		st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyCommandGroup, index: 0})
 		st.closeHTTPChoiceMenus()
 		ui.startHTTPRequest()
 	}
 	for st.saveClick.Clicked(gtx) {
+		st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyCommandGroup, index: 1})
 		st.closeHTTPChoiceMenus()
 		_ = ui.saveHTTPCollections()
 	}
@@ -1094,6 +1589,7 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 		for st.detailClicks[index].Clicked(gtx) {
 			st.closeHTTPChoiceMenus()
 			st.detailMode = detailModes[index]
+			st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyDetailTab, index: index})
 		}
 	}
 	responseModes := []string{httpResponsePretty, httpResponseRaw, httpResponseHeaders}
@@ -1101,6 +1597,7 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 		for st.responseClicks[index].Clicked(gtx) {
 			st.closeHTTPChoiceMenus()
 			st.responseMode = responseModes[index]
+			st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyResponseTab, index: index})
 			st.updateResponseEditor()
 		}
 	}
@@ -1117,9 +1614,8 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 					break
 				}
 				st.closeHTTPChoiceMenus()
-				if st.selectTreeRequest(rows[index]) {
-					gtx.Execute(key.FocusCmd{})
-				}
+				st.selectTreeRequest(rows[index])
+				st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyTree})
 				if click.NumClicks >= 2 {
 					st.beginTreeRename(rows[index])
 				}
@@ -1152,6 +1648,7 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 					continue
 				}
 				st.selectTreeGroup(rows[index])
+				st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyTree})
 			}
 		}
 	}
@@ -1268,7 +1765,7 @@ func (ui *UI) handleHTTPTreeSecondaryPresses(gtx layout.Context, st *httpClientS
 			st.treeMenuRow = row
 			st.treeMenuRowIndex = index
 			st.treeMenuOpen = true
-			gtx.Execute(key.FocusCmd{})
+			st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyTreeMenu})
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
@@ -1483,6 +1980,109 @@ func (st *httpClientState) collectionRows() []httpCollectionRow {
 		}
 	}
 	return rows
+}
+
+func sameHTTPTreeRow(left, right httpCollectionRow) bool {
+	return left.kind == right.kind && left.ref == right.ref
+}
+
+func findHTTPTreeRow(rows []httpCollectionRow, selected httpCollectionRow) int {
+	for index := range rows {
+		if sameHTTPTreeRow(rows[index], selected) {
+			return index
+		}
+	}
+	return -1
+}
+
+func (st *httpClientState) selectKeyboardTreeRow(row httpCollectionRow) bool {
+	if st == nil {
+		return false
+	}
+	changed := !st.hasTreeSelected || !sameHTTPTreeRow(st.treeSelected, row)
+	if row.kind == "request" {
+		st.selectRequest(row.ref)
+	} else {
+		st.treeSelected = row
+		st.hasTreeSelected = true
+	}
+	return changed
+}
+
+func (st *httpClientState) selectFirstKeyboardTreeRow() bool {
+	rows := st.collectionRows()
+	if len(rows) == 0 {
+		return false
+	}
+	return st.selectKeyboardTreeRow(rows[0])
+}
+
+// navigateCollectionTree follows the HTTP client's protocol-analyzer tree
+// convention: Left enters a branch and Right returns to its parent. Up and
+// Down simply visit every visible row in paint order.
+func (st *httpClientState) navigateCollectionTree(name key.Name) (int, bool) {
+	rows := st.collectionRows()
+	if len(rows) == 0 {
+		return 0, false
+	}
+	current := findHTTPTreeRow(rows, st.treeSelected)
+	if !st.hasTreeSelected || current < 0 {
+		st.selectKeyboardTreeRow(rows[0])
+		return 0, true
+	}
+
+	target := current
+	row := rows[current]
+	switch name {
+	case key.NameUpArrow:
+		if current > 0 {
+			target = current - 1
+		}
+	case key.NameDownArrow:
+		if current+1 < len(rows) {
+			target = current + 1
+		}
+	case key.NameLeftArrow:
+		if row.kind == "request" || !row.hasChildren {
+			return current, false
+		}
+		if row.kind == "collection" {
+			st.collapsedCollections[row.ref.collection] = false
+		} else {
+			st.collapsedFolders[[2]int{row.ref.collection, row.ref.folder}] = false
+		}
+		rows = st.collectionRows()
+		current = findHTTPTreeRow(rows, row)
+		if current >= 0 && current+1 < len(rows) && rows[current+1].depth == row.depth+1 {
+			target = current + 1
+		} else {
+			return max(current, 0), false
+		}
+	case key.NameRightArrow:
+		if row.kind == "collection" {
+			return current, false
+		}
+		parent := httpCollectionRow{
+			kind:  "collection",
+			ref:   httpRequestRef{collection: row.ref.collection, folder: -1, request: -1},
+			depth: 0,
+		}
+		if row.kind == "request" && row.ref.folder >= 0 {
+			parent.kind = "folder"
+			parent.ref.folder = row.ref.folder
+			parent.depth = 1
+		}
+		target = findHTTPTreeRow(rows, parent)
+		if target < 0 {
+			return current, false
+		}
+	default:
+		return current, false
+	}
+	if target == current {
+		return current, false
+	}
+	return target, st.selectKeyboardTreeRow(rows[target])
 }
 
 func (st *httpClientState) ensureRequestClicks(count int) {
@@ -1787,9 +2387,11 @@ func (st *httpClientState) openEnvironmentEditor(index int, focusName bool) bool
 	st.envMenuOpen = false
 	st.methodMenuOpen = false
 	st.envEditorFocus = "variables"
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyEnvVariables}
 	if focusName {
 		st.envEditorNameEd.SetCaret(0, st.envEditorNameEd.Len())
 		st.envEditorFocus = "name"
+		st.keyboardTarget = httpKeyboardTarget{kind: httpKeyEnvName}
 	}
 	return true
 }
@@ -1800,6 +2402,7 @@ func (st *httpClientState) closeEnvironmentEditor() {
 	}
 	st.envEditorOpen = false
 	st.envEditorFocus = ""
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyEnvironmentGroup}
 }
 
 func (ui *UI) saveEnvironmentEditor(st *httpClientState) bool {
@@ -1881,10 +2484,20 @@ func (ui *UI) handleHTTPEnvironmentEditor(gtx layout.Context, st *httpClientStat
 	if st == nil || !st.envEditorOpen {
 		return
 	}
-	handleHTTPAuthEditorClicks(gtx, &st.environmentAuth, false)
+	previousAuthType := st.environmentAuth.typeName
+	previousAuthLocation := st.environmentAuth.apiKeyLocation()
+	if handleHTTPAuthEditorClicks(gtx, &st.environmentAuth, false) {
+		switch {
+		case previousAuthType != st.environmentAuth.typeName:
+			st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyEnvAuthTab})
+		case previousAuthLocation != st.environmentAuth.apiKeyLocation():
+			st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyEnvAuthLocation})
+		}
+	}
 	for st.envEditorAddClick.Clicked(gtx) {
 		appendHTTPEditorLine(&st.envEditorVarsEd, "key=value")
 		st.envEditorFocus = "variables"
+		st.keyboardTarget = httpKeyboardTarget{kind: httpKeyEnvVariables}
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	for st.envEditorSaveClick.Clicked(gtx) {
@@ -2251,7 +2864,7 @@ func (ui *UI) layoutHTTPTreeContextMenu(th *material.Theme, gtx layout.Context, 
 	return layoutHTTPCommandFrame(gtx, func(gtx layout.Context) layout.Dimensions {
 		children := []layout.FlexChild{
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutHTTPChoiceMenuItem(th, gtx, &st.treeMenuRenameClick, "Rename", false)
+				return ui.layoutHTTPChoiceMenuItemFocused(th, gtx, &st.treeMenuRenameClick, "Rename", false, st.httpKeyboardTargetFocused(gtx, httpKeyTreeMenu, 0))
 			}),
 		}
 		if st.treeMenuRow.kind == "request" && st.file != nil {
@@ -2261,12 +2874,12 @@ func (ui *UI) layoutHTTPTreeContextMenu(th *material.Theme, gtx layout.Context, 
 					break
 				}
 				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutHTTPChoiceMenuItem(th, gtx, &st.treeMenuRunClicks[index], "Run with "+st.file.Environments[index].Name, false)
+					return ui.layoutHTTPChoiceMenuItemFocused(th, gtx, &st.treeMenuRunClicks[index], "Run with "+st.file.Environments[index].Name, false, st.httpKeyboardTargetFocused(gtx, httpKeyTreeMenu, index+1))
 				}))
 			}
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutHTTPChoiceMenuItem(th, gtx, &st.treeMenuDeleteClick, "Delete", false)
+			return ui.layoutHTTPChoiceMenuItemFocused(th, gtx, &st.treeMenuDeleteClick, "Delete", false, st.httpKeyboardTargetFocused(gtx, httpKeyTreeMenu, st.httpTreeMenuActionCount()-1))
 		}))
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 	})
@@ -2287,12 +2900,12 @@ func (ui *UI) layoutHTTPEnvironmentLine(th *material.Theme, gtx layout.Context, 
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedHeight(gtx, controlHeight, func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutHTTPWireActionTooltip(th, gtx, typeface, &st.addCollectionClick, "[ + ]", "New collection")
+						return ui.layoutHTTPWireActionTooltipFocused(th, gtx, typeface, &st.addCollectionClick, "[ + ]", "New collection", st.httpKeyboardTargetFocused(gtx, httpKeyEnvironmentGroup, 2))
 					})
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedHeight(gtx, controlHeight, func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutHTTPWireActionTooltip(th, gtx, typeface, &st.addRequestClick, "[ + ]", "New request")
+						return ui.layoutHTTPWireActionTooltipFocused(th, gtx, typeface, &st.addRequestClick, "[ + ]", "New request", st.httpKeyboardTargetFocused(gtx, httpKeyEnvironmentGroup, 3))
 					})
 				}),
 			)
@@ -2302,7 +2915,7 @@ func (ui *UI) layoutHTTPEnvironmentLine(th *material.Theme, gtx layout.Context, 
 
 func (ui *UI) layoutHTTPEnvironmentChooser(th *material.Theme, gtx layout.Context, typeface font.Typeface, st *httpClientState, environmentName string) layout.Dimensions {
 	bg := color.NRGBA{R: 15, G: 23, B: 30, A: 255}
-	segment := func(click *widget.Clickable, text string) layout.Widget {
+	segment := func(click *widget.Clickable, text string, focused bool) layout.Widget {
 		return func(gtx layout.Context) layout.Dimensions {
 			segmentBG := bg
 			textColor := txtColor
@@ -2312,7 +2925,7 @@ func (ui *UI) layoutHTTPEnvironmentChooser(th *material.Theme, gtx layout.Contex
 			}
 			return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				pointer.CursorPointer.Add(gtx.Ops)
-				return fillBgExact(gtx, segmentBG, func(gtx layout.Context) layout.Dimensions {
+				dimensions := fillBgExact(gtx, segmentBG, func(gtx layout.Context) layout.Dimensions {
 					label := material.Body2(th, text)
 					label.Font.Typeface = typeface
 					label.Font.Weight = font.Medium
@@ -2322,6 +2935,10 @@ func (ui *UI) layoutHTTPEnvironmentChooser(th *material.Theme, gtx layout.Contex
 						return layoutInkVCenteredLabel(gtx, label)
 					})
 				})
+				if focused {
+					drawHTTPKeyboardFocusIndicator(gtx, dimensions.Size)
+				}
+				return dimensions
 			})
 		}
 	}
@@ -2339,9 +2956,9 @@ func (ui *UI) layoutHTTPEnvironmentChooser(th *material.Theme, gtx layout.Contex
 	}
 	dimensions := layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		literal("[", txtColor),
-		layout.Rigid(segment(&st.envClick, "ENV: "+environmentName+" ▾")),
+		layout.Rigid(segment(&st.envClick, "ENV: "+environmentName+" ▾", st.httpKeyboardTargetFocused(gtx, httpKeyEnvironmentGroup, 0))),
 		literal("|", analyzerRule),
-		layout.Rigid(segment(&st.addEnvironmentClick, "+")),
+		layout.Rigid(segment(&st.addEnvironmentClick, "+", st.httpKeyboardTargetFocused(gtx, httpKeyEnvironmentGroup, 1))),
 		literal("]", txtColor),
 	)
 	if st.envClick.Hovered() {
@@ -2801,13 +3418,15 @@ func (ui *UI) layoutHTTPRequestTabs(th *material.Theme, gtx layout.Context, st *
 			title = request.Name
 		}
 		items[index] = appTabItem{
-			title:  title,
-			active: index == st.activeTab,
+			title:           title,
+			active:          index == st.activeTab,
+			keyboardFocused: st.httpKeyboardTargetFocused(gtx, httpKeyRequestTab, index),
 		}
 	}
 	style := appTabStripStyle{
 		open:             true,
 		activeBackground: httpRequestLineBackground(),
+		keyboardFocus:    analyzerAccent,
 	}
 	actions, dimensions, geometry := ui.layoutAppTabStrip(
 		th,
@@ -2822,8 +3441,11 @@ func (ui *UI) layoutHTTPRequestTabs(th *material.Theme, gtx layout.Context, st *
 		style,
 	)
 	st.tabGeometry = geometry
-	if actions.selectIdx >= 0 && st.activateRequestTab(actions.selectIdx) {
-		gtx.Execute(op.InvalidateCmd{})
+	if actions.selectIdx >= 0 {
+		if st.activateRequestTab(actions.selectIdx) {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		st.focusHTTPKeyboardTarget(gtx, httpKeyboardTarget{kind: httpKeyRequestTab, index: actions.selectIdx})
 	}
 	if actions.closeIdx >= 0 && st.closeRequestTab(actions.closeIdx) {
 		gtx.Execute(op.InvalidateCmd{})
@@ -2981,6 +3603,39 @@ func layoutHTTPWireGap(gtx layout.Context, width unit.Dp) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(gtx.Dp(width), 1)}
 }
 
+func drawHTTPKeyboardFocusIndicator(gtx layout.Context, size image.Point) {
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	height := max(1, gtx.Dp(unit.Dp(2)))
+	pad := gtx.Dp(unit.Dp(4))
+	if pad*2 >= size.X {
+		pad = 0
+	}
+	top := max(0, size.Y-height)
+	paint.FillShape(gtx.Ops, analyzerAccent, clip.Rect(image.Rect(pad, top, size.X-pad, size.Y)).Op())
+}
+
+func (st *httpClientState) httpCommandKeyboardFocused(gtx layout.Context, id string) bool {
+	if st == nil || !gtx.Focused(&st.treeKeyTag) {
+		return false
+	}
+	switch id {
+	case "method":
+		return st.keyboardTarget.kind == httpKeyMethod
+	case "send":
+		return st.keyboardTarget == (httpKeyboardTarget{kind: httpKeyCommandGroup, index: 0})
+	case "save":
+		return st.keyboardTarget == (httpKeyboardTarget{kind: httpKeyCommandGroup, index: 1})
+	case "env-editor-cancel":
+		return st.keyboardTarget == (httpKeyboardTarget{kind: httpKeyEnvActions, index: 0})
+	case "env-editor-save":
+		return st.keyboardTarget == (httpKeyboardTarget{kind: httpKeyEnvActions, index: 1})
+	default:
+		return false
+	}
+}
+
 func (ui *UI) layoutHTTPFlatCommandButton(th *material.Theme, gtx layout.Context, st *httpClientState, id string, click *widget.Clickable, text string, width unit.Dp, textColor color.NRGBA, primary bool) layout.Dimensions {
 	return fixedWidth(gtx, gtx.Dp(width), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
@@ -2994,7 +3649,7 @@ func (ui *UI) layoutHTTPFlatCommandButton(th *material.Theme, gtx layout.Context
 				target = color.NRGBA{R: 25, G: 68, B: 78, A: 255}
 			}
 			bg = mixNRGBA(bg, target, hover)
-			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+			dimensions := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					label := material.Body2(th, text)
 					label.Font.Typeface = ui.mainTypeface()
@@ -3005,6 +3660,10 @@ func (ui *UI) layoutHTTPFlatCommandButton(th *material.Theme, gtx layout.Context
 					return layout.Center.Layout(gtx, label.Layout)
 				})
 			})
+			if st.httpCommandKeyboardFocused(gtx, id) {
+				drawHTTPKeyboardFocusIndicator(gtx, dimensions.Size)
+			}
+			return dimensions
 		})
 	})
 }
@@ -3033,13 +3692,17 @@ func (ui *UI) layoutHTTPFlatSaveButton(gtx layout.Context, st *httpClientState, 
 				dot := max(2, gtx.Dp(unit.Dp(2)))
 				paint.FillShape(gtx.Ops, analyzerAccent, clip.Rect(image.Rect(gtx.Constraints.Max.X-dot-2, 2, gtx.Constraints.Max.X-2, 2+dot)).Op())
 			}
-			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			dimensions := layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				size := max(11, gtx.Dp(unit.Dp(14)))
 				iconGTX := gtx
 				iconGTX.Constraints = layout.Exact(image.Pt(size, size))
 				uitheme.SaveIcon().Layout(iconGTX, txtColor)
 				return layout.Dimensions{Size: image.Pt(size, size)}
 			})
+			if st.httpCommandKeyboardFocused(gtx, id) {
+				drawHTTPKeyboardFocusIndicator(gtx, gtx.Constraints.Max)
+			}
+			return dimensions
 		})
 	})
 }
@@ -3106,6 +3769,10 @@ func (ui *UI) layoutHTTPChoiceMenu(th *material.Theme, gtx layout.Context, label
 }
 
 func (ui *UI) layoutHTTPChoiceMenuItem(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, active bool) layout.Dimensions {
+	return ui.layoutHTTPChoiceMenuItemFocused(th, gtx, click, label, active, false)
+}
+
+func (ui *UI) layoutHTTPChoiceMenuItemFocused(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, active, focused bool) layout.Dimensions {
 	return fixedHeight(gtx, max(gtx.Dp(unit.Dp(24)), gtx.Sp(scaleThemeFontSize(th, 10))+gtx.Dp(unit.Dp(8))), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -3118,7 +3785,10 @@ func (ui *UI) layoutHTTPChoiceMenuItem(th *material.Theme, gtx layout.Context, c
 			} else if click.Hovered() {
 				bg = color.NRGBA{R: 25, G: 47, B: 56, A: 255}
 			}
-			return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
+			if focused {
+				textColor = analyzerAccent
+			}
+			dimensions := fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
 				return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -3147,6 +3817,10 @@ func (ui *UI) layoutHTTPChoiceMenuItem(th *material.Theme, gtx layout.Context, c
 					)
 				})
 			})
+			if focused {
+				drawHTTPKeyboardFocusIndicator(gtx, dimensions.Size)
+			}
+			return dimensions
 		})
 	})
 }
@@ -3268,7 +3942,7 @@ func (ui *UI) layoutHTTPDetailTabsInline(th *material.Theme, gtx layout.Context,
 			if index >= len(st.detailClicks) {
 				return layout.Dimensions{}
 			}
-			return ui.layoutHTTPAuthChoice(th, gtx, &st.detailClicks[index], labels[index], index < len(modes) && modes[index] == st.detailMode)
+			return ui.layoutHTTPAuthChoiceFocused(th, gtx, &st.detailClicks[index], labels[index], index < len(modes) && modes[index] == st.detailMode, st.httpKeyboardTargetFocused(gtx, httpKeyDetailTab, index))
 		}))
 	}
 	if st.detailMode == httpDetailParams || st.detailMode == httpDetailHeaders {
@@ -3350,7 +4024,7 @@ func (ui *UI) layoutHTTPAuthEditor(th *material.Theme, gtx layout.Context, st *h
 							}
 							headerChildren = append(headerChildren,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return ui.layoutHTTPAuthModeChoices(th, gtx, auth, allowInherit)
+									return ui.layoutHTTPAuthModeChoices(th, gtx, st, auth, allowInherit)
 								}),
 								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 									return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 1)}
@@ -3385,7 +4059,7 @@ func (ui *UI) layoutHTTPAuthEditor(th *material.Theme, gtx layout.Context, st *h
 			children = append(children,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return ui.layoutHTTPAuthField(th, gtx, "KEY NAME", &auth.apiKeyNameEd, "X-API-Key", idPrefix+"-key", func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutHTTPAuthLocationChoices(th, gtx, auth)
+						return ui.layoutHTTPAuthLocationChoices(th, gtx, st, auth, !allowInherit)
 					}, false, nil, false)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -3417,7 +4091,7 @@ func (ui *UI) layoutHTTPAuthEditor(th *material.Theme, gtx layout.Context, st *h
 	})
 }
 
-func (ui *UI) layoutHTTPAuthModeChoices(th *material.Theme, gtx layout.Context, auth *httpAuthEditorState, allowInherit bool) layout.Dimensions {
+func (ui *UI) layoutHTTPAuthModeChoices(th *material.Theme, gtx layout.Context, st *httpClientState, auth *httpAuthEditorState, allowInherit bool) layout.Dimensions {
 	children := make([]layout.FlexChild, 0, len(httpAuthTypes)*2)
 	for index, authType := range httpAuthTypes {
 		if authType == httpclient.AuthInherit && !allowInherit {
@@ -3431,7 +4105,15 @@ func (ui *UI) layoutHTTPAuthModeChoices(th *material.Theme, gtx layout.Context, 
 			}))
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutHTTPAuthChoice(th, gtx, &auth.typeClicks[index], authTypeLabel(authType), auth.typeName == authType)
+			focused := false
+			if allowInherit {
+				focusedIndex := httpChoiceIndex(httpAuthTypes, authType)
+				focused = focusedIndex >= 0 && st.httpKeyboardTargetFocused(gtx, httpKeyRequestAuthTab, focusedIndex)
+			} else {
+				focusedIndex := httpChoiceIndex(httpEnvironmentAuthTypes(), authType)
+				focused = focusedIndex >= 0 && st.httpKeyboardTargetFocused(gtx, httpKeyEnvAuthTab, focusedIndex)
+			}
+			return ui.layoutHTTPAuthChoiceFocused(th, gtx, &auth.typeClicks[index], authTypeLabel(authType), auth.typeName == authType, focused)
 		}))
 	}
 	return layoutHTTPConnectedRow(gtx, analyzerHeaderBg, analyzerRule, func(gtx layout.Context) layout.Dimensions {
@@ -3440,14 +4122,18 @@ func (ui *UI) layoutHTTPAuthModeChoices(th *material.Theme, gtx layout.Context, 
 }
 
 func (ui *UI) layoutHTTPAuthChoice(th *material.Theme, gtx layout.Context, click *widget.Clickable, text string, active bool) layout.Dimensions {
+	return ui.layoutHTTPAuthChoiceFocused(th, gtx, click, text, active, false)
+}
+
+func (ui *UI) layoutHTTPAuthChoiceFocused(th *material.Theme, gtx layout.Context, click *widget.Clickable, text string, active, focused bool) layout.Dimensions {
 	gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
 	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
 		textColor := txtColor
-		if active {
+		if active || focused {
 			textColor = analyzerAccent
 		}
-		return layoutHTTPAuthTabBackground(gtx, active, click.Hovered(), func(gtx layout.Context) layout.Dimensions {
+		dimensions := layoutHTTPAuthTabBackground(gtx, active, click.Hovered(), func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				label := material.Body2(th, text)
 				label.Font.Typeface = ui.mainTypeface()
@@ -3456,6 +4142,10 @@ func (ui *UI) layoutHTTPAuthChoice(th *material.Theme, gtx layout.Context, click
 				return layoutVCenteredLabel(gtx, label)
 			})
 		})
+		if focused {
+			drawHTTPKeyboardFocusIndicator(gtx, dimensions.Size)
+		}
+		return dimensions
 	})
 }
 
@@ -3533,19 +4223,27 @@ func (ui *UI) layoutHTTPAuthField(th *material.Theme, gtx layout.Context, captio
 	})
 }
 
-func (ui *UI) layoutHTTPAuthLocationChoices(th *material.Theme, gtx layout.Context, auth *httpAuthEditorState) layout.Dimensions {
+func (ui *UI) layoutHTTPAuthLocationChoices(th *material.Theme, gtx layout.Context, st *httpClientState, auth *httpAuthEditorState, environmentEditor bool) layout.Dimensions {
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layoutHTTPCommandSeparator(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutHTTPAuthChoice(th, gtx, &auth.headerClick, "Header", auth.apiKeyLocation() == httpclient.AuthInHeader)
+			focused := st.httpKeyboardTargetFocused(gtx, httpKeyRequestAuthLoc, 0)
+			if environmentEditor {
+				focused = st.httpKeyboardTargetFocused(gtx, httpKeyEnvAuthLocation, 0)
+			}
+			return ui.layoutHTTPAuthChoiceFocused(th, gtx, &auth.headerClick, "Header", auth.apiKeyLocation() == httpclient.AuthInHeader, focused)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layoutHTTPCommandSeparator(gtx)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.layoutHTTPAuthChoice(th, gtx, &auth.queryClick, "Query", auth.apiKeyLocation() == httpclient.AuthInQuery)
+			focused := st.httpKeyboardTargetFocused(gtx, httpKeyRequestAuthLoc, 1)
+			if environmentEditor {
+				focused = st.httpKeyboardTargetFocused(gtx, httpKeyEnvAuthLocation, 1)
+			}
+			return ui.layoutHTTPAuthChoiceFocused(th, gtx, &auth.queryClick, "Query", auth.apiKeyLocation() == httpclient.AuthInQuery, focused)
 		}),
 	)
 }
@@ -3653,7 +4351,7 @@ func (ui *UI) layoutHTTPResponseTabsInline(th *material.Theme, gtx layout.Contex
 				}))
 			}
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutHTTPAuthChoice(th, gtx, &st.responseClicks[index], labels[index], modes[index] == st.responseMode)
+				return ui.layoutHTTPAuthChoiceFocused(th, gtx, &st.responseClicks[index], labels[index], modes[index] == st.responseMode, st.httpKeyboardTargetFocused(gtx, httpKeyResponseTab, index))
 			}))
 		}
 		return layoutHTTPConnectedRow(gtx, analyzerHeaderBg, analyzerRule, func(gtx layout.Context) layout.Dimensions {
@@ -3803,7 +4501,14 @@ func layoutHTTPWireAction(th *material.Theme, gtx layout.Context, typeface font.
 }
 
 func (ui *UI) layoutHTTPWireActionTooltip(th *material.Theme, gtx layout.Context, typeface font.Typeface, click *widget.Clickable, text, tip string) layout.Dimensions {
+	return ui.layoutHTTPWireActionTooltipFocused(th, gtx, typeface, click, text, tip, false)
+}
+
+func (ui *UI) layoutHTTPWireActionTooltipFocused(th *material.Theme, gtx layout.Context, typeface font.Typeface, click *widget.Clickable, text, tip string, focused bool) layout.Dimensions {
 	dimensions := layoutHTTPWireAction(th, gtx, typeface, click, text, false)
+	if focused {
+		drawHTTPKeyboardFocusIndicator(gtx, dimensions.Size)
+	}
 	if click.Hovered() && strings.TrimSpace(tip) != "" {
 		ui.deferHTTPActionTooltip(th, gtx, dimensions.Size, tip)
 	}

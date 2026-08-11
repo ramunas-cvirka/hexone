@@ -20,7 +20,9 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/gpu/headless"
+	"gioui.org/io/event"
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -59,6 +61,7 @@ func TestHeadlessHTTPClient(t *testing.T) {
 	router := new(input.Router)
 	st := ui.ensureHTTPClientState()
 	st.selectRequest(httpRequestRef{collection: 0, folder: 0, request: 1})
+	var focusBeforeRender event.Tag
 
 	render := func(name string) {
 		var screenshot *image.RGBA
@@ -72,6 +75,10 @@ func TestHeadlessHTTPClient(t *testing.T) {
 				Now:         base.Add(time.Duration(frame) * 50 * time.Millisecond),
 				Source:      router.Source(),
 			}
+			if frame == 0 && focusBeforeRender != nil {
+				event.Op(gtx.Ops, focusBeforeRender)
+				gtx.Execute(key.FocusCmd{Tag: focusBeforeRender})
+			}
 			ui.Layout(th, gtx)
 			router.Frame(&ops)
 			if err := win.Frame(&ops); err != nil {
@@ -82,6 +89,7 @@ func TestHeadlessHTTPClient(t *testing.T) {
 				t.Fatalf("screenshot: %v", err)
 			}
 		}
+		focusBeforeRender = nil
 		path := filepath.Join(outDir, name)
 		file, err := os.Create(path)
 		if err != nil {
@@ -171,6 +179,8 @@ func TestHeadlessHTTPClient(t *testing.T) {
 		}
 	}
 	st.treeMenuOpen = true
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyTreeMenu, index: 1}
+	focusBeforeRender = &st.treeKeyTag
 	render("http-client-tree-context-menu.png")
 	st.treeMenuOpen = false
 	if !st.activateRequestTab(0) {
@@ -195,6 +205,13 @@ func TestHeadlessHTTPClient(t *testing.T) {
 	st.envEditorVarsEd.SetText("base_url=http://localhost:8080\ntoken=local-secret\nregion=eu-central")
 	st.environmentAuth.set(httpclient.Auth{Type: httpclient.AuthAPIKey, Key: "X-API-Key", Value: "{{token}}", In: httpclient.AuthInHeader}, false)
 	render("http-client-environment-editor.png")
+	st.envEditorFocus = ""
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyEnvAuthTab, index: 3}
+	focusBeforeRender = &st.treeKeyTag
+	render("http-client-environment-editor-auth-focus.png")
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyEnvActions, index: 1}
+	focusBeforeRender = &st.treeKeyTag
+	render("http-client-environment-editor-actions-focus.png")
 	st.closeEnvironmentEditor()
 	st.response = httpclient.Response{
 		StatusCode: 201,
@@ -217,6 +234,9 @@ func TestHeadlessHTTPClient(t *testing.T) {
 	render("http-client-auth-basic.png")
 	st.requestAuth.set(httpclient.Auth{Type: httpclient.AuthAPIKey, Key: "X-API-Key", Value: "{{api_key}}", In: httpclient.AuthInHeader}, true)
 	render("http-client-auth-api-key.png")
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyRequestAuthTab, index: httpChoiceIndex(httpAuthTypes, httpclient.AuthAPIKey)}
+	focusBeforeRender = &st.treeKeyTag
+	render("http-client-auth-api-key-keyboard-focus.png")
 	st.file.Environments[st.environment].Auth = httpclient.Auth{Type: httpclient.AuthBearer, Token: "{{token}}"}
 	st.requestAuth.set(httpclient.Auth{Type: httpclient.AuthInherit}, true)
 	render("http-client-auth-inherited.png")
@@ -225,6 +245,49 @@ func TestHeadlessHTTPClient(t *testing.T) {
 		t.Fatal("could not build collection-action verification hierarchy")
 	}
 	render("http-client-collection-actions.png")
+	st.finishTreeRename(false)
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyEnvironmentGroup, index: 0}
+	focusBeforeRender = &st.treeKeyTag
+	render("http-client-keyboard-environment-focus.png")
+	router.Queue(key.Event{Name: key.NameRightArrow, State: key.Press})
+	render("http-client-keyboard-environment-add-focus.png")
+	if st.keyboardTarget != (httpKeyboardTarget{kind: httpKeyEnvironmentGroup, index: 1}) {
+		t.Fatalf("environment group Right target=%#v, want add environment", st.keyboardTarget)
+	}
+	st.selectKeyboardTreeRow(st.collectionRows()[0])
+	focusBeforeRender = &st.urlEd
+	render("http-client-tree-keyboard-url-focus.png")
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	render("http-client-keyboard-send-focus.png")
+	if st.keyboardTarget != (httpKeyboardTarget{kind: httpKeyCommandGroup, index: 0}) {
+		t.Fatalf("keyboard Tab target=%#v, want Send", st.keyboardTarget)
+	}
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyMethod}
+	focusBeforeRender = &st.treeKeyTag
+	render("http-client-keyboard-method-focus.png")
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyRequestTab, index: 0}
+	st.activateRequestTab(0)
+	focusBeforeRender = &st.treeKeyTag
+	render("http-client-keyboard-request-tab-focus.png")
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyResponseTab, index: 1}
+	st.responseMode = httpResponseRaw
+	st.updateResponseEditor()
+	focusBeforeRender = &st.treeKeyTag
+	render("http-client-keyboard-response-tab-focus.png")
+	st.selectKeyboardTreeRow(st.collectionRows()[0])
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyTree}
+	focusBeforeRender = &st.treeKeyTag
+	render("http-client-tree-keyboard-root.png")
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	render("http-client-tree-keyboard-next-row.png")
+	if st.treeSelected.kind != "folder" || st.treeSelected.ref.collection != 0 {
+		t.Fatalf("keyboard Down selected %#v, want first folder", st.treeSelected)
+	}
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	render("http-client-tree-keyboard-inside.png")
+	if st.treeSelected.kind != "request" || st.treeSelected.ref.collection != 0 {
+		t.Fatalf("second keyboard Down selected %#v, want first request", st.treeSelected)
+	}
 
 	for index := 0; index < 36; index++ {
 		st.file.Collections[0].Folders[0].Requests = append(st.file.Collections[0].Folders[0].Requests, httpclient.Request{

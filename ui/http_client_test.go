@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/io/event"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -271,6 +272,324 @@ func TestHTTPCollectionTreeGroupsCollapseAndExpand(t *testing.T) {
 	st.selectTreeGroup(rows[1])
 	if got := len(st.collectionRows()); got != 4 {
 		t.Fatalf("expanded folder row count=%d want 4", got)
+	}
+}
+
+func TestHTTPCollectionTreeKeyboardNavigationFollowsHierarchy(t *testing.T) {
+	st := newHTTPClientState(filepath.Join(t.TempDir(), "hexone-http.yaml"))
+	st.file = &httpclient.File{
+		Version: httpclient.CurrentVersion,
+		Collections: []httpclient.Collection{
+			{
+				Name:     "Root A",
+				Requests: []httpclient.Request{{Name: "Direct A", Method: "GET", URL: "https://a.test"}},
+				Folders: []httpclient.Folder{{
+					Name: "Folder A",
+					Requests: []httpclient.Request{
+						{Name: "Leaf B", Method: "GET", URL: "https://b.test"},
+						{Name: "Leaf C", Method: "GET", URL: "https://c.test"},
+					},
+				}},
+			},
+			{
+				Name:     "Root B",
+				Requests: []httpclient.Request{{Name: "Direct D", Method: "GET", URL: "https://d.test"}},
+			},
+		},
+	}
+	rows := st.collectionRows()
+	st.selectKeyboardTreeRow(rows[0])
+
+	navigate := func(name key.Name, wantKind, wantLabel string) {
+		t.Helper()
+		if _, changed := st.navigateCollectionTree(name); !changed {
+			t.Fatalf("%s did not move from %#v", name, st.treeSelected)
+		}
+		rows = st.collectionRows()
+		index := findHTTPTreeRow(rows, st.treeSelected)
+		if index < 0 || rows[index].kind != wantKind || rows[index].label != wantLabel {
+			t.Fatalf("%s selected %#v at %d, want %s %q", name, st.treeSelected, index, wantKind, wantLabel)
+		}
+	}
+
+	navigate(key.NameDownArrow, "request", "Direct A")
+	navigate(key.NameDownArrow, "folder", "Folder A")
+	navigate(key.NameDownArrow, "request", "Leaf B")
+	navigate(key.NameDownArrow, "request", "Leaf C")
+	navigate(key.NameDownArrow, "collection", "Root B")
+	navigate(key.NameUpArrow, "request", "Leaf C")
+
+	navigate(key.NameRightArrow, "folder", "Folder A")
+	navigate(key.NameRightArrow, "collection", "Root A")
+
+	st.collapsedCollections[0] = true
+	st.selectKeyboardTreeRow(st.collectionRows()[0])
+	navigate(key.NameLeftArrow, "request", "Direct A")
+	if st.collapsedCollections[0] {
+		t.Fatal("Left did not expand the selected root before entering it")
+	}
+}
+
+func TestHTTPClientTabWalksInteractiveControls(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone-http.yaml")
+	st := newHTTPClientState(path)
+	st.selectRequest(httpRequestRef{collection: 0, folder: 0, request: 1})
+	if len(st.openTabs) != 2 {
+		t.Fatalf("open request tabs=%d want 2", len(st.openTabs))
+	}
+	st.selectKeyboardTreeRow(st.collectionRows()[0])
+	ui := &UI{httpState: st, httpCollectionsPath: path}
+	ui.Tabs.Value = "tab3"
+	router := new(input.Router)
+	th := material.NewTheme()
+
+	frame := func(focusURL bool) (bool, bool) {
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(640, 80)),
+			Now:         time.Now(),
+		}
+		if focusURL {
+			gtx.Execute(key.FocusCmd{Tag: &st.urlEd})
+		}
+		treeFocused := gtx.Focused(&st.treeKeyTag)
+		urlFocused := gtx.Focused(&st.urlEd)
+		ui.handleHTTPClientKeys(gtx)
+		material.Editor(th, &st.urlEd, "").Layout(gtx)
+		router.Frame(&ops)
+		return treeFocused, urlFocused
+	}
+
+	frame(true)
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	frame(false)
+	if treeFocused, urlFocused := frame(false); !treeFocused || urlFocused {
+		t.Fatalf("focus after Tab: tree=%t URL=%t", treeFocused, urlFocused)
+	}
+	if st.keyboardTarget != (httpKeyboardTarget{kind: httpKeyCommandGroup, index: 0}) {
+		t.Fatalf("target after URL Tab=%#v want Send", st.keyboardTarget)
+	}
+
+	router.Queue(key.Event{Name: key.NameTab, Modifiers: key.ModShift, State: key.Press})
+	frame(false)
+	if treeFocused, urlFocused := frame(false); treeFocused || !urlFocused {
+		t.Fatalf("focus after Shift+Tab: tree=%t URL=%t", treeFocused, urlFocused)
+	}
+
+	router.Queue(key.Event{Name: key.NameTab, Modifiers: key.ModShift, State: key.Press})
+	frame(false)
+	frame(false)
+	if st.keyboardTarget.kind != httpKeyMethod {
+		t.Fatalf("target before URL=%#v want Method", st.keyboardTarget)
+	}
+	originalMethod := st.method
+	router.Queue(key.Event{Name: key.NameEnter, State: key.Press})
+	frame(false)
+	if st.method == originalMethod {
+		t.Fatal("Enter did not activate the focused method control")
+	}
+
+	targets := st.httpKeyboardTargets()
+	wantKinds := []string{
+		httpKeyEnvironmentGroup,
+		httpKeyTree,
+		httpKeyRequestTab,
+		httpKeyMethod,
+		httpKeyURL,
+		httpKeyCommandGroup,
+		httpKeyDetailTab,
+		httpKeyResponseTab,
+	}
+	if len(targets) != len(wantKinds) {
+		t.Fatalf("keyboard target count=%d want %d: %#v", len(targets), len(wantKinds), targets)
+	}
+	for index := range targets {
+		if targets[index].kind != wantKinds[index] {
+			t.Fatalf("target %d=%#v want kind %q", index, targets[index], wantKinds[index])
+		}
+	}
+
+	st.treeMenuOpen = true
+	st.treeMenuRow = st.collectionRows()[2]
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyTreeMenu}
+	router.Queue(key.Event{Name: key.NameDownArrow, State: key.Press})
+	frame(false)
+	if !st.treeMenuOpen || st.keyboardTarget.kind != httpKeyTreeMenu || st.keyboardTarget.index != 1 {
+		t.Fatalf("context-menu Tab target=%#v open=%t want first Run action", st.keyboardTarget, st.treeMenuOpen)
+	}
+}
+
+func TestHTTPClientHorizontalGroupsSwitchActiveItems(t *testing.T) {
+	st := newHTTPClientState(filepath.Join(t.TempDir(), "hexone-http.yaml"))
+	st.selectRequest(httpRequestRef{collection: 0, folder: 0, request: 1})
+	ui := &UI{httpState: st}
+	gtx := layout.Context{Ops: new(op.Ops)}
+
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyRequestTab, index: 1}
+	if !ui.stepHTTPHorizontalGroup(gtx, st, 1) || st.activeTab != 0 || st.keyboardTarget.index != 0 {
+		t.Fatalf("request-tab group did not wrap: active=%d target=%#v", st.activeTab, st.keyboardTarget)
+	}
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyDetailTab, index: 0}
+	st.detailMode = httpDetailParams
+	if !ui.stepHTTPHorizontalGroup(gtx, st, 1) || st.detailMode != httpDetailHeaders {
+		t.Fatalf("request-detail group selected %q want headers", st.detailMode)
+	}
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyResponseTab, index: 0}
+	st.responseMode = httpResponsePretty
+	if !ui.stepHTTPHorizontalGroup(gtx, st, 1) || st.responseMode != httpResponseRaw {
+		t.Fatalf("response group selected %q want raw", st.responseMode)
+	}
+	st.detailMode = httpDetailAuth
+	st.requestAuth.typeName = httpclient.AuthBearer
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyRequestAuthTab, index: httpChoiceIndex(httpAuthTypes, httpclient.AuthBearer)}
+	if !ui.stepHTTPHorizontalGroup(gtx, st, 1) || st.requestAuth.typeName != httpclient.AuthAPIKey {
+		t.Fatalf("request Auth group selected %q want API key", st.requestAuth.typeName)
+	}
+	authTargets := st.httpKeyboardTargets()
+	wantAuthKinds := []string{httpKeyRequestAuthTab, httpKeyRequestAuthKey, httpKeyRequestAuthLoc, httpKeyRequestAuthValue}
+	for _, kind := range wantAuthKinds {
+		if indexHTTPKeyboardTarget(authTargets, httpKeyboardTarget{kind: kind}) < 0 {
+			t.Fatalf("request Auth keyboard target %q missing from %#v", kind, authTargets)
+		}
+	}
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyCommandGroup, index: 0}
+	if !ui.stepHTTPHorizontalGroup(gtx, st, 1) || st.keyboardTarget.index != 1 {
+		t.Fatalf("command group target=%#v want Save", st.keyboardTarget)
+	}
+}
+
+func TestHTTPEnvironmentEditorKeyboardTargetsAndGroups(t *testing.T) {
+	st := newHTTPClientState(filepath.Join(t.TempDir(), "hexone-http.yaml"))
+	if !st.openEnvironmentEditor(0, true) {
+		t.Fatal("openEnvironmentEditor returned false")
+	}
+	st.environmentAuth.set(httpclient.Auth{Type: httpclient.AuthAPIKey, In: httpclient.AuthInHeader}, false)
+	want := []string{
+		httpKeyEnvName,
+		httpKeyEnvAuthTab,
+		httpKeyEnvAuthKeyName,
+		httpKeyEnvAuthLocation,
+		httpKeyEnvAuthValue,
+		httpKeyEnvVariables,
+		httpKeyEnvActions,
+	}
+	targets := st.httpKeyboardTargets()
+	if len(targets) != len(want) {
+		t.Fatalf("environment target count=%d want %d: %#v", len(targets), len(want), targets)
+	}
+	for index := range want {
+		if targets[index].kind != want[index] {
+			t.Fatalf("environment target %d=%#v want %q", index, targets[index], want[index])
+		}
+	}
+	ui := &UI{httpState: st}
+	gtx := layout.Context{Ops: new(op.Ops)}
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyEnvAuthLocation, index: 0}
+	if !ui.stepHTTPHorizontalGroup(gtx, st, 1) || st.environmentAuth.apiKeyLocation() != httpclient.AuthInQuery {
+		t.Fatalf("API-key location=%q want query", st.environmentAuth.apiKeyLocation())
+	}
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyEnvActions, index: 1}
+	if !ui.stepHTTPHorizontalGroup(gtx, st, -1) || st.keyboardTarget.index != 0 {
+		t.Fatalf("environment actions target=%#v want Cancel", st.keyboardTarget)
+	}
+}
+
+func TestHTTPClientKeyboardActivationCoversTabsAndRunAction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone-http.yaml")
+	st := newHTTPClientState(path)
+	st.selectRequest(httpRequestRef{collection: 0, folder: 0, request: 1})
+	ui := &UI{httpState: st, httpCollectionsPath: path}
+	router := new(input.Router)
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Source:      router.Source(),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(640, 80)),
+		Now:         time.Now(),
+	}
+
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyRequestTab, index: 0}
+	ui.activateHTTPKeyboardTarget(gtx, st)
+	if st.activeTab != 0 {
+		t.Fatalf("request-tab activation selected %d want 0", st.activeTab)
+	}
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyResponseTab, index: 1}
+	ui.activateHTTPKeyboardTarget(gtx, st)
+	if st.responseMode != httpResponseRaw {
+		t.Fatalf("response-tab activation selected %q want raw", st.responseMode)
+	}
+
+	run := make(chan httpclient.Request, 1)
+	st.sender = func(_ context.Context, request httpclient.Request, _ httpclient.Environment) httpclient.Response {
+		run <- request
+		return httpclient.Response{StatusCode: 200, Status: "200 OK"}
+	}
+	st.treeMenuOpen = true
+	st.treeMenuRow = st.collectionRows()[2]
+	st.keyboardTarget = httpKeyboardTarget{kind: httpKeyTreeMenu, index: 1}
+	ui.activateHTTPKeyboardTarget(gtx, st)
+	select {
+	case request := <-run:
+		if request.Name != "Health check" {
+			t.Fatalf("run action sent %q want Health check", request.Name)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("keyboard Run action did not send the selected request")
+	}
+}
+
+func TestHTTPClientDoesNotConsumeTerminalFocusedKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone-http.yaml")
+	st := newHTTPClientState(path)
+	ui := &UI{httpState: st, httpCollectionsPath: path, terminal: newTerminalSession(nil)}
+	ui.Tabs.Value = "tab3"
+	ui.terminal.setActive(true)
+	router := new(input.Router)
+
+	frame := func(focusTerminal bool) bool {
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(640, 80)),
+			Now:         time.Now(),
+		}
+		event.Op(gtx.Ops, &ui.terminal.keyTag)
+		if focusTerminal {
+			gtx.Execute(key.FocusCmd{Tag: &ui.terminal.keyTag})
+		}
+		ui.handleHTTPClientKeys(gtx)
+		eventValue, received := gtx.Event(
+			key.FocusFilter{Target: &ui.terminal.keyTag},
+			key.Filter{Focus: &ui.terminal.keyTag, Name: key.NameTab},
+			key.Filter{Focus: &ui.terminal.keyTag, Name: "s", Required: key.ModCtrl, Optional: ^key.Modifiers(0)},
+		)
+		if received {
+			_, received = eventValue.(key.Event)
+		}
+		router.Frame(&ops)
+		return received
+	}
+
+	frame(true)
+	router.Queue(key.Event{Name: key.NameTab, State: key.Press})
+	if !frame(false) {
+		t.Fatal("terminal-focused Tab was consumed by the HTTP Client")
+	}
+	if st.keyboardTarget.kind != "" {
+		t.Fatalf("HTTP focus moved while terminal was focused: %#v", st.keyboardTarget)
+	}
+	st.dirty = true
+	router.Queue(key.Event{Name: "s", Modifiers: key.ModCtrl, State: key.Press})
+	if !frame(false) {
+		t.Fatal("terminal-focused Ctrl+S was consumed by the HTTP Client")
+	}
+	if !st.dirty {
+		t.Fatal("HTTP Client saved while the terminal owned Ctrl+S")
 	}
 }
 
