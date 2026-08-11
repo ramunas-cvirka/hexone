@@ -120,6 +120,7 @@ func run(window *app.Window) error {
 	if err := mainUI.InitializeSSHCredentialStore(); err != nil {
 		log.Printf("initialize SSH credential store: %v", err)
 	}
+	mainUI.InitializeHTTPCredentialStore()
 	mainUI.SetInvalidateFunc(window.Invalidate)
 	setNativeInsertInvalidate(window.Invalidate)
 	windowTracker := windowstate.NewTracker(session, window.Run)

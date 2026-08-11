@@ -106,6 +106,12 @@ func TestHeadlessHTTPClient(t *testing.T) {
 	selectedRequest.Method = "PATCH"
 	st.method = "PATCH"
 	render("http-client-patch-method.png")
+	selectedRequest.Method = "DELETE"
+	st.method = "DELETE"
+	render("http-client-delete-method.png")
+	selectedRequest.Method = "OPTIONS"
+	st.method = "OPTIONS"
+	render("http-client-options-method.png")
 	selectedRequest.Method = originalMethod
 	st.method = originalMethod
 	var selectedRequestRow httpCollectionRow
@@ -187,6 +193,7 @@ func TestHeadlessHTTPClient(t *testing.T) {
 		t.Fatal("could not open environment editor verification")
 	}
 	st.envEditorVarsEd.SetText("base_url=http://localhost:8080\ntoken=local-secret\nregion=eu-central")
+	st.environmentAuth.set(httpclient.Auth{Type: httpclient.AuthAPIKey, Key: "X-API-Key", Value: "{{token}}", In: httpclient.AuthInHeader}, false)
 	render("http-client-environment-editor.png")
 	st.closeEnvironmentEditor()
 	st.response = httpclient.Response{
@@ -204,8 +211,15 @@ func TestHeadlessHTTPClient(t *testing.T) {
 	st.updateResponseEditor()
 	render("http-client-response.png")
 	st.detailMode = httpDetailAuth
-	st.authEd.SetText("Bearer {{token}}")
-	render("http-client-auth.png")
+	st.requestAuth.set(httpclient.Auth{Type: httpclient.AuthBearer, Token: "{{token}}"}, true)
+	render("http-client-auth-bearer.png")
+	st.requestAuth.set(httpclient.Auth{Type: httpclient.AuthBasic, Username: "{{user}}", Password: "{{password}}"}, true)
+	render("http-client-auth-basic.png")
+	st.requestAuth.set(httpclient.Auth{Type: httpclient.AuthAPIKey, Key: "X-API-Key", Value: "{{api_key}}", In: httpclient.AuthInHeader}, true)
+	render("http-client-auth-api-key.png")
+	st.file.Environments[st.environment].Auth = httpclient.Auth{Type: httpclient.AuthBearer, Token: "{{token}}"}
+	st.requestAuth.set(httpclient.Auth{Type: httpclient.AuthInherit}, true)
+	render("http-client-auth-inherited.png")
 	st.detailMode = httpDetailHeaders
 	if !st.addCollection() || !st.addFolderToSelection() || !st.addRequestToSelection() {
 		t.Fatal("could not build collection-action verification hierarchy")

@@ -6,6 +6,7 @@ package httpclient
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,9 @@ func TestLoadOrCreateWritesSeparateCollectionFile(t *testing.T) {
 	if len(data) == 0 {
 		t.Fatal("created collection file is empty")
 	}
+	if strings.Contains(string(data), "auth: {}") || strings.Contains(string(data), "auth: null") {
+		t.Fatalf("empty auth was persisted:\n%s", data)
+	}
 }
 
 func TestSaveCreatesBackupAndPreservesOrderedHeaders(t *testing.T) {
@@ -40,7 +44,8 @@ func TestSaveCreatesBackupAndPreservesOrderedHeaders(t *testing.T) {
 		{Name: "X-First", Value: "two"},
 		{Name: "X-Disabled", Value: "three", Disabled: true},
 	}
-	request.Auth = "Bearer {{token}}"
+	request.Auth = Auth{Type: AuthInherit}
+	file.Environments[0].Auth = Auth{Type: AuthBearer, Token: "{{token}}"}
 	if err := Save(path, file); err != nil {
 		t.Fatalf("second Save: %v", err)
 	}
@@ -56,8 +61,40 @@ func TestSaveCreatesBackupAndPreservesOrderedHeaders(t *testing.T) {
 	if len(got) != 3 || got[0].Value != "one" || got[1].Value != "two" || !got[2].Disabled {
 		t.Fatalf("headers lost order or state: %#v", got)
 	}
-	if auth := loaded.Collections[0].Folders[0].Requests[0].Auth; auth != "Bearer {{token}}" {
-		t.Fatalf("auth=%q want persisted bearer template", auth)
+	if auth := loaded.Collections[0].Folders[0].Requests[0].Auth; auth.Type != AuthInherit {
+		t.Fatalf("request auth=%#v want inherited auth", auth)
+	}
+	if auth := loaded.Environments[0].Auth; auth.Type != AuthBearer || auth.Token != "{{token}}" {
+		t.Fatalf("environment auth=%#v want persisted bearer template", auth)
+	}
+}
+
+func TestLoadMigratesLegacyScalarAuth(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone-http.yaml")
+	legacy := []byte(`version: 1
+environments:
+  - name: local
+collections:
+  - name: API
+    requests:
+      - name: health
+        method: GET
+        url: https://example.test
+        auth: Bearer {{token}}
+`)
+	if err := os.WriteFile(path, legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Version != CurrentVersion {
+		t.Fatalf("version=%d want %d", loaded.Version, CurrentVersion)
+	}
+	auth := loaded.Collections[0].Requests[0].Auth
+	if auth.Type != AuthBearer || auth.Token != "{{token}}" {
+		t.Fatalf("migrated auth=%#v", auth)
 	}
 }
 

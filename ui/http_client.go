@@ -44,6 +44,14 @@ const (
 
 var httpMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 
+var httpAuthTypes = []string{
+	httpclient.AuthNone,
+	httpclient.AuthInherit,
+	httpclient.AuthBasic,
+	httpclient.AuthBearer,
+	httpclient.AuthAPIKey,
+}
+
 type httpRequestRef struct {
 	collection int
 	folder     int
@@ -75,6 +83,94 @@ type httpSplitHandle struct {
 	startPixels int
 }
 
+type httpAuthEditorState struct {
+	typeName            string
+	usernameEd          widget.Editor
+	passwordEd          widget.Editor
+	tokenEd             widget.Editor
+	apiKeyNameEd        widget.Editor
+	apiKeyValueEd       widget.Editor
+	location            string
+	typeClicks          [5]widget.Clickable
+	headerClick         widget.Clickable
+	queryClick          widget.Clickable
+	editEnvClick        widget.Clickable
+	passwordRevealClick widget.Clickable
+	tokenRevealClick    widget.Clickable
+	valueRevealClick    widget.Clickable
+	passwordRevealed    bool
+	tokenRevealed       bool
+	valueRevealed       bool
+}
+
+func (auth *httpAuthEditorState) init() {
+	if auth == nil {
+		return
+	}
+	for _, editor := range []*widget.Editor{&auth.usernameEd, &auth.passwordEd, &auth.tokenEd, &auth.apiKeyNameEd, &auth.apiKeyValueEd} {
+		editor.SingleLine = true
+		editor.Submit = true
+	}
+	auth.typeName = httpclient.AuthNone
+}
+
+func (auth *httpAuthEditorState) set(value httpclient.Auth, allowInherit bool) {
+	if auth == nil {
+		return
+	}
+	value.Normalize(allowInherit)
+	auth.typeName = value.Type
+	auth.usernameEd.SetText(value.Username)
+	auth.passwordEd.SetText(value.Password)
+	auth.tokenEd.SetText(value.Token)
+	auth.apiKeyNameEd.SetText(value.Key)
+	auth.apiKeyValueEd.SetText(value.Value)
+	auth.passwordRevealed = false
+	auth.tokenRevealed = false
+	auth.valueRevealed = false
+	auth.setAPIKeyLocation(value.In)
+}
+
+func (auth *httpAuthEditorState) setAPIKeyLocation(location string) {
+	if auth == nil {
+		return
+	}
+	if location == httpclient.AuthInQuery {
+		auth.location = httpclient.AuthInQuery
+	} else {
+		auth.location = httpclient.AuthInHeader
+	}
+}
+
+func (auth *httpAuthEditorState) apiKeyLocation() string {
+	if auth != nil && auth.location == httpclient.AuthInQuery {
+		return httpclient.AuthInQuery
+	}
+	return httpclient.AuthInHeader
+}
+
+func (auth *httpAuthEditorState) value(allowInherit bool) httpclient.Auth {
+	if auth == nil {
+		return httpclient.Auth{}
+	}
+	value := httpclient.Auth{Type: auth.typeName}
+	switch auth.typeName {
+	case httpclient.AuthBasic:
+		value.Username = strings.TrimSpace(auth.usernameEd.Text())
+		value.Password = auth.passwordEd.Text()
+	case httpclient.AuthBearer:
+		value.Token = strings.TrimSpace(auth.tokenEd.Text())
+	case httpclient.AuthAPIKey:
+		value.Key = strings.TrimSpace(auth.apiKeyNameEd.Text())
+		value.Value = auth.apiKeyValueEd.Text()
+		value.In = auth.apiKeyLocation()
+	case httpclient.AuthRaw:
+		value.Value = auth.apiKeyValueEd.Text()
+	}
+	value.Normalize(allowInherit)
+	return value
+}
+
 type httpClientState struct {
 	path        string
 	file        *httpclient.File
@@ -92,12 +188,13 @@ type httpClientState struct {
 	tabAdd      widget.Clickable
 	tabGeometry appTabStripGeometry
 
-	urlEd      widget.Editor
-	queryEd    widget.Editor
-	headersEd  widget.Editor
-	bodyEd     widget.Editor
-	authEd     widget.Editor
-	responseEd widget.Editor
+	urlEd           widget.Editor
+	queryEd         widget.Editor
+	headersEd       widget.Editor
+	bodyEd          widget.Editor
+	responseEd      widget.Editor
+	requestAuth     httpAuthEditorState
+	environmentAuth httpAuthEditorState
 
 	detailMode   string
 	responseMode string
@@ -114,6 +211,8 @@ type httpClientState struct {
 	requestRatio         float32
 	requestExtent        float32
 	requestSplitY        int
+	requestSplitMinX     int
+	requestSplitMaxX     int
 	requestClicks        []widget.Clickable
 	groupClicks          []widget.Clickable
 	treeRenameEd         widget.Editor
@@ -137,6 +236,8 @@ type httpClientState struct {
 	methodMenuClicks     []widget.Clickable
 	envMenuClicks        []widget.Clickable
 	envCycleOrigin       int
+	envCyclePending      bool
+	envCycleDue          time.Time
 	envEditorOpen        bool
 	envEditorIndex       int
 	envEditorNameEd      widget.Editor
@@ -166,6 +267,7 @@ type httpClientState struct {
 	resultCh chan httpClientResult
 	sender   httpclient.Sender
 	response httpclient.Response
+	vault    *httpclient.Vault
 }
 
 func resolveHTTPCollectionsPath() string {
@@ -173,12 +275,17 @@ func resolveHTTPCollectionsPath() string {
 }
 
 func newHTTPClientState(path string) *httpClientState {
+	return newHTTPClientStateWithVault(path, nil)
+}
+
+func newHTTPClientStateWithVault(path string, vault *httpclient.Vault) *httpClientState {
 	st := &httpClientState{
 		path:                 path,
 		detailMode:           httpDetailBody,
 		responseMode:         httpResponsePretty,
 		resultCh:             make(chan httpClientResult, 1),
 		sender:               httpclient.Send,
+		vault:                vault,
 		requestRatio:         0.42,
 		collapsedCollections: make(map[int]bool),
 		collapsedFolders:     make(map[[2]int]bool),
@@ -192,9 +299,17 @@ func newHTTPClientState(path string) *httpClientState {
 	st.treeRenameEd.Submit = true
 	st.envEditorNameEd.SingleLine = true
 	st.envEditorNameEd.Submit = true
+	st.requestAuth.init()
+	st.environmentAuth.init()
 	st.responseEd.ReadOnly = true
 
-	file, err := httpclient.LoadOrCreate(path)
+	var file *httpclient.File
+	var err error
+	if vault != nil {
+		file, err = vault.LoadOrCreate(path)
+	} else {
+		file, err = httpclient.LoadOrCreate(path)
+	}
 	if err != nil {
 		st.file = httpclient.DefaultFile()
 		st.loadIssue = err
@@ -212,7 +327,11 @@ func (ui *UI) ensureHTTPClientState() *httpClientState {
 		return nil
 	}
 	if ui.httpState == nil {
-		ui.httpState = newHTTPClientState(ui.httpCollectionsPath)
+		if ui.httpCredentials.initialized {
+			ui.httpState = newHTTPClientStateWithVault(ui.httpCollectionsPath, httpclient.NewVault(ui.httpCredentials.store))
+		} else {
+			ui.httpState = newHTTPClientState(ui.httpCollectionsPath)
+		}
 	}
 	return ui.httpState
 }
@@ -405,11 +524,11 @@ func (st *httpClientState) syncEditorsFromRequest() {
 	st.urlEd.SetText(request.URL)
 	st.queryEd.SetText(formatKeyValueLines(request.Query, "="))
 	st.headersEd.SetText(formatKeyValueLines(request.Headers, ": "))
-	st.authEd.SetText(request.Auth)
+	st.requestAuth.set(request.Auth, true)
 	st.bodyEd.SetText(request.Body)
 	if request.Body != "" {
 		st.detailMode = httpDetailBody
-	} else if request.Auth != "" {
+	} else if !request.Auth.IsZero() {
 		st.detailMode = httpDetailAuth
 	} else {
 		st.detailMode = httpDetailHeaders
@@ -425,7 +544,9 @@ func (st *httpClientState) applyEditorsToRequest() {
 	request.URL = strings.TrimSpace(st.urlEd.Text())
 	request.Query = parseKeyValueLines(st.queryEd.Text(), "=")
 	request.Headers = parseKeyValueLines(st.headersEd.Text(), ":")
-	request.Auth = strings.TrimSpace(st.authEd.Text())
+	auth := st.requestAuth.value(true)
+	auth.CredentialID = request.Auth.CredentialID
+	request.Auth = auth
 	request.Body = st.bodyEd.Text()
 }
 
@@ -439,10 +560,16 @@ func (st *httpClientState) updateDirty() {
 		request.URL != strings.TrimSpace(st.urlEd.Text()) ||
 		formatKeyValueLines(request.Query, "=") != strings.TrimSpace(st.queryEd.Text()) ||
 		formatKeyValueLines(request.Headers, ": ") != strings.TrimSpace(st.headersEd.Text()) ||
-		request.Auth != strings.TrimSpace(st.authEd.Text()) ||
+		!httpAuthEditorValueEqual(request.Auth, st.requestAuth.value(true)) ||
 		request.Body != st.bodyEd.Text() {
 		st.dirty = true
 	}
+}
+
+func httpAuthEditorValueEqual(left, right httpclient.Auth) bool {
+	left.CredentialID = ""
+	right.CredentialID = ""
+	return left == right
 }
 
 func formatKeyValueLines(items []httpclient.KeyValue, separator string) string {
@@ -518,7 +645,13 @@ func (ui *UI) saveHTTPCollections() error {
 		return fmt.Errorf("refusing to overwrite a collection file that did not load cleanly: %w", st.loadIssue)
 	}
 	st.applyEditorsToRequest()
-	if err := httpclient.Save(st.path, st.file); err != nil {
+	var err error
+	if st.vault != nil {
+		err = st.vault.Save(st.path, st.file)
+	} else {
+		err = httpclient.Save(st.path, st.file)
+	}
+	if err != nil {
 		st.status = "save failed: " + err.Error()
 		return err
 	}
@@ -811,8 +944,15 @@ func httpCollectionSplitWidth(gtx layout.Context, total, requested int) int {
 }
 
 func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
+	flushHTTPEnvironmentSingleClick(gtx, st)
 	handleHTTPChoiceMenuDismissPresses(gtx, st)
 	handleHTTPSelectorSecondaryPresses(gtx, st)
+	handleHTTPAuthEditorClicks(gtx, &st.requestAuth, true)
+	for st.requestAuth.editEnvClick.Clicked(gtx) {
+		if st.file != nil && st.environment >= 0 && st.environment < len(st.file.Environments) {
+			st.openEnvironmentEditor(st.environment, false)
+		}
+	}
 	ensureHTTPChoiceClicks(&st.methodMenuClicks, len(httpMethods))
 	environmentCount := 0
 	if st.file != nil {
@@ -851,12 +991,14 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 	}
 	for index := range st.envMenuClicks {
 		for st.envMenuClicks[index].Clicked(gtx) {
+			st.envCyclePending = false
 			st.closeEnvironmentEditor()
 			st.environment = index
 			st.envMenuOpen = false
 		}
 	}
 	for st.addEnvironmentClick.Clicked(gtx) {
+		st.envCyclePending = false
 		if st.addEnvironment() {
 			_ = ui.saveHTTPCollections()
 			st.openEnvironmentEditor(st.environment, true)
@@ -895,13 +1037,26 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 			continue
 		}
 		if click.NumClicks >= 2 {
-			st.environment = st.envCycleOrigin
-			st.openEnvironmentEditor(st.environment, true)
+			origin := st.environment
+			if st.envCyclePending {
+				origin = st.envCycleOrigin
+			}
+			st.envCyclePending = false
+			st.environment = origin
+			st.openEnvironmentEditor(origin, true)
 			continue
 		}
-		st.closeEnvironmentEditor()
+		if st.envCyclePending && gtx.Now.Before(st.envCycleDue) {
+			origin := st.envCycleOrigin
+			st.envCyclePending = false
+			st.environment = origin
+			st.openEnvironmentEditor(origin, true)
+			continue
+		}
 		st.envCycleOrigin = st.environment
-		st.environment = (st.environment + 1) % len(st.file.Environments)
+		st.envCyclePending = true
+		st.envCycleDue = gtx.Now.Add(400 * time.Millisecond)
+		gtx.Execute(op.InvalidateCmd{At: st.envCycleDue})
 	}
 	for st.detailAddClick.Clicked(gtx) {
 		st.closeHTTPChoiceMenus()
@@ -913,7 +1068,10 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 		case httpDetailHeaders:
 			editor, line = &st.headersEd, "Header: value"
 		case httpDetailAuth:
-			editor, line = &st.authEd, "Bearer {{token}}"
+			if st.requestAuth.typeName == httpclient.AuthNone {
+				st.requestAuth.typeName = httpclient.AuthBearer
+			}
+			editor, line = &st.requestAuth.tokenEd, "{{token}}"
 		case httpDetailBody:
 			st.detailMode = httpDetailParams
 			editor, line = &st.queryEd, "key=value"
@@ -997,6 +1155,22 @@ func (ui *UI) handleHTTPClientClicks(gtx layout.Context, st *httpClientState) {
 			}
 		}
 	}
+}
+
+func flushHTTPEnvironmentSingleClick(gtx layout.Context, st *httpClientState) {
+	if st == nil || !st.envCyclePending {
+		return
+	}
+	if gtx.Now.Before(st.envCycleDue) {
+		gtx.Execute(op.InvalidateCmd{At: st.envCycleDue})
+		return
+	}
+	st.envCyclePending = false
+	st.closeEnvironmentEditor()
+	if st.file == nil || len(st.file.Environments) == 0 {
+		return
+	}
+	st.environment = (st.envCycleOrigin + 1) % len(st.file.Environments)
 }
 
 func (st *httpClientState) closeHTTPChoiceMenus() {
@@ -1192,6 +1366,56 @@ func ensureHTTPChoiceClicks(clicks *[]widget.Clickable, count int) {
 	if len(*clicks) != count {
 		*clicks = make([]widget.Clickable, count)
 	}
+}
+
+func handleHTTPAuthEditorClicks(gtx layout.Context, auth *httpAuthEditorState, allowInherit bool) bool {
+	if auth == nil {
+		return false
+	}
+	changed := false
+	for index := range auth.typeClicks {
+		if index >= len(httpAuthTypes) {
+			break
+		}
+		for auth.typeClicks[index].Clicked(gtx) {
+			next := httpAuthTypes[index]
+			if next == httpclient.AuthInherit && !allowInherit {
+				continue
+			}
+			if auth.typeName != next {
+				auth.typeName = next
+				changed = true
+			}
+		}
+	}
+	for auth.headerClick.Clicked(gtx) {
+		if auth.location != httpclient.AuthInHeader {
+			auth.location = httpclient.AuthInHeader
+			changed = true
+		}
+	}
+	for auth.queryClick.Clicked(gtx) {
+		if auth.location != httpclient.AuthInQuery {
+			auth.location = httpclient.AuthInQuery
+			changed = true
+		}
+	}
+	for auth.passwordRevealClick.Clicked(gtx) {
+		auth.passwordRevealed = !auth.passwordRevealed
+		changed = true
+	}
+	for auth.tokenRevealClick.Clicked(gtx) {
+		auth.tokenRevealed = !auth.tokenRevealed
+		changed = true
+	}
+	for auth.valueRevealClick.Clicked(gtx) {
+		auth.valueRevealed = !auth.valueRevealed
+		changed = true
+	}
+	if changed {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	return changed
 }
 
 func (st *httpClientState) collectionRows() []httpCollectionRow {
@@ -1558,6 +1782,7 @@ func (st *httpClientState) openEnvironmentEditor(index int, focusName bool) bool
 	st.envEditorIndex = index
 	st.envEditorNameEd.SetText(environment.Name)
 	st.envEditorVarsEd.SetText(formatHTTPEnvironmentVariables(environment.Variables))
+	st.environmentAuth.set(environment.Auth, false)
 	st.envEditorOpen = true
 	st.envMenuOpen = false
 	st.methodMenuOpen = false
@@ -1587,9 +1812,12 @@ func (ui *UI) saveEnvironmentEditor(st *httpClientState) bool {
 		name = environment.Name
 	}
 	variables := parseHTTPEnvironmentVariables(st.envEditorVarsEd.Text())
-	changed := environment.Name != name || formatHTTPEnvironmentVariables(environment.Variables) != formatHTTPEnvironmentVariables(variables)
+	auth := st.environmentAuth.value(false)
+	changed := httpEnvironmentEditorDirty(st)
+	auth.CredentialID = environment.Auth.CredentialID
 	environment.Name = name
 	environment.Variables = variables
+	environment.Auth = auth
 	st.environment = st.envEditorIndex
 	st.closeEnvironmentEditor()
 	if changed {
@@ -1598,6 +1826,22 @@ func (ui *UI) saveEnvironmentEditor(st *httpClientState) bool {
 		_ = ui.saveHTTPCollections()
 	}
 	return changed
+}
+
+func httpEnvironmentEditorDirty(st *httpClientState) bool {
+	if st == nil || !st.envEditorOpen || st.file == nil || st.envEditorIndex < 0 || st.envEditorIndex >= len(st.file.Environments) {
+		return false
+	}
+	environment := st.file.Environments[st.envEditorIndex]
+	name := strings.TrimSpace(st.envEditorNameEd.Text())
+	if name == "" {
+		name = environment.Name
+	}
+	variables := parseHTTPEnvironmentVariables(st.envEditorVarsEd.Text())
+	auth := st.environmentAuth.value(false)
+	return environment.Name != name ||
+		formatHTTPEnvironmentVariables(environment.Variables) != formatHTTPEnvironmentVariables(variables) ||
+		!httpAuthEditorValueEqual(environment.Auth, auth)
 }
 
 func formatHTTPEnvironmentVariables(variables map[string]string) string {
@@ -1637,6 +1881,7 @@ func (ui *UI) handleHTTPEnvironmentEditor(gtx layout.Context, st *httpClientStat
 	if st == nil || !st.envEditorOpen {
 		return
 	}
+	handleHTTPAuthEditorClicks(gtx, &st.environmentAuth, false)
 	for st.envEditorAddClick.Clicked(gtx) {
 		appendHTTPEditorLine(&st.envEditorVarsEd, "key=value")
 		st.envEditorFocus = "variables"
@@ -1670,15 +1915,25 @@ func (ui *UI) handleHTTPEnvironmentEditor(gtx layout.Context, st *httpClientStat
 		}
 	}
 	anyMods := ^key.Modifiers(0)
-	for {
-		eventValue, ok := gtx.Event(
-			key.Filter{Focus: &st.envEditorNameEd, Name: key.NameEscape, Optional: anyMods},
-			key.Filter{Focus: &st.envEditorVarsEd, Name: key.NameEscape, Optional: anyMods},
-			key.Filter{Focus: &st.envEditorNameEd, Name: key.NameEnter, Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Focus: &st.envEditorVarsEd, Name: key.NameEnter, Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Focus: &st.envEditorNameEd, Name: key.NameReturn, Required: key.ModCtrl, Optional: anyMods},
-			key.Filter{Focus: &st.envEditorVarsEd, Name: key.NameReturn, Required: key.ModCtrl, Optional: anyMods},
+	editors := []*widget.Editor{
+		&st.envEditorNameEd,
+		&st.envEditorVarsEd,
+		&st.environmentAuth.usernameEd,
+		&st.environmentAuth.passwordEd,
+		&st.environmentAuth.tokenEd,
+		&st.environmentAuth.apiKeyNameEd,
+		&st.environmentAuth.apiKeyValueEd,
+	}
+	filters := make([]event.Filter, 0, len(editors)*4)
+	for _, editor := range editors {
+		filters = append(filters,
+			key.Filter{Focus: editor, Name: key.NameEscape, Optional: anyMods},
+			key.Filter{Focus: editor, Name: key.NameEnter, Required: key.ModCtrl, Optional: anyMods},
+			key.Filter{Focus: editor, Name: key.NameReturn, Required: key.ModCtrl, Optional: anyMods},
 		)
+	}
+	for {
+		eventValue, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}
@@ -2118,7 +2373,7 @@ func (ui *UI) layoutHTTPEnvironmentEditor(th *material.Theme, gtx layout.Context
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return fixedHeight(gtx, httpRequestLineHeight(th, gtx), func(gtx layout.Context) layout.Dimensions {
+				return fixedHeight(gtx, httpEditableFieldHeight(th, gtx), func(gtx layout.Context) layout.Dimensions {
 					return layoutHTTPConnectedRow(gtx, color.NRGBA{R: 11, G: 20, B: 27, A: 255}, analyzerRule, func(gtx layout.Context) layout.Dimensions {
 						return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2151,10 +2406,20 @@ func (ui *UI) layoutHTTPEnvironmentEditor(th *material.Theme, gtx layout.Context
 								return layoutHTTPCommandSeparator(gtx)
 							}),
 							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-								return ui.layoutHTTPFlatCommandButton(th, gtx, st, "env-editor-save", &st.envEditorSaveClick, "SAVE", unit.Dp(52), analyzerAccent, true)
+								return ui.layoutHTTPFlatSaveButton(gtx, st, "env-editor-save", &st.envEditorSaveClick, httpEnvironmentEditorDirty(st))
 							}),
 						)
 					})
+				})
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				fieldRows := 1
+				if st.environmentAuth.typeName == httpclient.AuthBasic || st.environmentAuth.typeName == httpclient.AuthAPIKey {
+					fieldRows = 2
+				}
+				height := httpInlineTabHeight(th, gtx) + fieldRows*httpEditableFieldHeight(th, gtx)
+				return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutHTTPAuthEditor(th, gtx, st, &st.environmentAuth, false, st.envEditorNameEd.Text(), "environment-auth")
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -2350,9 +2615,10 @@ func (ui *UI) layoutHTTPTreeRenameEditor(th *material.Theme, gtx layout.Context,
 }
 
 const (
-	httpTreeStepDp     = 22
-	httpTreeArmDp      = 32
-	httpTreeLabelGapDp = 6
+	httpTreeStepDp           = 22
+	httpTreeArmDp            = 32
+	httpTreeLabelGapDp       = 6
+	httpMethodControlWidthDp = 82
 )
 
 func layoutHTTPTreeRow(gtx layout.Context, row httpCollectionRow, bottom unit.Dp, content layout.Widget) layout.Dimensions {
@@ -2498,7 +2764,9 @@ func (ui *UI) layoutHTTPWorkbench(th *material.Theme, gtx layout.Context, st *ht
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			if splitY > 0 {
 				halfHit := max(4, gtx.Dp(unit.Dp(6)))
-				hit := image.Rect(0, splitY-halfHit, gtx.Constraints.Max.X, splitY+halfHit+1)
+				minX := max(0, min(gtx.Constraints.Max.X, st.requestSplitMinX))
+				maxX := max(minX, min(gtx.Constraints.Max.X, st.requestSplitMaxX))
+				hit := image.Rect(minX, splitY-halfHit, maxX, splitY+halfHit+1)
 				extent := st.requestExtent
 				if extent <= 0 {
 					extent = float32(gtx.Constraints.Max.Y)
@@ -2512,7 +2780,7 @@ func (ui *UI) layoutHTTPWorkbench(th *material.Theme, gtx layout.Context, st *ht
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			}
 			menuWidth := min(gtx.Dp(unit.Dp(106)), gtx.Constraints.Max.X)
-			menuY := ui.tabStripHeight(gtx) + max(3, gtx.Dp(unit.Dp(filePaneTabConnectorHeightDp))) + httpRequestLineHeight(th, gtx)
+			menuY := ui.tabStripHeight(gtx) + max(3, gtx.Dp(unit.Dp(filePaneTabConnectorHeightDp))) + httpEditableFieldHeight(th, gtx)
 			menuGTX := gtx
 			menuGTX.Constraints.Min = image.Pt(menuWidth, 0)
 			menuGTX.Constraints.Max = image.Pt(menuWidth, max(0, gtx.Constraints.Max.Y-menuY))
@@ -2612,21 +2880,24 @@ func httpRequestLineBackground() color.NRGBA {
 	return color.NRGBA{R: 14, G: 21, B: 27, A: 255}
 }
 
-func httpRequestLineHeight(th *material.Theme, gtx layout.Context) int {
-	height := gtx.Sp(scaleThemeFontSize(th, 11)) + gtx.Dp(unit.Dp(17))
-	return max(gtx.Dp(unit.Dp(28)), height)
+func httpInlineTabHeight(th *material.Theme, gtx layout.Context) int {
+	return max(gtx.Dp(unit.Dp(24)), gtx.Sp(scaleThemeFontSize(th, 10))+gtx.Dp(unit.Dp(10)))
+}
+
+func httpEditableFieldHeight(th *material.Theme, gtx layout.Context) int {
+	return httpInlineTabHeight(th, gtx)
 }
 
 func httpRequestHeaderBlockHeight(th *material.Theme, gtx layout.Context) int {
-	return gtx.Dp(unit.Dp(filePaneTabConnectorHeightDp)) + httpRequestLineHeight(th, gtx)
+	return gtx.Dp(unit.Dp(filePaneTabConnectorHeightDp)) + httpEditableFieldHeight(th, gtx)
 }
 
 func (ui *UI) layoutHTTPRequestLine(th *material.Theme, gtx layout.Context, st *httpClientState) layout.Dimensions {
-	return fixedHeight(gtx, httpRequestLineHeight(th, gtx), func(gtx layout.Context) layout.Dimensions {
+	return fixedHeight(gtx, httpEditableFieldHeight(th, gtx), func(gtx layout.Context) layout.Dimensions {
 		return layoutHTTPRequestWirePanel(gtx, httpRequestLineBackground(), true, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutHTTPFlatCommandButton(th, gtx, st, "method", &st.methodClick, st.method+" ▾", unit.Dp(62), httpMethodColor(st.method), false)
+					return ui.layoutHTTPFlatCommandButton(th, gtx, st, "method", &st.methodClick, st.method+" ▾", unit.Dp(httpMethodControlWidthDp), httpMethodColor(st.method), false)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layoutHTTPCommandSeparator(gtx)
@@ -2648,7 +2919,7 @@ func (ui *UI) layoutHTTPRequestLine(th *material.Theme, gtx layout.Context, st *
 					return layoutHTTPCommandSeparator(gtx)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutHTTPFlatSaveButton(gtx, st)
+					return ui.layoutHTTPFlatSaveButton(gtx, st, "save", &st.saveClick, st.dirty)
 				}),
 			)
 		})
@@ -2749,16 +3020,16 @@ func layoutHTTPCommandSeparator(gtx layout.Context) layout.Dimensions {
 	})
 }
 
-func (ui *UI) layoutHTTPFlatSaveButton(gtx layout.Context, st *httpClientState) layout.Dimensions {
+func (ui *UI) layoutHTTPFlatSaveButton(gtx layout.Context, st *httpClientState, id string, click *widget.Clickable, dirty bool) layout.Dimensions {
 	width := gtx.Dp(unit.Dp(30))
 	return fixedWidth(gtx, width, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-		return st.saveClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			pointer.CursorPointer.Add(gtx.Ops)
-			hover := httpHoverFill(gtx, st, "save")
+			hover := httpHoverFill(gtx, st, id)
 			bg := mixNRGBA(httpRequestLineBackground(), color.NRGBA{R: 32, G: 55, B: 64, A: 255}, hover)
 			paint.FillShape(gtx.Ops, bg, clip.Rect{Max: gtx.Constraints.Max}.Op())
-			if st.dirty {
+			if dirty {
 				dot := max(2, gtx.Dp(unit.Dp(2)))
 				paint.FillShape(gtx.Ops, analyzerAccent, clip.Rect(image.Rect(gtx.Constraints.Max.X-dot-2, 2, gtx.Constraints.Max.X-2, 2+dot)).Op())
 			}
@@ -2959,7 +3230,7 @@ func (ui *UI) layoutHTTPDetailTabs(th *material.Theme, gtx layout.Context, st *h
 		"Body",
 	}
 	modes := []string{httpDetailParams, httpDetailHeaders, httpDetailAuth, httpDetailBody}
-	height := max(gtx.Dp(unit.Dp(24)), gtx.Sp(scaleThemeFontSize(th, 10))+gtx.Dp(unit.Dp(10)))
+	height := httpInlineTabHeight(th, gtx)
 	return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
 		dimensions, _ := layoutHTTPWireLinePanel(gtx, analyzerHeaderBg, analyzerRule, func(gtx layout.Context) layout.Dimensions {
 			return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -2989,58 +3260,31 @@ func (ui *UI) layoutHTTPDetailTabsInline(th *material.Theme, gtx layout.Context,
 		index := index
 		if index > 0 {
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layoutHTTPWireLabelTight(th, gtx, ui.mainTypeface(), "│", analyzerRule, analyzerHeaderBg)
+				gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+				return layoutHTTPCommandSeparator(gtx)
 			}))
 		}
 		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if index >= len(st.detailClicks) {
 				return layout.Dimensions{}
 			}
-			gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-			return st.detailClicks[index].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				pointer.CursorPointer.Add(gtx.Ops)
-				textColor := txtColor
-				if index < len(modes) && modes[index] == st.detailMode {
-					textColor = analyzerAccent
-				}
-				hover := httpHoverFill(gtx, st, "detail-"+strconv.Itoa(index))
-				bg := mixNRGBA(analyzerHeaderBg, color.NRGBA{R: 31, G: 55, B: 64, A: 255}, hover)
-				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						label := material.Body2(th, labels[index])
-						label.Font.Typeface = ui.mainTypeface()
-						label.TextSize = scaleThemeFontSize(th, 10)
-						label.Color = textColor
-						return layoutVCenteredLabel(gtx, label)
-					})
-				})
-			})
+			return ui.layoutHTTPAuthChoice(th, gtx, &st.detailClicks[index], labels[index], index < len(modes) && modes[index] == st.detailMode)
 		}))
 	}
-	children = append(children,
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return layoutHTTPWireLabelTight(th, gtx, ui.mainTypeface(), "│", analyzerRule, analyzerHeaderBg)
-		}),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
-			return st.detailAddClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				pointer.CursorPointer.Add(gtx.Ops)
-				hover := httpHoverFill(gtx, st, "detail-add")
-				bg := mixNRGBA(analyzerHeaderBg, color.NRGBA{R: 31, G: 55, B: 64, A: 255}, hover)
-				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-					return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-						label := material.Body2(th, "+")
-						label.Font.Typeface = ui.mainTypeface()
-						label.Font.Weight = font.Medium
-						label.TextSize = scaleThemeFontSize(th, 10)
-						label.Color = analyzerAccent
-						return layoutVCenteredLabel(gtx, label)
-					})
-				})
-			})
-		}),
-	)
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+	if st.detailMode == httpDetailParams || st.detailMode == httpDetailHeaders {
+		children = append(children,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+				return layoutHTTPCommandSeparator(gtx)
+			}),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutHTTPAuthChoice(th, gtx, &st.detailAddClick, "+", false)
+			}),
+		)
+	}
+	return layoutHTTPConnectedRow(gtx, analyzerHeaderBg, analyzerRule, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+	})
 }
 
 func (ui *UI) layoutHTTPDetailEditor(th *material.Theme, gtx layout.Context, st *httpClientState) layout.Dimensions {
@@ -3057,11 +3301,277 @@ func (ui *UI) layoutHTTPDetailEditor(th *material.Theme, gtx layout.Context, st 
 		menuID = "http-headers"
 		hint = "Accept: application/json\nAuthorization: Bearer {{token}}"
 	case httpDetailAuth:
-		editor = &st.authEd
-		menuID = "http-auth"
-		hint = "Bearer {{token}}\n\nThis value is sent as the Authorization header."
+		environmentName := "environment"
+		if st.file != nil && st.environment >= 0 && st.environment < len(st.file.Environments) {
+			environmentName = st.file.Environments[st.environment].Name
+		}
+		return ui.layoutHTTPAuthEditor(th, gtx, st, &st.requestAuth, true, environmentName, "request-auth")
 	}
 	return layoutHTTPMultilineEditor(th, gtx, ui, menuID, editor, &st.detailScrollbar, hint, false)
+}
+
+func authTypeLabel(authType string) string {
+	switch authType {
+	case httpclient.AuthInherit:
+		return "Inherit env"
+	case httpclient.AuthBasic:
+		return "Basic"
+	case httpclient.AuthBearer:
+		return "Bearer"
+	case httpclient.AuthAPIKey:
+		return "API key"
+	case httpclient.AuthRaw:
+		return "Legacy"
+	default:
+		return "None"
+	}
+}
+
+func (ui *UI) layoutHTTPAuthEditor(th *material.Theme, gtx layout.Context, st *httpClientState, auth *httpAuthEditorState, allowInherit bool, environmentName, idPrefix string) layout.Dimensions {
+	if auth == nil {
+		return layout.Dimensions{}
+	}
+	return fillBgExact(gtx, analyzerSurfaceBg, func(gtx layout.Context) layout.Dimensions {
+		children := []layout.FlexChild{
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return fixedHeight(gtx, httpInlineTabHeight(th, gtx), func(gtx layout.Context) layout.Dimensions {
+					content := func(gtx layout.Context) layout.Dimensions {
+						return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							headerChildren := make([]layout.FlexChild, 0, 4)
+							if !allowInherit {
+								headerChildren = append(headerChildren,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layoutHTTPWireLabelTight(th, gtx, ui.mainTypeface(), "[ AUTH ]", analyzerAccent, analyzerHeaderBg)
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layoutHTTPWireGap(gtx, unit.Dp(6))
+									}),
+								)
+							}
+							headerChildren = append(headerChildren,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return ui.layoutHTTPAuthModeChoices(th, gtx, auth, allowInherit)
+								}),
+								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+									return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 1)}
+								}),
+							)
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, headerChildren...)
+						})
+					}
+					if !allowInherit {
+						dimensions, _ := layoutHTTPWireLinePanel(gtx, analyzerHeaderBg, analyzerRule, content)
+						return dimensions
+					}
+					return layoutHTTPConnectedRow(gtx, analyzerHeaderBg, analyzerRule, content)
+				})
+			}),
+		}
+		switch auth.typeName {
+		case httpclient.AuthBasic:
+			children = append(children,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutHTTPAuthField(th, gtx, "USERNAME", &auth.usernameEd, "username or {{user}}", idPrefix+"-username", nil, false, nil, false)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutHTTPAuthField(th, gtx, "PASSWORD", &auth.passwordEd, "password or {{password}}", idPrefix+"-password", nil, true, &auth.passwordRevealClick, auth.passwordRevealed)
+				}),
+			)
+		case httpclient.AuthBearer:
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutHTTPAuthField(th, gtx, "TOKEN", &auth.tokenEd, "token or {{token}}", idPrefix+"-token", nil, true, &auth.tokenRevealClick, auth.tokenRevealed)
+			}))
+		case httpclient.AuthAPIKey:
+			children = append(children,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutHTTPAuthField(th, gtx, "KEY NAME", &auth.apiKeyNameEd, "X-API-Key", idPrefix+"-key", func(gtx layout.Context) layout.Dimensions {
+						return ui.layoutHTTPAuthLocationChoices(th, gtx, auth)
+					}, false, nil, false)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.layoutHTTPAuthField(th, gtx, "VALUE", &auth.apiKeyValueEd, "value or {{api_key}}", idPrefix+"-value", nil, true, &auth.valueRevealClick, auth.valueRevealed)
+				}),
+			)
+		case httpclient.AuthInherit:
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				inherited := httpclient.Auth{}
+				if st != nil && st.file != nil && st.environment >= 0 && st.environment < len(st.file.Environments) {
+					inherited = st.file.Environments[st.environment].Auth
+				}
+				message := "Using " + authTypeLabel(inherited.Type) + " from " + environmentName
+				return ui.layoutHTTPAuthMessageRow(th, gtx, message, &auth.editEnvClick, "EDIT ENV")
+			}))
+		case httpclient.AuthRaw:
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutHTTPAuthField(th, gtx, "LEGACY", &auth.apiKeyValueEd, "Authorization header value", idPrefix+"-legacy", nil, true, &auth.valueRevealClick, auth.valueRevealed)
+			}))
+		default:
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return ui.layoutHTTPAuthMessageRow(th, gtx, "No authentication is sent with this request.", nil, "")
+			}))
+		}
+		children = append(children, layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		}))
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+	})
+}
+
+func (ui *UI) layoutHTTPAuthModeChoices(th *material.Theme, gtx layout.Context, auth *httpAuthEditorState, allowInherit bool) layout.Dimensions {
+	children := make([]layout.FlexChild, 0, len(httpAuthTypes)*2)
+	for index, authType := range httpAuthTypes {
+		if authType == httpclient.AuthInherit && !allowInherit {
+			continue
+		}
+		index, authType := index, authType
+		if len(children) > 0 {
+			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+				return layoutHTTPCommandSeparator(gtx)
+			}))
+		}
+		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutHTTPAuthChoice(th, gtx, &auth.typeClicks[index], authTypeLabel(authType), auth.typeName == authType)
+		}))
+	}
+	return layoutHTTPConnectedRow(gtx, analyzerHeaderBg, analyzerRule, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+	})
+}
+
+func (ui *UI) layoutHTTPAuthChoice(th *material.Theme, gtx layout.Context, click *widget.Clickable, text string, active bool) layout.Dimensions {
+	gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		pointer.CursorPointer.Add(gtx.Ops)
+		textColor := txtColor
+		if active {
+			textColor = analyzerAccent
+		}
+		return layoutHTTPAuthTabBackground(gtx, active, click.Hovered(), func(gtx layout.Context) layout.Dimensions {
+			return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				label := material.Body2(th, text)
+				label.Font.Typeface = ui.mainTypeface()
+				label.TextSize = scaleThemeFontSize(th, 10)
+				label.Color = textColor
+				return layoutVCenteredLabel(gtx, label)
+			})
+		})
+	})
+}
+
+func layoutHTTPAuthTabBackground(gtx layout.Context, active, hovered bool, content layout.Widget) layout.Dimensions {
+	recording := op.Record(gtx.Ops)
+	dimensions := content(gtx)
+	call := recording.Stop()
+	size := constrainHTTPRecordedSize(gtx, dimensions.Size)
+	if size.X > 0 && size.Y > 0 {
+		if active {
+			paint.FillShape(gtx.Ops, color.NRGBA{R: 16, G: 36, B: 44, A: 255}, clip.Rect{Max: size}.Op())
+		} else if hovered {
+			paint.FillShape(gtx.Ops, color.NRGBA{R: 20, G: 40, B: 48, A: 255}, clip.Rect(image.Rect(0, 0, size.X, max(0, size.Y-1))).Op())
+		}
+		stack := clip.Rect{Max: size}.Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		stack.Pop()
+	} else {
+		call.Add(gtx.Ops)
+	}
+	return layout.Dimensions{Size: size}
+}
+
+func (ui *UI) layoutHTTPAuthField(th *material.Theme, gtx layout.Context, caption string, editor *widget.Editor, hint, menuID string, trailing layout.Widget, secret bool, revealClick *widget.Clickable, revealed bool) layout.Dimensions {
+	if secret && !revealed {
+		editor.Mask = '•'
+	} else {
+		editor.Mask = 0
+	}
+	return fixedHeight(gtx, httpEditableFieldHeight(th, gtx), func(gtx layout.Context) layout.Dimensions {
+		return layoutHTTPConnectedRow(gtx, color.NRGBA{R: 11, G: 20, B: 27, A: 255}, analyzerRule, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					width := gtx.Dp(unit.Dp(82))
+					gtx.Constraints.Min.X = width
+					gtx.Constraints.Max.X = width
+					label := material.Body2(th, caption)
+					label.Font.Typeface = ui.mainTypeface()
+					label.Font.Weight = font.Medium
+					label.TextSize = scaleThemeFontSize(th, 10)
+					label.Color = analyzerAccent
+					return layout.Inset{Left: unit.Dp(9)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layoutInkVCenteredLabel(gtx, label)
+					})
+				}),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+					return layoutHTTPURLField(gtx, gtx.Focused(editor), func(gtx layout.Context) layout.Dimensions {
+						return layoutHTTPSingleLineEditor(th, gtx, ui, menuID, editor, hint)
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if revealClick == nil {
+						return layout.Dimensions{}
+					}
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return layoutHTTPCommandSeparator(gtx) }),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							label := "SHOW"
+							if revealed {
+								label = "HIDE"
+							}
+							return ui.layoutHTTPAuthChoice(th, gtx, revealClick, label, false)
+						}),
+					)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if trailing == nil {
+						return layout.Dimensions{}
+					}
+					return trailing(gtx)
+				}),
+			)
+		})
+	})
+}
+
+func (ui *UI) layoutHTTPAuthLocationChoices(th *material.Theme, gtx layout.Context, auth *httpAuthEditorState) layout.Dimensions {
+	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutHTTPCommandSeparator(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutHTTPAuthChoice(th, gtx, &auth.headerClick, "Header", auth.apiKeyLocation() == httpclient.AuthInHeader)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutHTTPCommandSeparator(gtx)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.layoutHTTPAuthChoice(th, gtx, &auth.queryClick, "Query", auth.apiKeyLocation() == httpclient.AuthInQuery)
+		}),
+	)
+}
+
+func (ui *UI) layoutHTTPAuthMessageRow(th *material.Theme, gtx layout.Context, message string, click *widget.Clickable, action string) layout.Dimensions {
+	return fixedHeight(gtx, httpEditableFieldHeight(th, gtx), func(gtx layout.Context) layout.Dimensions {
+		return layoutHTTPConnectedRow(gtx, analyzerSurfaceBg, analyzerRule, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					label := material.Body2(th, message)
+					label.Font.Typeface = ui.mainTypeface()
+					label.TextSize = scaleThemeFontSize(th, 10)
+					label.Color = hintColor
+					return layout.Inset{Left: unit.Dp(9), Right: unit.Dp(9)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						return layoutVCenteredLabel(gtx, label)
+					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if click == nil || action == "" {
+						return layout.Dimensions{}
+					}
+					return ui.layoutHTTPAuthChoice(th, gtx, click, action, false)
+				}),
+			)
+		})
+	})
 }
 
 func (ui *UI) layoutHTTPResponseHeader(th *material.Theme, gtx layout.Context, st *httpClientState, lineOffset *int) layout.Dimensions {
@@ -3085,23 +3595,34 @@ func (ui *UI) layoutHTTPResponseHeader(th *material.Theme, gtx layout.Context, s
 	if st.requestSplit.dragging || st.requestSplit.hovering {
 		rule = analyzerAccent
 	}
+	leftWidth := 0
+	rightWidth := 0
+	horizontalInset := gtx.Dp(unit.Dp(7))
 	dimensions, lineY := layoutHTTPWireLinePanel(gtx, analyzerHeaderBg, rule, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutHTTPWireLabelTight(th, gtx, ui.mainTypeface(), "[ RESPONSE ]", analyzerAccent, analyzerHeaderBg)
+					dimensions := layoutHTTPWireLabelTight(th, gtx, ui.mainTypeface(), "[ RESPONSE ]", analyzerAccent, analyzerHeaderBg)
+					leftWidth += dimensions.Size.X
+					return dimensions
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutHTTPWireGap(gtx, unit.Dp(6))
+					dimensions := layoutHTTPWireGap(gtx, unit.Dp(6))
+					leftWidth += dimensions.Size.X
+					return dimensions
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutHTTPResponseTabsInline(th, gtx, st)
+					dimensions := ui.layoutHTTPResponseTabsInline(th, gtx, st)
+					leftWidth += dimensions.Size.X
+					return dimensions
 				}),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 1)}
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutHTTPWireLabelTight(th, gtx, ui.mainTypeface(), "[ "+right+" ]", rightColor, analyzerHeaderBg)
+					dimensions := layoutHTTPWireLabelTight(th, gtx, ui.mainTypeface(), "[ "+right+" ]", rightColor, analyzerHeaderBg)
+					rightWidth = dimensions.Size.X
+					return dimensions
 				}),
 			)
 		})
@@ -3109,41 +3630,36 @@ func (ui *UI) layoutHTTPResponseHeader(th *material.Theme, gtx layout.Context, s
 	if lineOffset != nil {
 		*lineOffset = lineY
 	}
+	if st != nil {
+		padding := max(2, gtx.Dp(unit.Dp(3)))
+		st.requestSplitMinX = min(dimensions.Size.X, horizontalInset+leftWidth+padding)
+		st.requestSplitMaxX = max(st.requestSplitMinX, dimensions.Size.X-horizontalInset-rightWidth-padding)
+	}
 	return dimensions
 }
 
 func (ui *UI) layoutHTTPResponseTabsInline(th *material.Theme, gtx layout.Context, st *httpClientState) layout.Dimensions {
 	labels := []string{"Pretty", "Raw", "Headers (" + strconv.Itoa(len(st.response.Headers)) + ")"}
 	modes := []string{httpResponsePretty, httpResponseRaw, httpResponseHeaders}
-	children := make([]layout.FlexChild, 0, len(labels)*2)
-	for index := range labels {
-		index := index
-		if index > 0 {
+	height := httpInlineTabHeight(th, gtx)
+	return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
+		children := make([]layout.FlexChild, 0, len(labels)*2)
+		for index := range labels {
+			index := index
+			if index > 0 {
+				children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints.Min.Y = gtx.Constraints.Max.Y
+					return layoutHTTPCommandSeparator(gtx)
+				}))
+			}
 			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layoutHTTPWireLabelTight(th, gtx, ui.mainTypeface(), "│", analyzerRule, analyzerHeaderBg)
+				return ui.layoutHTTPAuthChoice(th, gtx, &st.responseClicks[index], labels[index], modes[index] == st.responseMode)
 			}))
 		}
-		children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return st.responseClicks[index].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				pointer.CursorPointer.Add(gtx.Ops)
-				active := modes[index] == st.responseMode
-				textColor := txtColor
-				if active {
-					textColor = analyzerAccent
-				}
-				hover := httpHoverFill(gtx, st, "response-"+strconv.Itoa(index))
-				bg := mixNRGBA(analyzerHeaderBg, color.NRGBA{R: 31, G: 55, B: 64, A: 255}, hover)
-				return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-					label := material.Body2(th, labels[index])
-					label.Font.Typeface = ui.mainTypeface()
-					label.TextSize = scaleThemeFontSize(th, 10)
-					label.Color = textColor
-					return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, label.Layout)
-				})
-			})
-		}))
-	}
-	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+		return layoutHTTPConnectedRow(gtx, analyzerHeaderBg, analyzerRule, func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx, children...)
+		})
+	})
 }
 
 func layoutHTTPWireLinePanel(gtx layout.Context, bg, rule color.NRGBA, content layout.Widget) (layout.Dimensions, int) {

@@ -5,10 +5,13 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"hexone/fm"
 	"hexone/httpclient"
 	"image"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +24,26 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget/material"
 )
+
+type httpTestSecretStore struct{ values map[string]string }
+
+func (s *httpTestSecretStore) Get(key string) (string, error) {
+	value, ok := s.values[key]
+	if !ok {
+		return "", errors.New("not found")
+	}
+	return value, nil
+}
+
+func (s *httpTestSecretStore) Set(key, value string) error {
+	s.values[key] = value
+	return nil
+}
+
+func (s *httpTestSecretStore) Delete(key string) error {
+	delete(s.values, key)
+	return nil
+}
 
 func TestHTTPClientStateLoadsAndSavesSeparateYAML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone-http.yaml")
@@ -449,6 +472,9 @@ func TestHTTPCollectionDoubleClickStartsInlineRename(t *testing.T) {
 
 	frame()
 	click(time.Millisecond)
+	if st.envEditorOpen || st.environment != 0 {
+		t.Fatalf("first click changed environment before double-click window: open=%t selected=%d", st.envEditorOpen, st.environment)
+	}
 	click(100 * time.Millisecond)
 	if !st.treeRenameActive || st.treeRenameKind != "collection" || st.treeRenameRef.collection != 0 {
 		t.Fatalf("collection double-click rename active=%t kind=%q ref=%#v", st.treeRenameActive, st.treeRenameKind, st.treeRenameRef)
@@ -461,6 +487,44 @@ func TestHTTPCollectionDoubleClickStartsInlineRename(t *testing.T) {
 	}
 	if got, _ := st.treeRenameName(requestRow.kind, requestRow.ref); got != originalRequestName {
 		t.Fatalf("collection rename committed previous request draft as %q want %q", got, originalRequestName)
+	}
+}
+
+func TestHTTPEnvironmentSingleClickCyclesAfterDoubleClickWindow(t *testing.T) {
+	st := newHTTPClientState(filepath.Join(t.TempDir(), "hexone-http.yaml"))
+	st.addEnvironment()
+	st.environment = 0
+	ui := &UI{httpState: st}
+	router := new(input.Router)
+	now := time.Unix(10, 0)
+	frame := func() {
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(180, 28)),
+			Now:         now,
+		}
+		ui.handleHTTPClientClicks(gtx, st)
+		st.envClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		})
+		router.Frame(&ops)
+	}
+	frame()
+	router.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: time.Millisecond, Position: f32.Pt(80, 14)},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Time: 2 * time.Millisecond, Position: f32.Pt(80, 14)},
+	)
+	frame()
+	if st.environment != 0 || !st.envCyclePending {
+		t.Fatalf("single click cycled early: selected=%d pending=%t", st.environment, st.envCyclePending)
+	}
+	now = now.Add(401 * time.Millisecond)
+	frame()
+	if st.environment != 1 || st.envCyclePending || st.envEditorOpen {
+		t.Fatalf("deferred single click selected=%d pending=%t editor=%t", st.environment, st.envCyclePending, st.envEditorOpen)
 	}
 }
 
@@ -639,7 +703,7 @@ func TestHTTPChoiceMenuGlobalDismissClosesOnlyOutside(t *testing.T) {
 func TestHTTPAuthAndAddedEnvironmentPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hexone-http.yaml")
 	st := newHTTPClientState(path)
-	st.authEd.SetText("Bearer {{token}}")
+	st.requestAuth.set(httpclient.Auth{Type: httpclient.AuthBearer, Token: "{{token}}"}, true)
 	st.applyEditorsToRequest()
 	if !st.addEnvironment() {
 		t.Fatal("addEnvironment returned false")
@@ -654,8 +718,8 @@ func TestHTTPAuthAndAddedEnvironmentPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := loaded.Collections[st.selected.collection].Folders[st.selected.folder].Requests[st.selected.request]
-	if request.Auth != "Bearer {{token}}" {
-		t.Fatalf("auth=%q", request.Auth)
+	if request.Auth.Type != httpclient.AuthBearer || request.Auth.Token != "{{token}}" {
+		t.Fatalf("auth=%#v", request.Auth)
 	}
 	if got := loaded.Environments[len(loaded.Environments)-1].Variables["token"]; got != "secret" {
 		t.Fatalf("added environment token=%q", got)
@@ -671,6 +735,7 @@ func TestHTTPEnvironmentEditorSavesNameAndParameters(t *testing.T) {
 	}
 	st.envEditorNameEd.SetText("staging")
 	st.envEditorVarsEd.SetText("base_url=https://staging.example.test\ntoken=abc=123\n# ignored\ninvalid")
+	st.environmentAuth.set(httpclient.Auth{Type: httpclient.AuthAPIKey, Key: "X-API-Key", Value: "{{token}}", In: httpclient.AuthInHeader}, false)
 	if !ui.saveEnvironmentEditor(st) {
 		t.Fatal("environment editor reported no changes")
 	}
@@ -688,6 +753,79 @@ func TestHTTPEnvironmentEditorSavesNameAndParameters(t *testing.T) {
 	if _, exists := environment.Variables["invalid"]; exists {
 		t.Fatalf("invalid parameter line was persisted: %#v", environment.Variables)
 	}
+	if environment.Auth.Type != httpclient.AuthAPIKey || environment.Auth.Key != "X-API-Key" || environment.Auth.Value != "{{token}}" || environment.Auth.In != httpclient.AuthInHeader {
+		t.Fatalf("saved environment auth=%#v", environment.Auth)
+	}
+}
+
+func TestHTTPAuthEditorSupportsStructuredModesAndInheritance(t *testing.T) {
+	var editor httpAuthEditorState
+	editor.init()
+	tests := []struct {
+		name         string
+		auth         httpclient.Auth
+		allowInherit bool
+	}{
+		{name: "basic", auth: httpclient.Auth{Type: httpclient.AuthBasic, Username: "{{user}}", Password: "{{password}}"}, allowInherit: true},
+		{name: "bearer", auth: httpclient.Auth{Type: httpclient.AuthBearer, Token: "{{token}}"}, allowInherit: true},
+		{name: "API key header", auth: httpclient.Auth{Type: httpclient.AuthAPIKey, Key: "X-API-Key", Value: "{{api_key}}", In: httpclient.AuthInHeader}, allowInherit: true},
+		{name: "API key query", auth: httpclient.Auth{Type: httpclient.AuthAPIKey, Key: "key", Value: "{{api_key}}", In: httpclient.AuthInQuery}, allowInherit: false},
+		{name: "inherit", auth: httpclient.Auth{Type: httpclient.AuthInherit}, allowInherit: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			editor.set(test.auth, test.allowInherit)
+			if got := editor.value(test.allowInherit); got != test.auth {
+				t.Fatalf("editor auth=%#v want %#v", got, test.auth)
+			}
+		})
+	}
+}
+
+func TestHTTPAuthModeControlsSwitchRequestAndEnvironmentModes(t *testing.T) {
+	router := new(input.Router)
+	requestAuth := httpAuthEditorState{}
+	requestAuth.init()
+	environmentAuth := httpAuthEditorState{}
+	environmentAuth.init()
+	frame := func() {
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Source:      router.Source(),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(160, 28)),
+			Now:         time.Now(),
+		}
+		handleHTTPAuthEditorClicks(gtx, &requestAuth, true)
+		handleHTTPAuthEditorClicks(gtx, &environmentAuth, false)
+		requestAuth.typeClicks[2].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		})
+		router.Frame(&ops)
+	}
+	frame()
+	router.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(80, 14)},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(80, 14)},
+	)
+	frame()
+	if requestAuth.typeName != httpclient.AuthBasic {
+		t.Fatalf("request auth type=%q want basic", requestAuth.typeName)
+	}
+
+	environmentAuth.typeName = httpclient.AuthAPIKey
+	environmentAuth.location = httpclient.AuthInHeader
+	var ops op.Ops
+	gtx := layout.Context{
+		Ops:         &ops,
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(160, 28)),
+	}
+	environmentAuth.queryClick.Click()
+	if !handleHTTPAuthEditorClicks(gtx, &environmentAuth, false) || environmentAuth.location != httpclient.AuthInQuery {
+		t.Fatalf("environment API key location=%q want query", environmentAuth.location)
+	}
 }
 
 func TestHTTPEnvironmentEditorCancelLeavesValuesUntouched(t *testing.T) {
@@ -696,10 +834,29 @@ func TestHTTPEnvironmentEditorCancelLeavesValuesUntouched(t *testing.T) {
 	st.openEnvironmentEditor(0, true)
 	st.envEditorNameEd.SetText("discarded")
 	st.envEditorVarsEd.SetText("token=discarded")
+	st.environmentAuth.set(httpclient.Auth{Type: httpclient.AuthBearer, Token: "discarded"}, false)
 	st.closeEnvironmentEditor()
 	got := st.file.Environments[0]
-	if got.Name != original.Name || formatHTTPEnvironmentVariables(got.Variables) != formatHTTPEnvironmentVariables(original.Variables) {
+	if got.Name != original.Name || formatHTTPEnvironmentVariables(got.Variables) != formatHTTPEnvironmentVariables(original.Variables) || got.Auth != original.Auth {
 		t.Fatalf("cancel changed environment from %#v to %#v", original, got)
+	}
+}
+
+func TestHTTPEnvironmentEditorIgnoresCredentialMetadataForDirtyState(t *testing.T) {
+	st := newHTTPClientState(filepath.Join(t.TempDir(), "hexone-http.yaml"))
+	st.file.Environments[0].Auth = httpclient.Auth{
+		Type: httpclient.AuthBearer, Token: "secret", CredentialID: "opaque-reference",
+	}
+	st.openEnvironmentEditor(0, true)
+	ui := &UI{httpState: st}
+	if ui.saveEnvironmentEditor(st) {
+		t.Fatal("unchanged environment was reported as changed")
+	}
+	if st.dirty {
+		t.Fatal("unchanged environment marked the collection dirty")
+	}
+	if got := st.file.Environments[0].Auth.CredentialID; got != "opaque-reference" {
+		t.Fatalf("credential reference=%q want preserved", got)
 	}
 }
 
@@ -892,6 +1049,58 @@ func TestHTTPHorizontalSplitHandleDragChangesRatio(t *testing.T) {
 	}
 }
 
+func TestHTTPResponseTabsDoNotCompeteWithSplitHandle(t *testing.T) {
+	st := newHTTPClientState(filepath.Join(t.TempDir(), "hexone-http.yaml"))
+	ui := &UI{httpState: st}
+	th := material.NewTheme()
+	router := new(input.Router)
+	frame := func() {
+		var ops op.Ops
+		gtx := layout.Context{
+			Ops:         &ops,
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(900, 600)),
+			Source:      router.Source(),
+			Now:         time.Now(),
+		}
+		ui.handleHTTPClientClicks(gtx, st)
+		ui.layoutHTTPWorkbench(th, gtx, st)
+		router.Frame(&ops)
+	}
+
+	frame()
+	if st.requestSplitMinX <= 180 || st.requestSplitMaxX <= st.requestSplitMinX {
+		t.Fatalf("split rail bounds=%d..%d do not leave the response tabs clear", st.requestSplitMinX, st.requestSplitMaxX)
+	}
+	tabY := float32(st.requestSplitY)
+	router.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(155, tabY)},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(155, tabY)},
+	)
+	frame()
+	if st.responseMode != httpResponseRaw {
+		t.Fatalf("response mode=%q want raw after clicking its tab", st.responseMode)
+	}
+	if st.requestSplit.dragging {
+		t.Fatal("response tab click started a split drag")
+	}
+
+	railX := float32((st.requestSplitMinX + st.requestSplitMaxX) / 2)
+	originalRatio := st.requestRatio
+	router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(railX, tabY)})
+	frame()
+	if !st.requestSplit.hovering {
+		t.Fatal("empty response rail is not available as a resize handle")
+	}
+	router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(railX, tabY)})
+	frame()
+	router.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(railX, tabY+30)})
+	frame()
+	if st.requestRatio <= originalRatio {
+		t.Fatalf("split ratio=%v did not increase from %v", st.requestRatio, originalRatio)
+	}
+}
+
 func TestHTTPSelectorSecondaryClickOpensChoiceMenus(t *testing.T) {
 	router := new(input.Router)
 	st := &httpClientState{envMenuOpen: true, treeMenuOpen: true}
@@ -915,5 +1124,48 @@ func TestHTTPSelectorSecondaryClickOpensChoiceMenus(t *testing.T) {
 	frame()
 	if !st.methodMenuOpen || st.envMenuOpen || st.treeMenuOpen {
 		t.Fatalf("method menu open=%v environment menu open=%v tree menu open=%v", st.methodMenuOpen, st.envMenuOpen, st.treeMenuOpen)
+	}
+}
+
+func TestHTTPUIUsesCredentialVaultForCollections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hexone-http.yaml")
+	store := &httpTestSecretStore{values: make(map[string]string)}
+	ui := NewUI(fm.DefaultConfig())
+	ui.httpCollectionsPath = path
+	ui.httpCredentials = httpCredentialState{store: store, initialized: true}
+	st := ui.ensureHTTPClientState()
+	if st.vault == nil || st.loadIssue != nil {
+		t.Fatalf("secure HTTP state vault=%v load issue=%v", st.vault, st.loadIssue)
+	}
+	st.file.Environments[0].Variables["token"] = "environment-secret"
+	request := st.currentRequest()
+	request.Auth = httpclient.Auth{Type: httpclient.AuthBearer, Token: "request-secret"}
+	st.syncEditorsFromRequest()
+	if err := ui.saveHTTPCollections(); err != nil {
+		t.Fatal(err)
+	}
+	st.updateDirty()
+	if st.dirty {
+		t.Fatal("secure save remained dirty because of credential metadata")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"environment-secret", "request-secret", "localhost:8080"} {
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("HTTP YAML contains protected value %q:\n%s", secret, data)
+		}
+	}
+
+	reloaded := newHTTPClientStateWithVault(path, httpclient.NewVault(store))
+	if reloaded.loadIssue != nil {
+		t.Fatal(reloaded.loadIssue)
+	}
+	if got := reloaded.file.Environments[0].Variables["token"]; got != "environment-secret" {
+		t.Fatalf("reloaded environment token=%q", got)
+	}
+	if got := reloaded.currentRequest().Auth.Token; got != "request-secret" {
+		t.Fatalf("reloaded request token=%q", got)
 	}
 }

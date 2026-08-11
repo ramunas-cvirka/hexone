@@ -437,13 +437,16 @@ Open **F9 → HTTP Client** for a compact request workbench.
 - Selecting a request opens it in the connected request-tab strip. Use `x` to close a view without deleting the saved request, or `+` to create a new request in the `Scratch requests` collection.
 - Click the compact method or environment selector to move to the next available value.
 - Edit query parameters as `name=value` lines and headers as `Name: value` lines. Prefix a line with `#` to keep it saved but disabled.
+- The Auth view supports Basic credentials, Bearer tokens, and API keys sent in either a header or the query string. Choose **Inherit env** to use the authentication configured on the selected environment; double-click the environment selector to edit its variables and authentication.
+- HTTP passwords, bearer tokens, API-key values, and environment-variable values are stored in Windows Credential Manager, macOS Keychain, or the Linux Secret Service. The YAML file and its backup contain only opaque credential references; existing plaintext collections are migrated when the HTTP Client opens. Saving fails safely when secure credential storage is unavailable.
+- Secret authentication fields are masked by default; use **Show** or **Hide** at the end of the field to control their visibility while editing.
 - Request bodies are stored as plain multi-line text.
 - `Enter` in the URL field sends the current request. `Ctrl+Enter` or `Cmd+Enter` sends it from elsewhere in the workbench.
 - `Ctrl+S` or `Cmd+S` saves all collection changes atomically. Replacing an existing file also creates `hexone-http.yaml.bak`.
 - Response views include pretty JSON, the raw body, and ordered response headers.
-- Environment values can be referenced as `{{variable_name}}` in URLs, query parameters, headers, and bodies.
+- Environment values can be referenced as `{{variable_name}}` in URLs, query parameters, headers, authentication fields, and bodies.
 
-Hexone creates `hexone-http.yaml` beside `hexone.yaml` the first time the HTTP Client opens. Collection headers and query parameters use YAML lists so duplicate names and display order are preserved.
+Hexone creates `hexone-http.yaml` beside `hexone.yaml` the first time the HTTP Client opens and restricts it to the current OS user. Collection headers and query parameters use YAML lists so duplicate names and display order are preserved.
 
 ## Protocol Analyzer
 

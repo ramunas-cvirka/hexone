@@ -68,8 +68,14 @@ func Send(ctx context.Context, request Request, environment Environment) Respons
 			ExpandVariables(header.Value, environment.Variables),
 		)
 	}
-	if auth := strings.TrimSpace(ExpandVariables(request.Auth, environment.Variables)); auth != "" && httpRequest.Header.Get("Authorization") == "" {
-		httpRequest.Header.Set("Authorization", auth)
+	auth := request.Auth
+	auth.Normalize(true)
+	if auth.Type == AuthInherit {
+		auth = environment.Auth
+		auth.Normalize(false)
+	}
+	if err := applyAuth(httpRequest, auth, environment.Variables); err != nil {
+		return Response{Duration: time.Since(started), Err: err}
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -99,6 +105,44 @@ func Send(ctx context.Context, request Request, environment Environment) Respons
 		result.Size = int64(len(responseBody))
 	}
 	return result
+}
+
+func applyAuth(request *http.Request, auth Auth, variables map[string]string) error {
+	if request == nil {
+		return nil
+	}
+	auth.Normalize(false)
+	expand := func(value string) string {
+		return ExpandVariables(value, variables)
+	}
+	switch auth.Type {
+	case AuthBasic:
+		if request.Header.Get("Authorization") == "" {
+			request.SetBasicAuth(expand(auth.Username), expand(auth.Password))
+		}
+	case AuthBearer:
+		if token := strings.TrimSpace(expand(auth.Token)); token != "" && request.Header.Get("Authorization") == "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+	case AuthAPIKey:
+		name := strings.TrimSpace(expand(auth.Key))
+		if name == "" {
+			return fmt.Errorf("API key name is empty")
+		}
+		value := expand(auth.Value)
+		if auth.In == AuthInQuery {
+			query := request.URL.Query()
+			query.Add(name, value)
+			request.URL.RawQuery = query.Encode()
+		} else if request.Header.Get(name) == "" {
+			request.Header.Set(name, value)
+		}
+	case AuthRaw:
+		if value := strings.TrimSpace(expand(auth.Value)); value != "" && request.Header.Get("Authorization") == "" {
+			request.Header.Set("Authorization", value)
+		}
+	}
+	return nil
 }
 
 func ExpandVariables(value string, variables map[string]string) string {

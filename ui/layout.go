@@ -184,6 +184,7 @@ type UI struct {
 	fmCfg                        *fm.Config
 	configPath                   string
 	httpCollectionsPath          string
+	httpCredentials              httpCredentialState
 	typeface                     font.Typeface
 	textSize                     unit.Sp
 	invalidate                   func()

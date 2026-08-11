@@ -50,6 +50,10 @@ func LoadOrCreate(path string) (*File, error) {
 }
 
 func Save(path string, file *File) error {
+	return save(path, file, true)
+}
+
+func save(path string, file *File, backup bool) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("HTTP collection path is empty")
 	}
@@ -61,23 +65,24 @@ func Save(path string, file *File) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(path, data)
+	return writeAtomic(path, data, backup)
 }
 
-func writeAtomic(path string, data []byte) error {
+func writeAtomic(path string, data []byte, backup bool) error {
 	dir := filepath.Dir(path)
 	if dir == "" {
 		dir = "."
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 
-	mode := os.FileMode(0o644)
-	if info, err := os.Stat(path); err == nil {
-		mode = info.Mode().Perm()
-		if err := copyFile(path, path+backupSuffix, mode); err != nil {
-			return fmt.Errorf("backup HTTP collections: %w", err)
+	mode := os.FileMode(0o600)
+	if _, err := os.Stat(path); err == nil {
+		if backup {
+			if err := copyFile(path, path+backupSuffix, mode); err != nil {
+				return fmt.Errorf("backup HTTP collections: %w", err)
+			}
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -121,5 +126,8 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, mode)
+	if err := os.WriteFile(dst, data, mode); err != nil {
+		return err
+	}
+	return os.Chmod(dst, mode)
 }

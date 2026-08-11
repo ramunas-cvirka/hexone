@@ -3,9 +3,26 @@
 
 package httpclient
 
-import "strings"
+import (
+	"encoding/base64"
+	"strings"
 
-const CurrentVersion = 1
+	"go.yaml.in/yaml/v4"
+)
+
+const CurrentVersion = 3
+
+const (
+	AuthNone    = "none"
+	AuthInherit = "inherit"
+	AuthBasic   = "basic"
+	AuthBearer  = "bearer"
+	AuthAPIKey  = "api-key"
+	AuthRaw     = "raw"
+
+	AuthInHeader = "header"
+	AuthInQuery  = "query"
+)
 
 type File struct {
 	Version      int           `yaml:"version"`
@@ -14,8 +31,103 @@ type File struct {
 }
 
 type Environment struct {
-	Name      string            `yaml:"name"`
-	Variables map[string]string `yaml:"variables,omitempty"`
+	Name                  string            `yaml:"name"`
+	Variables             map[string]string `yaml:"variables,omitempty"`
+	VariablesCredentialID string            `yaml:"variables_credential_id,omitempty"`
+	Auth                  Auth              `yaml:"auth,omitempty"`
+}
+
+// Auth describes request authentication. Values may contain {{environment}}
+// templates. Request auth may use the inherit type; environment auth may not.
+type Auth struct {
+	Type         string `yaml:"type,omitempty"`
+	Username     string `yaml:"username,omitempty"`
+	Password     string `yaml:"password,omitempty"`
+	Token        string `yaml:"token,omitempty"`
+	Key          string `yaml:"key,omitempty"`
+	Value        string `yaml:"value,omitempty"`
+	In           string `yaml:"in,omitempty"`
+	CredentialID string `yaml:"credential_id,omitempty"`
+}
+
+func (a Auth) IsZero() bool {
+	return normalizeAuthType(a.Type) == AuthNone && a.Username == "" && a.Password == "" && a.Token == "" && a.Key == "" && a.Value == ""
+}
+
+// UnmarshalYAML keeps version-1 collection files compatible. Those files used
+// a scalar Authorization value such as "Bearer {{token}}".
+func (a *Auth) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		*a = parseLegacyAuth(node.Value)
+		return nil
+	}
+	type plainAuth Auth
+	var decoded plainAuth
+	if err := node.Decode(&decoded); err != nil {
+		return err
+	}
+	*a = Auth(decoded)
+	a.Normalize(true)
+	return nil
+}
+
+func parseLegacyAuth(value string) Auth {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return Auth{}
+	}
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "bearer ") {
+		return Auth{Type: AuthBearer, Token: strings.TrimSpace(value[len("bearer "):])}
+	}
+	if strings.HasPrefix(lower, "basic ") {
+		encoded := strings.TrimSpace(value[len("basic "):])
+		if decoded, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+			if username, password, ok := strings.Cut(string(decoded), ":"); ok {
+				return Auth{Type: AuthBasic, Username: username, Password: password}
+			}
+		}
+	}
+	return Auth{Type: AuthRaw, Value: value}
+}
+
+func normalizeAuthType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", AuthNone:
+		return AuthNone
+	case AuthInherit, "environment", "env":
+		return AuthInherit
+	case AuthBasic:
+		return AuthBasic
+	case AuthBearer:
+		return AuthBearer
+	case AuthAPIKey, "api_key", "apikey":
+		return AuthAPIKey
+	case AuthRaw:
+		return AuthRaw
+	default:
+		return AuthNone
+	}
+}
+
+func (a *Auth) Normalize(allowInherit bool) {
+	if a == nil {
+		return
+	}
+	a.Type = normalizeAuthType(a.Type)
+	if a.Type == AuthInherit && !allowInherit {
+		a.Type = AuthNone
+	}
+	if a.Type == AuthAPIKey {
+		switch strings.ToLower(strings.TrimSpace(a.In)) {
+		case AuthInQuery:
+			a.In = AuthInQuery
+		default:
+			a.In = AuthInHeader
+		}
+	} else {
+		a.In = ""
+	}
 }
 
 type Collection struct {
@@ -37,7 +149,7 @@ type Request struct {
 	URL     string     `yaml:"url"`
 	Query   []KeyValue `yaml:"query,omitempty"`
 	Headers []KeyValue `yaml:"headers,omitempty"`
-	Auth    string     `yaml:"auth,omitempty"`
+	Auth    Auth       `yaml:"auth,omitempty"`
 	Body    string     `yaml:"body,omitempty"`
 }
 
@@ -98,7 +210,7 @@ func (f *File) Normalize() {
 	if f == nil {
 		return
 	}
-	if f.Version <= 0 {
+	if f.Version < CurrentVersion {
 		f.Version = CurrentVersion
 	}
 	for collectionIndex := range f.Collections {
@@ -126,6 +238,7 @@ func (f *File) Normalize() {
 		if environment.Variables == nil {
 			environment.Variables = map[string]string{}
 		}
+		environment.Auth.Normalize(false)
 	}
 }
 
@@ -141,5 +254,6 @@ func normalizeRequests(requests []Request) {
 			request.Method = "GET"
 		}
 		request.URL = strings.TrimSpace(request.URL)
+		request.Auth.Normalize(true)
 	}
 }
