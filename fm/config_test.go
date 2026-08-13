@@ -542,6 +542,29 @@ func TestDefaultConfigSerializesTabs(t *testing.T) {
 	}
 }
 
+func TestViewerEditorIndentConfigNormalizesAndSerializes(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.EditorIndentStyle = "space"
+	cfg.Viewer.EditorTabSize = 2
+	cfg.normalize()
+	if cfg.Viewer.EditorIndentStyle != ViewerEditorIndentSpaces || cfg.Viewer.EditorTabSize != 2 {
+		t.Fatalf("viewer editor indentation=%q/%d", cfg.Viewer.EditorIndentStyle, cfg.Viewer.EditorTabSize)
+	}
+	out := string(mustMarshalConfig(t, cfg))
+	for _, want := range []string{"editor_indent_style: spaces", "editor_tab_size: 2"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("serialized config missing %q:\n%s", want, out)
+		}
+	}
+
+	cfg.Viewer.EditorIndentStyle = "invalid"
+	cfg.Viewer.EditorTabSize = 99
+	cfg.normalize()
+	if cfg.Viewer.EditorIndentStyle != ViewerEditorIndentAuto || cfg.Viewer.EditorTabSize != 4 {
+		t.Fatalf("invalid viewer editor indentation normalized to %q/%d", cfg.Viewer.EditorIndentStyle, cfg.Viewer.EditorTabSize)
+	}
+}
+
 func TestConfigDropsStaleFieldsOnSave(t *testing.T) {
 	raw := `
 tabs:

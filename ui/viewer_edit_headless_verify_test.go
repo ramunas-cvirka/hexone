@@ -200,6 +200,17 @@ func TestHeadlessViewerEditModes(t *testing.T) {
 		t.Fatalf("read/editor line-height delta=%d want <= 1", delta)
 	}
 	shoot("viewer-text-edit.png", textImage)
+	typedAt := textState.stream.lineByteStart(4) + strings.Index(textState.stream.lines[4], "line00") + len("line")
+	if !textUI.replaceFileViewerVirtualText(textState, typedAt, typedAt+1, "X", time.Now()) {
+		t.Fatal("headless syntax typing edit was not applied")
+	}
+	if !textState.editSyntax.ready() {
+		t.Fatal("syntax highlighting disappeared after typing")
+	}
+	typingImage := frame(func(gtx layout.Context) {
+		textUI.layoutFileViewerTextEditor(th, gtx, textState)
+	})
+	shoot("viewer-text-edit-typing-highlight.png", typingImage)
 	textState.stream.beginSelection(18)
 	textState.stream.updateSelection(170)
 	textSelectionImage := frame(func(gtx layout.Context) {

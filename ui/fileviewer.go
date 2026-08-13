@@ -141,6 +141,8 @@ type fileViewerState struct {
 	editClipboardTag     fileViewerEventTag
 	editDesiredCol       int
 	editDesiredColSet    bool
+	editIndentStyle      string
+	editTabSize          int
 	editCaretBlinkAt     time.Time
 	editUndo             []fileViewerTextUndoRecord
 	editUndoIndex        int

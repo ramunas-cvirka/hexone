@@ -1387,6 +1387,108 @@ func TestFileViewerVirtualTextEditReplaceUndoRedo(t *testing.T) {
 	}
 }
 
+func TestViewerEditorIndentationDetectsAndHonorsConfig(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	style, size := viewerEditorIndentation(cfg, "root:\n  child:\n    value: yes\n")
+	if style != fm.ViewerEditorIndentSpaces || size != 2 {
+		t.Fatalf("space indentation=%q/%d want spaces/2", style, size)
+	}
+	style, size = viewerEditorIndentation(cfg, "root:\n\tchild:\n\t\tvalue: yes\n")
+	if style != fm.ViewerEditorIndentTabs || size != 4 {
+		t.Fatalf("tab indentation=%q/%d want tabs/4", style, size)
+	}
+	cfg.Viewer.EditorIndentStyle = fm.ViewerEditorIndentTabs
+	cfg.Viewer.EditorTabSize = 8
+	style, size = viewerEditorIndentation(cfg, "root:\n  child: yes\n")
+	if style != fm.ViewerEditorIndentTabs || size != 8 {
+		t.Fatalf("configured indentation=%q/%d want tabs/8", style, size)
+	}
+}
+
+func TestFileViewerVirtualTabUsesDetectedIndentation(t *testing.T) {
+	content := "root:\n  child:\n    value: yes"
+	st := &fileViewerState{mode: "file", path: "config.yaml", editBaselineText: content, content: content}
+	st.contentEditor.SetText(content)
+	st.stream.SetContent(content)
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	if !ui.startFileViewerEdit(time.Now()) {
+		t.Fatalf("start edit: %s", st.status)
+	}
+	if st.editIndentStyle != fm.ViewerEditorIndentSpaces || st.editTabSize != 2 {
+		t.Fatalf("detected indentation=%q/%d", st.editIndentStyle, st.editTabSize)
+	}
+	caret := st.stream.lineByteEnd(1)
+	virtualEditSetCaret(&st.stream, caret, false)
+	if !ui.insertFileViewerVirtualTab(st, caret, caret, false, time.Now()) {
+		t.Fatal("Tab was not applied")
+	}
+	if got, want := st.stream.lines[1], "  child:  "; got != want {
+		t.Fatalf("line after Tab=%q want %q", got, want)
+	}
+	caret = st.stream.selHead
+	if !ui.insertFileViewerVirtualTab(st, caret, caret, true, time.Now()) {
+		t.Fatal("Shift+Tab was not applied")
+	}
+	if got, want := st.stream.lines[1], "  child:"; got != want {
+		t.Fatalf("line after Shift+Tab=%q want %q", got, want)
+	}
+}
+
+func TestFileViewerVirtualTabIndentsSelectedLines(t *testing.T) {
+	content := "one\ntwo\nthree"
+	st := &fileViewerState{editVirtualReady: true, editIndentStyle: fm.ViewerEditorIndentSpaces, editTabSize: 2}
+	st.stream.SetContent(content)
+	st.editVirtualReady = true
+	st.editLineRunes = viewerEditLineRuneOffsetsFromLines(st.stream.lines)
+	start := st.stream.lineByteStart(0)
+	end := st.stream.lineByteEnd(1)
+	st.stream.selActive = true
+	st.stream.selAnchor, st.stream.selHead = start, end
+	st.stream.updateSelectionRange()
+	ui := NewUI(fm.DefaultConfig())
+	if !ui.insertFileViewerVirtualTab(st, start, end, false, time.Now()) {
+		t.Fatal("selection Tab was not applied")
+	}
+	if got, want := st.virtualEditText(), "  one\n  two\nthree"; got != want {
+		t.Fatalf("indented text=%q want %q", got, want)
+	}
+	start, end = virtualEditSelection(&st.stream)
+	if !ui.insertFileViewerVirtualTab(st, start, end, true, time.Now()) {
+		t.Fatal("selection Shift+Tab was not applied")
+	}
+	if got := st.virtualEditText(); got != content {
+		t.Fatalf("outdented text=%q want %q", got, content)
+	}
+}
+
+func TestFileViewerVirtualEditPreservesSyntaxWhileReparseIsPending(t *testing.T) {
+	content := "root:\n  child: value\nother: true"
+	doc := viewerBuildSyntaxDocument(context.Background(), "config.yaml", content)
+	if !doc.ready() {
+		t.Fatal("YAML source should produce syntax spans")
+	}
+	st := &fileViewerState{mode: "file", path: "config.yaml", editBaselineText: content, content: content}
+	st.contentEditor.SetText(content)
+	st.stream.SetContent(content)
+	st.stream.setSyntax(doc)
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	if !ui.startFileViewerEdit(time.Now()) {
+		t.Fatalf("start edit: %s", st.status)
+	}
+	start := st.stream.lineByteStart(1) + strings.Index(st.stream.lines[1], "value")
+	if !ui.replaceFileViewerVirtualText(st, start, start+1, "V", time.Now()) {
+		t.Fatal("edit was not applied")
+	}
+	if !st.editSyntax.ready() || !st.stream.syntax.ready() {
+		t.Fatal("syntax highlighting was cleared during the debounce window")
+	}
+	if len(st.editSyntax.lines) != len(st.stream.lines) || len(st.editSyntax.lines[0].spans) == 0 || len(st.editSyntax.lines[2].spans) == 0 {
+		t.Fatalf("preserved syntax lines=%d first=%d last=%d", len(st.editSyntax.lines), len(st.editSyntax.lines[0].spans), len(st.editSyntax.lines[2].spans))
+	}
+}
+
 func TestFileViewerVirtualTextEditRuneByteMapping(t *testing.T) {
 	content := "aŽ🙂\nβeta"
 	st := &fileViewerState{}

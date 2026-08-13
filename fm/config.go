@@ -62,6 +62,9 @@ const (
 	ViewerFileEncodingUTF16LE = "utf-16le"
 	ViewerFileEncodingUTF16BE = "utf-16be"
 	ViewerFileEncodingCP437   = "cp437"
+	ViewerEditorIndentAuto    = "auto"
+	ViewerEditorIndentSpaces  = "spaces"
+	ViewerEditorIndentTabs    = "tabs"
 
 	CompletionSoundNever      = "never"
 	CompletionSoundAlways     = "always"
@@ -386,6 +389,24 @@ func NormalizeViewerPreviewRange(start, end int) (int, int) {
 	return normalizeFindPreviewRange(start, end)
 }
 
+func NormalizeViewerEditorIndentStyle(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case ViewerEditorIndentSpaces, "space":
+		return ViewerEditorIndentSpaces
+	case ViewerEditorIndentTabs, "tab":
+		return ViewerEditorIndentTabs
+	default:
+		return ViewerEditorIndentAuto
+	}
+}
+
+func NormalizeViewerEditorTabSize(size int) int {
+	if size < 1 || size > 16 {
+		return 4
+	}
+	return size
+}
+
 func NormalizeViewerHexPreviewRows(rows int) int {
 	if rows < 1 {
 		return defaultViewerHexPreviewRows
@@ -603,6 +624,8 @@ type ViewerConfig struct {
 	WordSelectRegex         string              `yaml:"word_select_regex"`
 	FontSizeSp              float32             `yaml:"font_size_sp"`
 	WordWrap                bool                `yaml:"word_wrap"`
+	EditorIndentStyle       string              `yaml:"editor_indent_style"`
+	EditorTabSize           int                 `yaml:"editor_tab_size"`
 	MaxReadMB               float32             `yaml:"max_read_mb"`
 	CommandAutoRefresh      bool                `yaml:"command_auto_refresh"`
 	CommandRefreshMs        int                 `yaml:"command_refresh_ms"`
@@ -700,11 +723,13 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 			CompletionSound:       CompletionSoundBackground,
 		},
 		Viewer: ViewerConfig{
-			SmoothScrolling: true,
-			ShowLineNumbers: true,
-			PreviewStart:    defaultViewerPreviewStart,
-			PreviewEnd:      defaultViewerPreviewEnd,
-			HexPreviewRows:  defaultViewerHexPreviewRows,
+			SmoothScrolling:   true,
+			ShowLineNumbers:   true,
+			EditorIndentStyle: ViewerEditorIndentAuto,
+			EditorTabSize:     4,
+			PreviewStart:      defaultViewerPreviewStart,
+			PreviewEnd:        defaultViewerPreviewEnd,
+			HexPreviewRows:    defaultViewerHexPreviewRows,
 		},
 	}
 	if err := node.Decode(&raw); err != nil {
@@ -840,6 +865,8 @@ func DefaultConfig() *Config {
 			WordSelectRegex:         "[a-zA-Z0-9]+",
 			FontSizeSp:              14,
 			WordWrap:                false,
+			EditorIndentStyle:       ViewerEditorIndentAuto,
+			EditorTabSize:           4,
 			MaxReadMB:               1,
 			CommandAutoRefresh:      true,
 			CommandRefreshMs:        1500,
@@ -1114,6 +1141,8 @@ func (c *Config) normalize() {
 	c.Terminal.PreviewStart, c.Terminal.PreviewEnd = NormalizeTerminalPreviewRange(c.Terminal.PreviewStart, c.Terminal.PreviewEnd)
 	c.Viewer.PreviewStart, c.Viewer.PreviewEnd = NormalizeViewerPreviewRange(c.Viewer.PreviewStart, c.Viewer.PreviewEnd)
 	c.Viewer.HexPreviewRows = NormalizeViewerHexPreviewRows(c.Viewer.HexPreviewRows)
+	c.Viewer.EditorIndentStyle = NormalizeViewerEditorIndentStyle(c.Viewer.EditorIndentStyle)
+	c.Viewer.EditorTabSize = NormalizeViewerEditorTabSize(c.Viewer.EditorTabSize)
 	c.Tabs.WidthMode = NormalizeTabWidthMode(c.Tabs.WidthMode)
 	c.Tabs.MinWidthDp = NormalizeTabWidthDp(c.Tabs.MinWidthDp, defaultTabMinWidthDp)
 	c.Tabs.FixedWidthDp = NormalizeTabWidthDp(c.Tabs.FixedWidthDp, defaultTabFixedWidthDp)
