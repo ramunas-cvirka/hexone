@@ -260,9 +260,9 @@ func (ui *UI) viewerFunctionBarActionEnabled(action functionBarAction) bool {
 	case functionBarActionViewerMode:
 		return !st.commandOnly
 	case functionBarActionViewerWrap:
-		return !st.detectedImagePreview && st.mode != "hex" && !st.commandEditOn
+		return !st.detectedImagePreview && !viewerMarkdownPreviewActive(st) && st.mode != "hex" && !st.commandEditOn
 	case functionBarActionViewerLineNumbers:
-		return !st.detectedImagePreview && st.mode != "hex" && !st.commandEditOn
+		return !st.detectedImagePreview && !viewerMarkdownPreviewActive(st) && st.mode != "hex" && !st.commandEditOn
 	default:
 		return false
 	}
@@ -312,6 +312,18 @@ func (ui *UI) performFunctionBarActionContext(gtx layout.Context, action functio
 		}
 		ui.closeFunctionBarPopups()
 		if ui.fileViewer != nil {
+			if ui.fileViewer.markdown.detected {
+				if ui.fileViewer.mode != "file" || ui.fileViewer.historyOpen {
+					ui.setFileViewerMode("file", now)
+					return true
+				}
+				if ui.fileViewer.editMode {
+					ui.stopFileViewerEdit()
+					return true
+				}
+				ui.closeFileViewer()
+				return true
+			}
 			if ui.fileViewer.editMode {
 				ui.discardFileViewerChanges(ui.fileViewer)
 				ui.stopFileViewerEdit()
@@ -451,7 +463,9 @@ func (ui *UI) functionBarButtonSpecs() []functionBarButtonSpec {
 func (ui *UI) viewerFunctionBarButtonSpecs() []functionBarButtonSpec {
 	st := ui.fileViewer
 	viewLabel := "Close"
-	if st.editMode {
+	if st.markdown.detected && st.editMode {
+		viewLabel = "Preview"
+	} else if st.editMode {
 		viewLabel = "View"
 	}
 	modeLabel := "Hex"

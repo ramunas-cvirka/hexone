@@ -1259,8 +1259,14 @@ func formatHexSelectionTextCopy(data []byte) string {
 	const digits = "0123456789ABCDEF"
 	var out strings.Builder
 	out.Grow(len(data))
-	for _, value := range data {
+	for index := 0; index < len(data); index++ {
+		value := data[index]
 		switch {
+		case value == '\r' && index+1 < len(data) && data[index+1] == '\n':
+			out.WriteString("\r\n")
+			index++
+		case value == '\n':
+			out.WriteByte('\n')
 		case value == '\\':
 			out.WriteString(`\\`)
 		case value >= 0x20 && value <= 0x7E:

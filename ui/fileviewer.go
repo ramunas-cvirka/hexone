@@ -193,6 +193,7 @@ type fileViewerState struct {
 	updatedAt             time.Time
 	tabAnimAt             time.Time
 	stream                streamOutputView
+	markdown              markdownPreviewState
 	imageView             imagePreviewView
 	pdfDoc                pdfDocView
 	hex                   *hexViewerState
@@ -674,6 +675,12 @@ func (ui *UI) handleFileViewerKeys(gtx layout.Context) {
 			if st.commandEditOn || findFocused {
 				continue
 			}
+			if viewerMarkdownPreviewActive(st) {
+				st.markdown.selectAllText()
+				st.err = ""
+				gtx.Execute(op.InvalidateCmd{})
+				continue
+			}
 			if st.mode == "hex" {
 				if st.hex != nil && len(st.hex.buffer) > 0 {
 					start := st.hex.bufferStart
@@ -695,6 +702,19 @@ func (ui *UI) copyFileViewerText(gtx layout.Context, fallbackAll bool) bool {
 	st := ui.fileViewer
 	if st == nil {
 		return false
+	}
+	if viewerMarkdownPreviewActive(st) {
+		text := st.markdown.selectedText()
+		if text == "" && fallbackAll {
+			text = st.markdown.source
+		}
+		if text == "" {
+			st.status = "nothing to copy"
+			return false
+		}
+		writeFileViewerClipboard(gtx, text)
+		st.err = ""
+		return true
 	}
 	if viewerPDFPreviewActive(st) && st.pdfDoc.hasSelection() {
 		text := st.pdfDoc.selectedText()
@@ -885,6 +905,7 @@ func (ui *UI) startFileViewer(idx int, now time.Time) {
 	st.contentEditor.Submit = false
 	st.contentEditor.SetText("")
 	st.stream.SetContent("")
+	st.markdown.initialize(st.path)
 	st.commandEditor.SingleLine = true
 	st.commandEditor.Submit = true
 	st.commandEditor.SetText(st.command)
@@ -1108,6 +1129,13 @@ func (ui *UI) performFileViewerKeyScroll(now time.Time, name key.Name) bool {
 	}
 	if st.detectedImagePreview {
 		return ui.performFileViewerImageKeyScroll(now, st, name)
+	}
+	if viewerMarkdownPreviewActive(st) {
+		changed := st.markdown.scrollByKey(name)
+		if changed {
+			st.markUserBrowsing(now)
+		}
+		return changed
 	}
 	changed := false
 	switch name {
@@ -1662,6 +1690,11 @@ func applyFileViewerContentResult(st *fileViewerState, next string) {
 	if st == nil {
 		return
 	}
+	markdownSource := next
+	if st.markdown.detected && st.mode == "file" && !st.editDirty {
+		markdownSource = st.editableContent
+	}
+	st.markdown.setSource(st.path, markdownSource)
 	prev := st.content
 	if prev == next {
 		return
@@ -2541,6 +2574,11 @@ func (ui *UI) rememberViewerCommand(st *fileViewerState, cmd string) error {
 
 func (ui *UI) viewerInitialModeAndCommand(path string, remote *paneSSHSession, fallbackCommand string) (string, string) {
 	cmd, matchedRule, matchedTarget := ui.viewerDefaultCommand(path, remote, fallbackCommand)
+	// Markdown is a first-class native preview. F3 must open the rendered
+	// document even when a broad viewer command rule would otherwise match it.
+	if viewerPathLooksMarkdown(path) {
+		return "file", cmd
+	}
 	archiveMember := remote == nil && filesys.ArchiveMemberPath(path)
 	if !archiveMember && (matchedTarget || matchedRule) {
 		return "command", cmd
@@ -3729,6 +3767,9 @@ func viewerSupportsFind(st *fileViewerState) bool {
 	}
 	if st.mode == "command" {
 		return true
+	}
+	if viewerMarkdownPreviewActive(st) {
+		return false
 	}
 	return !st.detectedImagePreview || viewerPDFPreviewActive(st)
 }

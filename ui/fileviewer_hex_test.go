@@ -104,8 +104,53 @@ func TestFormatHexSelectionCopyUsesContinuousHex(t *testing.T) {
 
 func TestFormatHexSelectionTextCopyEscapesNonTextBytes(t *testing.T) {
 	data := []byte{'H', 'i', 0x00, '\\', '\n', 0xFF}
-	if got, want := formatHexSelectionTextCopy(data), `Hi\x00\\\x0A\xFF`; got != want {
+	if got, want := formatHexSelectionTextCopy(data), "Hi\\x00\\\\\n\\xFF"; got != want {
 		t.Fatalf("formatHexSelectionTextCopy = %q, want %q", got, want)
+	}
+}
+
+func TestFormatHexSelectionTextCopyPreservesLineEndings(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{name: "unix LF", data: []byte("alpha\nbeta\n"), want: "alpha\nbeta\n"},
+		{name: "windows CRLF", data: []byte("alpha\r\nbeta\r\n"), want: "alpha\r\nbeta\r\n"},
+		{name: "mixed line endings", data: []byte("unix\nwindows\r\n"), want: "unix\nwindows\r\n"},
+		{name: "isolated CR remains escaped", data: []byte("alpha\rbeta"), want: `alpha\x0Dbeta`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatHexSelectionTextCopy(tc.data); got != tc.want {
+				t.Fatalf("formatHexSelectionTextCopy=%q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCopyFileViewerHexAsTextWritesActualCRLFToClipboard(t *testing.T) {
+	oldWriteNow := writeFileViewerClipboardNow
+	writeFileViewerClipboardNow = func(string) error { return nil }
+	t.Cleanup(func() { writeFileViewerClipboardNow = oldWriteNow })
+
+	data := []byte("first\r\nsecond\r\n")
+	v := newHexViewerState()
+	v.fileSize = int64(len(data))
+	v.buffer = data
+	v.setSelectionRange(0, int64(len(data)))
+	st := &fileViewerState{mode: "hex", hex: v}
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	router := new(input.Router)
+	gtx := layout.Context{Ops: new(op.Ops), Source: router.Source()}
+
+	if !ui.copyFileViewerHex(gtx, false, true) {
+		t.Fatalf("copy as text failed: %s", st.status)
+	}
+	_, copied, ok := router.WriteClipboard()
+	if !ok || string(copied) != string(data) {
+		t.Fatalf("clipboard=(%v,%q) want exact CRLF text %q", ok, copied, data)
 	}
 }
 

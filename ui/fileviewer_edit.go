@@ -261,6 +261,7 @@ func (ui *UI) stopFileViewerEdit() bool {
 		st.content = sanitizeViewerContent(st.editableContent)
 		st.stream.SetContent(st.content)
 		st.stream.setSyntax(st.editSyntax)
+		st.markdown.setSource(st.path, st.editableContent)
 	}
 	st.editMode = false
 	st.editFocus = false
@@ -280,6 +281,11 @@ func (ui *UI) toggleFileViewerEdit(now time.Time) bool {
 	if !st.editMode {
 		return ui.startFileViewerEdit(now)
 	}
+	if st.markdown.detected {
+		// Returning to Markdown preview must retain the current edit buffer so
+		// F4 -> edit -> F3 can be used as a live preview workflow.
+		return ui.stopFileViewerEdit()
+	}
 	ui.discardFileViewerChanges(st)
 	return ui.stopFileViewerEdit()
 }
@@ -298,6 +304,7 @@ func (ui *UI) discardFileViewerChanges(st *fileViewerState) bool {
 		st.initializeVirtualEditText(st.editBaselineText)
 		st.editableContent = st.editBaselineText
 		st.content = sanitizeViewerContent(st.editBaselineText)
+		st.markdown.setSource(st.path, st.editableContent)
 		st.editSyntax = viewerBuildSyntaxDocument(context.Background(), st.path, st.editBaselineText)
 		st.stream.setSyntax(st.editSyntax)
 		st.editRenderText = st.editBaselineText

@@ -13,6 +13,7 @@ require (
 	github.com/mholt/archives v0.1.5
 	github.com/nwaples/rardecode/v2 v2.2.5
 	github.com/pkg/sftp v1.13.10
+	github.com/yuin/goldmark v1.8.5
 	github.com/zalando/go-keyring v0.2.8
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 	golang.org/x/crypto v0.54.0
