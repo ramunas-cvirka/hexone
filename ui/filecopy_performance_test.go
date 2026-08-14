@@ -4,9 +4,12 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"hexone/filesys"
+	"io"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/pkg/sftp"
 )
 
 func TestDirectFilePasteStatusLineShowsBottomBarProgress(t *testing.T) {
@@ -86,6 +91,419 @@ func TestCollectRemoteTransferEntriesReusesReadDirMetadata(t *testing.T) {
 	}
 	if got, want := len(walker.readCalls), 2; got != want {
 		t.Fatalf("ReadDir calls = %d, want one per directory (%d): %v", got, want, walker.readCalls)
+	}
+}
+
+type concurrentSFTPWriteProbe struct {
+	base sftp.FileWriter
+
+	mu          sync.Mutex
+	active      int
+	maxActive   int
+	overlapped  chan struct{}
+	overlapOnce sync.Once
+}
+
+func newConcurrentSFTPWriteProbe(base sftp.FileWriter) *concurrentSFTPWriteProbe {
+	return &concurrentSFTPWriteProbe{
+		base:       base,
+		overlapped: make(chan struct{}),
+	}
+}
+
+func (p *concurrentSFTPWriteProbe) Filewrite(request *sftp.Request) (io.WriterAt, error) {
+	writer, err := p.base.Filewrite(request)
+	if err != nil {
+		return nil, err
+	}
+	return &concurrentSFTPWriter{WriterAt: writer, probe: p}, nil
+}
+
+func (p *concurrentSFTPWriteProbe) maximumActive() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.maxActive
+}
+
+type concurrentSFTPWriter struct {
+	io.WriterAt
+	probe *concurrentSFTPWriteProbe
+}
+
+func (w *concurrentSFTPWriter) WriteAt(data []byte, offset int64) (int, error) {
+	w.probe.mu.Lock()
+	w.probe.active++
+	if w.probe.active > w.probe.maxActive {
+		w.probe.maxActive = w.probe.active
+	}
+	if w.probe.active >= 2 {
+		w.probe.overlapOnce.Do(func() { close(w.probe.overlapped) })
+	}
+	w.probe.mu.Unlock()
+
+	select {
+	case <-w.probe.overlapped:
+	case <-time.After(2 * time.Second):
+		w.probe.mu.Lock()
+		w.probe.active--
+		w.probe.mu.Unlock()
+		return 0, fmt.Errorf("SFTP writes did not overlap")
+	}
+
+	n, err := w.WriterAt.WriteAt(data, offset)
+	w.probe.mu.Lock()
+	w.probe.active--
+	w.probe.mu.Unlock()
+	return n, err
+}
+
+type concurrentSFTPReadProbe struct {
+	base sftp.FileReader
+
+	mu          sync.Mutex
+	active      int
+	maxActive   int
+	overlapped  chan struct{}
+	overlapOnce sync.Once
+}
+
+func newConcurrentSFTPReadProbe(base sftp.FileReader) *concurrentSFTPReadProbe {
+	return &concurrentSFTPReadProbe{
+		base:       base,
+		overlapped: make(chan struct{}),
+	}
+}
+
+func (p *concurrentSFTPReadProbe) Fileread(request *sftp.Request) (io.ReaderAt, error) {
+	reader, err := p.base.Fileread(request)
+	if err != nil {
+		return nil, err
+	}
+	return &concurrentSFTPReader{ReaderAt: reader, probe: p}, nil
+}
+
+func (p *concurrentSFTPReadProbe) maximumActive() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.maxActive
+}
+
+type concurrentSFTPReader struct {
+	io.ReaderAt
+	probe *concurrentSFTPReadProbe
+}
+
+func (r *concurrentSFTPReader) ReadAt(data []byte, offset int64) (int, error) {
+	r.probe.mu.Lock()
+	r.probe.active++
+	if r.probe.active > r.probe.maxActive {
+		r.probe.maxActive = r.probe.active
+	}
+	if r.probe.active >= 2 {
+		r.probe.overlapOnce.Do(func() { close(r.probe.overlapped) })
+	}
+	r.probe.mu.Unlock()
+
+	select {
+	case <-r.probe.overlapped:
+	case <-time.After(2 * time.Second):
+		r.probe.mu.Lock()
+		r.probe.active--
+		r.probe.mu.Unlock()
+		return 0, fmt.Errorf("SFTP reads did not overlap")
+	}
+
+	n, err := r.ReaderAt.ReadAt(data, offset)
+	r.probe.mu.Lock()
+	r.probe.active--
+	r.probe.mu.Unlock()
+	return n, err
+}
+
+func newTestSFTPClient(t *testing.T, handlers sftp.Handlers) *sftp.Client {
+	t.Helper()
+	serverConn, clientConn := net.Pipe()
+	server := sftp.NewRequestServer(serverConn, handlers)
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- server.Serve() }()
+
+	client, err := sftp.NewClientPipe(clientConn, clientConn)
+	if err != nil {
+		_ = server.Close()
+		t.Fatalf("NewClientPipe: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = server.Close()
+		_ = client.Close()
+		select {
+		case <-serverDone:
+		case <-time.After(2 * time.Second):
+			t.Error("SFTP request server did not stop")
+		}
+	})
+	return client
+}
+
+func TestCopyToSFTPContextPipelinesWritesAndReportsProgress(t *testing.T) {
+	handlers := sftp.InMemHandler()
+	probe := newConcurrentSFTPWriteProbe(handlers.FilePut)
+	handlers.FilePut = probe
+	client := newTestSFTPClient(t, handlers)
+
+	remoteFile, err := client.OpenFile("/upload.bin", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	data := bytes.Repeat([]byte("hexone-sftp-pipeline\n"), 32<<10)
+	progress := filesys.CopyProgress{BytesTotal: int64(len(data))}
+	var reports []int64
+	if err := copyToSFTPContext(context.Background(), remoteFile, bytes.NewReader(data), &progress, func(p filesys.CopyProgress) {
+		reports = append(reports, p.BytesDone)
+	}); err != nil {
+		_ = remoteFile.Close()
+		t.Fatalf("copyToSFTPContext: %v", err)
+	}
+	if err := remoteFile.Close(); err != nil {
+		t.Fatalf("Close upload: %v", err)
+	}
+
+	if got := probe.maximumActive(); got < 2 {
+		t.Fatalf("maximum concurrent SFTP writes = %d, want at least 2", got)
+	}
+	if got, want := progress.BytesDone, int64(len(data)); got != want {
+		t.Fatalf("progress bytes = %d, want %d", got, want)
+	}
+	if len(reports) == 0 || reports[len(reports)-1] != int64(len(data)) {
+		t.Fatalf("progress reports = %v, want final value %d", reports, len(data))
+	}
+	for i := 1; i < len(reports); i++ {
+		if reports[i] < reports[i-1] {
+			t.Fatalf("progress reports are not monotonic: %v", reports)
+		}
+	}
+
+	download, err := client.Open("/upload.bin")
+	if err != nil {
+		t.Fatalf("Open download: %v", err)
+	}
+	got, readErr := io.ReadAll(download)
+	closeErr := download.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read uploaded file: read=%v close=%v", readErr, closeErr)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("uploaded data differs: got %d bytes, want %d", len(got), len(data))
+	}
+}
+
+func TestCopyRegularToRemoteEndpointUsesPipelinedUpload(t *testing.T) {
+	handlers := sftp.InMemHandler()
+	probe := newConcurrentSFTPWriteProbe(handlers.FilePut)
+	handlers.FilePut = probe
+	client := newTestSFTPClient(t, handlers)
+	remote := &paneSSHSession{conn: newSharedSSHConn(sshClientBundle{sftp: client})}
+
+	src := filepath.Join(t.TempDir(), "source.bin")
+	data := bytes.Repeat([]byte("remote endpoint pipeline\n"), 24<<10)
+	if err := os.WriteFile(src, data, 0o640); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	entry := transferEntry{
+		srcPath: src,
+		rel:     ".",
+		mode:    info.Mode(),
+		modTime: info.ModTime(),
+		size:    info.Size(),
+	}
+	progress := filesys.CopyProgress{BytesTotal: info.Size()}
+	if err := copyRegularToEndpoint(
+		context.Background(),
+		copyEndpoint{},
+		copyEndpoint{remote: remote},
+		entry,
+		"/endpoint-copy.bin",
+		&progress,
+		nil,
+	); err != nil {
+		t.Fatalf("copyRegularToEndpoint: %v", err)
+	}
+	if got := probe.maximumActive(); got < 2 {
+		t.Fatalf("maximum concurrent SFTP writes = %d, want at least 2", got)
+	}
+	if got, want := progress.BytesDone, info.Size(); got != want {
+		t.Fatalf("progress bytes = %d, want %d", got, want)
+	}
+}
+
+func TestCopyFromSFTPContextPipelinesReadsAndReportsProgress(t *testing.T) {
+	handlers := sftp.InMemHandler()
+	probe := newConcurrentSFTPReadProbe(handlers.FileGet)
+	handlers.FileGet = probe
+	client := newTestSFTPClient(t, handlers)
+
+	data := bytes.Repeat([]byte("hexone-sftp-download-pipeline\n"), 32<<10)
+	upload, err := client.OpenFile("/download.bin", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	if err != nil {
+		t.Fatalf("OpenFile upload: %v", err)
+	}
+	if _, err := upload.Write(data); err != nil {
+		_ = upload.Close()
+		t.Fatalf("seed remote file: %v", err)
+	}
+	if err := upload.Close(); err != nil {
+		t.Fatalf("Close upload: %v", err)
+	}
+
+	remoteFile, err := client.Open("/download.bin")
+	if err != nil {
+		t.Fatalf("Open download: %v", err)
+	}
+	var dst bytes.Buffer
+	progress := filesys.CopyProgress{BytesTotal: int64(len(data))}
+	var reports []int64
+	if err := copyFromSFTPContext(context.Background(), &dst, remoteFile, &progress, func(p filesys.CopyProgress) {
+		reports = append(reports, p.BytesDone)
+	}); err != nil {
+		_ = remoteFile.Close()
+		t.Fatalf("copyFromSFTPContext: %v", err)
+	}
+	if err := remoteFile.Close(); err != nil {
+		t.Fatalf("Close download: %v", err)
+	}
+
+	if got := probe.maximumActive(); got < 2 {
+		t.Fatalf("maximum concurrent SFTP reads = %d, want at least 2", got)
+	}
+	if got, want := progress.BytesDone, int64(len(data)); got != want {
+		t.Fatalf("progress bytes = %d, want %d", got, want)
+	}
+	if len(reports) == 0 || reports[len(reports)-1] != int64(len(data)) {
+		t.Fatalf("progress reports = %v, want final value %d", reports, len(data))
+	}
+	for i := 1; i < len(reports); i++ {
+		if reports[i] < reports[i-1] {
+			t.Fatalf("progress reports are not monotonic: %v", reports)
+		}
+	}
+	if !bytes.Equal(dst.Bytes(), data) {
+		t.Fatalf("downloaded data differs: got %d bytes, want %d", dst.Len(), len(data))
+	}
+}
+
+func TestCopyRegularFromRemoteEndpointUsesPipelinedDownload(t *testing.T) {
+	handlers := sftp.InMemHandler()
+	probe := newConcurrentSFTPReadProbe(handlers.FileGet)
+	handlers.FileGet = probe
+	client := newTestSFTPClient(t, handlers)
+	remote := &paneSSHSession{conn: newSharedSSHConn(sshClientBundle{sftp: client})}
+
+	data := bytes.Repeat([]byte("remote download endpoint pipeline\n"), 24<<10)
+	upload, err := client.OpenFile("/endpoint-download.bin", os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	if err != nil {
+		t.Fatalf("OpenFile upload: %v", err)
+	}
+	if _, err := upload.Write(data); err != nil {
+		_ = upload.Close()
+		t.Fatalf("seed remote file: %v", err)
+	}
+	if err := upload.Close(); err != nil {
+		t.Fatalf("Close upload: %v", err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "destination.bin")
+	entry := transferEntry{
+		srcPath: "/endpoint-download.bin",
+		rel:     ".",
+		mode:    0o640,
+		modTime: time.Unix(1700000000, 0),
+		size:    int64(len(data)),
+	}
+	progress := filesys.CopyProgress{BytesTotal: int64(len(data))}
+	if err := copyRegularToEndpoint(
+		context.Background(),
+		copyEndpoint{remote: remote},
+		copyEndpoint{},
+		entry,
+		dst,
+		&progress,
+		nil,
+	); err != nil {
+		t.Fatalf("copyRegularToEndpoint: %v", err)
+	}
+	if got := probe.maximumActive(); got < 2 {
+		t.Fatalf("maximum concurrent SFTP reads = %d, want at least 2", got)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("downloaded data differs: got %d bytes, want %d", len(got), len(data))
+	}
+}
+
+func TestCopyProgressReaderStopsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	progress := filesys.CopyProgress{BytesDone: 7}
+	var reports []int64
+	reader := &copyProgressReader{
+		ctx:      ctx,
+		reader:   strings.NewReader("payload"),
+		progress: &progress,
+		report: func(p filesys.CopyProgress) {
+			reports = append(reports, p.BytesDone)
+		},
+	}
+
+	buf := make([]byte, 4)
+	if n, err := reader.Read(buf); n != 4 || err != nil {
+		t.Fatalf("first read = %d, %v; want 4, nil", n, err)
+	}
+	cancel()
+	if n, err := reader.Read(buf); n != 0 || err != context.Canceled {
+		t.Fatalf("canceled read = %d, %v; want 0, context.Canceled", n, err)
+	}
+	if got, want := progress.BytesDone, int64(11); got != want {
+		t.Fatalf("progress bytes = %d, want %d", got, want)
+	}
+	if len(reports) != 1 || reports[0] != 11 {
+		t.Fatalf("progress reports = %v, want [11]", reports)
+	}
+}
+
+func TestCopyProgressWriterStopsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	progress := filesys.CopyProgress{BytesDone: 7}
+	var reports []int64
+	var dst bytes.Buffer
+	writer := &copyProgressWriter{
+		ctx:      ctx,
+		writer:   &dst,
+		progress: &progress,
+		report: func(p filesys.CopyProgress) {
+			reports = append(reports, p.BytesDone)
+		},
+	}
+
+	if n, err := writer.Write([]byte("data")); n != 4 || err != nil {
+		t.Fatalf("first write = %d, %v; want 4, nil", n, err)
+	}
+	cancel()
+	if n, err := writer.Write([]byte("more")); n != 0 || err != context.Canceled {
+		t.Fatalf("canceled write = %d, %v; want 0, context.Canceled", n, err)
+	}
+	if got, want := progress.BytesDone, int64(11); got != want {
+		t.Fatalf("progress bytes = %d, want %d", got, want)
+	}
+	if len(reports) != 1 || reports[0] != 11 {
+		t.Fatalf("progress reports = %v, want [11]", reports)
+	}
+	if got := dst.String(); got != "data" {
+		t.Fatalf("destination = %q, want data", got)
 	}
 }
 
