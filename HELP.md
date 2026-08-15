@@ -255,7 +255,7 @@ Useful viewer keys:
 - hold `Shift` with those navigation keys to extend the byte selection from the active caret
 - moving away after entering one hex digit keeps the changed high nibble and preserves the byte's original low nibble
 - the Hex context menu offers `Copy as Hex` and `Copy as Text`
-- text copy preserves printable ASCII and writes other bytes as `\xNN` escapes
+- text copy recognizes printable UTF-8 text and writes invalid or non-text bytes as `\xNN` escapes
 - text saves preserve the detected UTF-8, UTF-16, or CP437 encoding, BOM, and CRLF line endings
 - read-only File mode uses the same compact line spacing and visual font weight as File edit mode
 - File edit mode follows the Word Wrap setting

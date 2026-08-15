@@ -109,6 +109,21 @@ func TestFormatHexSelectionTextCopyEscapesNonTextBytes(t *testing.T) {
 	}
 }
 
+func TestFormatHexSelectionTextCopyDecodesUTF8(t *testing.T) {
+	data := []byte("po muziejaus grįžti į Hotel Royal\n**~14:30–18:15** — poilsis\nPradžia: Eilė: CHF 300 už abu")
+	if got, want := formatHexSelectionTextCopy(data), string(data); got != want {
+		t.Fatalf("formatHexSelectionTextCopy = %q, want %q", got, want)
+	}
+}
+
+func TestFormatHexSelectionTextCopyRequiresValidUTF8Selection(t *testing.T) {
+	data := append([]byte("Aį"), 0xFF)
+	data = append(data, []byte("—B")...)
+	if got, want := formatHexSelectionTextCopy(data), `A\xC4\xAF\xFF\xE2\x80\x94B`; got != want {
+		t.Fatalf("formatHexSelectionTextCopy = %q, want %q", got, want)
+	}
+}
+
 func TestFormatHexSelectionTextCopyPreservesLineEndings(t *testing.T) {
 	tests := []struct {
 		name string
