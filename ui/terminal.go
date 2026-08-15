@@ -204,6 +204,8 @@ type terminalSession struct {
 	commandCursor    int
 	lastCommand      string
 	commandReliable  bool
+	lastSSHTarget    terminalSSHTarget
+	hasLastSSHTarget bool
 	keyRepeatActive  bool
 	keyRepeatKey     key.Name
 	keyRepeatStarted time.Time
@@ -3100,8 +3102,12 @@ func (ui *UI) setPaneDirToTerminalRemoteDir(idx int, loc terminalOSC7Location, n
 		return false
 	}
 	setup, found, ambiguous := findSSHSetupForTerminalOSC7(ui.fmCfg, loc)
+	var activeTarget terminalSSHTarget
+	activeTargetFound := false
 	if (!found || ambiguous) && ui.terminal != nil {
 		if target, ok := ui.terminal.activeSSHTarget(); ok {
+			activeTarget = target
+			activeTargetFound = true
 			if targetSetup, targetFound, targetAmbiguous := findSSHSetupForTerminalSSHTarget(ui.fmCfg, target); targetFound {
 				setup = targetSetup
 				found = true
@@ -3110,14 +3116,56 @@ func (ui *UI) setPaneDirToTerminalRemoteDir(idx int, loc terminalOSC7Location, n
 				ambiguous = true
 			}
 		}
+		if !activeTargetFound {
+			activeTarget, activeTargetFound = ui.terminal.trackedSSHTarget()
+			if activeTargetFound {
+				if targetSetup, targetFound, targetAmbiguous := findSSHSetupForTerminalSSHTarget(ui.fmCfg, activeTarget); targetFound {
+					setup = targetSetup
+					found = true
+					ambiguous = false
+				} else if !found && targetAmbiguous {
+					ambiguous = true
+				}
+			}
+		}
 	}
 	if ambiguous {
 		pane.setNotice("multiple SSH setups match terminal host: "+terminalOSC7DisplayHost(loc), now)
 		return false
 	}
 	if !found {
-		pane.setNotice("missing SSH setup for terminal host: "+terminalOSC7DisplayHost(loc), now)
-		return false
+		if !activeTargetFound {
+			activeTarget = terminalSSHTarget{
+				User:    loc.User,
+				Host:    loc.Host,
+				Port:    loc.Port,
+				HasPort: loc.HasPort,
+			}
+		}
+		if activeTarget.User == "" {
+			activeTarget.User = loc.User
+		}
+		if !activeTarget.HasPort && loc.HasPort {
+			activeTarget.Port = loc.Port
+			activeTarget.HasPort = true
+		}
+		spec, err := resolveOpenSSHConnectionSpecFunc(activeTarget)
+		if err != nil {
+			pane.setNotice("ssh config failed: "+err.Error(), now)
+			return false
+		}
+		if err := ui.connectPaneSSHSpec(idx, spec, loc.Dir, now); err != nil {
+			if ui.openSSHPassphraseRetry(idx, loc.Dir, err) {
+				pane.setNotice("SSH key passphrase required", now)
+				return true
+			}
+			pane.setNotice("ssh connect failed: "+err.Error(), now)
+			return false
+		}
+		if pane = ui.filePanes[idx]; pane != nil {
+			pane.setNotice("pane set to terminal dir", now)
+		}
+		return true
 	}
 	if pane.remoteConnected() && pane.remote != nil && sameSSHRemoteTarget(pane.remote.setup, setup) {
 		if ui.loadPaneDir(idx, loc.Dir) {
@@ -3170,10 +3218,11 @@ type terminalOSC7Location struct {
 }
 
 type terminalSSHTarget struct {
-	User    string
-	Host    string
-	Port    int
-	HasPort bool
+	User        string
+	Host        string
+	Port        int
+	HasPort     bool
+	OpenSSHArgs string
 }
 
 func (s *terminalSession) osc7Location() (terminalOSC7Location, bool) {
@@ -3437,12 +3486,13 @@ func terminalSSHTargetFromPS(rootPID int, psOutput string) (terminalSSHTarget, b
 }
 
 func parseTerminalSSHCommand(command string) (terminalSSHTarget, bool) {
-	fields := strings.Fields(strings.TrimSpace(command))
+	fields := splitOpenSSHConfigWords(strings.TrimSpace(command))
 	if len(fields) < 2 || terminalCommandBase(fields[0]) != "ssh" {
 		return terminalSSHTarget{}, false
 	}
 	target := terminalSSHTarget{Port: 22}
 	targetText := ""
+	var openSSHArgs []string
 	for i := 1; i < len(fields); i++ {
 		arg := fields[i]
 		if arg == "" {
@@ -3489,10 +3539,15 @@ func parseTerminalSSHCommand(command string) (terminalSSHTarget, bool) {
 			continue
 		}
 		if terminalSSHOptionConsumesNext(arg) {
+			if i+1 >= len(fields) {
+				return terminalSSHTarget{}, false
+			}
+			openSSHArgs = append(openSSHArgs, arg, fields[i+1])
 			i++
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
+			openSSHArgs = append(openSSHArgs, arg)
 			continue
 		}
 		targetText = arg
@@ -3501,6 +3556,7 @@ func parseTerminalSSHCommand(command string) (terminalSSHTarget, bool) {
 	if targetText == "" {
 		return terminalSSHTarget{}, false
 	}
+	target.OpenSSHArgs = encodeTerminalOpenSSHArgs(openSSHArgs)
 	if strings.HasPrefix(targetText, "ssh://") {
 		if u, err := url.Parse(targetText); err == nil && u != nil {
 			if u.User != nil && target.User == "" {
@@ -3526,6 +3582,17 @@ func parseTerminalSSHCommand(command string) (terminalSSHTarget, bool) {
 	}
 	target.Host = strings.Trim(strings.TrimSpace(targetText), "[]")
 	return target, target.Host != ""
+}
+
+func encodeTerminalOpenSSHArgs(args []string) string {
+	return strings.Join(args, "\x00")
+}
+
+func decodeTerminalOpenSSHArgs(encoded string) []string {
+	if encoded == "" {
+		return nil
+	}
+	return strings.Split(encoded, "\x00")
 }
 
 func terminalCommandBase(command string) string {

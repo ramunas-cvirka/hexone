@@ -63,6 +63,8 @@ var timeNowFunc = time.Now
 
 var openSSHClientsFunc = openSSHClients
 
+var openSSHConnectionSpecFunc = openSSHConnectionSpec
+
 const sshConnectBudget = 12 * time.Second
 
 type sharedSSHConn struct {
@@ -148,6 +150,10 @@ func (c *sharedSSHConn) commandClient() *ssh.Client {
 }
 
 func (c *sharedSSHConn) reconnectIfCurrent(setup fm.SSHSetup, failed *sftp.Client) error {
+	return c.reconnectSpecIfCurrent(directSSHConnectionSpec(setup), failed)
+}
+
+func (c *sharedSSHConn) reconnectSpecIfCurrent(spec sshConnectionSpec, failed *sftp.Client) error {
 	if c == nil {
 		return errors.New("sftp session is not connected")
 	}
@@ -185,7 +191,7 @@ func (c *sharedSSHConn) reconnectIfCurrent(setup fm.SSHSetup, failed *sftp.Clien
 	c.reconnecting = true
 	c.mu.Unlock()
 
-	bundle, err := openSSHClientsFunc(setup)
+	bundle, err := openSSHConnectionSpecFunc(spec)
 
 	var closeNow sshClientBundle
 	c.mu.Lock()
@@ -214,6 +220,7 @@ func (c *sharedSSHConn) reconnectIfCurrent(setup fm.SSHSetup, failed *sftp.Clien
 
 type paneSSHSession struct {
 	setup    fm.SSHSetup
+	spec     sshConnectionSpec
 	identity string
 	address  string
 	conn     *sharedSSHConn
@@ -305,7 +312,17 @@ func (s *paneSSHSession) reconnectSFTPClient(failed *sftp.Client) error {
 	if s == nil || s.conn == nil {
 		return errors.New("sftp session is not connected")
 	}
-	return s.conn.reconnectIfCurrent(s.setup, failed)
+	return s.conn.reconnectSpecIfCurrent(s.connectionSpec(), failed)
+}
+
+func (s *paneSSHSession) connectionSpec() sshConnectionSpec {
+	if s == nil {
+		return sshConnectionSpec{}
+	}
+	if strings.TrimSpace(s.spec.setup.Host) != "" {
+		return s.spec
+	}
+	return directSSHConnectionSpec(s.setup)
 }
 
 func (s *paneSSHSession) clone() *paneSSHSession {
@@ -315,6 +332,7 @@ func (s *paneSSHSession) clone() *paneSSHSession {
 	s.conn.retain()
 	return &paneSSHSession{
 		setup:    s.setup,
+		spec:     s.connectionSpec(),
 		identity: s.identity,
 		address:  s.address,
 		conn:     s.conn,
@@ -355,10 +373,26 @@ func (ui *UI) connectSSHModalToActivePane(now time.Time) error {
 	if err != nil {
 		return err
 	}
+	if request := ui.sshModal.transientConnect; request != nil {
+		if ui.sshModal.selected >= 0 && ui.sshModal.selected < len(ui.sshModal.setups) {
+			return ui.connectPaneSSH(request.pane, setup, request.targetDir, now)
+		}
+		spec := request.spec
+		spec.setup.User = strings.TrimSpace(setup.User)
+		spec.setup.Password = setup.Password
+		spec.setup.KeyPath = strings.TrimSpace(setup.KeyPath)
+		spec.setup.KeyPassphrase = setup.KeyPassphrase
+		spec.passphrase = setup.KeyPassphrase
+		return ui.connectPaneSSHSpec(request.pane, spec, request.targetDir, now)
+	}
 	return ui.connectPaneSSH(ui.activeFilePane, setup, "", now)
 }
 
 func (ui *UI) connectPaneSSH(idx int, setup fm.SSHSetup, targetDir string, now time.Time) error {
+	return ui.connectPaneSSHSpec(idx, directSSHConnectionSpec(setup), targetDir, now)
+}
+
+func (ui *UI) connectPaneSSHSpec(idx int, spec sshConnectionSpec, targetDir string, now time.Time) error {
 	if ui == nil {
 		return errors.New("ui is nil")
 	}
@@ -370,10 +404,11 @@ func (ui *UI) connectPaneSSH(idx int, setup fm.SSHSetup, targetDir string, now t
 		return errors.New("pane is nil")
 	}
 
-	setup, err := normalizeConnectSSHSetup(setup)
+	setup, err := normalizeConnectSSHSetupWithAuth(spec.setup, !spec.transient)
 	if err != nil {
 		return err
 	}
+	spec.setup = setup
 	var next *paneSSHSession
 	showConnectedNotice := true
 	if shared := ui.findReusableRemoteSession(idx, setup); shared != nil {
@@ -381,7 +416,7 @@ func (ui *UI) connectPaneSSH(idx int, setup fm.SSHSetup, targetDir string, now t
 		showConnectedNotice = false
 	}
 	if next == nil {
-		next, err = newPaneSSHSession(setup)
+		next, err = newPaneSSHSessionForSpec(spec)
 		if err != nil {
 			return err
 		}
@@ -557,6 +592,10 @@ func (ui *UI) currentSSHModalSetup() (fm.SSHSetup, error) {
 }
 
 func normalizeConnectSSHSetup(raw fm.SSHSetup) (fm.SSHSetup, error) {
+	return normalizeConnectSSHSetupWithAuth(raw, true)
+}
+
+func normalizeConnectSSHSetupWithAuth(raw fm.SSHSetup, requireExplicitAuth bool) (fm.SSHSetup, error) {
 	setup := fm.SSHSetup{
 		Name:          strings.TrimSpace(raw.Name),
 		Host:          strings.TrimSpace(raw.Host),
@@ -578,7 +617,7 @@ func normalizeConnectSSHSetup(raw fm.SSHSetup) (fm.SSHSetup, error) {
 	if setup.Port > 65535 {
 		return fm.SSHSetup{}, errors.New("port must be between 1 and 65535")
 	}
-	if setup.Password == "" && setup.KeyPath == "" {
+	if requireExplicitAuth && setup.Password == "" && setup.KeyPath == "" {
 		return fm.SSHSetup{}, errors.New("provide password or key path")
 	}
 	if setup.Name == "" {
@@ -717,19 +756,25 @@ func openSSHClients(setup fm.SSHSetup) (sshClientBundle, error) {
 }
 
 func newPaneSSHSession(setup fm.SSHSetup) (*paneSSHSession, error) {
-	setup, err := normalizeConnectSSHSetup(setup)
+	return newPaneSSHSessionForSpec(directSSHConnectionSpec(setup))
+}
+
+func newPaneSSHSessionForSpec(spec sshConnectionSpec) (*paneSSHSession, error) {
+	setup, err := normalizeConnectSSHSetupWithAuth(spec.setup, !spec.transient)
 	if err != nil {
 		return nil, err
 	}
-	bundle, err := openSSHClientsFunc(setup)
+	spec.setup = setup
+	bundle, err := openSSHConnectionSpecFunc(spec)
 	if err != nil {
 		return nil, err
 	}
 
 	return &paneSSHSession{
 		setup:    setup,
+		spec:     spec,
 		identity: sshSetupIdentity(setup),
-		address:  sshSetupAddress(setup),
+		address:  spec.address(),
 		conn:     newSharedSSHConn(bundle),
 	}, nil
 }

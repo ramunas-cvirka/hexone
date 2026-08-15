@@ -335,6 +335,55 @@ func TestNavigateRemoteFavoriteReusesOtherPaneSSHSessionBeforeSavedSetup(t *test
 	}
 }
 
+func TestNavigateRemoteFavoriteConnectsThroughOpenSSHWithoutSavedSetup(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldResolve := resolveOpenSSHConnectionSpecFunc
+	oldOpenSpec := openSSHConnectionSpecFunc
+	oldCloseSFTP := closeSFTPClientFunc
+	oldCloseSSH := closeSSHClientFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		resolveOpenSSHConnectionSpecFunc = oldResolve
+		openSSHConnectionSpecFunc = oldOpenSpec
+		closeSFTPClientFunc = oldCloseSFTP
+		closeSSHClientFunc = oldCloseSSH
+	})
+	closeSFTPClientFunc = func(*sftp.Client) {}
+	closeSSHClientFunc = func(*ssh.Client) {}
+
+	cfg := fm.DefaultConfig()
+	cfg.General.OpenFavoritesInNewTab = false
+	pane := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{fmCfg: cfg, filePanes: []*filePaneState{pane}}
+	client := new(sftp.Client)
+	resolveOpenSSHConnectionSpecFunc = func(target terminalSSHTarget) (sshConnectionSpec, error) {
+		if target.Host != "production" || target.User != "deploy" || target.Port != 2222 {
+			t.Fatalf("favorite target=%+v", target)
+		}
+		return sshConnectionSpec{
+			setup:     fm.SSHSetup{Host: "production", Port: 2222, User: "deploy"},
+			dialHost:  "srv.test",
+			transient: true,
+		}, nil
+	}
+	openSSHConnectionSpecFunc = func(sshConnectionSpec) (sshClientBundle, error) {
+		return sshClientBundle{sshClient: new(ssh.Client), sftpBase: new(ssh.Client), sftp: client}, nil
+	}
+	readDirSFTPFunc = func(got *sftp.Client, dir string) (filesys.Listing, error) {
+		if got != client || dir != "/var/log" {
+			t.Fatalf("readDir client=%p dir=%q", got, dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	if !ui.navigatePaneFavorite(0, "ssh://deploy@production:2222/var/log") {
+		t.Fatal("navigatePaneFavorite returned false")
+	}
+	if pane.remote == nil || pane.dir != "/var/log" {
+		t.Fatalf("favorite did not attach transient SSH session: %+v", pane)
+	}
+}
+
 func TestNavigateRemoteFavoriteNewTabIgnoresInheritedLocalLoad(t *testing.T) {
 	oldReadDir := readDirSFTPFunc
 	oldOpen := openSSHClientsFunc

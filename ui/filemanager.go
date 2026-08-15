@@ -2452,8 +2452,26 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 
 		setup, found := findSSHSetupForRemoteFavorite(ui.fmCfg, remoteLoc)
 		if !found {
-			pane.setNotice("missing SSH setup for favorite: "+displayRemoteFavoriteLocation(remoteLoc), time.Now())
-			return false
+			target := terminalSSHTarget{
+				User:    remoteLoc.User,
+				Host:    remoteLoc.Host,
+				Port:    remoteLoc.Port,
+				HasPort: true,
+			}
+			spec, err := resolveOpenSSHConnectionSpecFunc(target)
+			if err != nil {
+				pane.setNotice("ssh config failed: "+err.Error(), time.Now())
+				return false
+			}
+			if err := ui.connectPaneSSHSpec(idx, spec, remoteLoc.Dir, time.Now()); err != nil {
+				if ui.openSSHPassphraseRetry(idx, remoteLoc.Dir, err) {
+					pane.setNotice("SSH key passphrase required", time.Now())
+					return true
+				}
+				pane.setNotice("ssh connect failed: "+err.Error(), time.Now())
+				return false
+			}
+			return true
 		}
 		if err := ui.connectPaneSSH(idx, setup, remoteLoc.Dir, time.Now()); err != nil {
 			pane.setNotice("ssh connect failed: "+err.Error(), time.Now())

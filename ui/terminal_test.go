@@ -1451,6 +1451,22 @@ func TestParseTerminalSSHCommand(t *testing.T) {
 	}
 }
 
+func TestParseTerminalSSHCommandPreservesConnectionOptions(t *testing.T) {
+	target, ok := parseTerminalSSHCommand("ssh -F \"C:/ssh configs/custom.conf\" -i C:/keys/prod -J bastion -o StrictHostKeyChecking=yes deploy@production")
+	if !ok {
+		t.Fatal("parseTerminalSSHCommand failed")
+	}
+	wantOptions := []string{"-F", "C:/ssh configs/custom.conf", "-i", "C:/keys/prod", "-J", "bastion", "-o", "StrictHostKeyChecking=yes"}
+	if got, want := strings.Join(decodeTerminalOpenSSHArgs(target.OpenSSHArgs), "\n"), strings.Join(wantOptions, "\n"); got != want {
+		t.Fatalf("OpenSSH options=%q want %q", got, want)
+	}
+	wantCommandArgs := append([]string{"-G"}, wantOptions...)
+	wantCommandArgs = append(wantCommandArgs, "-l", "deploy", "--", "production")
+	if got, want := strings.Join(openSSHConfigCommandArgs(target), "\n"), strings.Join(wantCommandArgs, "\n"); got != want {
+		t.Fatalf("ssh -G args=%q want %q", got, want)
+	}
+}
+
 func TestTerminalSSHTargetFromPSFindsDescendantSSH(t *testing.T) {
 	ps := `
 100 1 /bin/zsh -l
@@ -1598,14 +1614,13 @@ func TestSetPaneDirToTerminalOSC7RemoteDirUsesActiveSSHCommandTarget(t *testing.
 	}
 }
 
-func TestSetPaneDirToTerminalOSC7RemoteDirRequiresSSHSetup(t *testing.T) {
-	oldOpen := openSSHClientsFunc
+func TestSetPaneDirToTerminalOSC7RemoteDirReportsOpenSSHConfigFailure(t *testing.T) {
+	oldResolve := resolveOpenSSHConnectionSpecFunc
 	t.Cleanup(func() {
-		openSSHClientsFunc = oldOpen
+		resolveOpenSSHConnectionSpecFunc = oldResolve
 	})
-	openSSHClientsFunc = func(fm.SSHSetup) (sshClientBundle, error) {
-		t.Fatal("missing terminal SSH setup should not dial")
-		return sshClientBundle{}, nil
+	resolveOpenSSHConnectionSpecFunc = func(terminalSSHTarget) (sshConnectionSpec, error) {
+		return sshConnectionSpec{}, errors.New("ssh executable unavailable")
 	}
 
 	cfg := fm.DefaultConfig()
@@ -1619,10 +1634,69 @@ func TestSetPaneDirToTerminalOSC7RemoteDirRequiresSSHSetup(t *testing.T) {
 
 	ui.terminal.writeOutput([]byte("\x1b]7;file://srv.test/var/log/app\x07"))
 	if ui.setPaneDirToTerminalDir(0, time.Now()) {
-		t.Fatal("setPaneDirToTerminalDir should fail without a saved SSH setup")
+		t.Fatal("setPaneDirToTerminalDir should fail when OpenSSH config resolution fails")
 	}
 	if pane := ui.filePanes[0]; pane == nil || pane.remote != nil {
 		t.Fatalf("pane should remain local, pane=%+v", pane)
+	}
+}
+
+func TestSetPaneDirToTerminalOSC7RemoteDirUsesTrackedSSHWithoutSetup(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldResolve := resolveOpenSSHConnectionSpecFunc
+	oldOpenSpec := openSSHConnectionSpecFunc
+	oldCloseSFTP := closeSFTPClientFunc
+	oldCloseSSH := closeSSHClientFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		resolveOpenSSHConnectionSpecFunc = oldResolve
+		openSSHConnectionSpecFunc = oldOpenSpec
+		closeSFTPClientFunc = oldCloseSFTP
+		closeSSHClientFunc = oldCloseSSH
+	})
+	closeSFTPClientFunc = func(*sftp.Client) {}
+	closeSSHClientFunc = func(*ssh.Client) {}
+
+	cfg := fm.DefaultConfig()
+	st := newTerminalSession(nil)
+	st.trackCommandInput([]byte("ssh production\r"))
+	ui := &UI{
+		fmCfg: cfg,
+		filePanes: []*filePaneState{
+			newFilePaneState(t.TempDir(), cfg),
+		},
+		terminal: st,
+	}
+	remoteClient := new(sftp.Client)
+	resolveOpenSSHConnectionSpecFunc = func(target terminalSSHTarget) (sshConnectionSpec, error) {
+		if target.Host != "production" {
+			t.Fatalf("tracked target=%+v want production alias", target)
+		}
+		return sshConnectionSpec{
+			setup:     fm.SSHSetup{Host: "production", Port: 22, User: "deploy"},
+			dialHost:  "srv.test",
+			transient: true,
+		}, nil
+	}
+	openSSHConnectionSpecFunc = func(spec sshConnectionSpec) (sshClientBundle, error) {
+		if spec.dialHost != "srv.test" {
+			t.Fatalf("dial host=%q want srv.test", spec.dialHost)
+		}
+		return sshClientBundle{sshClient: new(ssh.Client), sftpBase: new(ssh.Client), sftp: remoteClient}, nil
+	}
+	readDirSFTPFunc = func(client *sftp.Client, dir string) (filesys.Listing, error) {
+		if client != remoteClient || dir != "/var/log/app" {
+			t.Fatalf("readDir client=%p dir=%q", client, dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	st.writeOutput([]byte("\x1b]7;file://actual-host/var/log/app\x07"))
+	if !ui.setPaneDirToTerminalDir(0, time.Now()) {
+		t.Fatal("setPaneDirToTerminalDir returned false")
+	}
+	if pane := ui.filePanes[0]; pane.remote == nil || pane.dir != "/var/log/app" {
+		t.Fatalf("pane not connected through transient SSH spec: %+v", pane)
 	}
 }
 

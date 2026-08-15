@@ -47,16 +47,18 @@ type sshModalState struct {
 	keyPathEdit widget.Editor
 	keyPassEdit widget.Editor
 
-	savedSetups     []fm.SSHSetup
-	footerAnim      segmentedAnimState
-	setupHoverAnim  segmentedAnimState
-	setupSelectAnim segmentedAnimState
-	removeHoverAnim segmentedAnimState
-	addHoverAnim    segmentedAnimState
-	errText         string
-	keyFocus        dialogKeyboardFocusState
-	focus           sshModalFocus
-	actionFocus     sshModalAction
+	savedSetups      []fm.SSHSetup
+	footerAnim       segmentedAnimState
+	setupHoverAnim   segmentedAnimState
+	setupSelectAnim  segmentedAnimState
+	removeHoverAnim  segmentedAnimState
+	addHoverAnim     segmentedAnimState
+	errText          string
+	keyFocus         dialogKeyboardFocusState
+	focus            sshModalFocus
+	actionFocus      sshModalAction
+	transientConnect *sshTransientConnectRequest
+	focusPassphrase  bool
 }
 
 type sshModalFocus uint8
@@ -372,6 +374,9 @@ func (st *sshModalState) hasUnsavedChanges() bool {
 }
 
 func (st *sshModalState) saveLabel() string {
+	if st != nil && st.transientConnect != nil {
+		return "Save"
+	}
 	if st != nil && st.hasUnsavedChanges() {
 		return "Save (*)"
 	}
@@ -380,6 +385,9 @@ func (st *sshModalState) saveLabel() string {
 
 func (st *sshModalState) defaultAction() sshModalAction {
 	if st == nil {
+		return sshModalActionConnect
+	}
+	if st.transientConnect != nil {
 		return sshModalActionConnect
 	}
 	if st.hasUnsavedChanges() {
@@ -420,15 +428,16 @@ func (st *sshModalState) focusOrder() []sshModalFocus {
 	if st.selected >= 0 && st.selected < len(st.setups) {
 		order = append(order, sshModalFocusRemove)
 	}
-	order = append(order,
-		sshModalFocusHost,
-		sshModalFocusPort,
-		sshModalFocusUser,
-		sshModalFocusPassword,
-		sshModalFocusKeyPath,
-		sshModalFocusPassphrase,
-		sshModalFocusActions,
-	)
+	if st.transientConnect == nil {
+		order = append(order,
+			sshModalFocusHost,
+			sshModalFocusPort,
+			sshModalFocusUser,
+			sshModalFocusPassword,
+			sshModalFocusKeyPath,
+		)
+	}
+	order = append(order, sshModalFocusPassphrase, sshModalFocusActions)
 	return order
 }
 
@@ -437,7 +446,9 @@ func (st *sshModalState) canFocus(target sshModalFocus) bool {
 		return false
 	}
 	switch target {
-	case sshModalFocusAdd, sshModalFocusHost, sshModalFocusPort, sshModalFocusUser, sshModalFocusPassword, sshModalFocusKeyPath, sshModalFocusPassphrase, sshModalFocusActions:
+	case sshModalFocusHost, sshModalFocusPort, sshModalFocusUser, sshModalFocusPassword, sshModalFocusKeyPath:
+		return st.transientConnect == nil
+	case sshModalFocusAdd, sshModalFocusPassphrase, sshModalFocusActions:
 		return true
 	case sshModalFocusSetupsList:
 		return len(st.setups) > 0
@@ -524,6 +535,9 @@ func (st *sshModalState) stepAction(step int) bool {
 		return false
 	}
 	order := []sshModalAction{sshModalActionCancel, sshModalActionSave, sshModalActionConnect}
+	if st.transientConnect != nil {
+		order = []sshModalAction{sshModalActionCancel, sshModalActionConnect}
+	}
 	current := 0
 	for i, action := range order {
 		if action == st.actionFocus {
@@ -786,6 +800,9 @@ func (ui *UI) activateSSHModalAction(gtx layout.Context, st *sshModalState, acti
 		ui.closeSSHModal()
 		return true
 	case sshModalActionSave:
+		if st.transientConnect != nil {
+			return false
+		}
 		st.footerAnim.setPulse("save", gtx.Now)
 		if err := ui.saveSSHModal(); err != nil {
 			st.errText = err.Error()
@@ -812,6 +829,10 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		return layout.Dimensions{}
 	}
 	st.keyFocus.attach(gtx)
+	if st.focusPassphrase {
+		gtx.Execute(key.FocusCmd{Tag: &st.keyPassEdit})
+		st.focusPassphrase = false
+	}
 	st.syncFocus(gtx)
 
 	// Explicitly drain Ctrl/Cmd+F while modal is open to avoid macOS beep
@@ -970,7 +991,7 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		}
 	}
 	if st.saveClick.Clicked(gtx) {
-		if ui.activateSSHModalAction(gtx, st, sshModalActionSave) {
+		if st.transientConnect == nil && ui.activateSSHModalAction(gtx, st, sshModalActionSave) {
 			return layout.Dimensions{}
 		}
 	}
@@ -1092,7 +1113,11 @@ func (ui *UI) layoutSSHModalHeader(th *material.Theme, gtx layout.Context, st *s
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(th, "SSH Sessions")
+					title := "SSH Sessions"
+					if st != nil && st.transientConnect != nil {
+						title = "SSH Key Passphrase"
+					}
+					lbl := material.Body1(th, title)
 					lbl.Font.Typeface = ui.interfaceTypeface()
 					lbl.Font.Weight = font.Bold
 					lbl.TextSize = ui.scaleModalFontSize(12)
@@ -1362,6 +1387,7 @@ func (ui *UI) layoutSSHCloseButtonVisual(gtx layout.Context, hover float32, pres
 }
 
 func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *sshModalState) layout.Dimensions {
+	connectionFieldsEnabled := st.transientConnect == nil
 	identity, _ := st.currentEditorSetup()
 	identityLabel := sshSetupIdentity(identity)
 	visibleFocus := st.visibleFocus()
@@ -1387,12 +1413,12 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Flexed(1.0, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSSHField(th, gtx, "IP / Host", &st.hostEdit, "example.com", true, visibleFocus == sshModalFocusHost)
+					return ui.layoutSSHField(th, gtx, "IP / Host", &st.hostEdit, "example.com", connectionFieldsEnabled, visibleFocus == sshModalFocusHost)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedWidth(gtx, gtx.Dp(unit.Dp(72)), func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSSHField(th, gtx, "Port", &st.portEdit, "22", true, visibleFocus == sshModalFocusPort)
+						return ui.layoutSSHField(th, gtx, "Port", &st.portEdit, "22", connectionFieldsEnabled, visibleFocus == sshModalFocusPort)
 					})
 				}),
 			)
@@ -1401,11 +1427,11 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSSHField(th, gtx, "User", &st.userEdit, "root", true, visibleFocus == sshModalFocusUser)
+					return ui.layoutSSHField(th, gtx, "User", &st.userEdit, "root", connectionFieldsEnabled, visibleFocus == sshModalFocusUser)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSSHField(th, gtx, "Password", &st.passEdit, "optional", true, visibleFocus == sshModalFocusPassword)
+					return ui.layoutSSHField(th, gtx, "Password", &st.passEdit, "optional", connectionFieldsEnabled, visibleFocus == sshModalFocusPassword)
 				}),
 			)
 		}),
@@ -1413,7 +1439,7 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Flexed(1.3, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSSHField(th, gtx, "Key path", &st.keyPathEdit, "C:\\Users\\me\\.ssh\\id_ed25519", true, visibleFocus == sshModalFocusKeyPath)
+					return ui.layoutSSHField(th, gtx, "Key path", &st.keyPathEdit, "C:\\Users\\me\\.ssh\\id_ed25519", connectionFieldsEnabled, visibleFocus == sshModalFocusKeyPath)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				layout.Flexed(0.7, func(gtx layout.Context) layout.Dimensions {
@@ -1518,7 +1544,7 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 							saveLabel,
 							hoverSave,
 							pulseSave,
-							false,
+							st.transientConnect != nil,
 							&st.connectClick,
 							"Connect",
 							hoverConnect,

@@ -169,6 +169,8 @@ PROMPT_COMMAND="__osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 
 After reconnecting, `Set Left Pane to Terminal Dir` and `Set Right Pane to Terminal Dir` can use that OSC 7 value. If the remote OSC 7 hostname differs from the saved SSH setup host, Hexone also checks the active `ssh` process target to map the terminal session back to a saved SSH setup.
 
+If there is no matching Hexone SSH setup, Hexone can use the destination from the active terminal command. It asks the installed OpenSSH client for the effective `~/.ssh/config` values, then connects with a configured identity file or a key already loaded in `ssh-agent`. An encrypted key that is not available through the agent opens a one-time passphrase prompt. The remote host must already be present in the OpenSSH `known_hosts` file. `ProxyJump` and `ProxyCommand` configurations are reported as unsupported instead of being ignored.
+
 ## Custom Commands
 
 `F2` is for saved commands that run in the command-only viewer and are not tied to a single file. The editor stores up to 10 fixed slots, each with a short name and multi-line command body.
@@ -197,6 +199,8 @@ To manage SSH sessions:
 - save the session, then connect the active pane
 
 Saved passwords and private-key passphrases are stored in Windows Credential Manager, macOS Keychain, or the Linux Secret Service. They are not written to `hexone.yaml`; existing plaintext values are moved automatically the next time Hexone starts. If no secure credential service is available, the credentials can still be entered for a one-time connection but cannot be saved.
+
+Remote favorites do not require a separate Hexone SSH setup when their host can be resolved by OpenSSH configuration and authenticated through `ssh-agent` or an `IdentityFile`. Hexone SSH setups remain the first choice when a matching setup exists.
 
 Inside the internal viewer, the same shortcut opens Find instead of `SSH Sessions`.
 
