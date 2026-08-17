@@ -204,6 +204,27 @@ Saved passwords and private-key passphrases are stored in Windows Credential Man
 
 Remote favorites do not require a separate Hexone SSH setup when their host can be resolved by OpenSSH configuration and authenticated through `ssh-agent` or an `IdentityFile`. Hexone SSH setups remain the first choice when a matching setup exists.
 
+For a single SSH configuration shared by the terminal, Hexone, and other tools, define each server in `~/.ssh/config`:
+
+```sshconfig
+Host production
+  HostName 203.0.113.10
+  User root
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  AddKeysToAgent yes
+```
+
+Load a passphrase-protected key into the agent so Hexone does not need to ask for its passphrase on every connection:
+
+```sh
+ssh-add ~/.ssh/id_ed25519
+ssh-add -l
+ssh production
+```
+
+`ssh-add` asks for the passphrase once per agent lifetime; `ssh-add -l` confirms that the key is loaded. On macOS, use `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` and optionally add `UseKeychain yes` to the host entry to restore the key through Keychain. On Linux or Windows, ensure the OpenSSH agent is running before calling `ssh-add`. Connecting once with `ssh production` also records or verifies the server in `known_hosts`, which Hexone requires for configuration-only connections.
+
 Inside the internal viewer, the same shortcut opens Find instead of `SSH Sessions`.
 
 Once connected, a remote pane supports normal browsing plus viewer-based inspection, command-driven log viewing, and remote-assisted hex searching.
