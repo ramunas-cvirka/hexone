@@ -16,10 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/font/gofont"
 	"gioui.org/gpu/headless"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/text"
@@ -48,7 +50,7 @@ func TestHeadlessViewerFindModes(t *testing.T) {
 	binPath := filepath.Join(dir, "find-modes.bin")
 	pattern := []byte{0xDE, 0xAD, 0xBE, 0xEF}
 	block := append([]byte{0x10, 0x20, 0x30, 0x40}, pattern...)
-	block = append(block, []byte(" hex-context ")...)
+	block = append(block, []byte(" hex-context\n")...)
 	if err := os.WriteFile(binPath, bytes.Repeat(block, 14), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +133,14 @@ func TestHeadlessViewerFindModes(t *testing.T) {
 		t.Fatalf("file matches=%d want 14", len(st.find.matches))
 	}
 	shoot("file-find-results.png", frame())
+	router.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(850, 100)})
+	frame()
+	time.Sleep(110 * time.Millisecond)
+	shoot("file-find-hover-preview.png", frame())
+	router.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(850, 124)})
+	frame()
+	time.Sleep(24 * time.Millisecond)
+	shoot("file-find-cursor-motion.png", frame())
 
 	st.userBrowseUntil = time.Time{}
 	st.stream.clearSelection()
@@ -175,6 +185,17 @@ func TestHeadlessViewerFindModes(t *testing.T) {
 		t.Fatalf("hex text-preview state input=%v preview=%v matches=%d status=%q", st.find.hexInput, st.find.hexPreview, len(st.find.hexMatches), st.find.status)
 	}
 	shoot("hex-find-results.png", frame())
+	router.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(850, 76)})
+	frame()
+	time.Sleep(110 * time.Millisecond)
+	shoot("hex-find-hover-text-preview.png", frame())
+	if len(st.find.hexMatches) < 2 || len(viewerHexFindPreviewLines(st, st.find.hexMatches[1])) < 2 {
+		t.Fatal("second Hex match should expose detected multiline context")
+	}
+	router.Queue(pointer.Event{Kind: pointer.Move, Position: f32.Pt(850, 100)})
+	frame()
+	time.Sleep(110 * time.Millisecond)
+	shoot("hex-find-hover-preview.png", frame())
 
 	st.find.previewClick.Click()
 	frame()

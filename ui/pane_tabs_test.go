@@ -461,6 +461,17 @@ func TestTabStripUsesConfiguredFont(t *testing.T) {
 	}
 }
 
+func TestTabStripRejectsNonBundledFontAtRenderBoundary(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.General.Typeface = resources.BundledFontFamilyHackNerdFontMono
+	cfg.Tabs.Typeface = "Unavailable System Font"
+	ui := NewUI(cfg)
+
+	if got, want := ui.tabStripTypeface(), font.Typeface(resources.BundledFontFamilyHackNerdFontMono); got != want {
+		t.Fatalf("tab typeface=%q want bundled fallback %q", got, want)
+	}
+}
+
 func TestTabStripHeightGrowsWithConfiguredFont(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	ui := NewUI(cfg)

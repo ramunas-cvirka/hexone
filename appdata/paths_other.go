@@ -17,6 +17,10 @@ func SessionPath() string {
 	return sessionFileName
 }
 
+func HTTPCollectionsPath() string {
+	return httpCollectionsFileName
+}
+
 func ProtocolPath() string {
 	return protocolsFileName
 }

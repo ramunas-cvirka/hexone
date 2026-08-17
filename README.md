@@ -14,6 +14,7 @@ A fast dual-pane file manager for Windows, macOS, and Linux, with SSH/SFTP, an i
 - Integrated terminal with multiple tabs
 - Large-file viewing for logs and binary data
 - Hex-to-ASCII and configurable protocol-analysis tools
+- Built-in HTTP client with local YAML collections and environments
 
 <p align="center">
   <img src="assets/win-screenshots/viewer_pdf.jpg" alt="Hexone PDF viewer with search" width="49%" />
@@ -95,7 +96,7 @@ Hexone keeps its settings in:
 - **Windows portable** — same folder as the executable
 - **Windows MSIX** — the package's `LocalState` folder under `%LOCALAPPDATA%\Packages\`
 
-The main config file is `hexone.yaml`; Hexone creates it on first run. SSH passwords and key passphrases are stored in the operating system's secure credential store.
+The main config file is `hexone.yaml`; Hexone creates it on first run. HTTP client collections and environments are stored separately in `hexone-http.yaml`. SSH passwords and key passphrases are stored in the operating system's secure credential store.
 
 ## License
 

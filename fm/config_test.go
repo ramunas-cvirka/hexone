@@ -343,6 +343,12 @@ func TestTerminalAcceleratedKeysDefaultsOnAndCanBeDisabled(t *testing.T) {
 	if cfg.Terminal.Maximized {
 		t.Fatal("default terminal should not be maximized")
 	}
+	if got, want := cfg.Terminal.PreviewStart, 0; got != want {
+		t.Fatalf("default terminal preview start=%d want %d", got, want)
+	}
+	if got, want := cfg.Terminal.PreviewEnd, 2; got != want {
+		t.Fatalf("default terminal preview end=%d want %d", got, want)
+	}
 
 	raw := `
 general:
@@ -355,6 +361,9 @@ general:
 	cfg.normalize()
 	if !cfg.Terminal.AcceleratedKeys {
 		t.Fatal("decoded config should keep terminal accelerated keys enabled when omitted")
+	}
+	if cfg.Terminal.PreviewStart != 0 || cfg.Terminal.PreviewEnd != 2 {
+		t.Fatalf("decoded config should keep default preview range, got %d..%d", cfg.Terminal.PreviewStart, cfg.Terminal.PreviewEnd)
 	}
 
 	raw = `
@@ -381,6 +390,49 @@ terminal:
 	cfg.normalize()
 	if !cfg.Terminal.Maximized {
 		t.Fatal("terminal maximized state should preserve explicit true")
+	}
+}
+
+func TestTerminalPreviewRangeNormalizesOffsets(t *testing.T) {
+	if start, end := NormalizeTerminalPreviewRange(-1, 3); start != -1 || end != 3 {
+		t.Fatalf("preview range=%d..%d want -1..3", start, end)
+	}
+	if start, end := NormalizeTerminalPreviewRange(-99, 99); start != -8 || end != 8 {
+		t.Fatalf("clamped preview range=%d..%d want -8..8", start, end)
+	}
+	if start, end := NormalizeTerminalPreviewRange(4, -3); start != 0 || end != 0 {
+		t.Fatalf("current-line invariant range=%d..%d want 0..0", start, end)
+	}
+}
+
+func TestViewerPreviewRangeDefaultsAndNormalizesOffsets(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.Viewer.PreviewStart != 0 || cfg.Viewer.PreviewEnd != 2 {
+		t.Fatalf("default viewer preview range=%d..%d want 0..2", cfg.Viewer.PreviewStart, cfg.Viewer.PreviewEnd)
+	}
+	if cfg.Viewer.HexPreviewRows != 2 {
+		t.Fatalf("default viewer hex preview rows=%d want 2", cfg.Viewer.HexPreviewRows)
+	}
+	if got := NormalizeViewerHexPreviewRows(99); got != 8 {
+		t.Fatalf("clamped viewer hex preview rows=%d want 8", got)
+	}
+	if start, end := NormalizeViewerPreviewRange(-2, 4); start != -2 || end != 4 {
+		t.Fatalf("viewer preview range=%d..%d want -2..4", start, end)
+	}
+	if start, end := NormalizeViewerPreviewRange(-99, 99); start != -8 || end != 8 {
+		t.Fatalf("clamped viewer preview range=%d..%d want -8..8", start, end)
+	}
+
+	var decoded Config
+	if err := yaml.Unmarshal([]byte("general:\n  font_size_sp: 16\n"), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	decoded.normalize()
+	if decoded.Viewer.PreviewStart != 0 || decoded.Viewer.PreviewEnd != 2 {
+		t.Fatalf("omitted viewer preview range=%d..%d want 0..2", decoded.Viewer.PreviewStart, decoded.Viewer.PreviewEnd)
+	}
+	if decoded.Viewer.HexPreviewRows != 2 {
+		t.Fatalf("omitted viewer hex preview rows=%d want 2", decoded.Viewer.HexPreviewRows)
 	}
 }
 
@@ -487,6 +539,29 @@ func TestDefaultConfigSerializesTabs(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("serialized config missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestViewerEditorIndentConfigNormalizesAndSerializes(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Viewer.EditorIndentStyle = "space"
+	cfg.Viewer.EditorTabSize = 2
+	cfg.normalize()
+	if cfg.Viewer.EditorIndentStyle != ViewerEditorIndentSpaces || cfg.Viewer.EditorTabSize != 2 {
+		t.Fatalf("viewer editor indentation=%q/%d", cfg.Viewer.EditorIndentStyle, cfg.Viewer.EditorTabSize)
+	}
+	out := string(mustMarshalConfig(t, cfg))
+	for _, want := range []string{"editor_indent_style: spaces", "editor_tab_size: 2"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("serialized config missing %q:\n%s", want, out)
+		}
+	}
+
+	cfg.Viewer.EditorIndentStyle = "invalid"
+	cfg.Viewer.EditorTabSize = 99
+	cfg.normalize()
+	if cfg.Viewer.EditorIndentStyle != ViewerEditorIndentAuto || cfg.Viewer.EditorTabSize != 4 {
+		t.Fatalf("invalid viewer editor indentation normalized to %q/%d", cfg.Viewer.EditorIndentStyle, cfg.Viewer.EditorTabSize)
 	}
 }
 

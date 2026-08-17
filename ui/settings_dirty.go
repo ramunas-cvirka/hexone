@@ -34,9 +34,10 @@ func (st *settingsModalState) draftSignature() string {
 		}),
 		FilenameRules: fmt.Sprintf("%#v|%#v|%#v|%#v",
 			st.filenameAgeEntries, st.filenamePermEntries, st.filenameExtEntries, st.filenameSizeEntries),
-		ViewerFields: fmt.Sprintf("%q|%t|%t|%t",
+		ViewerFields: fmt.Sprintf("%q|%t|%t|%t|%d|%d|%d",
 			[]string{st.viewCommandEdit.Text(), st.viewShellEdit.Text(), st.viewRemoteSearchCommandEdit.Text()},
-			st.viewSmoothScrollingBool.Value, st.viewShowLineNumbersBool.Value, st.viewHideFunctionBarBool.Value),
+			st.viewSmoothScrollingBool.Value, st.viewShowLineNumbersBool.Value, st.viewHideFunctionBarBool.Value,
+			st.viewPreviewStart, st.viewPreviewEnd, st.viewHexPreviewRows),
 		ViewerEntries: fmt.Sprintf("%#v|%#v|%#v", st.viewTargetEntries, st.viewRuleEntries, st.viewAssocEntries),
 		Fonts: fmt.Sprintf("%q|%v", []string{
 			st.interfaceFontFamily, st.currentDirFontFamily, st.paneFontFamily, st.tabsFontFamily,
@@ -59,7 +60,7 @@ func (st *settingsModalState) draftSignature() string {
 		PaneColumns: fmt.Sprintf("%v|%v|%t|%q",
 			st.paneFullChars, st.paneBriefChars, st.paneShowPermissions, st.panePermissionFormat),
 		PaneDates:  fmt.Sprintf("%q|%q", st.paneDateFormatEdit.Text(), st.paneDateFallbackFormats),
-		Terminal:   fmt.Sprintf("%t", st.terminalAcceleratedKeysBool.Value),
+		Terminal:   fmt.Sprintf("%t|%d|%d", st.terminalAcceleratedKeysBool.Value, st.terminalPreviewStart, st.terminalPreviewEnd),
 		ConfigYAML: st.configEdit.Text(),
 	}
 	return fmt.Sprintf("%#v", snapshot)

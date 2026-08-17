@@ -4,6 +4,7 @@
 package ui
 
 import (
+	resources "hexone"
 	"hexone/fm"
 	uitheme "hexone/ui/theme"
 	"image"
@@ -55,6 +56,7 @@ type appTabStripGeometry struct {
 type appTabStripStyle struct {
 	open             bool
 	activeBackground color.NRGBA
+	keyboardFocus    color.NRGBA
 }
 
 type filePaneTabSet struct {
@@ -86,11 +88,12 @@ type terminalTabSet struct {
 }
 
 type appTabItem struct {
-	title     string
-	active    bool
-	remoteKey string
-	remoteTip string
-	remote    *remoteIndicatorHover
+	title           string
+	active          bool
+	keyboardFocused bool
+	remoteKey       string
+	remoteTip       string
+	remote          *remoteIndicatorHover
 }
 
 type remoteIndicatorHover struct {
@@ -220,6 +223,46 @@ func (ui *UI) activateFilePaneTab(paneIdx, tabIdx int) bool {
 	return true
 }
 
+func (ui *UI) activateFilePaneStateTab(paneIdx int, target *filePaneState) bool {
+	if ui == nil || target == nil {
+		return false
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return false
+	}
+	for tabIdx, pane := range ui.filePaneTabs[paneIdx].tabs {
+		if pane == target {
+			return ui.activateFilePaneTab(paneIdx, tabIdx)
+		}
+	}
+	return false
+}
+
+func (ui *UI) cleanupCanceledSSHTransientTab(request *sshTransientConnectRequest) {
+	if ui == nil || request == nil || !request.removeTabOnCancel || request.targetTab == nil {
+		return
+	}
+	ui.ensureFilePaneTabs()
+	paneIdx := request.pane
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return
+	}
+	targetIdx := -1
+	for tabIdx, pane := range ui.filePaneTabs[paneIdx].tabs {
+		if pane == request.targetTab {
+			targetIdx = tabIdx
+			break
+		}
+	}
+	if targetIdx >= 0 {
+		ui.closeFilePaneTab(paneIdx, targetIdx)
+	}
+	if request.restoreTab != nil {
+		ui.activateFilePaneStateTab(paneIdx, request.restoreTab)
+	}
+}
+
 func (ui *UI) stepFilePaneTab(paneIdx, step int) bool {
 	if ui == nil {
 		return false
@@ -277,6 +320,46 @@ func (ui *UI) addFilePaneTab(paneIdx int) bool {
 	set.scroll = tabScrollToActive(set.scroll, set.active)
 	ui.filePanes[paneIdx] = pane
 	ui.requestPaneLoadWithSelection(paneIdx, dir, "", "", 0)
+	return true
+}
+
+func (ui *UI) addFilePaneTabForRemoteSync(paneIdx int, now time.Time) bool {
+	if ui == nil {
+		return false
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) || paneIdx >= len(ui.filePanes) {
+		return false
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	if len(set.tabs) >= tabStripMaxTabsPerPane {
+		if pane := ui.filePanes[paneIdx]; pane != nil {
+			pane.setNotice("tab limit reached", now)
+		}
+		return false
+	}
+	base := ui.filePanes[paneIdx]
+	dir := "."
+	if base != nil {
+		if base.remoteConnected() {
+			dir = strings.TrimSpace(base.localDirBeforeRemote)
+		} else {
+			dir = strings.TrimSpace(base.dir)
+			if base.loading && strings.TrimSpace(base.loadingDir) != "" {
+				dir = strings.TrimSpace(base.loadingDir)
+			}
+		}
+	}
+	if dir == "" {
+		dir = "."
+	}
+	pane := newFilePaneState(dir, ui.fmCfg)
+	ui.installFilePaneHandlers(paneIdx, pane)
+	set.tabs = append(set.tabs, pane)
+	set.active = len(set.tabs) - 1
+	set.scroll = tabScrollToActive(set.scroll, set.active)
+	ui.filePanes[paneIdx] = pane
+	ui.setActiveFilePane(paneIdx)
 	return true
 }
 
@@ -689,6 +772,13 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 		if style.open && item.active {
 			bg = style.activeBackground
 		}
+		focusColor := style.keyboardFocus
+		if focusColor.A == 0 {
+			focusColor = ui.tabStripAccentColor(idx)
+		}
+		if item.keyboardFocused {
+			fg = focusColor
+		}
 		if bg.A != 0 {
 			paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
 		}
@@ -703,7 +793,7 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 		if !closable {
 			rightPad = unit.Dp(tabStripTitlePadDp)
 		}
-		return layout.Inset{Left: unit.Dp(tabStripTitlePadDp), Right: rightPad, Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		dimensions := layout.Inset{Left: unit.Dp(tabStripTitlePadDp), Right: rightPad, Top: unit.Dp(1), Bottom: unit.Dp(1)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if item.remoteKey == "" {
@@ -744,6 +834,15 @@ func (ui *UI) layoutTabStripTab(th *material.Theme, gtx layout.Context, item app
 				}),
 			)
 		})
+		if item.keyboardFocused && dimensions.Size.X > 0 && dimensions.Size.Y > 0 {
+			indicatorHeight := max(1, gtx.Dp(unit.Dp(2)))
+			indicatorPad := gtx.Dp(unit.Dp(5))
+			if indicatorPad*2 >= dimensions.Size.X {
+				indicatorPad = 0
+			}
+			paint.FillShape(gtx.Ops, focusColor, clip.Rect(image.Rect(indicatorPad, dimensions.Size.Y-indicatorHeight, dimensions.Size.X-indicatorPad, dimensions.Size.Y)).Op())
+		}
+		return dimensions
 	})
 }
 
@@ -1430,6 +1529,9 @@ func tabStripTitleTextWidth(th *material.Theme, gtx layout.Context, face font.Ty
 
 func (ui *UI) tabStripTypeface() font.Typeface {
 	if ui == nil || ui.fmCfg == nil || ui.fmCfg.Tabs.Typeface == "" {
+		return ui.mainTypeface()
+	}
+	if !resources.IsBundledFontFamily(ui.fmCfg.Tabs.Typeface) {
 		return ui.mainTypeface()
 	}
 	return font.Typeface(ui.fmCfg.Tabs.Typeface)

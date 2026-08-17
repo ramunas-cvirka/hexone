@@ -86,3 +86,12 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Redesigned the file-pane tabs and current-directory line. Active tabs connect to the current-directory line through a notched frame. The line includes breadcrumbs, editable filters, and pane controls. Brief mode now sizes columns to their contents.
 - Added terminal snippets with global, directory, and Git-repository scopes.
 - Redesigned the Protocol Analyzer for clearer input, navigation, and decoding.
+
+## v1.2.0 - 2026-08-17
+
+- Added a built-in HTTP client with YAML-backed collections, environments, variable substitution, request authentication, formatted responses, and OS-secured secrets.
+- Added rendered Markdown previews with headings, lists, tables, code blocks, selectable source text, and safe link handling.
+- Unified Find across File, Hex, Cmd, and terminal views with keyboard-navigable contextual results. Improved terminal `Ctrl+C` and middle-click clipboard behavior.
+- Greatly accelerated SFTP transfers, especially uploads, by pipelining remote I/O. Redesigned copy and move overwrite confirmations to preview multiple conflicts and source/destination differences.
+- Improved viewer editing with automatic or configurable tabs/spaces indentation, reduced syntax-highlighting flicker, external file-size change detection, and UTF-8-aware Hex `Copy as Text`.
+- Expanded terminal-to-pane SSH sync: no saved Hexone SSH setup or remote shell configuration is required; Hexone uses OpenSSH configuration and `ssh-agent`, queries the remote directory on demand, preserves or reuses server tabs, and multiplexes SFTP and commands over one connection.

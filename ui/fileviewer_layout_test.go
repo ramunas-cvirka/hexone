@@ -80,6 +80,120 @@ func TestFileViewerHexContextMenuHasCopyFormatsWithoutWordWrap(t *testing.T) {
 	}
 }
 
+func TestFileViewerHexContextMenuCopiesSelection(t *testing.T) {
+	oldWriteNow := writeFileViewerClipboardNow
+	writeFileViewerClipboardNow = func(string) error { return nil }
+	t.Cleanup(func() { writeFileViewerClipboardNow = oldWriteNow })
+
+	for _, tc := range []struct {
+		name string
+		row  int
+		want string
+	}{
+		{name: "hex", row: 0, want: "486900FF"},
+		{name: "text", row: 1, want: `Hi\x00\xFF`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ui := NewUI(fm.DefaultConfig())
+			v := newHexViewerState()
+			v.fileSize = 4
+			v.buffer = []byte{'H', 'i', 0x00, 0xFF}
+			v.setSelectionRange(0, 4)
+			st := &fileViewerState{
+				mode:         "hex",
+				hex:          v,
+				menuOpen:     true,
+				menuPos:      image.Pt(40, 40),
+				menuOpenedAt: time.Now().Add(-time.Second),
+			}
+			ui.fileViewer = st
+
+			router := new(input.Router)
+			gtx := layout.Context{
+				Ops:         new(op.Ops),
+				Source:      router.Source(),
+				Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+				Constraints: layout.Exact(image.Pt(640, 480)),
+				Now:         time.Now(),
+			}
+			frame := func() {
+				gtx.Ops.Reset()
+				ui.layoutFileViewerContextMenu(material.NewTheme(), gtx, st)
+				router.Frame(gtx.Ops)
+			}
+			frame()
+			rowH := ui.fileContextMenuRowHeight(gtx, fileContextMenuItem{Label: "Copy as Hex"})
+			pos := f32.Pt(float32(st.menuRect.Min.X+20), float32(st.menuRect.Min.Y+tc.row*rowH+rowH/2))
+			router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos})
+			frame()
+			router.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos})
+			frame()
+
+			mime, got, ok := router.WriteClipboard()
+			if !ok {
+				t.Fatal("context menu action did not issue a clipboard write")
+			}
+			if mime != "application/text" || string(got) != tc.want {
+				t.Fatalf("clipboard=(%q, %q), want (%q, %q)", mime, got, "application/text", tc.want)
+			}
+			wantStatus := "copied as " + tc.name
+			if st.status != wantStatus {
+				t.Fatalf("status=%q, want %q", st.status, wantStatus)
+			}
+		})
+	}
+}
+
+func TestFileViewerLayoutHexContextMenuCopiesSelection(t *testing.T) {
+	oldWriteNow := writeFileViewerClipboardNow
+	writeFileViewerClipboardNow = func(string) error { return nil }
+	t.Cleanup(func() { writeFileViewerClipboardNow = oldWriteNow })
+
+	ui := NewUI(fm.DefaultConfig())
+	v := newHexViewerState()
+	v.fileSize = 4
+	v.buffer = []byte{'H', 'i', 0x00, 0xFF}
+	v.setSelectionRange(0, 4)
+	st := &fileViewerState{
+		mode:     "hex",
+		hex:      v,
+		name:     "sample.bin",
+		status:   "file: 4 bytes",
+		resultCh: make(chan fileViewerResult, 1),
+	}
+	ui.fileViewer = st
+	th := material.NewTheme()
+	router := new(input.Router)
+	now := time.Now()
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Source:      router.Source(),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(800, 600)),
+		Now:         now,
+	}
+	frame := func() {
+		gtx.Ops.Reset()
+		ui.layoutFileViewer(th, gtx)
+		router.Frame(gtx.Ops)
+		gtx.Now = gtx.Now.Add(time.Millisecond)
+	}
+	frame()
+	st.openContextMenu(image.Pt(200, 200), now.Add(-time.Second))
+	frame()
+	rowH := ui.fileContextMenuRowHeight(gtx, fileContextMenuItem{Label: "Copy as Hex"})
+	pos := f32.Pt(float32(st.menuRect.Min.X+20), float32(st.menuRect.Min.Y+rowH/2))
+	router.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos})
+	frame()
+	router.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos})
+	frame()
+
+	_, got, ok := router.WriteClipboard()
+	if !ok || string(got) != "486900FF" {
+		t.Fatalf("clipboard=(%t, %q), want (true, %q); status=%q menuOpen=%t", ok, got, "486900FF", st.status, st.menuOpen)
+	}
+}
+
 func TestFileViewerRootPressCancelsCommandEditWithoutPopup(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	st := &fileViewerState{

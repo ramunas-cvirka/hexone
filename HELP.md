@@ -83,7 +83,7 @@ Use this when a folder makes more sense grouped by modification time, extension,
 - `F6` moves or renames.
 - `F7` creates a file or folder.
 - `F8` or `Delete` deletes selected items. In **Settings → File panes → Other**, deletion can use the local system Trash / Recycle Bin and can optionally skip confirmation. SSH deletions are always permanent.
-- `F9` opens the Tools menu (`Multi-Rename`, `Hex to ASCII`, `Protocol Analyzer`, `Settings`).
+- `F9` opens the Tools menu (`Multi-Rename`, `Hex to ASCII`, `Protocol Analyzer`, `HTTP Client`, `Settings`).
 - `Ctrl+M` / `Cmd+M` opens Multi-Rename for the current file-pane selection.
 - `F10` exits the app.
 - `F11` hides or shows the function key bar.
@@ -137,7 +137,7 @@ Right-click opens the terminal context menu. It can:
 
 - copy, paste, or select the full terminal buffer
 - send `cd` commands to move the terminal to the left or right pane's local directory
-- set the left or right pane to the terminal's current directory, including supported SSH sessions that report their location
+- set the left or right pane to the terminal's current directory, including SSH shells through OSC 7 tracking or an on-demand directory query
 
 For local shells, Hexone can usually read the terminal process current directory directly.
 
@@ -156,7 +156,9 @@ Use the `☆` button at the right side of the terminal tab row, or `Ctrl+Shift+P
 
 When the current terminal is inside a local Git repository, new snippets default to repository scope. Outside a repository they default to directory scope when the terminal location is available, and otherwise to global scope. Repository scope is unavailable for remote terminals because Hexone cannot safely infer the remote repository root without running a command.
 
-For SSH shells, Hexone needs the remote shell to emit OSC 7 working-directory updates. Hexone can parse OSC 7 and use it to open the matching remote directory in a file pane, but it cannot infer the remote directory from a prompt alone.
+For SSH shells that already emit OSC 7 working-directory updates, Hexone continuously tracks the reported remote directory. No remote-shell configuration is required for on-demand pane sync: if an active SSH shell has not reported OSC 7, `Set Left Pane to Terminal Dir` and `Set Right Pane to Terminal Dir` inject a one-shot `printf` command at the empty shell prompt to query `$PWD`. Leave full-screen programs and clear any partially typed command before using the action.
+
+Remote terminal sync preserves existing pane tabs. If the chosen pane already has a tab connected to the terminal's SSH server, Hexone activates that tab and changes only its directory. Otherwise it opens the server in a new pane tab instead of replacing the currently selected local or remote tab.
 
 If your remote shell does not already emit OSC 7, add something like this to the remote `~/.bashrc`:
 
@@ -167,7 +169,9 @@ __osc7() {
 PROMPT_COMMAND="__osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 ```
 
-After reconnecting, `Set Left Pane to Terminal Dir` and `Set Right Pane to Terminal Dir` can use that OSC 7 value. If the remote OSC 7 hostname differs from the saved SSH setup host, Hexone also checks the active `ssh` process target to map the terminal session back to a saved SSH setup.
+After reconnecting, Hexone can use those OSC 7 updates without injecting a command. If the remote OSC 7 hostname differs from the saved SSH setup host, Hexone also checks the active `ssh` process target to map the terminal session back to a saved SSH setup.
+
+If there is no matching Hexone SSH setup, Hexone can use the destination from the active terminal command. It asks the installed OpenSSH client for the effective `~/.ssh/config` values, then connects with a configured identity file or a key already loaded in `ssh-agent`. An encrypted key that is not available through the agent opens a one-time passphrase prompt. The remote host must already be present in the OpenSSH `known_hosts` file. `ProxyJump` and `ProxyCommand` configurations are reported as unsupported instead of being ignored.
 
 ## Custom Commands
 
@@ -197,6 +201,29 @@ To manage SSH sessions:
 - save the session, then connect the active pane
 
 Saved passwords and private-key passphrases are stored in Windows Credential Manager, macOS Keychain, or the Linux Secret Service. They are not written to `hexone.yaml`; existing plaintext values are moved automatically the next time Hexone starts. If no secure credential service is available, the credentials can still be entered for a one-time connection but cannot be saved.
+
+Remote favorites do not require a separate Hexone SSH setup when their host can be resolved by OpenSSH configuration and authenticated through `ssh-agent` or an `IdentityFile`. Hexone SSH setups remain the first choice when a matching setup exists.
+
+For a single SSH configuration shared by the terminal, Hexone, and other tools, define each server in `~/.ssh/config`:
+
+```sshconfig
+Host production
+  HostName 203.0.113.10
+  User root
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  AddKeysToAgent yes
+```
+
+Load a passphrase-protected key into the agent so Hexone does not need to ask for its passphrase on every connection:
+
+```sh
+ssh-add ~/.ssh/id_ed25519
+ssh-add -l
+ssh production
+```
+
+`ssh-add` asks for the passphrase once per agent lifetime; `ssh-add -l` confirms that the key is loaded. On macOS, use `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` and optionally add `UseKeychain yes` to the host entry to restore the key through Keychain. On Linux or Windows, ensure the OpenSSH agent is running before calling `ssh-add`. Connecting once with `ssh production` also records or verifies the server in `known_hosts`, which Hexone requires for configuration-only connections.
 
 Inside the internal viewer, the same shortcut opens Find instead of `SSH Sessions`.
 
@@ -255,7 +282,7 @@ Useful viewer keys:
 - hold `Shift` with those navigation keys to extend the byte selection from the active caret
 - moving away after entering one hex digit keeps the changed high nibble and preserves the byte's original low nibble
 - the Hex context menu offers `Copy as Hex` and `Copy as Text`
-- text copy preserves printable ASCII and writes other bytes as `\xNN` escapes
+- text copy recognizes printable UTF-8 text and writes invalid or non-text bytes as `\xNN` escapes
 - text saves preserve the detected UTF-8, UTF-16, or CP437 encoding, BOM, and CRLF line endings
 - read-only File mode uses the same compact line spacing and visual font weight as File edit mode
 - File edit mode follows the Word Wrap setting
@@ -427,6 +454,28 @@ Notes:
 - `word_wrap` controls File and Cmd text and can also be toggled from their right-click menu
 - `command_auto_refresh` matters most for non-streaming command mode
 - Settings -> Viewer exposes the same priority order directly in the UI, along with smooth scrolling, line numbers, and viewer auto-hide
+
+## HTTP Client
+
+Open **F9 → HTTP Client** for a compact request workbench.
+
+- The left pane lists collections, folders, and saved requests from `hexone-http.yaml`. Use the connected `[ + ]` menu to add a request, folder, or collection to the selected part of the tree; click collection or folder rows to collapse or expand them.
+- Press `Tab` or `Shift+Tab` to move between the environment controls, collection tree, request-tab group, method and URL controls, Send/Save group, request-detail and Auth groups, response tabs, and environment-editor fields/actions. Within a horizontal group, use `Left`/`Right` to move and activate its item; a thin accent underline marks keyboard focus. Use `Enter` or `Space` to activate focused buttons. A request context menu also exposes its Rename, Run-with-environment, and Delete actions to the same keyboard navigation.
+- In the collection tree, `Up`/`Down` visit every visible row in order, `Left` enters or expands the selected collection/folder, and `Right` returns to its parent. The selected row scrolls into view automatically. When the terminal owns keyboard focus, HTTP Client shortcuts yield all key presses to it.
+- Drag the vertical collection separator or the horizontal request/response separator to resize the panes. The collection width stays fixed when the application window width changes; the request column absorbs the change. Collections, request content, and responses scroll independently and show compact scrollbars when their content overflows.
+- Selecting a request opens it in the connected request-tab strip. Use `x` to close a view without deleting the saved request, or `+` to create a new request in the `Scratch requests` collection.
+- Click the compact method or environment selector to move to the next available value.
+- Edit query parameters as `name=value` lines and headers as `Name: value` lines. Prefix a line with `#` to keep it saved but disabled.
+- The Auth view supports Basic credentials, Bearer tokens, and API keys sent in either a header or the query string. Choose **Inherit env** to use the authentication configured on the selected environment; double-click the environment selector to edit its variables and authentication.
+- HTTP passwords, bearer tokens, API-key values, and environment-variable values are stored in Windows Credential Manager, macOS Keychain, or the Linux Secret Service. The YAML file and its backup contain only opaque credential references; existing plaintext collections are migrated when the HTTP Client opens. Saving fails safely when secure credential storage is unavailable.
+- Secret authentication fields are masked by default; use **Show** or **Hide** at the end of the field to control their visibility while editing.
+- Request bodies are stored as plain multi-line text.
+- `Enter` in the URL field sends the current request. `Ctrl+Enter` or `Cmd+Enter` sends it from elsewhere in the workbench.
+- `Ctrl+S` or `Cmd+S` saves all collection changes atomically. Replacing an existing file also creates `hexone-http.yaml.bak`.
+- Response views include pretty JSON, the raw body, and ordered response headers.
+- Environment values can be referenced as `{{variable_name}}` in URLs, query parameters, headers, authentication fields, and bodies.
+
+Hexone creates `hexone-http.yaml` beside `hexone.yaml` the first time the HTTP Client opens and restricts it to the current OS user. Collection headers and query parameters use YAML lists so duplicate names and display order are preserved.
 
 ## Protocol Analyzer
 

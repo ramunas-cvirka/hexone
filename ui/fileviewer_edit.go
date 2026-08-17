@@ -136,6 +136,7 @@ func (ui *UI) startFileViewerEdit(now time.Time) bool {
 		st.stream.setSyntax(st.editSyntax)
 		st.editSyntaxDue = time.Time{}
 		st.editRenderText = current
+		st.editIndentStyle, st.editTabSize = viewerEditorIndentation(ui.fmCfg, current)
 		if st.editSyntaxCh == nil {
 			st.editSyntaxCh = make(chan fileViewerEditSyntaxResult, 1)
 		}
@@ -176,6 +177,76 @@ func (ui *UI) startFileViewerEdit(now time.Time) bool {
 	return true
 }
 
+func viewerEditorIndentation(cfg *fm.Config, content string) (string, int) {
+	style := fm.ViewerEditorIndentAuto
+	tabSize := 4
+	if cfg != nil {
+		style = fm.NormalizeViewerEditorIndentStyle(cfg.Viewer.EditorIndentStyle)
+		tabSize = fm.NormalizeViewerEditorTabSize(cfg.Viewer.EditorTabSize)
+	}
+	if style != fm.ViewerEditorIndentAuto {
+		return style, tabSize
+	}
+
+	spaceLines := 0
+	tabLines := 0
+	detectedSize := 0
+	spaceIndents := make([]int, 0, 32)
+	for index, line := range strings.Split(content, "\n") {
+		if index >= 4000 {
+			break
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		spaces := 0
+		for spaces < len(line) && line[spaces] == ' ' {
+			spaces++
+		}
+		switch {
+		case spaces > 0:
+			spaceLines++
+			if spaces <= 16 {
+				detectedSize = viewerIndentGCD(detectedSize, spaces)
+				spaceIndents = append(spaceIndents, spaces)
+			}
+		case line[0] == '\t':
+			tabLines++
+		}
+	}
+	if tabLines > spaceLines {
+		return fm.ViewerEditorIndentTabs, tabSize
+	}
+	if detectedSize == 1 && len(spaceIndents) > 1 {
+		bestSize, bestScore := 1, 0
+		for candidate := 2; candidate <= 8; candidate++ {
+			score := 0
+			for _, indent := range spaceIndents {
+				if indent%candidate == 0 {
+					score++
+				}
+			}
+			if score > bestScore || score == bestScore && candidate > bestSize {
+				bestSize, bestScore = candidate, score
+			}
+		}
+		if bestScore >= 2 && bestScore*3 >= len(spaceIndents)*2 {
+			detectedSize = bestSize
+		}
+	}
+	if detectedSize >= 1 && detectedSize <= 16 {
+		tabSize = detectedSize
+	}
+	return fm.ViewerEditorIndentSpaces, tabSize
+}
+
+func viewerIndentGCD(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
 func (ui *UI) stopFileViewerEdit() bool {
 	st := ui.fileViewer
 	if st == nil || !st.editMode {
@@ -190,6 +261,7 @@ func (ui *UI) stopFileViewerEdit() bool {
 		st.content = sanitizeViewerContent(st.editableContent)
 		st.stream.SetContent(st.content)
 		st.stream.setSyntax(st.editSyntax)
+		st.markdown.setSource(st.path, st.editableContent)
 	}
 	st.editMode = false
 	st.editFocus = false
@@ -209,6 +281,11 @@ func (ui *UI) toggleFileViewerEdit(now time.Time) bool {
 	if !st.editMode {
 		return ui.startFileViewerEdit(now)
 	}
+	if st.markdown.detected {
+		// Returning to Markdown preview must retain the current edit buffer so
+		// F4 -> edit -> F3 can be used as a live preview workflow.
+		return ui.stopFileViewerEdit()
+	}
 	ui.discardFileViewerChanges(st)
 	return ui.stopFileViewerEdit()
 }
@@ -227,6 +304,7 @@ func (ui *UI) discardFileViewerChanges(st *fileViewerState) bool {
 		st.initializeVirtualEditText(st.editBaselineText)
 		st.editableContent = st.editBaselineText
 		st.content = sanitizeViewerContent(st.editBaselineText)
+		st.markdown.setSource(st.path, st.editableContent)
 		st.editSyntax = viewerBuildSyntaxDocument(context.Background(), st.path, st.editBaselineText)
 		st.stream.setSyntax(st.editSyntax)
 		st.editRenderText = st.editBaselineText
@@ -835,6 +913,9 @@ func (ui *UI) pumpFileViewerSaveState(gtx layout.Context, st *fileViewerState) {
 				st.status = "editing"
 			} else {
 				st.status = "saved"
+			}
+			if st.remote == nil {
+				ui.refreshLocalFilePanesForPath(st.path)
 			}
 			st.captureWatchState()
 			ui.finishFileViewerModeSwitchSave(st, true, gtx.Now)

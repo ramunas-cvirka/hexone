@@ -37,6 +37,8 @@ const (
 	settingsKeyboardFocusFilePaneTimeStyle
 	settingsKeyboardFocusTerminalShell
 	settingsKeyboardFocusTerminalAcceleratedKeys
+	settingsKeyboardFocusTerminalPreviewStart
+	settingsKeyboardFocusTerminalPreviewEnd
 	settingsKeyboardFocusFontsInterfaceFont
 	settingsKeyboardFocusFontsInterfaceFontSize
 	settingsKeyboardFocusFontsCurrentDirFont
@@ -53,6 +55,9 @@ const (
 	settingsKeyboardFocusViewerSmoothScrolling
 	settingsKeyboardFocusViewerShowLineNumbers
 	settingsKeyboardFocusViewerHideFunctionBar
+	settingsKeyboardFocusViewerPreviewStart
+	settingsKeyboardFocusViewerPreviewEnd
+	settingsKeyboardFocusViewerHexPreviewRows
 	settingsKeyboardFocusViewerTargetKey
 	settingsKeyboardFocusViewerTargetBrowse
 	settingsKeyboardFocusViewerTargetApply
@@ -346,6 +351,8 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		order = append(order,
 			settingsKeyboardFocusTerminalShell,
 			settingsKeyboardFocusTerminalAcceleratedKeys,
+			settingsKeyboardFocusTerminalPreviewStart,
+			settingsKeyboardFocusTerminalPreviewEnd,
 		)
 	case "fonts":
 		if len(resources.BundledFontFamilies()) > 0 {
@@ -378,6 +385,9 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 			settingsKeyboardFocusViewerSmoothScrolling,
 			settingsKeyboardFocusViewerShowLineNumbers,
 			settingsKeyboardFocusViewerHideFunctionBar,
+			settingsKeyboardFocusViewerPreviewStart,
+			settingsKeyboardFocusViewerPreviewEnd,
+			settingsKeyboardFocusViewerHexPreviewRows,
 			settingsKeyboardFocusViewerTargetKey,
 			settingsKeyboardFocusViewerTargetBrowse,
 			settingsKeyboardFocusViewerTargetApply,
@@ -1563,7 +1573,62 @@ func (st *settingsModalState) stepFocusedNumber(step int) bool {
 	if st.stepFontSize(st.focus, step) {
 		return true
 	}
+	if st.stepTerminalPreviewOffset(st.focus, step) {
+		return true
+	}
+	if st.stepViewerPreviewOffset(st.focus, step) {
+		return true
+	}
 	return st.stepPaneChars(st.focus, step)
+}
+
+func (st *settingsModalState) stepTerminalPreviewOffset(focus settingsKeyboardFocus, step int) bool {
+	if st == nil || step == 0 {
+		return false
+	}
+	switch focus {
+	case settingsKeyboardFocusTerminalPreviewStart:
+		next, _ := fm.NormalizeTerminalPreviewRange(st.terminalPreviewStart+step, st.terminalPreviewEnd)
+		changed := next != st.terminalPreviewStart
+		st.terminalPreviewStart = next
+		return changed
+	case settingsKeyboardFocusTerminalPreviewEnd:
+		_, next := fm.NormalizeTerminalPreviewRange(st.terminalPreviewStart, st.terminalPreviewEnd+step)
+		changed := next != st.terminalPreviewEnd
+		st.terminalPreviewEnd = next
+		return changed
+	default:
+		return false
+	}
+}
+
+func (st *settingsModalState) stepViewerPreviewOffset(focus settingsKeyboardFocus, step int) bool {
+	if st == nil || step == 0 {
+		return false
+	}
+	switch focus {
+	case settingsKeyboardFocusViewerPreviewStart:
+		next, _ := fm.NormalizeViewerPreviewRange(st.viewPreviewStart+step, st.viewPreviewEnd)
+		changed := next != st.viewPreviewStart
+		st.viewPreviewStart = next
+		return changed
+	case settingsKeyboardFocusViewerPreviewEnd:
+		_, next := fm.NormalizeViewerPreviewRange(st.viewPreviewStart, st.viewPreviewEnd+step)
+		changed := next != st.viewPreviewEnd
+		st.viewPreviewEnd = next
+		return changed
+	case settingsKeyboardFocusViewerHexPreviewRows:
+		next := st.viewHexPreviewRows + step
+		if next < 1 {
+			next = 1
+		}
+		next = fm.NormalizeViewerHexPreviewRows(next)
+		changed := next != st.viewHexPreviewRows
+		st.viewHexPreviewRows = next
+		return changed
+	default:
+		return false
+	}
 }
 
 func (st *settingsModalState) stepColorScope(step int, now time.Time) bool {

@@ -7,6 +7,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"hexone/filesys"
 	"hexone/fm"
 	"image"
@@ -130,6 +131,28 @@ func TestHeadlessFileOperationDialogs(t *testing.T) {
 			},
 		},
 		{
+			name: "filecopy-multi-overwrite",
+			setup: func(ui *UI) func() {
+				srcDir, dstDir, sources, cleanup := headlessOverwriteFixture([]string{
+					"quarterly-reconciliation-archive-2026-final.txt", "a2.txt", "a3.txt", "a4.txt", "a5.txt", "a6.txt",
+				})
+				headlessSetAllSourcesNewer(sources, dstDir)
+				ui.fileCopy = &fileCopyState{
+					op:          fileCopyOpCopy,
+					sources:     sources,
+					srcPath:     sources[0].Path,
+					dstPath:     dstDir,
+					dstRaw:      dstDir,
+					srcEndpoint: copyEndpoint{dir: srcDir},
+					dstEndpoint: copyEndpoint{dir: dstDir},
+					focus:       fileCopyDialogFocusDestination,
+				}
+				ui.fileCopy.dstEdit.SetText(dstDir)
+				ui.fileCopy.refreshPreview()
+				return cleanup
+			},
+		},
+		{
 			name: "filemove",
 			setup: func(ui *UI) func() {
 				ui.fileMove = &fileMoveState{
@@ -142,6 +165,29 @@ func TestHeadlessFileOperationDialogs(t *testing.T) {
 				}
 				ui.fileMove.dstEdit.SetText("/srv/backup")
 				return func() {}
+			},
+		},
+		{
+			name: "filemove-multi-overwrite",
+			setup: func(ui *UI) func() {
+				srcDir, dstDir, copySources, cleanup := headlessOverwriteFixture([]string{
+					"alpha.log", "beta.log", "gamma.log", "delta.log", "epsilon.log", "zeta.log", "eta.log",
+				})
+				sources := make([]fileMoveSource, 0, len(copySources))
+				for _, source := range copySources {
+					sources = append(sources, fileMoveSource{Path: source.Path, Name: source.Name})
+				}
+				ui.fileMove = &fileMoveState{
+					pane:     0,
+					sources:  sources,
+					srcPath:  sources[0].Path,
+					dstPath:  dstDir,
+					endpoint: copyEndpoint{dir: srcDir},
+					focus:    fileMoveDialogFocusDestination,
+				}
+				ui.fileMove.dstEdit.SetText(dstDir)
+				ui.fileMove.refreshPreview()
+				return cleanup
 			},
 		},
 		{
@@ -203,7 +249,17 @@ func TestHeadlessFileOperationDialogs(t *testing.T) {
 
 func renderHeadlessFileOperation(t *testing.T, th *material.Theme, ui *UI, outPath string) {
 	t.Helper()
-	const width, height = 900, 620
+	width, height := 900, 620
+	if raw := os.Getenv("UI_VERIFY_WIDTH"); raw != "" {
+		if _, err := fmt.Sscanf(raw, "%d", &width); err != nil || width < 320 {
+			t.Fatalf("invalid UI_VERIFY_WIDTH %q", raw)
+		}
+	}
+	if raw := os.Getenv("UI_VERIFY_HEIGHT"); raw != "" {
+		if _, err := fmt.Sscanf(raw, "%d", &height); err != nil || height < 240 {
+			t.Fatalf("invalid UI_VERIFY_HEIGHT %q", raw)
+		}
+	}
 	win, err := headless.NewWindow(width, height)
 	if err != nil {
 		t.Fatalf("headless window: %v", err)
@@ -257,6 +313,78 @@ func renderHeadlessFileOperation(t *testing.T, th *material.Theme, ui *UI, outPa
 		t.Fatalf("close screenshot: %v", err)
 	}
 	t.Logf("wrote %s", outPath)
+}
+
+func headlessOverwriteFixture(names []string) (srcDir, dstDir string, sources []fileCopySource, cleanup func()) {
+	root, err := os.MkdirTemp("", "hexone-overwrite-preview-")
+	if err != nil {
+		panic(err)
+	}
+	cleanup = func() { _ = os.RemoveAll(root) }
+	srcDir = filepath.Join(root, "source")
+	dstDir = filepath.Join(root, "destination")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		cleanup()
+		panic(err)
+	}
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		cleanup()
+		panic(err)
+	}
+	baseTime := time.Date(2026, 8, 3, 9, 15, 0, 0, time.Local)
+	for i, name := range names {
+		srcPath := filepath.Join(srcDir, name)
+		dstPath := filepath.Join(dstDir, name)
+		if err := os.WriteFile(srcPath, []byte("new contents for "+name), 0o644); err != nil {
+			cleanup()
+			panic(err)
+		}
+		if err := os.WriteFile(dstPath, []byte("old"), 0o644); err != nil {
+			cleanup()
+			panic(err)
+		}
+		if err := os.Truncate(srcPath, 2_400_000+int64(i)*64_000); err != nil {
+			cleanup()
+			panic(err)
+		}
+		if err := os.Truncate(dstPath, 2_300_000+int64(i)*32_000); err != nil {
+			cleanup()
+			panic(err)
+		}
+		srcTime := baseTime.Add(time.Duration(i) * 6 * time.Second)
+		dstTime := baseTime.Add(-53 * time.Second)
+		if i%3 == 1 {
+			srcTime = baseTime.Add(-2 * time.Minute)
+			dstTime = baseTime.Add(time.Duration(i) * time.Second)
+		} else if i%3 == 2 {
+			dstTime = srcTime
+		}
+		if err := os.Chtimes(srcPath, srcTime, srcTime); err != nil {
+			cleanup()
+			panic(err)
+		}
+		if err := os.Chtimes(dstPath, dstTime, dstTime); err != nil {
+			cleanup()
+			panic(err)
+		}
+		sources = append(sources, fileCopySource{Path: srcPath, Name: name})
+	}
+	return srcDir, dstDir, sources, cleanup
+}
+
+func headlessSetAllSourcesNewer(sources []fileCopySource, dstDir string) {
+	baseTime := time.Date(2026, 8, 3, 9, 14, 0, 0, time.Local)
+	for i, source := range sources {
+		dstTime := baseTime.Add(7 * time.Second)
+		srcTime := baseTime.Add(time.Minute + time.Duration(i)*6*time.Second)
+		if err := os.Chtimes(source.Path, srcTime, srcTime); err != nil {
+			panic(err)
+		}
+		dstPath := filepath.Join(dstDir, source.Name)
+		if err := os.Chtimes(dstPath, dstTime, dstTime); err != nil {
+			panic(err)
+		}
+	}
 }
 
 func headlessFrameCoversWindow(img *image.RGBA) bool {

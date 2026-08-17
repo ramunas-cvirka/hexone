@@ -528,6 +528,31 @@ func (ui *UI) editorForMenuID(id string) (*widget.Editor, bool) {
 			return nil, false
 		}
 		return &ui.tab2State.hexEd, true
+	case "http-url":
+		if ui.httpState == nil {
+			return nil, false
+		}
+		return &ui.httpState.urlEd, true
+	case "http-query":
+		if ui.httpState == nil {
+			return nil, false
+		}
+		return &ui.httpState.queryEd, true
+	case "http-headers":
+		if ui.httpState == nil {
+			return nil, false
+		}
+		return &ui.httpState.headersEd, true
+	case "http-body":
+		if ui.httpState == nil {
+			return nil, false
+		}
+		return &ui.httpState.bodyEd, true
+	case "http-response":
+		if ui.httpState == nil {
+			return nil, false
+		}
+		return &ui.httpState.responseEd, true
 	case "viewer-command":
 		if ui.fileViewer == nil {
 			return nil, false

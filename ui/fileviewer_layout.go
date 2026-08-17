@@ -401,6 +401,9 @@ func (ui *UI) layoutFileViewer(th *material.Theme, gtx layout.Context) layout.Di
 										if st.editMode && st.mode == "file" {
 											return ui.layoutFileViewerTextEditor(th, gtx, st)
 										}
+										if viewerMarkdownPreviewActive(st) {
+											return ui.layoutMarkdownPreview(th, gtx, st)
+										}
 										return ui.layoutStreamOutputView(th, gtx, st)
 									}),
 									layout.Stacked(func(gtx layout.Context) layout.Dimensions {
@@ -796,6 +799,9 @@ func fileViewerContextMenuRows(st *fileViewerState) []fileViewerContextMenuRow {
 				Label: "Copy",
 			},
 		},
+	}
+	if viewerMarkdownPreviewActive(st) {
+		return items
 	}
 	if st.mode == "hex" {
 		items[0].item.Label = "Copy as Hex"

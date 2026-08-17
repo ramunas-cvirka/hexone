@@ -27,19 +27,27 @@ const (
 	defaultFullColumnGapDp    = 12
 	// Brief mode already has left/right cell padding; keep the explicit
 	// inter-column gap at zero so the visible separation stays near 1ch.
-	defaultBriefGapDp         = 0
-	defaultNameIconReserveDp  = 14
-	defaultNameChars          = 20.0
-	defaultBriefChars         = 16.0
-	defaultNameMinWidthDp     = 52
-	defaultPermWidthChars     = 9.5
-	defaultOctalWidthChars    = 4.5
-	defaultSizeWidthChars     = 7.5
-	defaultDateWidthChars     = 15.0
-	defaultNameTextReserveDp  = defaultApproxCharPx/2 + 2
-	configBackupSuffix        = ".bak"
-	defaultTerminalHeightRows = 24
-	minTerminalHeightRows     = 4
+	defaultBriefGapDp           = 0
+	defaultNameIconReserveDp    = 14
+	defaultNameChars            = 20.0
+	defaultBriefChars           = 16.0
+	defaultNameMinWidthDp       = 52
+	defaultPermWidthChars       = 9.5
+	defaultOctalWidthChars      = 4.5
+	defaultSizeWidthChars       = 7.5
+	defaultDateWidthChars       = 15.0
+	defaultNameTextReserveDp    = defaultApproxCharPx/2 + 2
+	configBackupSuffix          = ".bak"
+	defaultTerminalHeightRows   = 24
+	minTerminalHeightRows       = 4
+	defaultTerminalPreviewStart = 0
+	defaultTerminalPreviewEnd   = 2
+	defaultViewerPreviewStart   = 0
+	defaultViewerPreviewEnd     = 2
+	defaultViewerHexPreviewRows = 2
+	maxViewerHexPreviewRows     = 8
+	minTerminalPreviewOffset    = -8
+	maxTerminalPreviewOffset    = 8
 	// This is only a malformed-config safety limit. The interactive terminal
 	// ceiling is derived from 75% of the available pane height.
 	maxTerminalHeightRows  = 512
@@ -54,6 +62,9 @@ const (
 	ViewerFileEncodingUTF16LE = "utf-16le"
 	ViewerFileEncodingUTF16BE = "utf-16be"
 	ViewerFileEncodingCP437   = "cp437"
+	ViewerEditorIndentAuto    = "auto"
+	ViewerEditorIndentSpaces  = "spaces"
+	ViewerEditorIndentTabs    = "tabs"
 
 	CompletionSoundNever      = "never"
 	CompletionSoundAlways     = "always"
@@ -162,6 +173,8 @@ type TerminalConfig struct {
 	Typeface        string  `yaml:"typeface"`
 	FontSizeSp      float32 `yaml:"font_size_sp"`
 	AcceleratedKeys bool    `yaml:"accelerated_keys"`
+	PreviewStart    int     `yaml:"preview_start"`
+	PreviewEnd      int     `yaml:"preview_end"`
 	Maximized       bool    `yaml:"maximized"`
 }
 
@@ -368,6 +381,55 @@ func NormalizeTerminalHeightRows(rows int) int {
 	return rows
 }
 
+func NormalizeTerminalPreviewRange(start, end int) (int, int) {
+	return normalizeFindPreviewRange(start, end)
+}
+
+func NormalizeViewerPreviewRange(start, end int) (int, int) {
+	return normalizeFindPreviewRange(start, end)
+}
+
+func NormalizeViewerEditorIndentStyle(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case ViewerEditorIndentSpaces, "space":
+		return ViewerEditorIndentSpaces
+	case ViewerEditorIndentTabs, "tab":
+		return ViewerEditorIndentTabs
+	default:
+		return ViewerEditorIndentAuto
+	}
+}
+
+func NormalizeViewerEditorTabSize(size int) int {
+	if size < 1 || size > 16 {
+		return 4
+	}
+	return size
+}
+
+func NormalizeViewerHexPreviewRows(rows int) int {
+	if rows < 1 {
+		return defaultViewerHexPreviewRows
+	}
+	return min(rows, maxViewerHexPreviewRows)
+}
+
+func normalizeFindPreviewRange(start, end int) (int, int) {
+	if start < minTerminalPreviewOffset {
+		start = minTerminalPreviewOffset
+	}
+	if start > 0 {
+		start = 0
+	}
+	if end < 0 {
+		end = 0
+	}
+	if end > maxTerminalPreviewOffset {
+		end = maxTerminalPreviewOffset
+	}
+	return start, end
+}
+
 func NormalizeTabWidthMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "fixed", "uniform", "same":
@@ -562,10 +624,15 @@ type ViewerConfig struct {
 	WordSelectRegex         string              `yaml:"word_select_regex"`
 	FontSizeSp              float32             `yaml:"font_size_sp"`
 	WordWrap                bool                `yaml:"word_wrap"`
+	EditorIndentStyle       string              `yaml:"editor_indent_style"`
+	EditorTabSize           int                 `yaml:"editor_tab_size"`
 	MaxReadMB               float32             `yaml:"max_read_mb"`
 	CommandAutoRefresh      bool                `yaml:"command_auto_refresh"`
 	CommandRefreshMs        int                 `yaml:"command_refresh_ms"`
 	HideFunctionBarWhenOpen bool                `yaml:"hide_function_bar_when_open"`
+	PreviewStart            int                 `yaml:"preview_start"`
+	PreviewEnd              int                 `yaml:"preview_end"`
+	HexPreviewRows          int                 `yaml:"hex_preview_rows"`
 }
 
 type SSHSetup struct {
@@ -648,14 +715,21 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	}{
 		Terminal: TerminalConfig{
 			AcceleratedKeys: true,
+			PreviewStart:    defaultTerminalPreviewStart,
+			PreviewEnd:      defaultTerminalPreviewEnd,
 		},
 		General: GeneralConfig{
 			OpenFavoritesInNewTab: true,
 			CompletionSound:       CompletionSoundBackground,
 		},
 		Viewer: ViewerConfig{
-			SmoothScrolling: true,
-			ShowLineNumbers: true,
+			SmoothScrolling:   true,
+			ShowLineNumbers:   true,
+			EditorIndentStyle: ViewerEditorIndentAuto,
+			EditorTabSize:     4,
+			PreviewStart:      defaultViewerPreviewStart,
+			PreviewEnd:        defaultViewerPreviewEnd,
+			HexPreviewRows:    defaultViewerHexPreviewRows,
 		},
 	}
 	if err := node.Decode(&raw); err != nil {
@@ -717,6 +791,8 @@ func DefaultConfig() *Config {
 			Typeface:        resources.BundledFontFamilyFiraCodeNerdFontMono,
 			FontSizeSp:      14,
 			AcceleratedKeys: true,
+			PreviewStart:    defaultTerminalPreviewStart,
+			PreviewEnd:      defaultTerminalPreviewEnd,
 		},
 		Tabs: TabsConfig{
 			WidthMode:    "variable",
@@ -789,10 +865,15 @@ func DefaultConfig() *Config {
 			WordSelectRegex:         "[a-zA-Z0-9]+",
 			FontSizeSp:              14,
 			WordWrap:                false,
+			EditorIndentStyle:       ViewerEditorIndentAuto,
+			EditorTabSize:           4,
 			MaxReadMB:               1,
 			CommandAutoRefresh:      true,
 			CommandRefreshMs:        1500,
 			HideFunctionBarWhenOpen: true,
+			PreviewStart:            defaultViewerPreviewStart,
+			PreviewEnd:              defaultViewerPreviewEnd,
+			HexPreviewRows:          defaultViewerHexPreviewRows,
 		},
 		SSH: SSHConfig{
 			Setups: []SSHSetup{},
@@ -1057,6 +1138,11 @@ func (c *Config) normalize() {
 	c.Sort.DefaultKey = NormalizeSortKey(c.Sort.DefaultKey)
 	c.Sort.PerDir = NormalizeSortPerDir(c.Sort.PerDir, c.Sort)
 	c.Terminal.HeightRows = NormalizeTerminalHeightRows(c.Terminal.HeightRows)
+	c.Terminal.PreviewStart, c.Terminal.PreviewEnd = NormalizeTerminalPreviewRange(c.Terminal.PreviewStart, c.Terminal.PreviewEnd)
+	c.Viewer.PreviewStart, c.Viewer.PreviewEnd = NormalizeViewerPreviewRange(c.Viewer.PreviewStart, c.Viewer.PreviewEnd)
+	c.Viewer.HexPreviewRows = NormalizeViewerHexPreviewRows(c.Viewer.HexPreviewRows)
+	c.Viewer.EditorIndentStyle = NormalizeViewerEditorIndentStyle(c.Viewer.EditorIndentStyle)
+	c.Viewer.EditorTabSize = NormalizeViewerEditorTabSize(c.Viewer.EditorTabSize)
 	c.Tabs.WidthMode = NormalizeTabWidthMode(c.Tabs.WidthMode)
 	c.Tabs.MinWidthDp = NormalizeTabWidthDp(c.Tabs.MinWidthDp, defaultTabMinWidthDp)
 	c.Tabs.FixedWidthDp = NormalizeTabWidthDp(c.Tabs.FixedWidthDp, defaultTabFixedWidthDp)

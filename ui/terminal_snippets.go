@@ -404,9 +404,17 @@ func (s *terminalSession) trackCommandInput(data []byte) {
 				command := strings.TrimSpace(string(s.commandDraft))
 				if command != "" && !strings.ContainsAny(command, "\r\n") {
 					s.lastCommand = command
+					if target, ok := parseTerminalSSHCommand(command); ok {
+						s.lastSSHTarget = target
+						s.hasLastSSHTarget = true
+					}
 				}
 			} else if command := s.commandFromScreen(); command != "" && !strings.ContainsAny(command, "\r\n") {
 				s.lastCommand = command
+				if target, ok := parseTerminalSSHCommand(command); ok {
+					s.lastSSHTarget = target
+					s.hasLastSSHTarget = true
+				}
 			}
 			s.commandDraft = s.commandDraft[:0]
 			s.commandCursor = 0
@@ -450,6 +458,15 @@ func (s *terminalSession) trackCommandInput(data []byte) {
 		}
 		data = data[1:]
 	}
+}
+
+func (s *terminalSession) trackedSSHTarget() (terminalSSHTarget, bool) {
+	if s == nil {
+		return terminalSSHTarget{}, false
+	}
+	s.inputMu.Lock()
+	defer s.inputMu.Unlock()
+	return s.lastSSHTarget, s.hasLastSSHTarget
 }
 
 func terminalInputEscapeSequence(data []byte) (sequence, rest []byte) {

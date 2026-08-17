@@ -2001,13 +2001,33 @@ func (p *filePaneState) dirWatchChanged() bool {
 		(p.dirWatch.dir != target ||
 			!p.dirWatch.modTime.Equal(modTime) ||
 			p.dirWatch.size != size ||
-			p.dirWatch.errText != errText)
+			p.dirWatch.errText != errText ||
+			p.selectedLocalEntryMetadataChanged())
 	p.dirWatch.dir = target
 	p.dirWatch.modTime = modTime
 	p.dirWatch.size = size
 	p.dirWatch.errText = errText
 	p.dirWatch.ready = true
 	return changed
+}
+
+func (p *filePaneState) selectedLocalEntryMetadataChanged() bool {
+	if p == nil || p.remoteConnected() || p.archiveBrowsing() {
+		return false
+	}
+	entry := p.selectedEntry()
+	if entry == nil || entry.Path == "" {
+		return false
+	}
+	switch entry.Kind {
+	case filesys.EntryDir, filesys.EntryParent:
+		return false
+	}
+	info, err := os.Lstat(entry.Path)
+	if err != nil {
+		return true
+	}
+	return entry.SizeBytes != info.Size() || !entry.ModTime.Equal(info.ModTime())
 }
 
 func (p *filePaneState) pathBaseName(raw string) string {
@@ -2432,8 +2452,26 @@ func (ui *UI) navigatePaneFavorite(idx int, target string) bool {
 
 		setup, found := findSSHSetupForRemoteFavorite(ui.fmCfg, remoteLoc)
 		if !found {
-			pane.setNotice("missing SSH setup for favorite: "+displayRemoteFavoriteLocation(remoteLoc), time.Now())
-			return false
+			target := terminalSSHTarget{
+				User:    remoteLoc.User,
+				Host:    remoteLoc.Host,
+				Port:    remoteLoc.Port,
+				HasPort: true,
+			}
+			spec, err := resolveOpenSSHConnectionSpecFunc(target)
+			if err != nil {
+				pane.setNotice("ssh config failed: "+err.Error(), time.Now())
+				return false
+			}
+			if err := ui.connectPaneSSHSpec(idx, spec, remoteLoc.Dir, time.Now()); err != nil {
+				if ui.openSSHPassphraseRetry(idx, remoteLoc.Dir, err) {
+					pane.setNotice("SSH key passphrase required", time.Now())
+					return true
+				}
+				pane.setNotice("ssh connect failed: "+err.Error(), time.Now())
+				return false
+			}
+			return true
 		}
 		if err := ui.connectPaneSSH(idx, setup, remoteLoc.Dir, time.Now()); err != nil {
 			pane.setNotice("ssh connect failed: "+err.Error(), time.Now())
@@ -3313,6 +3351,23 @@ func startLocalPaneBackgroundRefresh(pane *filePaneState) bool {
 		restoreAnchor: pane.visibleAnchorPath(),
 		background:    true,
 	}, true)
+}
+
+func (ui *UI) refreshLocalFilePanesForPath(filePath string) bool {
+	if ui == nil || strings.TrimSpace(filePath) == "" || filesys.ArchiveMemberPath(filePath) {
+		return false
+	}
+	targetDir := filepath.Dir(filepath.Clean(filePath))
+	started := false
+	for _, pane := range ui.allFilePaneTabPanes() {
+		if pane == nil || pane.remoteConnected() || pane.archiveBrowsing() || !samePath(pane.dir, targetDir) {
+			continue
+		}
+		if startLocalPaneBackgroundRefresh(pane) {
+			started = true
+		}
+	}
+	return started
 }
 
 func startLocalPaneLoadRequest(pane *filePaneState, dir string, req filePaneLoadResult, quiet bool) bool {

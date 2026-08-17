@@ -392,6 +392,12 @@ type streamedTransferEntry struct {
 
 const streamingCopyQueueSize = 32
 
+// Match OpenSSH's default number of outstanding SFTP transfer requests. Each
+// request carries up to pkg/sftp's default 32 KiB packet, keeping enough data
+// in flight to avoid making upload throughput proportional to one packet per
+// network round trip.
+const sftpUploadConcurrency = 64
+
 type streamingCopyProgress struct {
 	mu       sync.Mutex
 	progress filesys.CopyProgress
@@ -1170,6 +1176,120 @@ func copyRegularToEndpoint(ctx context.Context, srcEp, dstEp copyEndpoint, entry
 	}
 	defer out.Close()
 
+	if dstEp.isRemote() && !srcEp.isRemote() {
+		remoteOut, ok := out.(*sftp.File)
+		if !ok {
+			return errors.New("sftp destination is not a remote file")
+		}
+		if err := copyToSFTPContext(ctx, remoteOut, in, progress, report); err != nil {
+			return err
+		}
+	} else if srcEp.isRemote() && !dstEp.isRemote() {
+		remoteIn, ok := in.(*sftp.File)
+		if !ok {
+			return errors.New("sftp source is not a remote file")
+		}
+		if err := copyFromSFTPContext(ctx, out, remoteIn, progress, report); err != nil {
+			return err
+		}
+	} else if err := copyRegularStreamContext(ctx, out, in, progress, report); err != nil {
+		return err
+	}
+
+	if err := applyEndpointFileAttrs(dstEp, dstPath, entry.mode, entry.modTime); err != nil {
+		return err
+	}
+	return nil
+}
+
+type copyProgressReader struct {
+	ctx      context.Context
+	reader   io.Reader
+	progress *filesys.CopyProgress
+	report   func(filesys.CopyProgress)
+}
+
+func (r *copyProgressReader) Read(buf []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.reader.Read(buf)
+	if n > 0 {
+		r.progress.BytesDone += int64(n)
+		reportCopyProgress(r.report, *r.progress)
+	}
+	return n, err
+}
+
+func copyToSFTPContext(ctx context.Context, dst *sftp.File, src io.Reader, progress *filesys.CopyProgress, report func(filesys.CopyProgress)) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if dst == nil {
+		return errors.New("sftp destination file is not open")
+	}
+	reader := &copyProgressReader{
+		ctx:      ctx,
+		reader:   src,
+		progress: progress,
+		report:   report,
+	}
+	if _, err := dst.ReadFromWithConcurrency(reader, sftpUploadConcurrency); err != nil {
+		// Concurrent writes can complete out of order. pkg/sftp leaves the file
+		// offset at the earliest failed request, so truncate there to remove any
+		// later writes and preserve the same contiguous-partial-file behavior as
+		// the former sequential upload path.
+		if offset, seekErr := dst.Seek(0, io.SeekCurrent); seekErr == nil {
+			_ = dst.Truncate(offset)
+		}
+		return err
+	}
+	return nil
+}
+
+type copyProgressWriter struct {
+	ctx      context.Context
+	writer   io.Writer
+	progress *filesys.CopyProgress
+	report   func(filesys.CopyProgress)
+}
+
+func (w *copyProgressWriter) Write(buf []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := w.writer.Write(buf)
+	if n > 0 {
+		w.progress.BytesDone += int64(n)
+		reportCopyProgress(w.report, *w.progress)
+	}
+	return n, err
+}
+
+func copyFromSFTPContext(ctx context.Context, dst io.Writer, src *sftp.File, progress *filesys.CopyProgress, report func(filesys.CopyProgress)) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if src == nil {
+		return errors.New("sftp source file is not open")
+	}
+	writer := &copyProgressWriter{
+		ctx:      ctx,
+		writer:   dst,
+		progress: progress,
+		report:   report,
+	}
+	_, err := src.WriteTo(writer)
+	return err
+}
+
+func copyRegularStreamContext(ctx context.Context, out io.Writer, in io.Reader, progress *filesys.CopyProgress, report func(filesys.CopyProgress)) error {
 	buf := make([]byte, 1<<20)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1202,10 +1322,6 @@ func copyRegularToEndpoint(ctx context.Context, srcEp, dstEp copyEndpoint, entry
 		if readErr != nil {
 			return readErr
 		}
-	}
-
-	if err := applyEndpointFileAttrs(dstEp, dstPath, entry.mode, entry.modTime); err != nil {
-		return err
 	}
 	return nil
 }

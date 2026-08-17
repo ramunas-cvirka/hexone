@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"hexone/fm"
 	"image"
 	"io"
 	"sort"
@@ -189,6 +190,8 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 	replacement = normalizeViewerLineEndings(replacement)
 	startLine, startLocal, _ := v.lineForOffset(start)
 	endLine, endLocal, _ := v.lineForOffset(end)
+	oldSyntax := v.syntax
+	oldChangedLines := append([]string(nil), v.lines[startLine:endLine+1]...)
 	prefix := v.lines[startLine][:startLocal]
 	suffix := v.lines[endLine][endLocal:]
 	replacementLines := strings.Split(prefix+replacement+suffix, "\n")
@@ -333,7 +336,6 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 			}
 		}
 	}
-	v.clearSyntax()
 	v.clampTop()
 	v.syncVisualTop()
 	caret := start + len(replacement)
@@ -347,7 +349,8 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 	}
 	st.editMaxCols = v.maxCols
 	st.editDesiredColSet = false
-	st.editSyntax = viewerSyntaxDocument{}
+	st.editSyntax = viewerPreserveSyntaxAfterEdit(oldSyntax, oldChangedLines, startLine, endLine, startLocal, endLocal, replacement, v.lines)
+	v.setSyntax(st.editSyntax)
 	st.editSyntaxSeq++
 	st.editSyntaxDue = time.Now().Add(fileViewerEditSyntaxDelay)
 }
@@ -642,6 +645,129 @@ func (st *fileViewerState) revealVirtualEditCaret() {
 	}
 }
 
+func viewerVirtualEditColumn(text string, tabSize int) int {
+	if tabSize < 1 {
+		tabSize = 4
+	}
+	col := 0
+	for _, r := range text {
+		if r == '\t' {
+			col += tabSize - col%tabSize
+		} else {
+			col++
+		}
+	}
+	return col
+}
+
+func (ui *UI) indentFileViewerVirtualSelection(st *fileViewerState, start, end int, outdent bool, now time.Time) bool {
+	if st == nil || start == end {
+		return false
+	}
+	v := &st.stream
+	startLine, _, ok := v.lineForOffset(start)
+	if !ok {
+		return false
+	}
+	endLine, endLocal, ok := v.lineForOffset(end)
+	if !ok {
+		return false
+	}
+	if endLocal == 0 && endLine > startLine {
+		endLine--
+	}
+	blockStart := v.lineByteStart(startLine)
+	blockEnd := v.lineByteEnd(endLine)
+	unit := "\t"
+	if st.editIndentStyle != fm.ViewerEditorIndentTabs {
+		unit = strings.Repeat(" ", max(1, st.editTabSize))
+	}
+	lines := append([]string(nil), v.lines[startLine:endLine+1]...)
+	changed := false
+	for i, line := range lines {
+		if !outdent {
+			lines[i] = unit + line
+			changed = true
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "\t"):
+			lines[i] = line[1:]
+			changed = true
+		default:
+			remove := 0
+			for remove < len(line) && remove < max(1, st.editTabSize) && line[remove] == ' ' {
+				remove++
+			}
+			if remove > 0 {
+				lines[i] = line[remove:]
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return false
+	}
+	replacement := strings.Join(lines, "\n")
+	anchorBefore, headBefore := v.selAnchor, v.selHead
+	if !ui.replaceFileViewerVirtualText(st, blockStart, blockEnd, replacement, now) {
+		return false
+	}
+	selectionStart := blockStart
+	selectionEnd := blockStart + len(replacement)
+	if anchorBefore > headBefore {
+		v.selAnchor, v.selHead = selectionEnd, selectionStart
+	} else {
+		v.selAnchor, v.selHead = selectionStart, selectionEnd
+	}
+	v.selActive = true
+	v.updateSelectionRange()
+	if st.editUndoIndex > 0 && st.editUndoIndex <= len(st.editUndo) {
+		st.editUndo[st.editUndoIndex-1].selectionAfter = v.selectionState()
+	}
+	return true
+}
+
+func (ui *UI) insertFileViewerVirtualTab(st *fileViewerState, start, end int, outdent bool, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	if start != end {
+		return ui.indentFileViewerVirtualSelection(st, start, end, outdent, now)
+	}
+	v := &st.stream
+	line, local, ok := v.lineForOffset(start)
+	if !ok {
+		return false
+	}
+	if outdent {
+		lineText := v.lines[line]
+		if local > 0 && lineText[local-1] == '\t' {
+			return ui.replaceFileViewerVirtualText(st, start-1, start, "", now)
+		}
+		spaces := 0
+		for pos := local - 1; pos >= 0 && lineText[pos] == ' ' && spaces < max(1, st.editTabSize); pos-- {
+			spaces++
+		}
+		if spaces == 0 {
+			return false
+		}
+		col := viewerVirtualEditColumn(lineText[:local], st.editTabSize)
+		remove := col % max(1, st.editTabSize)
+		if remove == 0 {
+			remove = max(1, st.editTabSize)
+		}
+		remove = min(remove, spaces)
+		return ui.replaceFileViewerVirtualText(st, start-remove, start, "", now)
+	}
+	if st.editIndentStyle == fm.ViewerEditorIndentTabs {
+		return ui.replaceFileViewerVirtualText(st, start, end, "\t", now)
+	}
+	col := viewerVirtualEditColumn(v.lines[line][:local], st.editTabSize)
+	spaces := max(1, st.editTabSize) - col%max(1, st.editTabSize)
+	return ui.replaceFileViewerVirtualText(st, start, end, strings.Repeat(" ", spaces), now)
+}
+
 func (ui *UI) handleFileViewerVirtualEditKey(st *fileViewerState, gtx layout.Context, ke key.Event) bool {
 	if st == nil || ke.State != key.Press {
 		return false
@@ -754,7 +880,7 @@ func (ui *UI) handleFileViewerVirtualEditKey(st *fileViewerState, gtx layout.Con
 	case key.NameEnter, key.NameReturn:
 		return ui.replaceFileViewerVirtualText(st, start, end, "\n", gtx.Now)
 	case key.NameTab:
-		return ui.replaceFileViewerVirtualText(st, start, end, "\t", gtx.Now)
+		return ui.insertFileViewerVirtualTab(st, start, end, extend, gtx.Now)
 	default:
 		return false
 	}

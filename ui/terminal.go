@@ -6,6 +6,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	resources "hexone"
 	"hexone/fm"
 	"hexone/ui/platform"
@@ -78,8 +79,11 @@ const (
 	terminalSmoothSnapEpsilon  = 0.02
 	terminalSmoothJumpMinLines = 6
 	terminalCwdProbeTimeout    = 150 * time.Millisecond
+	terminalDirProbeTimeout    = 3 * time.Second
 	terminalPasteReadTimeout   = 2 * time.Second
 )
+
+const terminalDirProbeHostPrefix = "hexone-probe-"
 
 var (
 	terminalBG     = color.NRGBA{R: 4, G: 6, B: 10, A: 255}
@@ -204,11 +208,14 @@ type terminalSession struct {
 	commandCursor    int
 	lastCommand      string
 	commandReliable  bool
+	lastSSHTarget    terminalSSHTarget
+	hasLastSSHTarget bool
 	keyRepeatActive  bool
 	keyRepeatKey     key.Name
 	keyRepeatStarted time.Time
 	keyRepeatNext    time.Time
 	keyRepeatPeriod  time.Duration
+	find             terminalFindState
 
 	invalidateMu sync.RWMutex
 	invalidate   func()
@@ -239,6 +246,11 @@ func newTerminalSession(invalidate func(), preferredRows ...int) *terminalSessio
 		rows:            rows,
 		cols:            terminalDefaultCols,
 		commandReliable: true,
+		find: terminalFindState{
+			previewIndex: -1,
+			previewStart: 0,
+			previewEnd:   2,
+		},
 		modes: terminalModes{
 			eraseTemplate: headlessterm.NewCellTemplate(),
 		},
@@ -722,6 +734,8 @@ func (ui *UI) toggleTerminal() bool {
 		st.focusKeyboard()
 	} else {
 		ui.closeTerminalSnippetMenu()
+		st.closeFind()
+		st.wantFocus = false
 	}
 	return true
 }
@@ -808,14 +822,21 @@ func (ui *UI) toggleTerminalKeyboardFocus(gtx layout.Context, terminalFocused bo
 }
 
 func (ui *UI) terminalFocused(gtx layout.Context) bool {
-	return ui != nil && ui.terminal != nil && ui.terminal.active() && gtx.Focused(&ui.terminal.keyTag)
+	return ui != nil && ui.terminal != nil && ui.terminal.active() && ui.terminal.keyboardFocused(gtx)
 }
 
 func (ui *UI) terminalVisuallyFocused(gtx layout.Context) bool {
 	if ui == nil || ui.terminal == nil || !ui.terminal.active() {
 		return false
 	}
-	return ui.terminal.wantFocus || gtx.Focused(&ui.terminal.keyTag)
+	return ui.terminal.wantFocus || ui.terminal.keyboardFocused(gtx)
+}
+
+func (s *terminalSession) keyboardFocused(gtx layout.Context) bool {
+	if s == nil {
+		return false
+	}
+	return gtx.Focused(&s.keyTag) || (s.find.open && gtx.Focused(&s.find.editor))
 }
 
 func (ui *UI) releaseTerminalKeyboardFocus(gtx layout.Context) bool {
@@ -1298,6 +1319,30 @@ func (s *terminalSession) write(data []byte) {
 	if err != nil {
 		s.setError(err.Error())
 	}
+}
+
+func (s *terminalSession) writeUntracked(data []byte) bool {
+	if s == nil || len(data) == 0 {
+		return false
+	}
+	if s.scrollToBottom() {
+		s.snapshot()
+	}
+	s.procMu.Lock()
+	proc := s.pty
+	running := s.running
+	s.procMu.Unlock()
+	if proc == nil || !running {
+		return false
+	}
+	s.writeMu.Lock()
+	_, err := proc.Write(data)
+	s.writeMu.Unlock()
+	if err != nil {
+		s.setError(err.Error())
+		return false
+	}
+	return true
 }
 
 func (s *terminalSession) writeString(text string) {
@@ -2067,18 +2112,20 @@ func (s *terminalSession) pasteText(gtx layout.Context) bool {
 }
 
 func (s *terminalSession) pastePrimarySelectionOrClipboard(gtx layout.Context) bool {
-	if s == nil || !s.hasActiveSelection() {
-		return s.pasteText(gtx)
-	}
-	gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
-	data := terminalPasteBytes(s.selectedText(false), s.bracketedPasteMode())
-	if len(data) == 0 {
+	if s == nil {
 		return false
 	}
-	// The terminal selection acts as a primary-selection buffer. Keep it
-	// independent of the system clipboard and visible after it is pasted.
-	s.write(data)
-	return true
+	if s.hasActiveSelection() {
+		data := terminalPasteBytes(s.selectedText(false), s.bracketedPasteMode())
+		if len(data) > 0 {
+			gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
+			// The terminal selection acts as a primary-selection buffer. Keep it
+			// independent of the system clipboard and visible after it is pasted.
+			s.write(data)
+			return true
+		}
+	}
+	return s.pasteText(gtx)
 }
 
 func (s *terminalSession) handleClipboardEvents(gtx layout.Context) bool {
@@ -3021,11 +3068,15 @@ func (ui *UI) setPaneDirToTerminalDir(idx int, now time.Time) bool {
 	}
 	if loc, ok := ui.terminal.osc7Location(); ok {
 		if !terminalOSC7HostIsLocal(loc.Host) {
+			if terminalDirProbeHost(loc.Host) {
+				if target, sshOK := ui.terminal.activeSSHTarget(); sshOK {
+					return ui.startTerminalDirProbe(idx, target, now)
+				}
+			}
 			return ui.setPaneDirToTerminalRemoteDir(idx, loc, now)
 		}
-		if _, sshOK := ui.terminal.activeSSHTarget(); sshOK {
-			pane.setNotice("terminal SSH dir unavailable; remote shell must emit OSC 7", now)
-			return false
+		if target, sshOK := ui.terminal.activeSSHTarget(); sshOK {
+			return ui.startTerminalDirProbe(idx, target, now)
 		}
 		if ui.setPaneDirToLocalTerminalDir(idx, terminalOSC7LocalDir(loc.Dir), now) {
 			return true
@@ -3035,9 +3086,8 @@ func (ui *UI) setPaneDirToTerminalDir(idx int, now time.Time) bool {
 			return false
 		}
 	}
-	if _, sshOK := ui.terminal.activeSSHTarget(); sshOK {
-		pane.setNotice("terminal SSH dir unavailable; remote shell must emit OSC 7", now)
-		return false
+	if target, sshOK := ui.terminal.activeSSHTarget(); sshOK {
+		return ui.startTerminalDirProbe(idx, target, now)
 	}
 	dir, ok := ui.terminal.currentDir()
 	if !ok {
@@ -3045,6 +3095,83 @@ func (ui *UI) setPaneDirToTerminalDir(idx int, now time.Time) bool {
 		return false
 	}
 	return ui.setPaneDirToLocalTerminalDir(idx, dir, now)
+}
+
+type terminalDirProbeState struct {
+	session  *terminalSession
+	pane     int
+	target   terminalSSHTarget
+	host     string
+	deadline time.Time
+}
+
+func terminalDirProbeCommand(host string) string {
+	return "printf '\\033]7;file://" + host + "%s\\007' \"$PWD\"\r"
+}
+
+func terminalDirProbeHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return strings.HasPrefix(host, terminalDirProbeHostPrefix) && strings.HasSuffix(host, ".invalid")
+}
+
+func (ui *UI) startTerminalDirProbe(idx int, target terminalSSHTarget, now time.Time) bool {
+	if ui == nil || ui.terminal == nil || idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return false
+	}
+	ui.terminal.State.Mu.RLock()
+	alternate := ui.terminal.State.Alternate
+	ui.terminal.State.Mu.RUnlock()
+	if alternate {
+		pane.setNotice("leave the full-screen terminal program before syncing its dir", now)
+		return false
+	}
+	draft, _, reliable := ui.terminal.trackedCommand()
+	if draft != "" || !reliable {
+		pane.setNotice("clear the current terminal command before syncing its dir", now)
+		return false
+	}
+	host := fmt.Sprintf("%s%x.invalid", terminalDirProbeHostPrefix, now.UnixNano())
+	probe := &terminalDirProbeState{
+		session:  ui.terminal,
+		pane:     idx,
+		target:   target,
+		host:     host,
+		deadline: now.Add(terminalDirProbeTimeout),
+	}
+	ui.terminalDirProbe = probe
+	if !probe.session.writeUntracked([]byte(terminalDirProbeCommand(host))) {
+		ui.terminalDirProbe = nil
+		pane.setNotice("failed to query terminal SSH dir", now)
+		return false
+	}
+	pane.setNotice("querying terminal SSH dir…", now)
+	return true
+}
+
+func (ui *UI) pumpTerminalDirProbe(gtx layout.Context) {
+	if ui == nil || ui.terminalDirProbe == nil {
+		return
+	}
+	probe := ui.terminalDirProbe
+	if probe.session == nil || probe.pane < 0 || probe.pane >= len(ui.filePanes) || ui.filePanes[probe.pane] == nil {
+		ui.terminalDirProbe = nil
+		return
+	}
+	if loc, ok := probe.session.osc7Location(); ok && strings.EqualFold(loc.Host, probe.host) {
+		ui.terminalDirProbe = nil
+		ui.setPaneDirToTerminalRemoteDirForTarget(probe.pane, loc, probe.target, gtx.Now)
+		return
+	}
+	if !gtx.Now.Before(probe.deadline) {
+		ui.terminalDirProbe = nil
+		ui.filePanes[probe.pane].setNotice("terminal SSH dir query timed out; run it from a shell prompt", gtx.Now)
+		return
+	}
+	gtx.Execute(op.InvalidateCmd{At: probe.deadline})
 }
 
 func (ui *UI) setPaneDirToLocalTerminalDir(idx int, dir string, now time.Time) bool {
@@ -3075,6 +3202,14 @@ func (ui *UI) setPaneDirToLocalTerminalDir(idx int, dir string, now time.Time) b
 }
 
 func (ui *UI) setPaneDirToTerminalRemoteDir(idx int, loc terminalOSC7Location, now time.Time) bool {
+	return ui.setPaneDirToTerminalRemoteDirWithTarget(idx, loc, terminalSSHTarget{}, false, now)
+}
+
+func (ui *UI) setPaneDirToTerminalRemoteDirForTarget(idx int, loc terminalOSC7Location, target terminalSSHTarget, now time.Time) bool {
+	return ui.setPaneDirToTerminalRemoteDirWithTarget(idx, loc, target, true, now)
+}
+
+func (ui *UI) setPaneDirToTerminalRemoteDirWithTarget(idx int, loc terminalOSC7Location, suppliedTarget terminalSSHTarget, suppliedTargetFound bool, now time.Time) bool {
 	if ui == nil || idx < 0 || idx >= len(ui.filePanes) {
 		return false
 	}
@@ -3082,41 +3217,238 @@ func (ui *UI) setPaneDirToTerminalRemoteDir(idx int, loc terminalOSC7Location, n
 	if pane == nil {
 		return false
 	}
-	setup, found, ambiguous := findSSHSetupForTerminalOSC7(ui.fmCfg, loc)
-	if (!found || ambiguous) && ui.terminal != nil {
+	activeTarget := suppliedTarget
+	activeTargetFound := suppliedTargetFound
+	if !activeTargetFound && ui.terminal != nil {
 		if target, ok := ui.terminal.activeSSHTarget(); ok {
-			if targetSetup, targetFound, targetAmbiguous := findSSHSetupForTerminalSSHTarget(ui.fmCfg, target); targetFound {
-				setup = targetSetup
-				found = true
-				ambiguous = false
-			} else if !found && targetAmbiguous {
-				ambiguous = true
-			}
+			activeTarget = target
+			activeTargetFound = true
+		}
+		if !activeTargetFound {
+			activeTarget, activeTargetFound = ui.terminal.trackedSSHTarget()
+		}
+	}
+	if tabIdx := ui.findFilePaneTabForTerminalRemote(idx, loc, activeTarget, activeTargetFound); tabIdx >= 0 {
+		return ui.activateAndSyncTerminalRemoteTab(idx, tabIdx, loc.Dir, now)
+	}
+
+	setup, found, ambiguous := findSSHSetupForTerminalOSC7(ui.fmCfg, loc)
+	if (!found || ambiguous) && activeTargetFound {
+		if targetSetup, targetFound, targetAmbiguous := findSSHSetupForTerminalSSHTarget(ui.fmCfg, activeTarget); targetFound {
+			setup = targetSetup
+			found = true
+			ambiguous = false
+		} else if !found && targetAmbiguous {
+			ambiguous = true
 		}
 	}
 	if ambiguous {
 		pane.setNotice("multiple SSH setups match terminal host: "+terminalOSC7DisplayHost(loc), now)
 		return false
 	}
+
+	var spec sshConnectionSpec
 	if !found {
-		pane.setNotice("missing SSH setup for terminal host: "+terminalOSC7DisplayHost(loc), now)
+		if !activeTargetFound {
+			activeTarget = terminalSSHTarget{
+				User:    loc.User,
+				Host:    loc.Host,
+				Port:    loc.Port,
+				HasPort: loc.HasPort,
+			}
+		}
+		if activeTarget.User == "" {
+			activeTarget.User = loc.User
+		}
+		if !activeTarget.HasPort && loc.HasPort {
+			activeTarget.Port = loc.Port
+			activeTarget.HasPort = true
+		}
+		var err error
+		spec, err = resolveOpenSSHConnectionSpecFunc(activeTarget)
+		if err != nil {
+			pane.setNotice("ssh config failed: "+err.Error(), now)
+			return false
+		}
+		setup = spec.setup
+	} else {
+		spec = directSSHConnectionSpec(setup)
+	}
+	if tabIdx := ui.findFilePaneTabForSSHSpec(idx, spec); tabIdx >= 0 {
+		return ui.activateAndSyncTerminalRemoteTab(idx, tabIdx, loc.Dir, now)
+	}
+
+	ui.ensureFilePaneTabs()
+	originalTab := 0
+	var originalPane *filePaneState
+	if idx < len(ui.filePaneTabs) {
+		originalTab = ui.filePaneTabs[idx].active
+		if originalTab >= 0 && originalTab < len(ui.filePaneTabs[idx].tabs) {
+			originalPane = ui.filePaneTabs[idx].tabs[originalTab]
+		}
+	}
+	if !ui.addFilePaneTabForRemoteSync(idx, now) {
 		return false
 	}
-	if pane.remoteConnected() && pane.remote != nil && sameSSHRemoteTarget(pane.remote.setup, setup) {
-		if ui.loadPaneDir(idx, loc.Dir) {
-			pane.setNotice("pane set to terminal dir", now)
+	createdTab := ui.filePaneTabs[idx].active
+	err := ui.connectPaneSSHSpec(idx, spec, loc.Dir, now)
+	if err != nil {
+		if ui.openSSHPassphraseRetry(idx, loc.Dir, err) {
+			if request := ui.sshModal.transientConnect; request != nil {
+				request.restoreTab = originalPane
+				request.removeTabOnCancel = true
+			}
+			if pane = ui.filePanes[idx]; pane != nil {
+				pane.setNotice("SSH key passphrase required", now)
+			}
 			return true
 		}
-		return false
-	}
-	if err := ui.connectPaneSSH(idx, setup, loc.Dir, now); err != nil {
-		pane.setNotice("ssh connect failed: "+err.Error(), now)
+		ui.rollbackTerminalRemoteSyncTab(idx, createdTab, originalTab)
+		if pane = ui.filePanes[idx]; pane != nil {
+			pane.setNotice("ssh connect failed: "+err.Error(), now)
+		}
 		return false
 	}
 	if pane = ui.filePanes[idx]; pane != nil {
 		pane.setNotice("pane set to terminal dir", now)
 	}
 	return true
+}
+
+func (ui *UI) findFilePaneTabForTerminalRemote(paneIdx int, loc terminalOSC7Location, target terminalSSHTarget, targetFound bool) int {
+	if ui == nil {
+		return -1
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return -1
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	active := clampTabIndex(set.active, len(set.tabs))
+	if active >= 0 && active < len(set.tabs) {
+		pane := set.tabs[active]
+		if pane != nil && pane.remote != nil && paneSSHSessionMatchesTerminalRemote(pane.remote, loc, target, targetFound) {
+			return active
+		}
+	}
+	match := -1
+	for tabIdx, pane := range set.tabs {
+		if tabIdx == active {
+			continue
+		}
+		if pane == nil || pane.remote == nil {
+			continue
+		}
+		if paneSSHSessionMatchesTerminalRemote(pane.remote, loc, target, targetFound) {
+			if match >= 0 {
+				// Let effective OpenSSH config disambiguate duplicate host aliases
+				// or users before selecting an inactive tab.
+				return -1
+			}
+			match = tabIdx
+		}
+	}
+	return match
+}
+
+func paneSSHSessionMatchesTerminalRemote(session *paneSSHSession, loc terminalOSC7Location, target terminalSSHTarget, targetFound bool) bool {
+	if session == nil {
+		return false
+	}
+	if targetFound && paneSSHSessionMatchesRemoteIdentity(session, target.Host, target.User, target.Port, true) {
+		return true
+	}
+	return paneSSHSessionMatchesRemoteIdentity(session, loc.Host, loc.User, loc.Port, loc.HasPort)
+}
+
+func paneSSHSessionMatchesRemoteIdentity(session *paneSSHSession, host, user string, port int, checkPort bool) bool {
+	if session == nil {
+		return false
+	}
+	host = strings.TrimSpace(host)
+	if host == "" || terminalDirProbeHost(host) {
+		return false
+	}
+	setup := session.setup
+	if user = strings.TrimSpace(user); user != "" && user != strings.TrimSpace(setup.User) {
+		return false
+	}
+	setupPort := setup.Port
+	if setupPort <= 0 {
+		setupPort = 22
+	}
+	if checkPort {
+		if port <= 0 {
+			port = 22
+		}
+		if port != setupPort {
+			return false
+		}
+	}
+	if strings.EqualFold(host, strings.TrimSpace(setup.Host)) {
+		return true
+	}
+	return strings.EqualFold(host, strings.TrimSpace(session.connectionSpec().dialHost))
+}
+
+func (ui *UI) findFilePaneTabForSSHSpec(paneIdx int, spec sshConnectionSpec) int {
+	if ui == nil {
+		return -1
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return -1
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	matches := func(pane *filePaneState) bool {
+		if pane == nil || pane.remote == nil {
+			return false
+		}
+		if sameSSHRemoteTarget(pane.remote.setup, spec.setup) {
+			return true
+		}
+		return paneSSHSessionMatchesRemoteIdentity(pane.remote, spec.dialHost, spec.setup.User, spec.setup.Port, true)
+	}
+	active := clampTabIndex(set.active, len(set.tabs))
+	if active >= 0 && active < len(set.tabs) && matches(set.tabs[active]) {
+		return active
+	}
+	for tabIdx, pane := range set.tabs {
+		if tabIdx != active && matches(pane) {
+			return tabIdx
+		}
+	}
+	return -1
+}
+
+func (ui *UI) activateAndSyncTerminalRemoteTab(paneIdx, tabIdx int, dir string, now time.Time) bool {
+	if !ui.activateFilePaneTab(paneIdx, tabIdx) {
+		return false
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	set.scroll = tabScrollToActive(set.scroll, set.active)
+	pane := ui.filePanes[paneIdx]
+	if pane == nil {
+		return false
+	}
+	if !ui.loadPaneDir(paneIdx, dir) {
+		pane.setNotice("failed to set pane dir", now)
+		return false
+	}
+	pane.setNotice("pane set to terminal dir", now)
+	return true
+}
+
+func (ui *UI) rollbackTerminalRemoteSyncTab(paneIdx, createdTab, originalTab int) {
+	if ui == nil || paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return
+	}
+	if createdTab >= 0 && createdTab < len(ui.filePaneTabs[paneIdx].tabs) {
+		ui.closeFilePaneTab(paneIdx, createdTab)
+	}
+	if originalTab >= 0 && originalTab < len(ui.filePaneTabs[paneIdx].tabs) {
+		ui.activateFilePaneTab(paneIdx, originalTab)
+	}
 }
 
 func terminalChangeDirCommand(dir string) string {
@@ -3153,10 +3485,11 @@ type terminalOSC7Location struct {
 }
 
 type terminalSSHTarget struct {
-	User    string
-	Host    string
-	Port    int
-	HasPort bool
+	User        string
+	Host        string
+	Port        int
+	HasPort     bool
+	OpenSSHArgs string
 }
 
 func (s *terminalSession) osc7Location() (terminalOSC7Location, bool) {
@@ -3189,6 +3522,9 @@ func parseTerminalOSC7Location(raw string) (terminalOSC7Location, bool) {
 	raw = strings.TrimSpace(raw)
 	if strings.HasPrefix(strings.ToLower(raw), "file://") {
 		raw = strings.ReplaceAll(raw, `\`, "/")
+	}
+	if loc, ok := parseTerminalDirProbeLocation(raw); ok {
+		return loc, true
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u == nil || !strings.EqualFold(u.Scheme, "file") {
@@ -3225,6 +3561,27 @@ func parseTerminalOSC7Location(raw string) (terminalOSC7Location, bool) {
 		HasPort: hasPort,
 		Dir:     dir,
 	}, true
+}
+
+func parseTerminalDirProbeLocation(raw string) (terminalOSC7Location, bool) {
+	const scheme = "file://"
+	if !strings.HasPrefix(strings.ToLower(raw), scheme+terminalDirProbeHostPrefix) {
+		return terminalOSC7Location{}, false
+	}
+	rest := raw[len(scheme):]
+	slash := strings.IndexByte(rest, '/')
+	if slash <= 0 {
+		return terminalOSC7Location{}, false
+	}
+	host := rest[:slash]
+	if !terminalDirProbeHost(host) {
+		return terminalOSC7Location{}, false
+	}
+	dir := normalizeRemoteFavoriteDir(rest[slash:])
+	if dir == "" {
+		return terminalOSC7Location{}, false
+	}
+	return terminalOSC7Location{Host: host, Dir: dir}, true
 }
 
 func parseTerminalOSC7Port(raw string) (int, bool) {
@@ -3420,12 +3777,13 @@ func terminalSSHTargetFromPS(rootPID int, psOutput string) (terminalSSHTarget, b
 }
 
 func parseTerminalSSHCommand(command string) (terminalSSHTarget, bool) {
-	fields := strings.Fields(strings.TrimSpace(command))
+	fields := splitOpenSSHConfigWords(strings.TrimSpace(command))
 	if len(fields) < 2 || terminalCommandBase(fields[0]) != "ssh" {
 		return terminalSSHTarget{}, false
 	}
 	target := terminalSSHTarget{Port: 22}
 	targetText := ""
+	var openSSHArgs []string
 	for i := 1; i < len(fields); i++ {
 		arg := fields[i]
 		if arg == "" {
@@ -3472,10 +3830,15 @@ func parseTerminalSSHCommand(command string) (terminalSSHTarget, bool) {
 			continue
 		}
 		if terminalSSHOptionConsumesNext(arg) {
+			if i+1 >= len(fields) {
+				return terminalSSHTarget{}, false
+			}
+			openSSHArgs = append(openSSHArgs, arg, fields[i+1])
 			i++
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
+			openSSHArgs = append(openSSHArgs, arg)
 			continue
 		}
 		targetText = arg
@@ -3484,6 +3847,7 @@ func parseTerminalSSHCommand(command string) (terminalSSHTarget, bool) {
 	if targetText == "" {
 		return terminalSSHTarget{}, false
 	}
+	target.OpenSSHArgs = encodeTerminalOpenSSHArgs(openSSHArgs)
 	if strings.HasPrefix(targetText, "ssh://") {
 		if u, err := url.Parse(targetText); err == nil && u != nil {
 			if u.User != nil && target.User == "" {
@@ -3509,6 +3873,17 @@ func parseTerminalSSHCommand(command string) (terminalSSHTarget, bool) {
 	}
 	target.Host = strings.Trim(strings.TrimSpace(targetText), "[]")
 	return target, target.Host != ""
+}
+
+func encodeTerminalOpenSSHArgs(args []string) string {
+	return strings.Join(args, "\x00")
+}
+
+func decodeTerminalOpenSSHArgs(encoded string) []string {
+	if encoded == "" {
+		return nil
+	}
+	return strings.Split(encoded, "\x00")
 }
 
 func terminalCommandBase(command string) string {
@@ -3738,7 +4113,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		if size.X <= 0 || size.Y <= 0 {
 			return layout.Dimensions{Size: size}
 		}
-		terminalFocused := gtx.Focused(&st.keyTag)
+		terminalFocused := st.keyboardFocused(gtx)
 		paint.FillShape(gtx.Ops, terminalBG, clip.Rect(image.Rectangle{Max: size}).Op())
 		paint.FillShape(gtx.Ops, terminalBorder, clip.Rect(image.Rect(0, 0, size.X, 1)).Op())
 		if st.resizeHandleActive() {
@@ -3769,12 +4144,18 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 		content, rows := terminalGridContentRect(content, cellH)
 		st.resize(rows, cols)
 		st.start(ui.terminalStartDir(), ui.terminalShell())
+		if ui.fmCfg != nil {
+			st.setFindPreviewRange(ui.fmCfg.Terminal.PreviewStart, ui.fmCfg.Terminal.PreviewEnd)
+		}
 		st.layoutScrollbar(gtx, content)
 
 		if st.handlePointer(gtx, content, cellW, cellH) {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 		if st.handleInputWithAcceleratedKeys(gtx, ui.terminalAcceleratedKeysEnabled()) {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+		if st.pumpFindResults() {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 		if st.runSelectionAutoScroll(gtx.Now, content, cellW, cellH) {
@@ -3807,6 +4188,7 @@ func (ui *UI) layoutTerminalPane(th *material.Theme, gtx layout.Context) layout.
 			off.Pop()
 			ui.drawTerminalTabRail(gtx, tabRect)
 		}
+		ui.layoutTerminalFind(th, gtx, st, contentTop)
 		if !terminalFocused {
 			if shade := filePaneInactiveShadeColor(ui.fmCfg, terminalBG); shade.A != 0 {
 				paint.FillShape(gtx.Ops, shade, clip.Rect(image.Rectangle{Max: size}).Op())
@@ -4913,13 +5295,9 @@ func (s *terminalSession) handlePointer(gtx layout.Context, content image.Rectan
 				continue
 			}
 			gtx.Execute(key.FocusCmd{Tag: &s.keyTag})
-			if s.terminalMouseReporting() && viewerPointInRect(pos, content) {
-				if s.reportTerminalMousePress(pe, content, cellW, cellH) {
-					gtx.Execute(pointer.GrabCmd{Tag: &s.pointerTag, ID: pe.PointerID})
-					handled = true
-					continue
-				}
-			}
+			// Middle-click is always the terminal's primary-selection paste
+			// shortcut. Handle it before application mouse reporting so programs
+			// that enable mouse mode cannot swallow the paste gesture.
 			if pe.Buttons.Contain(pointer.ButtonTertiary) {
 				s.closeContextMenu()
 				if viewerPointInRect(pos, content) {
@@ -4927,6 +5305,13 @@ func (s *terminalSession) handlePointer(gtx layout.Context, content image.Rectan
 				}
 				handled = true
 				continue
+			}
+			if s.terminalMouseReporting() && viewerPointInRect(pos, content) {
+				if s.reportTerminalMousePress(pe, content, cellW, cellH) {
+					gtx.Execute(pointer.GrabCmd{Tag: &s.pointerTag, ID: pe.PointerID})
+					handled = true
+					continue
+				}
 			}
 			if pe.Buttons.Contain(pointer.ButtonSecondary) {
 				s.openContextMenu(pos, gtx.Now)
@@ -5306,6 +5691,11 @@ func (s *terminalSession) handleInputWithAcceleratedKeys(gtx layout.Context, acc
 				continue
 			}
 			s.stopKeyRepeat("")
+			if terminalFindKey(ev) {
+				s.openFind(gtx)
+				handled = true
+				continue
+			}
 			if terminalClearBufferKey(ev) {
 				if s.clearBuffer() {
 					handled = true
@@ -5316,6 +5706,11 @@ func (s *terminalSession) handleInputWithAcceleratedKeys(gtx layout.Context, acc
 				if s.copyText(gtx, false) {
 					handled = true
 				}
+				continue
+			}
+			if terminalInterruptKey(ev) {
+				s.write([]byte{0x03})
+				handled = true
 				continue
 			}
 			if terminalPasteKey(ev) {
@@ -5442,10 +5837,31 @@ func terminalClearBufferKeyForGOOS(ev key.Event, goos string) bool {
 }
 
 func terminalCopyKey(ev key.Event) bool {
+	return terminalCopyKeyForGOOS(ev, runtime.GOOS)
+}
+
+func terminalCopyKeyForGOOS(ev key.Event, goos string) bool {
 	if ev.Name != "C" && ev.Name != "c" {
 		return false
 	}
-	return ev.Modifiers.Contain(key.ModCtrl) || ev.Modifiers.Contain(key.ModShortcut)
+	if goos == "darwin" {
+		return ev.Modifiers == key.ModCommand
+	}
+	return ev.Modifiers == key.ModCtrl|key.ModShift
+}
+
+func terminalInterruptKey(ev key.Event) bool {
+	return terminalInterruptKeyForGOOS(ev, runtime.GOOS)
+}
+
+func terminalInterruptKeyForGOOS(ev key.Event, goos string) bool {
+	if ev.Name != "C" && ev.Name != "c" {
+		return false
+	}
+	if ev.Modifiers == key.ModCtrl {
+		return true
+	}
+	return goos == "darwin" && ev.Modifiers == key.ModCommand
 }
 
 func terminalPasteKey(ev key.Event) bool {

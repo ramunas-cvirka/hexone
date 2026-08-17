@@ -17,7 +17,7 @@ func (ui *UI) SnapshotSession() *fm.SessionState {
 	ui.ensureFilePaneTabs()
 
 	switch ui.Tabs.Value {
-	case "tab0", "tab1", "tab2":
+	case "tab0", "tab1", "tab2", "tab3":
 		s.ActiveTab = ui.Tabs.Value
 	default:
 		s.ActiveTab = "tab0"
@@ -58,7 +58,7 @@ func (ui *UI) ApplySession(s *fm.SessionState) {
 	}
 
 	switch strings.ToLower(strings.TrimSpace(s.ActiveTab)) {
-	case "tab0", "tab1", "tab2":
+	case "tab0", "tab1", "tab2", "tab3":
 		ui.Tabs.Value = strings.ToLower(strings.TrimSpace(s.ActiveTab))
 	}
 

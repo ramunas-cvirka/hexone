@@ -77,6 +77,100 @@ func (v *streamOutputView) syntaxLine(line int) ([]viewerSyntaxSpan, bool) {
 	return v.syntax.lines[line].spans, true
 }
 
+// viewerPreserveSyntaxAfterEdit keeps unaffected highlighting visible while a
+// debounced full-document reparse is pending. The edited line is adjusted for
+// a single-line replacement; multiline edits temporarily render only their
+// changed lines as plain text.
+func viewerPreserveSyntaxAfterEdit(doc viewerSyntaxDocument, oldChangedLines []string, startLine, endLine, startLocal, endLocal int, replacement string, newLines []string) viewerSyntaxDocument {
+	if !doc.ready() || startLine < 0 || endLine < startLine || startLine > len(doc.lines) {
+		return viewerSyntaxDocument{}
+	}
+	affected := strings.Count(replacement, "\n") + 1
+	if affected < 1 || startLine+affected > len(newLines) {
+		return viewerSyntaxDocument{}
+	}
+	if len(oldChangedLines) == 1 && affected == 1 && len(doc.lines) == len(newLines) && startLine < len(doc.lines) {
+		doc.lines[startLine] = viewerAdjustSyntaxLineForEdit(doc.lines[startLine], oldChangedLines[0], startLocal, endLocal, replacement)
+		return doc
+	}
+	next := viewerSyntaxDocument{lines: make([]viewerSyntaxLine, len(newLines))}
+	copy(next.lines[:startLine], doc.lines[:min(startLine, len(doc.lines))])
+
+	oldSuffix := endLine + 1
+	newSuffix := startLine + affected
+	if oldSuffix < len(doc.lines) && newSuffix < len(next.lines) {
+		copy(next.lines[newSuffix:], doc.lines[oldSuffix:])
+	}
+	for i := startLine; i < newSuffix; i++ {
+		next.lines[i] = viewerPlainSyntaxLine(newLines[i])
+	}
+	return next
+}
+
+func viewerAdjustSyntaxLineForEdit(line viewerSyntaxLine, oldText string, startByte, endByte int, replacement string) viewerSyntaxLine {
+	if startByte < 0 || endByte < startByte || endByte > len(oldText) || strings.Contains(replacement, "\n") {
+		return viewerPlainSyntaxLine(oldText[:max(0, min(len(oldText), startByte))] + replacement + oldText[max(0, min(len(oldText), endByte)):])
+	}
+	oldRunes := []rune(oldText)
+	roles := make([]viewerSyntaxRole, len(oldRunes))
+	for _, span := range line.spans {
+		from := max(0, min(len(roles), span.colStart))
+		to := max(from, min(len(roles), span.colEnd))
+		for i := from; i < to; i++ {
+			roles[i] = span.role
+		}
+	}
+	startCol := utf8.RuneCountInString(oldText[:startByte])
+	endCol := utf8.RuneCountInString(oldText[:endByte])
+	replacementRunes := []rune(replacement)
+	replacementRole := viewerSyntaxText
+	if startCol > 0 && startCol-1 < len(roles) {
+		replacementRole = roles[startCol-1]
+	}
+	if replacementRole == viewerSyntaxText && endCol < len(roles) {
+		replacementRole = roles[endCol]
+	}
+	if strings.TrimSpace(replacement) == "" {
+		replacementRole = viewerSyntaxText
+	}
+	newRoles := make([]viewerSyntaxRole, 0, len(roles)-(endCol-startCol)+len(replacementRunes))
+	newRoles = append(newRoles, roles[:startCol]...)
+	for range replacementRunes {
+		newRoles = append(newRoles, replacementRole)
+	}
+	newRoles = append(newRoles, roles[endCol:]...)
+	newText := oldText[:startByte] + replacement + oldText[endByte:]
+	return viewerSyntaxLineFromRoles(newText, newRoles)
+}
+
+func viewerPlainSyntaxLine(text string) viewerSyntaxLine {
+	return viewerSyntaxLineFromRoles(text, make([]viewerSyntaxRole, utf8.RuneCountInString(text)))
+}
+
+func viewerSyntaxLineFromRoles(text string, roles []viewerSyntaxRole) viewerSyntaxLine {
+	if text == "" {
+		return viewerSyntaxLine{}
+	}
+	runes := []rune(text)
+	if len(roles) != len(runes) {
+		roles = make([]viewerSyntaxRole, len(runes))
+	}
+	var line viewerSyntaxLine
+	byteStart := 0
+	for colStart := 0; colStart < len(runes); {
+		role := roles[colStart]
+		colEnd := colStart + 1
+		for colEnd < len(runes) && roles[colEnd] == role {
+			colEnd++
+		}
+		byteEnd := byteStart + len(string(runes[colStart:colEnd]))
+		viewerSyntaxAppendSpan(&line, viewerSyntaxSpan{role: role, byteStart: byteStart, byteEnd: byteEnd, colStart: colStart, colEnd: colEnd})
+		byteStart = byteEnd
+		colStart = colEnd
+	}
+	return line
+}
+
 func viewerBuildSyntaxDocument(ctx context.Context, path, content string) viewerSyntaxDocument {
 	if strings.TrimSpace(content) == "" || viewerTotalLines(content) > viewerSyntaxMaxLines {
 		return viewerSyntaxDocument{}

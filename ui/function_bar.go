@@ -260,9 +260,9 @@ func (ui *UI) viewerFunctionBarActionEnabled(action functionBarAction) bool {
 	case functionBarActionViewerMode:
 		return !st.commandOnly
 	case functionBarActionViewerWrap:
-		return !st.detectedImagePreview && st.mode != "hex" && !st.commandEditOn
+		return !st.detectedImagePreview && !viewerMarkdownPreviewActive(st) && st.mode != "hex" && !st.commandEditOn
 	case functionBarActionViewerLineNumbers:
-		return !st.detectedImagePreview && st.mode != "hex" && !st.commandEditOn
+		return !st.detectedImagePreview && !viewerMarkdownPreviewActive(st) && st.mode != "hex" && !st.commandEditOn
 	default:
 		return false
 	}
@@ -312,6 +312,18 @@ func (ui *UI) performFunctionBarActionContext(gtx layout.Context, action functio
 		}
 		ui.closeFunctionBarPopups()
 		if ui.fileViewer != nil {
+			if ui.fileViewer.markdown.detected {
+				if ui.fileViewer.mode != "file" || ui.fileViewer.historyOpen {
+					ui.setFileViewerMode("file", now)
+					return true
+				}
+				if ui.fileViewer.editMode {
+					ui.stopFileViewerEdit()
+					return true
+				}
+				ui.closeFileViewer()
+				return true
+			}
 			if ui.fileViewer.editMode {
 				ui.discardFileViewerChanges(ui.fileViewer)
 				ui.stopFileViewerEdit()
@@ -451,7 +463,9 @@ func (ui *UI) functionBarButtonSpecs() []functionBarButtonSpec {
 func (ui *UI) viewerFunctionBarButtonSpecs() []functionBarButtonSpec {
 	st := ui.fileViewer
 	viewLabel := "Close"
-	if st.editMode {
+	if st.markdown.detected && st.editMode {
+		viewLabel = "Preview"
+	} else if st.editMode {
 		viewLabel = "View"
 	}
 	modeLabel := "Hex"
@@ -490,7 +504,7 @@ func (ui *UI) functionBarToolsFill() float32 {
 	if ui.functionBarToolsOpen {
 		return 1
 	}
-	if ui.settingsModal != nil || ui.sshModal != nil || ui.Tabs.Value == "tab1" || ui.Tabs.Value == "tab2" {
+	if ui.settingsModal != nil || ui.sshModal != nil || ui.Tabs.Value == "tab1" || ui.Tabs.Value == "tab2" || ui.Tabs.Value == "tab3" {
 		return 0.7
 	}
 	return 0
@@ -917,7 +931,7 @@ func (ui *UI) functionBarActiveIndex(specs []functionBarButtonSpec) int {
 	switch {
 	case ui.customCommandMenuOpen, ui.customCommandEditor != nil:
 		return ui.functionBarIndexForAction(specs, functionBarActionCustom)
-	case ui.functionBarToolsOpen, ui.settingsModal != nil, ui.Tabs.Value == "tab1", ui.Tabs.Value == "tab2":
+	case ui.functionBarToolsOpen, ui.settingsModal != nil, ui.Tabs.Value == "tab1", ui.Tabs.Value == "tab2", ui.Tabs.Value == "tab3":
 		return ui.functionBarIndexForAction(specs, functionBarActionTools)
 	case ui.fileDelete != nil:
 		return ui.functionBarIndexForAction(specs, functionBarActionDelete)
@@ -1206,12 +1220,15 @@ func (ui *UI) functionBarToolSpecs() []functionBarToolSpec {
 		active = "hex"
 	case ui.Tabs.Value == "tab2":
 		active = "protocol"
+	case ui.Tabs.Value == "tab3":
+		active = "http"
 	}
 	return []functionBarToolSpec{
 		{key: "multi-rename", label: "Multi-Rename", shortcut: "Ctrl+M"},
 		{key: "ssh", label: "SSH Setup", shortcut: "Ctrl+F", active: active == "ssh"},
 		{key: "hex", label: "Hex to ASCII", active: active == "hex"},
 		{key: "protocol", label: "Protocol Analyzer", active: active == "protocol"},
+		{key: "http", label: "HTTP Client", active: active == "http"},
 		{key: "settings", label: "Settings", shortcut: "Ctrl+S", active: active == "settings"},
 	}
 }
@@ -1316,6 +1333,8 @@ func (ui *UI) activateFunctionBarTool(key string, now time.Time) {
 		ui.setActiveTab("tab1", now)
 	case "protocol":
 		ui.setActiveTab("tab2", now)
+	case "http":
+		ui.setActiveTab("tab3", now)
 	case "settings":
 		ui.openSettingsModal()
 	}

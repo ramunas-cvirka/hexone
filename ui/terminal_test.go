@@ -74,6 +74,81 @@ func TestTerminalKeyBytesSpecialKeys(t *testing.T) {
 	}
 }
 
+func TestTerminalCtrlCInterruptsEvenWithSelection(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+	st.viewMu.Lock()
+	st.selectionActive = true
+	st.selectionStart = terminalPoint{Row: 0, Col: 0}
+	st.selectionEnd = terminalPoint{Row: 0, Col: 1}
+	st.viewMu.Unlock()
+
+	gtx, router := testKeyContext()
+	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+	router.Event(key.Filter{Focus: &st.keyTag, Optional: ^key.Modifiers(0)})
+	router.Queue(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl})
+
+	if !st.handleInput(gtx) {
+		t.Fatal("Ctrl+C should be handled by the terminal")
+	}
+	if got, want := proc.String(), "\x03"; got != want {
+		t.Fatalf("Ctrl+C input=%q want interrupt byte %q", got, want)
+	}
+}
+
+func TestTerminalCmdCInterruptsWithoutSelectionOnDarwin(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Command+C is a macOS-only terminal shortcut")
+	}
+
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testKeyContext()
+	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+	router.Event(key.Filter{Focus: &st.keyTag, Optional: ^key.Modifiers(0)})
+	router.Queue(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCommand})
+
+	if !st.handleInput(gtx) {
+		t.Fatal("Cmd+C should be handled by the terminal")
+	}
+	if got, want := proc.String(), "\x03"; got != want {
+		t.Fatalf("Cmd+C input=%q want interrupt byte %q", got, want)
+	}
+}
+
+func TestTerminalCtrlFOpenFindDoesNotReachShell(t *testing.T) {
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testKeyContext()
+	gtx.Execute(key.FocusCmd{Tag: &st.keyTag})
+	router.Event(key.Filter{Focus: &st.keyTag, Optional: ^key.Modifiers(0)})
+	router.Queue(key.Event{Name: "F", State: key.Press, Modifiers: key.ModCtrl})
+
+	if !st.handleInput(gtx) {
+		t.Fatal("Ctrl+F should be handled by the terminal")
+	}
+	if !st.find.open {
+		t.Fatal("Ctrl+F should open terminal find")
+	}
+	if got := proc.String(); got != "" {
+		t.Fatalf("Ctrl+F reached shell as %q", got)
+	}
+}
+
 func TestTerminalApplicationCursorKeys(t *testing.T) {
 	if got, want := string(terminalKeyBytesForMode(key.Event{Name: key.NameUpArrow, State: key.Press}, true)), "\x1bOA"; got != want {
 		t.Fatalf("application up=%q want %q", got, want)
@@ -433,14 +508,45 @@ func TestTerminalSelectAllKey(t *testing.T) {
 }
 
 func TestTerminalCopyKey(t *testing.T) {
-	if !terminalCopyKey(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl}) {
-		t.Fatal("Ctrl+C should copy terminal selection when one exists")
+	if terminalCopyKeyForGOOS(key.Event{Name: "C", State: key.Press, Modifiers: key.ModCtrl}, "linux") {
+		t.Fatal("plain Ctrl+C must remain available to interrupt the shell")
 	}
-	if !terminalCopyKey(key.Event{Name: "c", State: key.Press, Modifiers: key.ModShortcut}) {
-		t.Fatal("Shortcut+C should copy terminal selection when one exists")
+	if !terminalCopyKeyForGOOS(key.Event{Name: "c", State: key.Press, Modifiers: key.ModCtrl | key.ModShift}, "linux") {
+		t.Fatal("Ctrl+Shift+C should copy terminal selection on Linux")
+	}
+	if !terminalCopyKeyForGOOS(key.Event{Name: "c", State: key.Press, Modifiers: key.ModCommand}, "darwin") {
+		t.Fatal("Command+C should copy terminal selection on macOS")
 	}
 	if terminalCopyKey(key.Event{Name: "C", State: key.Press}) {
 		t.Fatal("plain C should not copy")
+	}
+}
+
+func TestTerminalInterruptKeyUsesPlatformShortcuts(t *testing.T) {
+	tests := []struct {
+		name string
+		goos string
+		mods key.Modifiers
+		want bool
+	}{
+		{name: "macOS Ctrl+C", goos: "darwin", mods: key.ModCtrl, want: true},
+		{name: "Linux Ctrl+C", goos: "linux", mods: key.ModCtrl, want: true},
+		{name: "Windows Ctrl+C", goos: "windows", mods: key.ModCtrl, want: true},
+		{name: "macOS Command+C", goos: "darwin", mods: key.ModCommand, want: true},
+		{name: "Linux Command+C", goos: "linux", mods: key.ModCommand, want: false},
+		{name: "Windows Command+C", goos: "windows", mods: key.ModCommand, want: false},
+		{name: "macOS Ctrl+Shift+C", goos: "darwin", mods: key.ModCtrl | key.ModShift, want: false},
+		{name: "Linux Ctrl+Shift+C", goos: "linux", mods: key.ModCtrl | key.ModShift, want: false},
+		{name: "Windows Ctrl+Shift+C", goos: "windows", mods: key.ModCtrl | key.ModShift, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := key.Event{Name: "C", State: key.Press, Modifiers: tc.mods}
+			if got := terminalInterruptKeyForGOOS(ev, tc.goos); got != tc.want {
+				t.Fatalf("terminalInterruptKeyForGOOS(%q)=%t want %t", tc.goos, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -1139,10 +1245,49 @@ func TestTerminalMiddleClickPrefersSelectionWithoutChangingClipboard(t *testing.
 	}
 }
 
-func TestTerminalMiddleClickReportsMouseWhenEnabled(t *testing.T) {
+func TestTerminalMiddleClickFallsBackToClipboardForStaleSelection(t *testing.T) {
 	oldRead := readTerminalClipboardText
 	readTerminalClipboardText = func() (string, error) {
-		return "should-not-paste", nil
+		return "clipboard fallback", nil
+	}
+	defer func() {
+		readTerminalClipboardText = oldRead
+	}()
+
+	st := newTerminalSession(nil)
+	st.writeOutput([]byte("visible text"))
+	st.viewMu.Lock()
+	st.selectionActive = true
+	st.selectionStart = terminalPoint{Row: 100, Col: 0}
+	st.selectionEnd = terminalPoint{Row: 100, Col: 5}
+	st.viewMu.Unlock()
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+
+	gtx, router := testPointerContext()
+	registerPointerTag(router, gtx.Ops, &st.pointerTag)
+	primePointerFilter(router, &st.pointerTag)
+	router.Queue(pointer.Event{
+		Kind:     pointer.Press,
+		Buttons:  pointer.ButtonTertiary,
+		Position: f32.Pt(40, 40),
+	})
+
+	if !st.handlePointer(gtx, image.Rect(0, 0, 240, 160), 8, 16) {
+		t.Fatal("middle click should be handled")
+	}
+	if got, want := proc.String(), "clipboard fallback"; got != want {
+		t.Fatalf("middle click pasted bytes=%q want %q", got, want)
+	}
+}
+
+func TestTerminalMiddleClickPastesClipboardWhenMouseReportingEnabled(t *testing.T) {
+	oldRead := readTerminalClipboardText
+	readTerminalClipboardText = func() (string, error) {
+		return "paste-not-report", nil
 	}
 	defer func() {
 		readTerminalClipboardText = oldRead
@@ -1166,10 +1311,10 @@ func TestTerminalMiddleClickReportsMouseWhenEnabled(t *testing.T) {
 	})
 
 	if !st.handlePointer(gtx, image.Rect(0, 0, 240, 160), 8, 16) {
-		t.Fatal("middle click mouse report should be handled")
+		t.Fatal("middle click paste should be handled")
 	}
-	if got, want := proc.String(), "\x1b[<1;3;2M"; got != want {
-		t.Fatalf("middle click mouse report=%q want %q", got, want)
+	if got, want := proc.String(), "paste-not-report"; got != want {
+		t.Fatalf("middle click pasted bytes=%q want %q", got, want)
 	}
 }
 
@@ -1252,6 +1397,16 @@ func TestTerminalOSC7LocationParsesFileURI(t *testing.T) {
 	}
 }
 
+func TestTerminalOSC7LocationParsesProbePathLiterally(t *testing.T) {
+	loc, ok := parseTerminalOSC7Location("file://hexone-probe-123.invalid/var/log/app#one?raw%dir")
+	if !ok {
+		t.Fatal("expected terminal dir probe URI to parse")
+	}
+	if loc.Host != "hexone-probe-123.invalid" || loc.Dir != "/var/log/app#one?raw%dir" {
+		t.Fatalf("loc=%+v", loc)
+	}
+}
+
 func TestFindSSHSetupForTerminalOSC7RequiresUniqueMatch(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.SSH.Setups = []fm.SSHSetup{
@@ -1303,6 +1458,22 @@ func TestParseTerminalSSHCommand(t *testing.T) {
 				t.Fatalf("target=%+v want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseTerminalSSHCommandPreservesConnectionOptions(t *testing.T) {
+	target, ok := parseTerminalSSHCommand("ssh -F \"C:/ssh configs/custom.conf\" -i C:/keys/prod -J bastion -o StrictHostKeyChecking=yes deploy@production")
+	if !ok {
+		t.Fatal("parseTerminalSSHCommand failed")
+	}
+	wantOptions := []string{"-F", "C:/ssh configs/custom.conf", "-i", "C:/keys/prod", "-J", "bastion", "-o", "StrictHostKeyChecking=yes"}
+	if got, want := strings.Join(decodeTerminalOpenSSHArgs(target.OpenSSHArgs), "\n"), strings.Join(wantOptions, "\n"); got != want {
+		t.Fatalf("OpenSSH options=%q want %q", got, want)
+	}
+	wantCommandArgs := append([]string{"-G"}, wantOptions...)
+	wantCommandArgs = append(wantCommandArgs, "-l", "deploy", "--", "production")
+	if got, want := strings.Join(openSSHConfigCommandArgs(target), "\n"), strings.Join(wantCommandArgs, "\n"); got != want {
+		t.Fatalf("ssh -G args=%q want %q", got, want)
 	}
 }
 
@@ -1453,14 +1624,13 @@ func TestSetPaneDirToTerminalOSC7RemoteDirUsesActiveSSHCommandTarget(t *testing.
 	}
 }
 
-func TestSetPaneDirToTerminalOSC7RemoteDirRequiresSSHSetup(t *testing.T) {
-	oldOpen := openSSHClientsFunc
+func TestSetPaneDirToTerminalOSC7RemoteDirReportsOpenSSHConfigFailure(t *testing.T) {
+	oldResolve := resolveOpenSSHConnectionSpecFunc
 	t.Cleanup(func() {
-		openSSHClientsFunc = oldOpen
+		resolveOpenSSHConnectionSpecFunc = oldResolve
 	})
-	openSSHClientsFunc = func(fm.SSHSetup) (sshClientBundle, error) {
-		t.Fatal("missing terminal SSH setup should not dial")
-		return sshClientBundle{}, nil
+	resolveOpenSSHConnectionSpecFunc = func(terminalSSHTarget) (sshConnectionSpec, error) {
+		return sshConnectionSpec{}, errors.New("ssh executable unavailable")
 	}
 
 	cfg := fm.DefaultConfig()
@@ -1474,14 +1644,234 @@ func TestSetPaneDirToTerminalOSC7RemoteDirRequiresSSHSetup(t *testing.T) {
 
 	ui.terminal.writeOutput([]byte("\x1b]7;file://srv.test/var/log/app\x07"))
 	if ui.setPaneDirToTerminalDir(0, time.Now()) {
-		t.Fatal("setPaneDirToTerminalDir should fail without a saved SSH setup")
+		t.Fatal("setPaneDirToTerminalDir should fail when OpenSSH config resolution fails")
 	}
 	if pane := ui.filePanes[0]; pane == nil || pane.remote != nil {
 		t.Fatalf("pane should remain local, pane=%+v", pane)
 	}
 }
 
-func TestSetPaneDirToTerminalSSHWithoutRemoteOSC7DoesNotUseLocalFallback(t *testing.T) {
+func TestSetPaneDirToTerminalOSC7RemoteDirUsesTrackedSSHWithoutSetup(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldResolve := resolveOpenSSHConnectionSpecFunc
+	oldOpenSpec := openSSHConnectionSpecFunc
+	oldCloseSFTP := closeSFTPClientFunc
+	oldCloseSSH := closeSSHClientFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		resolveOpenSSHConnectionSpecFunc = oldResolve
+		openSSHConnectionSpecFunc = oldOpenSpec
+		closeSFTPClientFunc = oldCloseSFTP
+		closeSSHClientFunc = oldCloseSSH
+	})
+	closeSFTPClientFunc = func(*sftp.Client) {}
+	closeSSHClientFunc = func(*ssh.Client) {}
+
+	cfg := fm.DefaultConfig()
+	st := newTerminalSession(nil)
+	st.trackCommandInput([]byte("ssh production\r"))
+	ui := &UI{
+		fmCfg: cfg,
+		filePanes: []*filePaneState{
+			newFilePaneState(t.TempDir(), cfg),
+		},
+		terminal: st,
+	}
+	remoteClient := new(sftp.Client)
+	resolveOpenSSHConnectionSpecFunc = func(target terminalSSHTarget) (sshConnectionSpec, error) {
+		if target.Host != "production" {
+			t.Fatalf("tracked target=%+v want production alias", target)
+		}
+		return sshConnectionSpec{
+			setup:     fm.SSHSetup{Host: "production", Port: 22, User: "deploy"},
+			dialHost:  "srv.test",
+			transient: true,
+		}, nil
+	}
+	openSSHConnectionSpecFunc = func(spec sshConnectionSpec) (sshClientBundle, error) {
+		if spec.dialHost != "srv.test" {
+			t.Fatalf("dial host=%q want srv.test", spec.dialHost)
+		}
+		return sshClientBundle{sshClient: new(ssh.Client), sftpBase: new(ssh.Client), sftp: remoteClient}, nil
+	}
+	readDirSFTPFunc = func(client *sftp.Client, dir string) (filesys.Listing, error) {
+		if client != remoteClient || dir != "/var/log/app" {
+			t.Fatalf("readDir client=%p dir=%q", client, dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	st.writeOutput([]byte("\x1b]7;file://actual-host/var/log/app\x07"))
+	if !ui.setPaneDirToTerminalDir(0, time.Now()) {
+		t.Fatal("setPaneDirToTerminalDir returned false")
+	}
+	if pane := ui.filePanes[0]; pane.remote == nil || pane.dir != "/var/log/app" {
+		t.Fatalf("pane not connected through transient SSH spec: %+v", pane)
+	}
+}
+
+func TestTerminalRemoteSyncActivatesExistingServerTab(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldResolve := resolveOpenSSHConnectionSpecFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		resolveOpenSSHConnectionSpecFunc = oldResolve
+	})
+	resolveOpenSSHConnectionSpecFunc = func(terminalSSHTarget) (sshConnectionSpec, error) {
+		t.Fatal("existing matching tab should not resolve or open another SSH connection")
+		return sshConnectionSpec{}, nil
+	}
+
+	cfg := fm.DefaultConfig()
+	client := new(sftp.Client)
+	remoteTab := newFilePaneState("/old", cfg)
+	remoteTab.remote = &paneSSHSession{
+		setup: fm.SSHSetup{Host: "srv.test", Port: 22, User: "root"},
+		conn:  newSharedSSHConn(sshClientBundle{sftp: client}),
+	}
+	remoteTab.dir = "/old"
+	localTab := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{localTab},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{remoteTab, localTab}, active: 1}},
+	}
+	readDirSFTPFunc = func(got *sftp.Client, dir string) (filesys.Listing, error) {
+		if got != client || dir != "/var/log" {
+			t.Fatalf("readDir client=%p dir=%q", got, dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	loc := terminalOSC7Location{Host: "srv.test", User: "root", Port: 22, HasPort: true, Dir: "/var/log"}
+	target := terminalSSHTarget{Host: "srv.test", User: "root", Port: 22}
+	if !ui.setPaneDirToTerminalRemoteDirForTarget(0, loc, target, time.Now()) {
+		t.Fatal("remote sync failed")
+	}
+	if got := len(ui.filePaneTabs[0].tabs); got != 2 {
+		t.Fatalf("tabs=%d want existing two tabs", got)
+	}
+	if ui.filePaneTabs[0].active != 0 || ui.filePanes[0] != remoteTab {
+		t.Fatal("matching remote tab was not activated")
+	}
+	if remoteTab.dir != "/var/log" || localTab.remote != nil {
+		t.Fatalf("remote dir=%q local remote=%v", remoteTab.dir, localTab.remote)
+	}
+}
+
+func TestTerminalRemoteSyncCreatesTabWithoutReplacingDifferentServer(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldOpen := openSSHClientsFunc
+	oldCloseSFTP := closeSFTPClientFunc
+	oldCloseSSH := closeSSHClientFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		openSSHClientsFunc = oldOpen
+		closeSFTPClientFunc = oldCloseSFTP
+		closeSSHClientFunc = oldCloseSSH
+	})
+
+	cfg := fm.DefaultConfig()
+	targetSetup := fm.SSHSetup{Host: "server-a.test", Port: 22, User: "root", Password: "secret"}
+	cfg.SSH.Setups = []fm.SSHSetup{targetSetup}
+	oldClient := new(sftp.Client)
+	newClient := new(sftp.Client)
+	oldTab := newFilePaneState("/srv/old", cfg)
+	oldTab.remote = &paneSSHSession{
+		setup: fm.SSHSetup{Host: "server-b.test", Port: 22, User: "root"},
+		conn:  newSharedSSHConn(sshClientBundle{sftp: oldClient}),
+	}
+	oldTab.dir = "/srv/old"
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{oldTab},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{oldTab}, active: 0}},
+	}
+	closedOld := 0
+	closeSFTPClientFunc = func(client *sftp.Client) {
+		if client == oldClient {
+			closedOld++
+		}
+	}
+	closeSSHClientFunc = func(*ssh.Client) {}
+	openSSHClientsFunc = func(got fm.SSHSetup) (sshClientBundle, error) {
+		if !sameSSHRemoteTarget(got, targetSetup) {
+			t.Fatalf("unexpected setup: %+v", got)
+		}
+		return sshClientBundle{sftp: newClient}, nil
+	}
+	oldReads := 0
+	readDirSFTPFunc = func(client *sftp.Client, dir string) (filesys.Listing, error) {
+		switch client {
+		case oldClient:
+			oldReads++
+			if dir != "/srv/old" {
+				t.Fatalf("old tab read dir=%q", dir)
+			}
+		case newClient:
+			if dir != "/opt/app" {
+				t.Fatalf("new tab read dir=%q", dir)
+			}
+		default:
+			t.Fatalf("unexpected client %p", client)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	loc := terminalOSC7Location{Host: targetSetup.Host, User: targetSetup.User, Port: 22, HasPort: true, Dir: "/opt/app"}
+	target := terminalSSHTarget{Host: targetSetup.Host, User: targetSetup.User, Port: 22}
+	if !ui.setPaneDirToTerminalRemoteDirForTarget(0, loc, target, time.Now()) {
+		t.Fatal("remote sync failed")
+	}
+	set := &ui.filePaneTabs[0]
+	if len(set.tabs) != 2 || set.active != 1 {
+		t.Fatalf("tabs=%d active=%d want new active tab", len(set.tabs), set.active)
+	}
+	if set.tabs[0] != oldTab || oldTab.remote == nil || oldTab.dir != "/srv/old" {
+		t.Fatal("previous server tab was replaced")
+	}
+	newTab := set.tabs[1]
+	if ui.filePanes[0] != newTab || newTab.remote == nil || newTab.dir != "/opt/app" {
+		t.Fatalf("new server tab not active and synced: %+v", newTab)
+	}
+	if closedOld != 0 {
+		t.Fatalf("previous server connection closed %d times", closedOld)
+	}
+	if oldReads != 0 {
+		t.Fatalf("remote sync redundantly reloaded previous server %d times", oldReads)
+	}
+}
+
+func TestTerminalRemoteSyncRemovesNewTabWhenConnectionFails(t *testing.T) {
+	oldOpen := openSSHClientsFunc
+	t.Cleanup(func() { openSSHClientsFunc = oldOpen })
+	openSSHClientsFunc = func(fm.SSHSetup) (sshClientBundle, error) {
+		return sshClientBundle{}, errors.New("connection refused")
+	}
+
+	cfg := fm.DefaultConfig()
+	setup := fm.SSHSetup{Host: "server-a.test", Port: 22, User: "root", Password: "secret"}
+	cfg.SSH.Setups = []fm.SSHSetup{setup}
+	localTab := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{localTab},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{localTab}, active: 0}},
+	}
+	loc := terminalOSC7Location{Host: setup.Host, User: setup.User, Port: 22, HasPort: true, Dir: "/opt/app"}
+	target := terminalSSHTarget{Host: setup.Host, User: setup.User, Port: 22}
+	if ui.setPaneDirToTerminalRemoteDirForTarget(0, loc, target, time.Now()) {
+		t.Fatal("failed remote sync should return false")
+	}
+	if len(ui.filePaneTabs[0].tabs) != 1 || ui.filePaneTabs[0].tabs[0] != localTab || ui.filePanes[0] != localTab {
+		t.Fatalf("failed sync left an extra tab: %+v", ui.filePaneTabs[0])
+	}
+	if !strings.Contains(localTab.noticeText, "connection refused") {
+		t.Fatalf("notice=%q", localTab.noticeText)
+	}
+}
+
+func TestSetPaneDirToTerminalSSHWithoutRemoteOSC7InjectsProbe(t *testing.T) {
 	oldSSHTarget := terminalProcessSSHTarget
 	t.Cleanup(func() {
 		terminalProcessSSHTarget = oldSSHTarget
@@ -1494,8 +1884,9 @@ func TestSetPaneDirToTerminalSSHWithoutRemoteOSC7DoesNotUseLocalFallback(t *test
 	cfg := fm.DefaultConfig()
 	st := newTerminalSession(nil)
 	st.writeOutput([]byte("\x1b]7;file://localhost" + localDir + "\x07"))
+	proc := &terminalWriteProcess{}
 	st.procMu.Lock()
-	st.pty = &terminalWriteProcess{}
+	st.pty = proc
 	st.running = true
 	st.procMu.Unlock()
 	ui := &UI{
@@ -1506,11 +1897,129 @@ func TestSetPaneDirToTerminalSSHWithoutRemoteOSC7DoesNotUseLocalFallback(t *test
 		terminal: st,
 	}
 
-	if ui.setPaneDirToTerminalDir(0, time.Now()) {
-		t.Fatal("active SSH without remote OSC7 should not use local OSC7 fallback")
+	now := time.Unix(123, 456)
+	if !ui.setPaneDirToTerminalDir(0, now) {
+		t.Fatal("active SSH without remote OSC7 should start a dir probe")
 	}
 	if pane := ui.filePanes[0]; pane == nil || pane.dir == localDir {
 		t.Fatalf("pane should not move to local OSC7 dir, pane=%+v", pane)
+	}
+	if ui.terminalDirProbe == nil {
+		t.Fatal("terminal dir probe was not recorded")
+	}
+	want := terminalDirProbeCommand(ui.terminalDirProbe.host)
+	if got := proc.String(); got != want {
+		t.Fatalf("probe command=%q want %q", got, want)
+	}
+}
+
+func TestTerminalDirProbeResultConnectsPane(t *testing.T) {
+	oldSSHTarget := terminalProcessSSHTarget
+	oldReadDir := readDirSFTPFunc
+	oldOpen := openSSHClientsFunc
+	t.Cleanup(func() {
+		terminalProcessSSHTarget = oldSSHTarget
+		readDirSFTPFunc = oldReadDir
+		openSSHClientsFunc = oldOpen
+	})
+	target := terminalSSHTarget{User: "root", Host: "157.180.68.247", Port: 22}
+	terminalProcessSSHTarget = func(int) (terminalSSHTarget, bool) { return target, true }
+
+	cfg := fm.DefaultConfig()
+	cfg.SSH.Setups = []fm.SSHSetup{{Host: target.Host, Port: target.Port, User: target.User, Password: "secret"}}
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{fmCfg: cfg, filePanes: []*filePaneState{pane}, terminal: st}
+	client := new(sftp.Client)
+	openSSHClientsFunc = func(got fm.SSHSetup) (sshClientBundle, error) {
+		if got.Host != target.Host || got.Port != target.Port || got.User != target.User {
+			t.Fatalf("unexpected setup: %+v", got)
+		}
+		return sshClientBundle{sshClient: new(ssh.Client), sftpBase: new(ssh.Client), sftp: client}, nil
+	}
+	readDirSFTPFunc = func(got *sftp.Client, dir string) (filesys.Listing, error) {
+		if got != client || dir != "/var/log/app#one?raw%dir" {
+			t.Fatalf("readDir client=%p dir=%q", got, dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	now := time.Unix(123, 456)
+	if !ui.setPaneDirToTerminalDir(0, now) || ui.terminalDirProbe == nil {
+		t.Fatal("terminal dir probe did not start")
+	}
+	host := ui.terminalDirProbe.host
+	st.writeOutput([]byte("\x1b]7;file://" + host + "/var/log/app#one?raw%dir\x07"))
+	gtx := testPathLayoutContext()
+	gtx.Now = now.Add(time.Millisecond)
+	ui.pumpTerminalDirProbe(gtx)
+
+	if ui.terminalDirProbe != nil {
+		t.Fatal("terminal dir probe was not cleared")
+	}
+	if len(ui.filePaneTabs) != 1 || len(ui.filePaneTabs[0].tabs) != 2 {
+		t.Fatalf("remote sync tabs=%+v want preserved local tab plus remote tab", ui.filePaneTabs)
+	}
+	if pane.remote != nil {
+		t.Fatal("original local tab should remain unchanged")
+	}
+	synced := ui.filePanes[0]
+	if synced == pane || synced.remote == nil || synced.dir != "/var/log/app#one?raw%dir" {
+		t.Fatalf("active tab not connected to probed dir: %+v", synced)
+	}
+}
+
+func TestTerminalDirProbeDoesNotOverwriteDraft(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	st := newTerminalSession(nil)
+	st.trackCommandInput([]byte("echo pending"))
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{fmCfg: cfg, filePanes: []*filePaneState{pane}, terminal: st}
+
+	if ui.startTerminalDirProbe(0, terminalSSHTarget{Host: "srv.test", User: "root", Port: 22}, time.Now()) {
+		t.Fatal("probe should not overwrite a partially typed command")
+	}
+	if got := proc.String(); got != "" {
+		t.Fatalf("unexpected injected command=%q", got)
+	}
+	if got := pane.noticeText; got != "clear the current terminal command before syncing its dir" {
+		t.Fatalf("notice=%q", got)
+	}
+}
+
+func TestTerminalDirProbeTimesOut(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	base := time.Unix(123, 0)
+	ui := &UI{
+		fmCfg:     cfg,
+		filePanes: []*filePaneState{pane},
+		terminalDirProbe: &terminalDirProbeState{
+			session:  newTerminalSession(nil),
+			pane:     0,
+			host:     "hexone-probe-timeout.invalid",
+			deadline: base,
+		},
+	}
+	gtx := testPathLayoutContext()
+	gtx.Now = base
+	ui.pumpTerminalDirProbe(gtx)
+
+	if ui.terminalDirProbe != nil {
+		t.Fatal("timed-out probe was not cleared")
+	}
+	if got := pane.noticeText; got != "terminal SSH dir query timed out; run it from a shell prompt" {
+		t.Fatalf("notice=%q", got)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"image/color"
 	"strconv"
 	"strings"
+	"time"
 
 	"gioui.org/font"
 	"gioui.org/io/key"
@@ -36,7 +37,7 @@ type sshModalState struct {
 	selected          int
 	setupClicks       []widget.Clickable
 	setupRemoveClicks []widget.Clickable
-	setupList         layout.List
+	setupList         widget.List
 
 	nameEdit    widget.Editor
 	hostEdit    widget.Editor
@@ -46,12 +47,18 @@ type sshModalState struct {
 	keyPathEdit widget.Editor
 	keyPassEdit widget.Editor
 
-	savedSetups []fm.SSHSetup
-	footerAnim  segmentedAnimState
-	errText     string
-	keyFocus    dialogKeyboardFocusState
-	focus       sshModalFocus
-	actionFocus sshModalAction
+	savedSetups      []fm.SSHSetup
+	footerAnim       segmentedAnimState
+	setupHoverAnim   segmentedAnimState
+	setupSelectAnim  segmentedAnimState
+	removeHoverAnim  segmentedAnimState
+	addHoverAnim     segmentedAnimState
+	errText          string
+	keyFocus         dialogKeyboardFocusState
+	focus            sshModalFocus
+	actionFocus      sshModalAction
+	transientConnect *sshTransientConnectRequest
+	focusPassphrase  bool
 }
 
 type sshModalFocus uint8
@@ -138,6 +145,12 @@ func (ui *UI) openSSHModal() {
 }
 
 func (ui *UI) closeSSHModal() {
+	if ui == nil {
+		return
+	}
+	if ui.sshModal != nil {
+		ui.cleanupCanceledSSHTransientTab(ui.sshModal.transientConnect)
+	}
 	ui.sshModal = nil
 }
 
@@ -166,6 +179,10 @@ func (st *sshModalState) loadFromConfigWithSelected(cfg *fm.Config, selected int
 		st.setupList.Position = layout.Position{}
 	}
 	st.loadEditorsFromSelected()
+	st.setupHoverAnim = segmentedAnimState{}
+	st.setupSelectAnim = segmentedAnimState{}
+	st.removeHoverAnim = segmentedAnimState{}
+	st.addHoverAnim = segmentedAnimState{}
 	st.errText = ""
 	st.focus = st.primaryFocus()
 	st.actionFocus = sshModalActionConnect
@@ -363,6 +380,9 @@ func (st *sshModalState) hasUnsavedChanges() bool {
 }
 
 func (st *sshModalState) saveLabel() string {
+	if st != nil && st.transientConnect != nil {
+		return "Save"
+	}
 	if st != nil && st.hasUnsavedChanges() {
 		return "Save (*)"
 	}
@@ -371,6 +391,9 @@ func (st *sshModalState) saveLabel() string {
 
 func (st *sshModalState) defaultAction() sshModalAction {
 	if st == nil {
+		return sshModalActionConnect
+	}
+	if st.transientConnect != nil {
 		return sshModalActionConnect
 	}
 	if st.hasUnsavedChanges() {
@@ -411,15 +434,16 @@ func (st *sshModalState) focusOrder() []sshModalFocus {
 	if st.selected >= 0 && st.selected < len(st.setups) {
 		order = append(order, sshModalFocusRemove)
 	}
-	order = append(order,
-		sshModalFocusHost,
-		sshModalFocusPort,
-		sshModalFocusUser,
-		sshModalFocusPassword,
-		sshModalFocusKeyPath,
-		sshModalFocusPassphrase,
-		sshModalFocusActions,
-	)
+	if st.transientConnect == nil {
+		order = append(order,
+			sshModalFocusHost,
+			sshModalFocusPort,
+			sshModalFocusUser,
+			sshModalFocusPassword,
+			sshModalFocusKeyPath,
+		)
+	}
+	order = append(order, sshModalFocusPassphrase, sshModalFocusActions)
 	return order
 }
 
@@ -428,7 +452,9 @@ func (st *sshModalState) canFocus(target sshModalFocus) bool {
 		return false
 	}
 	switch target {
-	case sshModalFocusAdd, sshModalFocusHost, sshModalFocusPort, sshModalFocusUser, sshModalFocusPassword, sshModalFocusKeyPath, sshModalFocusPassphrase, sshModalFocusActions:
+	case sshModalFocusHost, sshModalFocusPort, sshModalFocusUser, sshModalFocusPassword, sshModalFocusKeyPath:
+		return st.transientConnect == nil
+	case sshModalFocusAdd, sshModalFocusPassphrase, sshModalFocusActions:
 		return true
 	case sshModalFocusSetupsList:
 		return len(st.setups) > 0
@@ -515,6 +541,9 @@ func (st *sshModalState) stepAction(step int) bool {
 		return false
 	}
 	order := []sshModalAction{sshModalActionCancel, sshModalActionSave, sshModalActionConnect}
+	if st.transientConnect != nil {
+		order = []sshModalAction{sshModalActionCancel, sshModalActionConnect}
+	}
 	current := 0
 	for i, action := range order {
 		if action == st.actionFocus {
@@ -626,6 +655,7 @@ func (st *sshModalState) addSetup() bool {
 		st.setups = append(st.setups, fm.SSHSetup{Port: 22})
 	}
 	st.selected = len(st.setups) - 1
+	st.setupSelectAnim = segmentedAnimState{}
 	st.loadEditorsFromSelected()
 	st.ensureSelectedVisible()
 	st.errText = ""
@@ -637,6 +667,9 @@ func (st *sshModalState) removeSetup(index int) bool {
 		return false
 	}
 	st.setups = append(st.setups[:index], st.setups[index+1:]...)
+	st.setupHoverAnim = segmentedAnimState{}
+	st.setupSelectAnim = segmentedAnimState{}
+	st.removeHoverAnim = segmentedAnimState{}
 	if len(st.setups) == 0 {
 		st.selected = -1
 	} else {
@@ -773,6 +806,9 @@ func (ui *UI) activateSSHModalAction(gtx layout.Context, st *sshModalState, acti
 		ui.closeSSHModal()
 		return true
 	case sshModalActionSave:
+		if st.transientConnect != nil {
+			return false
+		}
 		st.footerAnim.setPulse("save", gtx.Now)
 		if err := ui.saveSSHModal(); err != nil {
 			st.errText = err.Error()
@@ -785,6 +821,9 @@ func (ui *UI) activateSSHModalAction(gtx layout.Context, st *sshModalState, acti
 		if err := ui.connectSSHModalToActivePane(gtx.Now); err != nil {
 			st.errText = err.Error()
 		} else {
+			if st.transientConnect != nil {
+				st.transientConnect.removeTabOnCancel = false
+			}
 			ui.closeSSHModal()
 			return true
 		}
@@ -799,6 +838,10 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		return layout.Dimensions{}
 	}
 	st.keyFocus.attach(gtx)
+	if st.focusPassphrase {
+		gtx.Execute(key.FocusCmd{Tag: &st.keyPassEdit})
+		st.focusPassphrase = false
+	}
 	st.syncFocus(gtx)
 
 	// Explicitly drain Ctrl/Cmd+F while modal is open to avoid macOS beep
@@ -957,7 +1000,7 @@ func (ui *UI) layoutSSHModal(th *material.Theme, gtx layout.Context) layout.Dime
 		}
 	}
 	if st.saveClick.Clicked(gtx) {
-		if ui.activateSSHModalAction(gtx, st, sshModalActionSave) {
+		if st.transientConnect == nil && ui.activateSSHModalAction(gtx, st, sshModalActionSave) {
 			return layout.Dimensions{}
 		}
 	}
@@ -1079,7 +1122,11 @@ func (ui *UI) layoutSSHModalHeader(th *material.Theme, gtx layout.Context, st *s
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body1(th, "SSH Sessions")
+					title := "SSH Sessions"
+					if st != nil && st.transientConnect != nil {
+						title = "SSH Key Passphrase"
+					}
+					lbl := material.Body1(th, title)
 					lbl.Font.Typeface = ui.interfaceTypeface()
 					lbl.Font.Weight = font.Bold
 					lbl.TextSize = ui.scaleModalFontSize(12)
@@ -1114,6 +1161,32 @@ func (ui *UI) layoutSSHModalBody(th *material.Theme, gtx layout.Context, st *ssh
 
 func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *sshModalState) layout.Dimensions {
 	visibleFocus := st.visibleFocus()
+	hoveredSetup := ""
+	hoveredRemove := ""
+	for i := range st.setupClicks {
+		key := strconv.Itoa(i)
+		if st.setupClicks[i].Hovered() {
+			hoveredSetup = key
+		}
+		if i < len(st.setupRemoveClicks) && st.setupRemoveClicks[i].Hovered() {
+			hoveredRemove = key
+		}
+	}
+	st.setupHoverAnim.setHover(hoveredSetup, gtx.Now)
+	st.removeHoverAnim.setHover(hoveredRemove, gtx.Now)
+	selectedSetup := ""
+	if st.selected >= 0 {
+		selectedSetup = strconv.Itoa(st.selected)
+	}
+	st.setupSelectAnim.setHover(selectedSetup, gtx.Now)
+	addHovered := ""
+	if st.addClick.Hovered() {
+		addHovered = "add"
+	}
+	st.addHoverAnim.setHover(addHovered, gtx.Now)
+	if sshSetupAnimationsActive(st, gtx.Now) {
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	return layout.Inset{Left: unit.Dp(5), Right: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1126,7 +1199,8 @@ func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *ss
 						return lbl.Layout(gtx)
 					}),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSSHAddButton(th, gtx, &st.addClick, visibleFocus == sshModalFocusAdd)
+						hover, _ := st.addHoverAnim.hoverFill(gtx.Now, "add")
+						return ui.layoutSSHAddButtonAnimated(th, gtx, &st.addClick, visibleFocus == sshModalFocusAdd, smoothstep01(hover))
 					}),
 				)
 			}),
@@ -1140,7 +1214,7 @@ func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *ss
 					lbl.MaxLines = 3
 					return lbl.Layout(gtx)
 				}
-				return st.setupList.Layout(gtx, len(st.setups), func(gtx layout.Context, index int) layout.Dimensions {
+				return settingsScrollableListStyle(th, &st.setupList).Layout(gtx, len(st.setups), func(gtx layout.Context, index int) layout.Dimensions {
 					return ui.layoutSSHSetupRow(th, gtx, st, index)
 				})
 			}),
@@ -1148,10 +1222,62 @@ func (ui *UI) layoutSSHSetupsList(th *material.Theme, gtx layout.Context, st *ss
 	})
 }
 
+func sshSetupAnimationsActive(st *sshModalState, now time.Time) bool {
+	if st == nil {
+		return false
+	}
+	for i := range st.setupClicks {
+		key := strconv.Itoa(i)
+		if _, animating := st.setupHoverAnim.hoverFill(now, key); animating {
+			return true
+		}
+		if _, animating := st.setupSelectAnim.hoverFill(now, key); animating {
+			return true
+		}
+		if _, animating := st.removeHoverAnim.hoverFill(now, key); animating {
+			return true
+		}
+	}
+	_, animating := st.addHoverAnim.hoverFill(now, "add")
+	return animating
+}
+
 func (ui *UI) layoutSSHAddButton(th *material.Theme, gtx layout.Context, c *widget.Clickable, focused bool) layout.Dimensions {
+	hover := float32(0)
+	if c != nil && c.Hovered() {
+		hover = 1
+	}
+	return ui.layoutSSHAddButtonAnimated(th, gtx, c, focused, hover)
+}
+
+func (ui *UI) layoutSSHAddButtonAnimated(_ *material.Theme, gtx layout.Context, c *widget.Clickable, focused bool, hover float32) layout.Dimensions {
 	height := gtx.Dp(unit.Dp(20))
 	return fixedHeight(gtx, height, func(gtx layout.Context) layout.Dimensions {
-		dims := ui.layoutTabStripButton(th, gtx, c, uitheme.AddIcon(), true)
+		dims := fixedWidth(gtx, tabStripControlWidth(gtx), func(gtx layout.Context) layout.Dimensions {
+			return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				pointer.CursorPointer.Add(gtx.Ops)
+				if c.Pressed() {
+					hover = 1
+				}
+				baseBG, baseFG := ui.tabStripButtonColors(true, false)
+				hoverBG, hoverFG := ui.tabStripButtonColors(true, true)
+				bg := mixNRGBA(baseBG, hoverBG, hover)
+				fg := mixNRGBA(baseFG, hoverFG, hover)
+				if bg.A != 0 {
+					paint.FillShape(gtx.Ops, bg, clip.Rect(image.Rectangle{Max: gtx.Constraints.Max}).Op())
+				}
+				return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					size := gtx.Dp(unit.Dp(15))
+					if size < 10 {
+						size = 10
+					}
+					iconGtx := gtx
+					iconGtx.Constraints = layout.Exact(image.Pt(size, size))
+					uitheme.AddIcon().Layout(iconGtx, fg)
+					return layout.Dimensions{Size: image.Pt(size, size)}
+				})
+			})
+		})
 		if focused {
 			h := gtx.Dp(unit.Dp(2))
 			if h < 1 {
@@ -1171,14 +1297,15 @@ func (ui *UI) layoutSSHSetupRow(th *material.Theme, gtx layout.Context, st *sshM
 	visibleFocus := st.visibleFocus()
 
 	active := index == st.selected
-	bg := color.NRGBA{}
-	if active {
-		bg = color.NRGBA{R: 40, G: 40, B: 40, A: 255}
-	} else if st.setupClicks[index].Hovered() {
-		bg = color.NRGBA{R: 32, G: 32, B: 32, A: 255}
-	}
-	if active && visibleFocus == sshModalFocusSetupsList {
-		bg = mixNRGBA(bg, color.NRGBA{R: 42, G: 54, B: 80, A: 255}, 0.35)
+	key := strconv.Itoa(index)
+	hoverFill, _ := st.setupHoverAnim.hoverFill(gtx.Now, key)
+	selectFill, _ := st.setupSelectAnim.hoverFill(gtx.Now, key)
+	hoverFill = smoothstep01(hoverFill)
+	selectFill = smoothstep01(selectFill)
+	bg := mixNRGBA(color.NRGBA{}, color.NRGBA{R: 40, G: 40, B: 40, A: 255}, selectFill)
+	bg = mixNRGBA(bg, color.NRGBA{R: 32, G: 32, B: 32, A: 255}, hoverFill*(1-selectFill))
+	if visibleFocus == sshModalFocusSetupsList {
+		bg = mixNRGBA(bg, color.NRGBA{R: 42, G: 54, B: 80, A: 255}, 0.35*selectFill)
 	}
 
 	return fixedHeight(gtx, ui.sshSetupRowHeight(gtx), func(gtx layout.Context) layout.Dimensions {
@@ -1201,7 +1328,8 @@ func (ui *UI) layoutSSHSetupRow(th *material.Theme, gtx layout.Context, st *sshM
 					}),
 					layout.Rigid(layout.Spacer{Width: unit.Dp(2)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSSHCloseButton(gtx, &st.setupRemoveClicks[index], active && visibleFocus == sshModalFocusRemove)
+						hover, _ := st.removeHoverAnim.hoverFill(gtx.Now, key)
+						return ui.layoutSSHCloseButtonAnimated(gtx, &st.setupRemoveClicks[index], active && visibleFocus == sshModalFocusRemove, smoothstep01(hover))
 					}),
 				)
 			})
@@ -1218,13 +1346,21 @@ func (ui *UI) sshSetupRowHeight(gtx layout.Context) int {
 }
 
 func (ui *UI) layoutSSHCloseButton(gtx layout.Context, c *widget.Clickable, focused bool) layout.Dimensions {
+	hover := float32(0)
+	if c != nil && c.Hovered() {
+		hover = 1
+	}
+	return ui.layoutSSHCloseButtonAnimated(gtx, c, focused, hover)
+}
+
+func (ui *UI) layoutSSHCloseButtonAnimated(gtx layout.Context, c *widget.Clickable, focused bool, hover float32) layout.Dimensions {
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
-		return ui.layoutSSHCloseButtonVisual(gtx, c.Hovered(), c.Pressed(), focused)
+		return ui.layoutSSHCloseButtonVisual(gtx, hover, c.Pressed(), focused)
 	})
 }
 
-func (ui *UI) layoutSSHCloseButtonVisual(gtx layout.Context, hovered, pressed, focused bool) layout.Dimensions {
+func (ui *UI) layoutSSHCloseButtonVisual(gtx layout.Context, hover float32, pressed, focused bool) layout.Dimensions {
 	icon := gtx.Dp(ui.scaleInterfaceDp(10))
 	if icon < 1 {
 		icon = 1
@@ -1238,9 +1374,9 @@ func (ui *UI) layoutSSHCloseButtonVisual(gtx layout.Context, hovered, pressed, f
 		bg = color.NRGBA{R: 28, G: 36, B: 54, A: 210}
 		iconColor = color.NRGBA{R: 244, G: 248, B: 255, A: 238}
 	}
-	if hovered || pressed {
-		bg = color.NRGBA{R: 112, G: 40, B: 52, A: 238}
-		iconColor = color.NRGBA{R: 255, G: 150, B: 164, A: 255}
+	if hover > 0 {
+		bg = mixNRGBA(bg, color.NRGBA{R: 112, G: 40, B: 52, A: 238}, hover)
+		iconColor = mixNRGBA(iconColor, color.NRGBA{R: 255, G: 150, B: 164, A: 255}, hover)
 	}
 	if pressed {
 		bg = color.NRGBA{R: 136, G: 44, B: 60, A: 255}
@@ -1260,6 +1396,7 @@ func (ui *UI) layoutSSHCloseButtonVisual(gtx layout.Context, hovered, pressed, f
 }
 
 func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *sshModalState) layout.Dimensions {
+	connectionFieldsEnabled := st.transientConnect == nil
 	identity, _ := st.currentEditorSetup()
 	identityLabel := sshSetupIdentity(identity)
 	visibleFocus := st.visibleFocus()
@@ -1285,12 +1422,12 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Flexed(1.0, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSSHField(th, gtx, "IP / Host", &st.hostEdit, "example.com", true, visibleFocus == sshModalFocusHost)
+					return ui.layoutSSHField(th, gtx, "IP / Host", &st.hostEdit, "example.com", connectionFieldsEnabled, visibleFocus == sshModalFocusHost)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return fixedWidth(gtx, gtx.Dp(unit.Dp(72)), func(gtx layout.Context) layout.Dimensions {
-						return ui.layoutSSHField(th, gtx, "Port", &st.portEdit, "22", true, visibleFocus == sshModalFocusPort)
+						return ui.layoutSSHField(th, gtx, "Port", &st.portEdit, "22", connectionFieldsEnabled, visibleFocus == sshModalFocusPort)
 					})
 				}),
 			)
@@ -1299,11 +1436,11 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSSHField(th, gtx, "User", &st.userEdit, "root", true, visibleFocus == sshModalFocusUser)
+					return ui.layoutSSHField(th, gtx, "User", &st.userEdit, "root", connectionFieldsEnabled, visibleFocus == sshModalFocusUser)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSSHField(th, gtx, "Password", &st.passEdit, "optional", true, visibleFocus == sshModalFocusPassword)
+					return ui.layoutSSHField(th, gtx, "Password", &st.passEdit, "optional", connectionFieldsEnabled, visibleFocus == sshModalFocusPassword)
 				}),
 			)
 		}),
@@ -1311,7 +1448,7 @@ func (ui *UI) layoutSSHSetupForm(th *material.Theme, gtx layout.Context, st *ssh
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
 				layout.Flexed(1.3, func(gtx layout.Context) layout.Dimensions {
-					return ui.layoutSSHField(th, gtx, "Key path", &st.keyPathEdit, "C:\\Users\\me\\.ssh\\id_ed25519", true, visibleFocus == sshModalFocusKeyPath)
+					return ui.layoutSSHField(th, gtx, "Key path", &st.keyPathEdit, "C:\\Users\\me\\.ssh\\id_ed25519", connectionFieldsEnabled, visibleFocus == sshModalFocusKeyPath)
 				}),
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				layout.Flexed(0.7, func(gtx layout.Context) layout.Dimensions {
@@ -1416,7 +1553,7 @@ func (ui *UI) layoutSSHModalFooter(th *material.Theme, gtx layout.Context, st *s
 							saveLabel,
 							hoverSave,
 							pulseSave,
-							false,
+							st.transientConnect != nil,
 							&st.connectClick,
 							"Connect",
 							hoverConnect,
