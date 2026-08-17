@@ -6,6 +6,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	resources "hexone"
 	"hexone/fm"
 	"hexone/ui/platform"
@@ -78,8 +79,11 @@ const (
 	terminalSmoothSnapEpsilon  = 0.02
 	terminalSmoothJumpMinLines = 6
 	terminalCwdProbeTimeout    = 150 * time.Millisecond
+	terminalDirProbeTimeout    = 3 * time.Second
 	terminalPasteReadTimeout   = 2 * time.Second
 )
+
+const terminalDirProbeHostPrefix = "hexone-probe-"
 
 var (
 	terminalBG     = color.NRGBA{R: 4, G: 6, B: 10, A: 255}
@@ -1315,6 +1319,30 @@ func (s *terminalSession) write(data []byte) {
 	if err != nil {
 		s.setError(err.Error())
 	}
+}
+
+func (s *terminalSession) writeUntracked(data []byte) bool {
+	if s == nil || len(data) == 0 {
+		return false
+	}
+	if s.scrollToBottom() {
+		s.snapshot()
+	}
+	s.procMu.Lock()
+	proc := s.pty
+	running := s.running
+	s.procMu.Unlock()
+	if proc == nil || !running {
+		return false
+	}
+	s.writeMu.Lock()
+	_, err := proc.Write(data)
+	s.writeMu.Unlock()
+	if err != nil {
+		s.setError(err.Error())
+		return false
+	}
+	return true
 }
 
 func (s *terminalSession) writeString(text string) {
@@ -3040,11 +3068,15 @@ func (ui *UI) setPaneDirToTerminalDir(idx int, now time.Time) bool {
 	}
 	if loc, ok := ui.terminal.osc7Location(); ok {
 		if !terminalOSC7HostIsLocal(loc.Host) {
+			if terminalDirProbeHost(loc.Host) {
+				if target, sshOK := ui.terminal.activeSSHTarget(); sshOK {
+					return ui.startTerminalDirProbe(idx, target, now)
+				}
+			}
 			return ui.setPaneDirToTerminalRemoteDir(idx, loc, now)
 		}
-		if _, sshOK := ui.terminal.activeSSHTarget(); sshOK {
-			pane.setNotice("terminal SSH dir unavailable; remote shell must emit OSC 7", now)
-			return false
+		if target, sshOK := ui.terminal.activeSSHTarget(); sshOK {
+			return ui.startTerminalDirProbe(idx, target, now)
 		}
 		if ui.setPaneDirToLocalTerminalDir(idx, terminalOSC7LocalDir(loc.Dir), now) {
 			return true
@@ -3054,9 +3086,8 @@ func (ui *UI) setPaneDirToTerminalDir(idx int, now time.Time) bool {
 			return false
 		}
 	}
-	if _, sshOK := ui.terminal.activeSSHTarget(); sshOK {
-		pane.setNotice("terminal SSH dir unavailable; remote shell must emit OSC 7", now)
-		return false
+	if target, sshOK := ui.terminal.activeSSHTarget(); sshOK {
+		return ui.startTerminalDirProbe(idx, target, now)
 	}
 	dir, ok := ui.terminal.currentDir()
 	if !ok {
@@ -3064,6 +3095,83 @@ func (ui *UI) setPaneDirToTerminalDir(idx int, now time.Time) bool {
 		return false
 	}
 	return ui.setPaneDirToLocalTerminalDir(idx, dir, now)
+}
+
+type terminalDirProbeState struct {
+	session  *terminalSession
+	pane     int
+	target   terminalSSHTarget
+	host     string
+	deadline time.Time
+}
+
+func terminalDirProbeCommand(host string) string {
+	return "printf '\\033]7;file://" + host + "%s\\007' \"$PWD\"\r"
+}
+
+func terminalDirProbeHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return strings.HasPrefix(host, terminalDirProbeHostPrefix) && strings.HasSuffix(host, ".invalid")
+}
+
+func (ui *UI) startTerminalDirProbe(idx int, target terminalSSHTarget, now time.Time) bool {
+	if ui == nil || ui.terminal == nil || idx < 0 || idx >= len(ui.filePanes) {
+		return false
+	}
+	pane := ui.filePanes[idx]
+	if pane == nil {
+		return false
+	}
+	ui.terminal.State.Mu.RLock()
+	alternate := ui.terminal.State.Alternate
+	ui.terminal.State.Mu.RUnlock()
+	if alternate {
+		pane.setNotice("leave the full-screen terminal program before syncing its dir", now)
+		return false
+	}
+	draft, _, reliable := ui.terminal.trackedCommand()
+	if draft != "" || !reliable {
+		pane.setNotice("clear the current terminal command before syncing its dir", now)
+		return false
+	}
+	host := fmt.Sprintf("%s%x.invalid", terminalDirProbeHostPrefix, now.UnixNano())
+	probe := &terminalDirProbeState{
+		session:  ui.terminal,
+		pane:     idx,
+		target:   target,
+		host:     host,
+		deadline: now.Add(terminalDirProbeTimeout),
+	}
+	ui.terminalDirProbe = probe
+	if !probe.session.writeUntracked([]byte(terminalDirProbeCommand(host))) {
+		ui.terminalDirProbe = nil
+		pane.setNotice("failed to query terminal SSH dir", now)
+		return false
+	}
+	pane.setNotice("querying terminal SSH dir…", now)
+	return true
+}
+
+func (ui *UI) pumpTerminalDirProbe(gtx layout.Context) {
+	if ui == nil || ui.terminalDirProbe == nil {
+		return
+	}
+	probe := ui.terminalDirProbe
+	if probe.session == nil || probe.pane < 0 || probe.pane >= len(ui.filePanes) || ui.filePanes[probe.pane] == nil {
+		ui.terminalDirProbe = nil
+		return
+	}
+	if loc, ok := probe.session.osc7Location(); ok && strings.EqualFold(loc.Host, probe.host) {
+		ui.terminalDirProbe = nil
+		ui.setPaneDirToTerminalRemoteDirForTarget(probe.pane, loc, probe.target, gtx.Now)
+		return
+	}
+	if !gtx.Now.Before(probe.deadline) {
+		ui.terminalDirProbe = nil
+		ui.filePanes[probe.pane].setNotice("terminal SSH dir query timed out; run it from a shell prompt", gtx.Now)
+		return
+	}
+	gtx.Execute(op.InvalidateCmd{At: probe.deadline})
 }
 
 func (ui *UI) setPaneDirToLocalTerminalDir(idx int, dir string, now time.Time) bool {
@@ -3094,6 +3202,14 @@ func (ui *UI) setPaneDirToLocalTerminalDir(idx int, dir string, now time.Time) b
 }
 
 func (ui *UI) setPaneDirToTerminalRemoteDir(idx int, loc terminalOSC7Location, now time.Time) bool {
+	return ui.setPaneDirToTerminalRemoteDirWithTarget(idx, loc, terminalSSHTarget{}, false, now)
+}
+
+func (ui *UI) setPaneDirToTerminalRemoteDirForTarget(idx int, loc terminalOSC7Location, target terminalSSHTarget, now time.Time) bool {
+	return ui.setPaneDirToTerminalRemoteDirWithTarget(idx, loc, target, true, now)
+}
+
+func (ui *UI) setPaneDirToTerminalRemoteDirWithTarget(idx int, loc terminalOSC7Location, suppliedTarget terminalSSHTarget, suppliedTargetFound bool, now time.Time) bool {
 	if ui == nil || idx < 0 || idx >= len(ui.filePanes) {
 		return false
 	}
@@ -3101,38 +3217,37 @@ func (ui *UI) setPaneDirToTerminalRemoteDir(idx int, loc terminalOSC7Location, n
 	if pane == nil {
 		return false
 	}
-	setup, found, ambiguous := findSSHSetupForTerminalOSC7(ui.fmCfg, loc)
-	var activeTarget terminalSSHTarget
-	activeTargetFound := false
-	if (!found || ambiguous) && ui.terminal != nil {
+	activeTarget := suppliedTarget
+	activeTargetFound := suppliedTargetFound
+	if !activeTargetFound && ui.terminal != nil {
 		if target, ok := ui.terminal.activeSSHTarget(); ok {
 			activeTarget = target
 			activeTargetFound = true
-			if targetSetup, targetFound, targetAmbiguous := findSSHSetupForTerminalSSHTarget(ui.fmCfg, target); targetFound {
-				setup = targetSetup
-				found = true
-				ambiguous = false
-			} else if !found && targetAmbiguous {
-				ambiguous = true
-			}
 		}
 		if !activeTargetFound {
 			activeTarget, activeTargetFound = ui.terminal.trackedSSHTarget()
-			if activeTargetFound {
-				if targetSetup, targetFound, targetAmbiguous := findSSHSetupForTerminalSSHTarget(ui.fmCfg, activeTarget); targetFound {
-					setup = targetSetup
-					found = true
-					ambiguous = false
-				} else if !found && targetAmbiguous {
-					ambiguous = true
-				}
-			}
+		}
+	}
+	if tabIdx := ui.findFilePaneTabForTerminalRemote(idx, loc, activeTarget, activeTargetFound); tabIdx >= 0 {
+		return ui.activateAndSyncTerminalRemoteTab(idx, tabIdx, loc.Dir, now)
+	}
+
+	setup, found, ambiguous := findSSHSetupForTerminalOSC7(ui.fmCfg, loc)
+	if (!found || ambiguous) && activeTargetFound {
+		if targetSetup, targetFound, targetAmbiguous := findSSHSetupForTerminalSSHTarget(ui.fmCfg, activeTarget); targetFound {
+			setup = targetSetup
+			found = true
+			ambiguous = false
+		} else if !found && targetAmbiguous {
+			ambiguous = true
 		}
 	}
 	if ambiguous {
 		pane.setNotice("multiple SSH setups match terminal host: "+terminalOSC7DisplayHost(loc), now)
 		return false
 	}
+
+	var spec sshConnectionSpec
 	if !found {
 		if !activeTargetFound {
 			activeTarget = terminalSSHTarget{
@@ -3149,39 +3264,191 @@ func (ui *UI) setPaneDirToTerminalRemoteDir(idx int, loc terminalOSC7Location, n
 			activeTarget.Port = loc.Port
 			activeTarget.HasPort = true
 		}
-		spec, err := resolveOpenSSHConnectionSpecFunc(activeTarget)
+		var err error
+		spec, err = resolveOpenSSHConnectionSpecFunc(activeTarget)
 		if err != nil {
 			pane.setNotice("ssh config failed: "+err.Error(), now)
 			return false
 		}
-		if err := ui.connectPaneSSHSpec(idx, spec, loc.Dir, now); err != nil {
-			if ui.openSSHPassphraseRetry(idx, loc.Dir, err) {
-				pane.setNotice("SSH key passphrase required", now)
-				return true
-			}
-			pane.setNotice("ssh connect failed: "+err.Error(), now)
-			return false
-		}
-		if pane = ui.filePanes[idx]; pane != nil {
-			pane.setNotice("pane set to terminal dir", now)
-		}
-		return true
+		setup = spec.setup
+	} else {
+		spec = directSSHConnectionSpec(setup)
 	}
-	if pane.remoteConnected() && pane.remote != nil && sameSSHRemoteTarget(pane.remote.setup, setup) {
-		if ui.loadPaneDir(idx, loc.Dir) {
-			pane.setNotice("pane set to terminal dir", now)
-			return true
+	if tabIdx := ui.findFilePaneTabForSSHSpec(idx, spec); tabIdx >= 0 {
+		return ui.activateAndSyncTerminalRemoteTab(idx, tabIdx, loc.Dir, now)
+	}
+
+	ui.ensureFilePaneTabs()
+	originalTab := 0
+	var originalPane *filePaneState
+	if idx < len(ui.filePaneTabs) {
+		originalTab = ui.filePaneTabs[idx].active
+		if originalTab >= 0 && originalTab < len(ui.filePaneTabs[idx].tabs) {
+			originalPane = ui.filePaneTabs[idx].tabs[originalTab]
 		}
+	}
+	if !ui.addFilePaneTabForRemoteSync(idx, now) {
 		return false
 	}
-	if err := ui.connectPaneSSH(idx, setup, loc.Dir, now); err != nil {
-		pane.setNotice("ssh connect failed: "+err.Error(), now)
+	createdTab := ui.filePaneTabs[idx].active
+	err := ui.connectPaneSSHSpec(idx, spec, loc.Dir, now)
+	if err != nil {
+		if ui.openSSHPassphraseRetry(idx, loc.Dir, err) {
+			if request := ui.sshModal.transientConnect; request != nil {
+				request.restoreTab = originalPane
+				request.removeTabOnCancel = true
+			}
+			if pane = ui.filePanes[idx]; pane != nil {
+				pane.setNotice("SSH key passphrase required", now)
+			}
+			return true
+		}
+		ui.rollbackTerminalRemoteSyncTab(idx, createdTab, originalTab)
+		if pane = ui.filePanes[idx]; pane != nil {
+			pane.setNotice("ssh connect failed: "+err.Error(), now)
+		}
 		return false
 	}
 	if pane = ui.filePanes[idx]; pane != nil {
 		pane.setNotice("pane set to terminal dir", now)
 	}
 	return true
+}
+
+func (ui *UI) findFilePaneTabForTerminalRemote(paneIdx int, loc terminalOSC7Location, target terminalSSHTarget, targetFound bool) int {
+	if ui == nil {
+		return -1
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return -1
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	active := clampTabIndex(set.active, len(set.tabs))
+	if active >= 0 && active < len(set.tabs) {
+		pane := set.tabs[active]
+		if pane != nil && pane.remote != nil && paneSSHSessionMatchesTerminalRemote(pane.remote, loc, target, targetFound) {
+			return active
+		}
+	}
+	match := -1
+	for tabIdx, pane := range set.tabs {
+		if tabIdx == active {
+			continue
+		}
+		if pane == nil || pane.remote == nil {
+			continue
+		}
+		if paneSSHSessionMatchesTerminalRemote(pane.remote, loc, target, targetFound) {
+			if match >= 0 {
+				// Let effective OpenSSH config disambiguate duplicate host aliases
+				// or users before selecting an inactive tab.
+				return -1
+			}
+			match = tabIdx
+		}
+	}
+	return match
+}
+
+func paneSSHSessionMatchesTerminalRemote(session *paneSSHSession, loc terminalOSC7Location, target terminalSSHTarget, targetFound bool) bool {
+	if session == nil {
+		return false
+	}
+	if targetFound && paneSSHSessionMatchesRemoteIdentity(session, target.Host, target.User, target.Port, true) {
+		return true
+	}
+	return paneSSHSessionMatchesRemoteIdentity(session, loc.Host, loc.User, loc.Port, loc.HasPort)
+}
+
+func paneSSHSessionMatchesRemoteIdentity(session *paneSSHSession, host, user string, port int, checkPort bool) bool {
+	if session == nil {
+		return false
+	}
+	host = strings.TrimSpace(host)
+	if host == "" || terminalDirProbeHost(host) {
+		return false
+	}
+	setup := session.setup
+	if user = strings.TrimSpace(user); user != "" && user != strings.TrimSpace(setup.User) {
+		return false
+	}
+	setupPort := setup.Port
+	if setupPort <= 0 {
+		setupPort = 22
+	}
+	if checkPort {
+		if port <= 0 {
+			port = 22
+		}
+		if port != setupPort {
+			return false
+		}
+	}
+	if strings.EqualFold(host, strings.TrimSpace(setup.Host)) {
+		return true
+	}
+	return strings.EqualFold(host, strings.TrimSpace(session.connectionSpec().dialHost))
+}
+
+func (ui *UI) findFilePaneTabForSSHSpec(paneIdx int, spec sshConnectionSpec) int {
+	if ui == nil {
+		return -1
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return -1
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	matches := func(pane *filePaneState) bool {
+		if pane == nil || pane.remote == nil {
+			return false
+		}
+		if sameSSHRemoteTarget(pane.remote.setup, spec.setup) {
+			return true
+		}
+		return paneSSHSessionMatchesRemoteIdentity(pane.remote, spec.dialHost, spec.setup.User, spec.setup.Port, true)
+	}
+	active := clampTabIndex(set.active, len(set.tabs))
+	if active >= 0 && active < len(set.tabs) && matches(set.tabs[active]) {
+		return active
+	}
+	for tabIdx, pane := range set.tabs {
+		if tabIdx != active && matches(pane) {
+			return tabIdx
+		}
+	}
+	return -1
+}
+
+func (ui *UI) activateAndSyncTerminalRemoteTab(paneIdx, tabIdx int, dir string, now time.Time) bool {
+	if !ui.activateFilePaneTab(paneIdx, tabIdx) {
+		return false
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	set.scroll = tabScrollToActive(set.scroll, set.active)
+	pane := ui.filePanes[paneIdx]
+	if pane == nil {
+		return false
+	}
+	if !ui.loadPaneDir(paneIdx, dir) {
+		pane.setNotice("failed to set pane dir", now)
+		return false
+	}
+	pane.setNotice("pane set to terminal dir", now)
+	return true
+}
+
+func (ui *UI) rollbackTerminalRemoteSyncTab(paneIdx, createdTab, originalTab int) {
+	if ui == nil || paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return
+	}
+	if createdTab >= 0 && createdTab < len(ui.filePaneTabs[paneIdx].tabs) {
+		ui.closeFilePaneTab(paneIdx, createdTab)
+	}
+	if originalTab >= 0 && originalTab < len(ui.filePaneTabs[paneIdx].tabs) {
+		ui.activateFilePaneTab(paneIdx, originalTab)
+	}
 }
 
 func terminalChangeDirCommand(dir string) string {
@@ -3256,6 +3523,9 @@ func parseTerminalOSC7Location(raw string) (terminalOSC7Location, bool) {
 	if strings.HasPrefix(strings.ToLower(raw), "file://") {
 		raw = strings.ReplaceAll(raw, `\`, "/")
 	}
+	if loc, ok := parseTerminalDirProbeLocation(raw); ok {
+		return loc, true
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u == nil || !strings.EqualFold(u.Scheme, "file") {
 		return terminalOSC7Location{}, false
@@ -3291,6 +3561,27 @@ func parseTerminalOSC7Location(raw string) (terminalOSC7Location, bool) {
 		HasPort: hasPort,
 		Dir:     dir,
 	}, true
+}
+
+func parseTerminalDirProbeLocation(raw string) (terminalOSC7Location, bool) {
+	const scheme = "file://"
+	if !strings.HasPrefix(strings.ToLower(raw), scheme+terminalDirProbeHostPrefix) {
+		return terminalOSC7Location{}, false
+	}
+	rest := raw[len(scheme):]
+	slash := strings.IndexByte(rest, '/')
+	if slash <= 0 {
+		return terminalOSC7Location{}, false
+	}
+	host := rest[:slash]
+	if !terminalDirProbeHost(host) {
+		return terminalOSC7Location{}, false
+	}
+	dir := normalizeRemoteFavoriteDir(rest[slash:])
+	if dir == "" {
+		return terminalOSC7Location{}, false
+	}
+	return terminalOSC7Location{Host: host, Dir: dir}, true
 }
 
 func parseTerminalOSC7Port(raw string) (int, bool) {

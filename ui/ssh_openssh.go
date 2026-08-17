@@ -61,9 +61,12 @@ type sshPassphraseRequiredError struct {
 }
 
 type sshTransientConnectRequest struct {
-	pane      int
-	targetDir string
-	spec      sshConnectionSpec
+	pane              int
+	targetDir         string
+	spec              sshConnectionSpec
+	targetTab         *filePaneState
+	restoreTab        *filePaneState
+	removeTabOnCancel bool
 }
 
 func (ui *UI) openSSHPassphraseRetry(pane int, targetDir string, connectErr error) bool {
@@ -94,6 +97,9 @@ func (ui *UI) openSSHPassphraseRetry(pane int, targetDir string, connectErr erro
 		targetDir: targetDir,
 		spec:      required.spec,
 	}
+	if pane >= 0 && pane < len(ui.filePanes) {
+		st.transientConnect.targetTab = ui.filePanes[pane]
+	}
 	st.errText = required.Error()
 	st.focus = sshModalFocusPassphrase
 	st.actionFocus = sshModalActionConnect
@@ -121,6 +127,8 @@ func (e *sshPassphraseRequiredError) Unwrap() error {
 var runOpenSSHConfigCommandFunc = runOpenSSHConfigCommand
 
 var resolveOpenSSHConnectionSpecFunc = resolveOpenSSHConnectionSpec
+
+var dialSSHAgentFunc = dialSSHAgent
 
 func resolveOpenSSHConnectionSpec(target terminalSSHTarget) (sshConnectionSpec, error) {
 	host := strings.TrimSpace(target.Host)
@@ -453,25 +461,14 @@ func openSSHConnectionSpec(spec sshConnectionSpec) (sshClientBundle, error) {
 	}
 	address := spec.address()
 	deadline := sshConnectDeadline()
-	cmdClient, _, err := dialSSHClientWithDeadline(address, cfg, deadline)
+	bundle, err := openMultiplexedSSHClients(address, cfg, deadline)
 	if err != nil {
 		if len(encryptedKeys) > 0 && sshAuthenticationFailed(err) {
 			return sshClientBundle{}, &sshPassphraseRequiredError{spec: spec, keyPath: encryptedKeys[0], cause: err}
 		}
-		return sshClientBundle{}, fmt.Errorf("ssh command session: %w", err)
+		return sshClientBundle{}, fmt.Errorf("ssh connection: %w", err)
 	}
-	sftpBase, sftpConn, err := dialSSHClientWithDeadline(address, cfg, deadline)
-	if err != nil {
-		closeSSHClientFunc(cmdClient)
-		return sshClientBundle{}, fmt.Errorf("ssh sftp session: %w", err)
-	}
-	sftpClient, err := newSFTPClientWithDeadline(sftpBase, sftpConn, deadline)
-	if err != nil {
-		closeSSHClientFunc(sftpBase)
-		closeSSHClientFunc(cmdClient)
-		return sshClientBundle{}, fmt.Errorf("sftp init: %w", err)
-	}
-	return sshClientBundle{sshClient: cmdClient, sftpBase: sftpBase, sftp: sftpClient}, nil
+	return bundle, nil
 }
 
 func sshAuthMethodsForConnectionSpec(spec sshConnectionSpec) ([]ssh.AuthMethod, []string, io.Closer, error) {
@@ -523,22 +520,25 @@ func sshAuthMethodsForConnectionSpec(spec sshConnectionSpec) ([]ssh.AuthMethod, 
 		signers = append(signers, signer)
 	}
 
-	methods := make([]ssh.AuthMethod, 0, 3)
-	if len(signers) > 0 {
-		methods = append(methods, ssh.PublicKeys(signers...))
-	}
-
 	var agentCloser io.Closer
 	if !strings.EqualFold(strings.TrimSpace(spec.identityAgent), "none") {
-		if conn, err := dialSSHAgent(spec.identityAgent); err == nil {
+		if conn, err := dialSSHAgentFunc(spec.identityAgent); err == nil {
 			client := agent.NewClient(conn)
 			if agentSigners, signerErr := client.Signers(); signerErr == nil && len(agentSigners) > 0 {
-				methods = append(methods, ssh.PublicKeys(agentSigners...))
+				signers = append(signers, agentSigners...)
 				agentCloser = conn
 			} else {
 				_ = conn.Close()
 			}
 		}
+	}
+	methods := make([]ssh.AuthMethod, 0, 2)
+	if len(signers) > 0 {
+		// Go's SSH client tries each authentication method name only once. Disk
+		// and agent signers must therefore share one publickey method; placing
+		// them in separate methods prevents the agent keys from ever being tried
+		// after a disk key is rejected.
+		methods = append(methods, ssh.PublicKeys(signers...))
 	}
 	if spec.setup.Password != "" {
 		methods = append(methods, ssh.Password(spec.setup.Password))

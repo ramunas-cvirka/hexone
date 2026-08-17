@@ -1397,6 +1397,16 @@ func TestTerminalOSC7LocationParsesFileURI(t *testing.T) {
 	}
 }
 
+func TestTerminalOSC7LocationParsesProbePathLiterally(t *testing.T) {
+	loc, ok := parseTerminalOSC7Location("file://hexone-probe-123.invalid/var/log/app#one?raw%dir")
+	if !ok {
+		t.Fatal("expected terminal dir probe URI to parse")
+	}
+	if loc.Host != "hexone-probe-123.invalid" || loc.Dir != "/var/log/app#one?raw%dir" {
+		t.Fatalf("loc=%+v", loc)
+	}
+}
+
 func TestFindSSHSetupForTerminalOSC7RequiresUniqueMatch(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	cfg.SSH.Setups = []fm.SSHSetup{
@@ -1700,7 +1710,168 @@ func TestSetPaneDirToTerminalOSC7RemoteDirUsesTrackedSSHWithoutSetup(t *testing.
 	}
 }
 
-func TestSetPaneDirToTerminalSSHWithoutRemoteOSC7DoesNotUseLocalFallback(t *testing.T) {
+func TestTerminalRemoteSyncActivatesExistingServerTab(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldResolve := resolveOpenSSHConnectionSpecFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		resolveOpenSSHConnectionSpecFunc = oldResolve
+	})
+	resolveOpenSSHConnectionSpecFunc = func(terminalSSHTarget) (sshConnectionSpec, error) {
+		t.Fatal("existing matching tab should not resolve or open another SSH connection")
+		return sshConnectionSpec{}, nil
+	}
+
+	cfg := fm.DefaultConfig()
+	client := new(sftp.Client)
+	remoteTab := newFilePaneState("/old", cfg)
+	remoteTab.remote = &paneSSHSession{
+		setup: fm.SSHSetup{Host: "srv.test", Port: 22, User: "root"},
+		conn:  newSharedSSHConn(sshClientBundle{sftp: client}),
+	}
+	remoteTab.dir = "/old"
+	localTab := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{localTab},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{remoteTab, localTab}, active: 1}},
+	}
+	readDirSFTPFunc = func(got *sftp.Client, dir string) (filesys.Listing, error) {
+		if got != client || dir != "/var/log" {
+			t.Fatalf("readDir client=%p dir=%q", got, dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	loc := terminalOSC7Location{Host: "srv.test", User: "root", Port: 22, HasPort: true, Dir: "/var/log"}
+	target := terminalSSHTarget{Host: "srv.test", User: "root", Port: 22}
+	if !ui.setPaneDirToTerminalRemoteDirForTarget(0, loc, target, time.Now()) {
+		t.Fatal("remote sync failed")
+	}
+	if got := len(ui.filePaneTabs[0].tabs); got != 2 {
+		t.Fatalf("tabs=%d want existing two tabs", got)
+	}
+	if ui.filePaneTabs[0].active != 0 || ui.filePanes[0] != remoteTab {
+		t.Fatal("matching remote tab was not activated")
+	}
+	if remoteTab.dir != "/var/log" || localTab.remote != nil {
+		t.Fatalf("remote dir=%q local remote=%v", remoteTab.dir, localTab.remote)
+	}
+}
+
+func TestTerminalRemoteSyncCreatesTabWithoutReplacingDifferentServer(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldOpen := openSSHClientsFunc
+	oldCloseSFTP := closeSFTPClientFunc
+	oldCloseSSH := closeSSHClientFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		openSSHClientsFunc = oldOpen
+		closeSFTPClientFunc = oldCloseSFTP
+		closeSSHClientFunc = oldCloseSSH
+	})
+
+	cfg := fm.DefaultConfig()
+	targetSetup := fm.SSHSetup{Host: "server-a.test", Port: 22, User: "root", Password: "secret"}
+	cfg.SSH.Setups = []fm.SSHSetup{targetSetup}
+	oldClient := new(sftp.Client)
+	newClient := new(sftp.Client)
+	oldTab := newFilePaneState("/srv/old", cfg)
+	oldTab.remote = &paneSSHSession{
+		setup: fm.SSHSetup{Host: "server-b.test", Port: 22, User: "root"},
+		conn:  newSharedSSHConn(sshClientBundle{sftp: oldClient}),
+	}
+	oldTab.dir = "/srv/old"
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{oldTab},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{oldTab}, active: 0}},
+	}
+	closedOld := 0
+	closeSFTPClientFunc = func(client *sftp.Client) {
+		if client == oldClient {
+			closedOld++
+		}
+	}
+	closeSSHClientFunc = func(*ssh.Client) {}
+	openSSHClientsFunc = func(got fm.SSHSetup) (sshClientBundle, error) {
+		if !sameSSHRemoteTarget(got, targetSetup) {
+			t.Fatalf("unexpected setup: %+v", got)
+		}
+		return sshClientBundle{sftp: newClient}, nil
+	}
+	oldReads := 0
+	readDirSFTPFunc = func(client *sftp.Client, dir string) (filesys.Listing, error) {
+		switch client {
+		case oldClient:
+			oldReads++
+			if dir != "/srv/old" {
+				t.Fatalf("old tab read dir=%q", dir)
+			}
+		case newClient:
+			if dir != "/opt/app" {
+				t.Fatalf("new tab read dir=%q", dir)
+			}
+		default:
+			t.Fatalf("unexpected client %p", client)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	loc := terminalOSC7Location{Host: targetSetup.Host, User: targetSetup.User, Port: 22, HasPort: true, Dir: "/opt/app"}
+	target := terminalSSHTarget{Host: targetSetup.Host, User: targetSetup.User, Port: 22}
+	if !ui.setPaneDirToTerminalRemoteDirForTarget(0, loc, target, time.Now()) {
+		t.Fatal("remote sync failed")
+	}
+	set := &ui.filePaneTabs[0]
+	if len(set.tabs) != 2 || set.active != 1 {
+		t.Fatalf("tabs=%d active=%d want new active tab", len(set.tabs), set.active)
+	}
+	if set.tabs[0] != oldTab || oldTab.remote == nil || oldTab.dir != "/srv/old" {
+		t.Fatal("previous server tab was replaced")
+	}
+	newTab := set.tabs[1]
+	if ui.filePanes[0] != newTab || newTab.remote == nil || newTab.dir != "/opt/app" {
+		t.Fatalf("new server tab not active and synced: %+v", newTab)
+	}
+	if closedOld != 0 {
+		t.Fatalf("previous server connection closed %d times", closedOld)
+	}
+	if oldReads != 0 {
+		t.Fatalf("remote sync redundantly reloaded previous server %d times", oldReads)
+	}
+}
+
+func TestTerminalRemoteSyncRemovesNewTabWhenConnectionFails(t *testing.T) {
+	oldOpen := openSSHClientsFunc
+	t.Cleanup(func() { openSSHClientsFunc = oldOpen })
+	openSSHClientsFunc = func(fm.SSHSetup) (sshClientBundle, error) {
+		return sshClientBundle{}, errors.New("connection refused")
+	}
+
+	cfg := fm.DefaultConfig()
+	setup := fm.SSHSetup{Host: "server-a.test", Port: 22, User: "root", Password: "secret"}
+	cfg.SSH.Setups = []fm.SSHSetup{setup}
+	localTab := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{localTab},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{localTab}, active: 0}},
+	}
+	loc := terminalOSC7Location{Host: setup.Host, User: setup.User, Port: 22, HasPort: true, Dir: "/opt/app"}
+	target := terminalSSHTarget{Host: setup.Host, User: setup.User, Port: 22}
+	if ui.setPaneDirToTerminalRemoteDirForTarget(0, loc, target, time.Now()) {
+		t.Fatal("failed remote sync should return false")
+	}
+	if len(ui.filePaneTabs[0].tabs) != 1 || ui.filePaneTabs[0].tabs[0] != localTab || ui.filePanes[0] != localTab {
+		t.Fatalf("failed sync left an extra tab: %+v", ui.filePaneTabs[0])
+	}
+	if !strings.Contains(localTab.noticeText, "connection refused") {
+		t.Fatalf("notice=%q", localTab.noticeText)
+	}
+}
+
+func TestSetPaneDirToTerminalSSHWithoutRemoteOSC7InjectsProbe(t *testing.T) {
 	oldSSHTarget := terminalProcessSSHTarget
 	t.Cleanup(func() {
 		terminalProcessSSHTarget = oldSSHTarget
@@ -1713,8 +1884,9 @@ func TestSetPaneDirToTerminalSSHWithoutRemoteOSC7DoesNotUseLocalFallback(t *test
 	cfg := fm.DefaultConfig()
 	st := newTerminalSession(nil)
 	st.writeOutput([]byte("\x1b]7;file://localhost" + localDir + "\x07"))
+	proc := &terminalWriteProcess{}
 	st.procMu.Lock()
-	st.pty = &terminalWriteProcess{}
+	st.pty = proc
 	st.running = true
 	st.procMu.Unlock()
 	ui := &UI{
@@ -1725,11 +1897,129 @@ func TestSetPaneDirToTerminalSSHWithoutRemoteOSC7DoesNotUseLocalFallback(t *test
 		terminal: st,
 	}
 
-	if ui.setPaneDirToTerminalDir(0, time.Now()) {
-		t.Fatal("active SSH without remote OSC7 should not use local OSC7 fallback")
+	now := time.Unix(123, 456)
+	if !ui.setPaneDirToTerminalDir(0, now) {
+		t.Fatal("active SSH without remote OSC7 should start a dir probe")
 	}
 	if pane := ui.filePanes[0]; pane == nil || pane.dir == localDir {
 		t.Fatalf("pane should not move to local OSC7 dir, pane=%+v", pane)
+	}
+	if ui.terminalDirProbe == nil {
+		t.Fatal("terminal dir probe was not recorded")
+	}
+	want := terminalDirProbeCommand(ui.terminalDirProbe.host)
+	if got := proc.String(); got != want {
+		t.Fatalf("probe command=%q want %q", got, want)
+	}
+}
+
+func TestTerminalDirProbeResultConnectsPane(t *testing.T) {
+	oldSSHTarget := terminalProcessSSHTarget
+	oldReadDir := readDirSFTPFunc
+	oldOpen := openSSHClientsFunc
+	t.Cleanup(func() {
+		terminalProcessSSHTarget = oldSSHTarget
+		readDirSFTPFunc = oldReadDir
+		openSSHClientsFunc = oldOpen
+	})
+	target := terminalSSHTarget{User: "root", Host: "157.180.68.247", Port: 22}
+	terminalProcessSSHTarget = func(int) (terminalSSHTarget, bool) { return target, true }
+
+	cfg := fm.DefaultConfig()
+	cfg.SSH.Setups = []fm.SSHSetup{{Host: target.Host, Port: target.Port, User: target.User, Password: "secret"}}
+	st := newTerminalSession(nil)
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{fmCfg: cfg, filePanes: []*filePaneState{pane}, terminal: st}
+	client := new(sftp.Client)
+	openSSHClientsFunc = func(got fm.SSHSetup) (sshClientBundle, error) {
+		if got.Host != target.Host || got.Port != target.Port || got.User != target.User {
+			t.Fatalf("unexpected setup: %+v", got)
+		}
+		return sshClientBundle{sshClient: new(ssh.Client), sftpBase: new(ssh.Client), sftp: client}, nil
+	}
+	readDirSFTPFunc = func(got *sftp.Client, dir string) (filesys.Listing, error) {
+		if got != client || dir != "/var/log/app#one?raw%dir" {
+			t.Fatalf("readDir client=%p dir=%q", got, dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	now := time.Unix(123, 456)
+	if !ui.setPaneDirToTerminalDir(0, now) || ui.terminalDirProbe == nil {
+		t.Fatal("terminal dir probe did not start")
+	}
+	host := ui.terminalDirProbe.host
+	st.writeOutput([]byte("\x1b]7;file://" + host + "/var/log/app#one?raw%dir\x07"))
+	gtx := testPathLayoutContext()
+	gtx.Now = now.Add(time.Millisecond)
+	ui.pumpTerminalDirProbe(gtx)
+
+	if ui.terminalDirProbe != nil {
+		t.Fatal("terminal dir probe was not cleared")
+	}
+	if len(ui.filePaneTabs) != 1 || len(ui.filePaneTabs[0].tabs) != 2 {
+		t.Fatalf("remote sync tabs=%+v want preserved local tab plus remote tab", ui.filePaneTabs)
+	}
+	if pane.remote != nil {
+		t.Fatal("original local tab should remain unchanged")
+	}
+	synced := ui.filePanes[0]
+	if synced == pane || synced.remote == nil || synced.dir != "/var/log/app#one?raw%dir" {
+		t.Fatalf("active tab not connected to probed dir: %+v", synced)
+	}
+}
+
+func TestTerminalDirProbeDoesNotOverwriteDraft(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	st := newTerminalSession(nil)
+	st.trackCommandInput([]byte("echo pending"))
+	proc := &terminalWriteProcess{}
+	st.procMu.Lock()
+	st.pty = proc
+	st.running = true
+	st.procMu.Unlock()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{fmCfg: cfg, filePanes: []*filePaneState{pane}, terminal: st}
+
+	if ui.startTerminalDirProbe(0, terminalSSHTarget{Host: "srv.test", User: "root", Port: 22}, time.Now()) {
+		t.Fatal("probe should not overwrite a partially typed command")
+	}
+	if got := proc.String(); got != "" {
+		t.Fatalf("unexpected injected command=%q", got)
+	}
+	if got := pane.noticeText; got != "clear the current terminal command before syncing its dir" {
+		t.Fatalf("notice=%q", got)
+	}
+}
+
+func TestTerminalDirProbeTimesOut(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	pane := newFilePaneState(t.TempDir(), cfg)
+	base := time.Unix(123, 0)
+	ui := &UI{
+		fmCfg:     cfg,
+		filePanes: []*filePaneState{pane},
+		terminalDirProbe: &terminalDirProbeState{
+			session:  newTerminalSession(nil),
+			pane:     0,
+			host:     "hexone-probe-timeout.invalid",
+			deadline: base,
+		},
+	}
+	gtx := testPathLayoutContext()
+	gtx.Now = base
+	ui.pumpTerminalDirProbe(gtx)
+
+	if ui.terminalDirProbe != nil {
+		t.Fatal("timed-out probe was not cleared")
+	}
+	if got := pane.noticeText; got != "terminal SSH dir query timed out; run it from a shell prompt" {
+		t.Fatalf("notice=%q", got)
 	}
 }
 

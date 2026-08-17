@@ -31,7 +31,7 @@ func (b sshClientBundle) close() {
 	if b.sftp != nil {
 		closeSFTPClientFunc(b.sftp)
 	}
-	if b.sftpBase != nil {
+	if b.sftpBase != nil && b.sftpBase != b.sshClient {
 		closeSSHClientFunc(b.sftpBase)
 	}
 	if b.sshClient != nil {
@@ -58,6 +58,10 @@ var netDialTimeoutFunc = net.DialTimeout
 var sshNewClientConnFunc = ssh.NewClientConn
 
 var newSFTPClientFunc = sftp.NewClient
+
+var dialSSHClientWithDeadlineFunc = dialSSHClientWithDeadline
+
+var newSFTPClientWithDeadlineFunc = newSFTPClientWithDeadline
 
 var timeNowFunc = time.Now
 
@@ -374,6 +378,9 @@ func (ui *UI) connectSSHModalToActivePane(now time.Time) error {
 		return err
 	}
 	if request := ui.sshModal.transientConnect; request != nil {
+		if request.targetTab != nil && !ui.activateFilePaneStateTab(request.pane, request.targetTab) {
+			return errors.New("SSH target tab is no longer available")
+		}
 		if ui.sshModal.selected >= 0 && ui.sshModal.selected < len(ui.sshModal.setups) {
 			return ui.connectPaneSSH(request.pane, setup, request.targetDir, now)
 		}
@@ -411,7 +418,7 @@ func (ui *UI) connectPaneSSHSpec(idx int, spec sshConnectionSpec, targetDir stri
 	spec.setup = setup
 	var next *paneSSHSession
 	showConnectedNotice := true
-	if shared := ui.findReusableRemoteSession(idx, setup); shared != nil {
+	if shared := ui.findReusableRemoteSessionForSpec(idx, spec); shared != nil {
 		next = shared.clone()
 		showConnectedNotice = false
 	}
@@ -493,15 +500,21 @@ func (ui *UI) attachPaneSSHSession(idx int, next *paneSSHSession, targetDir stri
 	return nil
 }
 
-func (ui *UI) findReusableRemoteSession(excludeIdx int, setup fm.SSHSetup) *paneSSHSession {
+func (ui *UI) findReusableRemoteSessionForSpec(excludeIdx int, spec sshConnectionSpec) *paneSSHSession {
 	if ui == nil {
 		return nil
 	}
-	for i, pane := range ui.filePanes {
-		if i == excludeIdx || pane == nil || pane.remote == nil {
+	var excluded *filePaneState
+	if excludeIdx >= 0 && excludeIdx < len(ui.filePanes) {
+		excluded = ui.filePanes[excludeIdx]
+	}
+	for _, pane := range ui.allFilePaneTabPanes() {
+		if pane == excluded || pane == nil || pane.remote == nil {
 			continue
 		}
-		if !sameSSHRemoteTarget(pane.remote.setup, setup) {
+		if !sameSSHRemoteTarget(pane.remote.setup, spec.setup) &&
+			!(strings.EqualFold(strings.TrimSpace(pane.remote.address), strings.TrimSpace(spec.address())) &&
+				strings.TrimSpace(pane.remote.setup.User) == strings.TrimSpace(spec.setup.User)) {
 			continue
 		}
 		if pane.remote.sftpClient() == nil {
@@ -516,8 +529,12 @@ func (ui *UI) findReusableRemoteSessionForFavorite(excludeIdx int, loc remoteFav
 	if ui == nil {
 		return nil
 	}
-	for i, pane := range ui.filePanes {
-		if i == excludeIdx || pane == nil || pane.remote == nil {
+	var excluded *filePaneState
+	if excludeIdx >= 0 && excludeIdx < len(ui.filePanes) {
+		excluded = ui.filePanes[excludeIdx]
+	}
+	for _, pane := range ui.allFilePaneTabPanes() {
+		if pane == excluded || pane == nil || pane.remote == nil {
 			continue
 		}
 		if !paneMatchesRemoteFavoriteTarget(pane, loc) {
@@ -733,26 +750,26 @@ func openSSHClients(setup fm.SSHSetup) (sshClientBundle, error) {
 	address := sshSetupAddress(setup)
 	deadline := sshConnectDeadline()
 
-	cmdClient, _, err := dialSSHClientWithDeadline(address, cfg, deadline)
+	bundle, err := openMultiplexedSSHClients(address, cfg, deadline)
 	if err != nil {
-		return sshClientBundle{}, fmt.Errorf("ssh command session: %w", err)
+		return sshClientBundle{}, fmt.Errorf("ssh connection: %w", err)
 	}
-	sftpBase, sftpConn, err := dialSSHClientWithDeadline(address, cfg, deadline)
+	return bundle, nil
+}
+
+func openMultiplexedSSHClients(address string, cfg *ssh.ClientConfig, deadline time.Time) (sshClientBundle, error) {
+	client, rawConn, err := dialSSHClientWithDeadlineFunc(address, cfg, deadline)
 	if err != nil {
-		closeSSHClientFunc(cmdClient)
-		return sshClientBundle{}, fmt.Errorf("ssh sftp session: %w", err)
+		return sshClientBundle{}, err
 	}
-	sftpClient, err := newSFTPClientWithDeadline(sftpBase, sftpConn, deadline)
+	sftpClient, err := newSFTPClientWithDeadlineFunc(client, rawConn, deadline)
 	if err != nil {
-		closeSSHClientFunc(sftpBase)
-		closeSSHClientFunc(cmdClient)
+		closeSSHClientFunc(client)
 		return sshClientBundle{}, fmt.Errorf("sftp init: %w", err)
 	}
-	return sshClientBundle{
-		sshClient: cmdClient,
-		sftpBase:  sftpBase,
-		sftp:      sftpClient,
-	}, nil
+	// SSH multiplexes the command sessions and SFTP subsystem as channels on
+	// one transport. A second TCP+SSH handshake only adds latency.
+	return sshClientBundle{sshClient: client, sftp: sftpClient}, nil
 }
 
 func newPaneSSHSession(setup fm.SSHSetup) (*paneSSHSession, error) {

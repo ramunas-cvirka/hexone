@@ -145,6 +145,12 @@ func (ui *UI) openSSHModal() {
 }
 
 func (ui *UI) closeSSHModal() {
+	if ui == nil {
+		return
+	}
+	if ui.sshModal != nil {
+		ui.cleanupCanceledSSHTransientTab(ui.sshModal.transientConnect)
+	}
 	ui.sshModal = nil
 }
 
@@ -815,6 +821,9 @@ func (ui *UI) activateSSHModalAction(gtx layout.Context, st *sshModalState, acti
 		if err := ui.connectSSHModalToActivePane(gtx.Now); err != nil {
 			st.errText = err.Error()
 		} else {
+			if st.transientConnect != nil {
+				st.transientConnect.removeTabOnCancel = false
+			}
 			ui.closeSSHModal()
 			return true
 		}

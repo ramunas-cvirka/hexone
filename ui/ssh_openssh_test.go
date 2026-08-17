@@ -10,6 +10,8 @@ import (
 	"errors"
 	"hexone/filesys"
 	"hexone/fm"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 func TestResolveOpenSSHConnectionSpecUsesEffectiveConfig(t *testing.T) {
@@ -237,6 +240,65 @@ func TestSSHAuthMethodsPassphraseIsScopedToRequestedKey(t *testing.T) {
 	}
 }
 
+func TestSSHAuthMethodsMergeDiskAndAgentSigners(t *testing.T) {
+	oldDialAgent := dialSSHAgentFunc
+	t.Cleanup(func() { dialSSHAgentFunc = oldDialAgent })
+
+	_, diskKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diskBlock, err := ssh.MarshalPrivateKey(diskKey, "disk key rejected by server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	diskPath := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(diskPath, pem.EncodeToMemory(diskBlock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, agentKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring := agent.NewKeyring()
+	if err := keyring.Add(agent.AddedKey{PrivateKey: agentKey, Comment: "accepted agent key"}); err != nil {
+		t.Fatal(err)
+	}
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+	go func() { _ = agent.ServeAgent(keyring, serverConn) }()
+	used := false
+	dialSSHAgentFunc = func(string) (io.ReadWriteCloser, error) {
+		if used {
+			t.Fatal("agent dialed more than once")
+		}
+		used = true
+		return clientConn, nil
+	}
+
+	methods, encrypted, closer, err := sshAuthMethodsForConnectionSpec(sshConnectionSpec{
+		setup:         fm.SSHSetup{Host: "example.test", Port: 22, User: "alice"},
+		identityFiles: []string{diskPath},
+		transient:     true,
+	})
+	if closer != nil {
+		defer closer.Close()
+	}
+	if err != nil {
+		t.Fatalf("combined disk and agent auth: %v", err)
+	}
+	if !used {
+		t.Fatal("SSH agent was not queried")
+	}
+	if len(encrypted) != 0 || len(methods) != 1 {
+		t.Fatalf("methods=%d encrypted=%v want one combined publickey method", len(methods), encrypted)
+	}
+}
+
 func TestOpenSSHPassphraseRetryPrefillsOneTimeConnection(t *testing.T) {
 	cfg := fm.DefaultConfig()
 	ui := &UI{fmCfg: cfg, filePanes: []*filePaneState{newFilePaneState(t.TempDir(), cfg)}}
@@ -283,7 +345,12 @@ func TestOpenSSHPassphraseRetryConnectsRequestedPaneAndDirectory(t *testing.T) {
 
 	cfg := fm.DefaultConfig()
 	pane := newFilePaneState(t.TempDir(), cfg)
-	ui := &UI{fmCfg: cfg, filePanes: []*filePaneState{pane}}
+	other := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{pane},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{pane, other}, active: 0}},
+	}
 	spec := sshConnectionSpec{
 		setup:     fm.SSHSetup{Host: "production", Port: 22, User: "deploy"},
 		dialHost:  "srv.test",
@@ -291,6 +358,9 @@ func TestOpenSSHPassphraseRetryConnectsRequestedPaneAndDirectory(t *testing.T) {
 	}
 	if !ui.openSSHPassphraseRetry(0, "/var/log", &sshPassphraseRequiredError{spec: spec, keyPath: "/keys/prod"}) {
 		t.Fatal("passphrase retry modal was not opened")
+	}
+	if !ui.activateFilePaneTab(0, 1) {
+		t.Fatal("failed to switch away from passphrase target tab")
 	}
 	ui.sshModal.keyPassEdit.SetText("secret")
 	client := new(sftp.Client)
@@ -312,5 +382,38 @@ func TestOpenSSHPassphraseRetryConnectsRequestedPaneAndDirectory(t *testing.T) {
 	}
 	if pane.remote == nil || pane.dir != "/var/log" {
 		t.Fatalf("retry did not connect requested pane: %+v", pane)
+	}
+	if ui.filePanes[0] != pane || ui.filePaneTabs[0].active != 0 || other.remote != nil {
+		t.Fatal("passphrase retry connected whichever tab was active instead of its requested tab")
+	}
+}
+
+func TestCloseSSHPassphraseModalRemovesTransientSyncTab(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	original := newFilePaneState(t.TempDir(), cfg)
+	created := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{
+		fmCfg:        cfg,
+		filePanes:    []*filePaneState{created},
+		filePaneTabs: []filePaneTabSet{{tabs: []*filePaneState{original, created}, active: 1}},
+	}
+	spec := sshConnectionSpec{
+		setup:     fm.SSHSetup{Host: "production", Port: 22, User: "deploy"},
+		dialHost:  "srv.test",
+		transient: true,
+	}
+	if !ui.openSSHPassphraseRetry(0, "/var/log", &sshPassphraseRequiredError{spec: spec, keyPath: "/keys/prod"}) {
+		t.Fatal("passphrase retry modal was not opened")
+	}
+	request := ui.sshModal.transientConnect
+	request.restoreTab = original
+	request.removeTabOnCancel = true
+	ui.closeSSHModal()
+
+	if ui.sshModal != nil {
+		t.Fatal("SSH modal did not close")
+	}
+	if len(ui.filePaneTabs[0].tabs) != 1 || ui.filePaneTabs[0].tabs[0] != original || ui.filePanes[0] != original {
+		t.Fatalf("canceled passphrase left transient tab: %+v", ui.filePaneTabs[0])
 	}
 }

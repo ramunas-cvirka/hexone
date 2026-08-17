@@ -223,6 +223,46 @@ func (ui *UI) activateFilePaneTab(paneIdx, tabIdx int) bool {
 	return true
 }
 
+func (ui *UI) activateFilePaneStateTab(paneIdx int, target *filePaneState) bool {
+	if ui == nil || target == nil {
+		return false
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return false
+	}
+	for tabIdx, pane := range ui.filePaneTabs[paneIdx].tabs {
+		if pane == target {
+			return ui.activateFilePaneTab(paneIdx, tabIdx)
+		}
+	}
+	return false
+}
+
+func (ui *UI) cleanupCanceledSSHTransientTab(request *sshTransientConnectRequest) {
+	if ui == nil || request == nil || !request.removeTabOnCancel || request.targetTab == nil {
+		return
+	}
+	ui.ensureFilePaneTabs()
+	paneIdx := request.pane
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) {
+		return
+	}
+	targetIdx := -1
+	for tabIdx, pane := range ui.filePaneTabs[paneIdx].tabs {
+		if pane == request.targetTab {
+			targetIdx = tabIdx
+			break
+		}
+	}
+	if targetIdx >= 0 {
+		ui.closeFilePaneTab(paneIdx, targetIdx)
+	}
+	if request.restoreTab != nil {
+		ui.activateFilePaneStateTab(paneIdx, request.restoreTab)
+	}
+}
+
 func (ui *UI) stepFilePaneTab(paneIdx, step int) bool {
 	if ui == nil {
 		return false
@@ -280,6 +320,46 @@ func (ui *UI) addFilePaneTab(paneIdx int) bool {
 	set.scroll = tabScrollToActive(set.scroll, set.active)
 	ui.filePanes[paneIdx] = pane
 	ui.requestPaneLoadWithSelection(paneIdx, dir, "", "", 0)
+	return true
+}
+
+func (ui *UI) addFilePaneTabForRemoteSync(paneIdx int, now time.Time) bool {
+	if ui == nil {
+		return false
+	}
+	ui.ensureFilePaneTabs()
+	if paneIdx < 0 || paneIdx >= len(ui.filePaneTabs) || paneIdx >= len(ui.filePanes) {
+		return false
+	}
+	set := &ui.filePaneTabs[paneIdx]
+	if len(set.tabs) >= tabStripMaxTabsPerPane {
+		if pane := ui.filePanes[paneIdx]; pane != nil {
+			pane.setNotice("tab limit reached", now)
+		}
+		return false
+	}
+	base := ui.filePanes[paneIdx]
+	dir := "."
+	if base != nil {
+		if base.remoteConnected() {
+			dir = strings.TrimSpace(base.localDirBeforeRemote)
+		} else {
+			dir = strings.TrimSpace(base.dir)
+			if base.loading && strings.TrimSpace(base.loadingDir) != "" {
+				dir = strings.TrimSpace(base.loadingDir)
+			}
+		}
+	}
+	if dir == "" {
+		dir = "."
+	}
+	pane := newFilePaneState(dir, ui.fmCfg)
+	ui.installFilePaneHandlers(paneIdx, pane)
+	set.tabs = append(set.tabs, pane)
+	set.active = len(set.tabs) - 1
+	set.scroll = tabScrollToActive(set.scroll, set.active)
+	ui.filePanes[paneIdx] = pane
+	ui.setActiveFilePane(paneIdx)
 	return true
 }
 

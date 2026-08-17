@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -42,6 +43,62 @@ func TestShouldReconnectSSHTransport(t *testing.T) {
 				t.Fatalf("shouldReconnectSSHTransport(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestOpenMultiplexedSSHClientsUsesOneTransport(t *testing.T) {
+	oldDial := dialSSHClientWithDeadlineFunc
+	oldNewSFTP := newSFTPClientWithDeadlineFunc
+	oldCloseSFTP := closeSFTPClientFunc
+	oldCloseSSH := closeSSHClientFunc
+	t.Cleanup(func() {
+		dialSSHClientWithDeadlineFunc = oldDial
+		newSFTPClientWithDeadlineFunc = oldNewSFTP
+		closeSFTPClientFunc = oldCloseSFTP
+		closeSSHClientFunc = oldCloseSSH
+	})
+
+	client := new(ssh.Client)
+	sftpClient := new(sftp.Client)
+	dials := 0
+	dialSSHClientWithDeadlineFunc = func(address string, cfg *ssh.ClientConfig, deadline time.Time) (*ssh.Client, net.Conn, error) {
+		dials++
+		if address != "srv.test:22" || cfg == nil || deadline.IsZero() {
+			t.Fatalf("dial address=%q cfg=%v deadline=%v", address, cfg, deadline)
+		}
+		return client, nil, nil
+	}
+	newSFTPClientWithDeadlineFunc = func(got *ssh.Client, raw net.Conn, deadline time.Time) (*sftp.Client, error) {
+		if got != client || raw != nil || deadline.IsZero() {
+			t.Fatalf("sftp client=%p raw=%v deadline=%v", got, raw, deadline)
+		}
+		return sftpClient, nil
+	}
+	closedSSH := 0
+	closedSFTP := 0
+	closeSSHClientFunc = func(got *ssh.Client) {
+		if got != client {
+			t.Fatalf("closed SSH client=%p", got)
+		}
+		closedSSH++
+	}
+	closeSFTPClientFunc = func(got *sftp.Client) {
+		if got != sftpClient {
+			t.Fatalf("closed SFTP client=%p", got)
+		}
+		closedSFTP++
+	}
+
+	bundle, err := openMultiplexedSSHClients("srv.test:22", &ssh.ClientConfig{}, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dials != 1 || bundle.sshClient != client || bundle.sftpBase != nil || bundle.sftp != sftpClient {
+		t.Fatalf("dials=%d bundle=%+v", dials, bundle)
+	}
+	bundle.close()
+	if closedSSH != 1 || closedSFTP != 1 {
+		t.Fatalf("closed SSH=%d SFTP=%d", closedSSH, closedSFTP)
 	}
 }
 
@@ -332,6 +389,61 @@ func TestNavigateRemoteFavoriteReusesOtherPaneSSHSessionBeforeSavedSetup(t *test
 	}
 	if right.noticeText != "" {
 		t.Fatalf("reused ssh favorite notice=%q want empty", right.noticeText)
+	}
+}
+
+func TestConnectPaneSSHSpecReusesInactiveTabSession(t *testing.T) {
+	oldReadDir := readDirSFTPFunc
+	oldOpenSpec := openSSHConnectionSpecFunc
+	t.Cleanup(func() {
+		readDirSFTPFunc = oldReadDir
+		openSSHConnectionSpecFunc = oldOpenSpec
+	})
+
+	openSSHConnectionSpecFunc = func(sshConnectionSpec) (sshClientBundle, error) {
+		t.Fatal("matching inactive tab should avoid a new SSH handshake")
+		return sshClientBundle{}, nil
+	}
+
+	cfg := fm.DefaultConfig()
+	setup := fm.SSHSetup{Host: "example.test", Port: 2222, User: "ramunas", Password: "secret"}
+	client := new(sftp.Client)
+	remoteTab := newFilePaneState("/home/ramunas", cfg)
+	remoteTab.remote = &paneSSHSession{
+		setup:    setup,
+		identity: sshSetupIdentity(setup),
+		address:  sshSetupAddress(setup),
+		conn: newSharedSSHConn(sshClientBundle{
+			sshClient: new(ssh.Client),
+			sftp:      client,
+		}),
+	}
+	localTab := newFilePaneState(t.TempDir(), cfg)
+	ui := &UI{
+		fmCfg:          cfg,
+		filePanes:      []*filePaneState{localTab},
+		filePaneTabs:   []filePaneTabSet{{tabs: []*filePaneState{remoteTab, localTab}, active: 1}},
+		activeFilePane: 0,
+	}
+
+	readDirSFTPFunc = func(got *sftp.Client, dir string) (filesys.Listing, error) {
+		if got != client || dir != "/var/log" {
+			t.Fatalf("readDir client=%p dir=%q", got, dir)
+		}
+		return filesys.Listing{Dir: dir}, nil
+	}
+
+	if err := ui.connectPaneSSHSpec(0, directSSHConnectionSpec(setup), "/var/log", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if localTab.remote == nil || localTab.remote.conn != remoteTab.remote.conn {
+		t.Fatal("active tab should share the inactive tab's live SSH transport")
+	}
+	if localTab.dir != "/var/log" {
+		t.Fatalf("pane dir=%q want /var/log", localTab.dir)
+	}
+	if localTab.noticeText != "" {
+		t.Fatalf("reused session notice=%q want empty", localTab.noticeText)
 	}
 }
 

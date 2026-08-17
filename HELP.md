@@ -137,7 +137,7 @@ Right-click opens the terminal context menu. It can:
 
 - copy, paste, or select the full terminal buffer
 - send `cd` commands to move the terminal to the left or right pane's local directory
-- set the left or right pane to the terminal's current directory, including supported SSH sessions that report their location
+- set the left or right pane to the terminal's current directory, including SSH shells through OSC 7 tracking or an on-demand directory query
 
 For local shells, Hexone can usually read the terminal process current directory directly.
 
@@ -156,7 +156,9 @@ Use the `☆` button at the right side of the terminal tab row, or `Ctrl+Shift+P
 
 When the current terminal is inside a local Git repository, new snippets default to repository scope. Outside a repository they default to directory scope when the terminal location is available, and otherwise to global scope. Repository scope is unavailable for remote terminals because Hexone cannot safely infer the remote repository root without running a command.
 
-For SSH shells, Hexone needs the remote shell to emit OSC 7 working-directory updates. Hexone can parse OSC 7 and use it to open the matching remote directory in a file pane, but it cannot infer the remote directory from a prompt alone.
+For SSH shells that already emit OSC 7 working-directory updates, Hexone continuously tracks the reported remote directory. No remote-shell configuration is required for on-demand pane sync: if an active SSH shell has not reported OSC 7, `Set Left Pane to Terminal Dir` and `Set Right Pane to Terminal Dir` inject a one-shot `printf` command at the empty shell prompt to query `$PWD`. Leave full-screen programs and clear any partially typed command before using the action.
+
+Remote terminal sync preserves existing pane tabs. If the chosen pane already has a tab connected to the terminal's SSH server, Hexone activates that tab and changes only its directory. Otherwise it opens the server in a new pane tab instead of replacing the currently selected local or remote tab.
 
 If your remote shell does not already emit OSC 7, add something like this to the remote `~/.bashrc`:
 
@@ -167,7 +169,7 @@ __osc7() {
 PROMPT_COMMAND="__osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 ```
 
-After reconnecting, `Set Left Pane to Terminal Dir` and `Set Right Pane to Terminal Dir` can use that OSC 7 value. If the remote OSC 7 hostname differs from the saved SSH setup host, Hexone also checks the active `ssh` process target to map the terminal session back to a saved SSH setup.
+After reconnecting, Hexone can use those OSC 7 updates without injecting a command. If the remote OSC 7 hostname differs from the saved SSH setup host, Hexone also checks the active `ssh` process target to map the terminal session back to a saved SSH setup.
 
 If there is no matching Hexone SSH setup, Hexone can use the destination from the active terminal command. It asks the installed OpenSSH client for the effective `~/.ssh/config` values, then connects with a configured identity file or a key already loaded in `ssh-agent`. An encrypted key that is not available through the agent opens a one-time passphrase prompt. The remote host must already be present in the OpenSSH `known_hosts` file. `ProxyJump` and `ProxyCommand` configurations are reported as unsupported instead of being ignored.
 
