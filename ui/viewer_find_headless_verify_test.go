@@ -64,6 +64,13 @@ func TestHeadlessViewerFindModes(t *testing.T) {
 	th := material.NewTheme()
 	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
 	ui := NewUI(fm.DefaultConfig())
+	oldWriteNow := writeFileViewerClipboardNow
+	var copiedNow string
+	writeFileViewerClipboardNow = func(text string) error {
+		copiedNow = text
+		return nil
+	}
+	t.Cleanup(func() { writeFileViewerClipboardNow = oldWriteNow })
 	router := new(input.Router)
 	frame := func() *image.RGBA {
 		var ops op.Ops
@@ -218,4 +225,23 @@ func TestHeadlessViewerFindModes(t *testing.T) {
 		t.Fatalf("independent modes input=%v preview=%v matches=%d status=%q", st.find.hexInput, st.find.hexPreview, len(st.find.hexMatches), st.find.status)
 	}
 	shoot("hex-find-text-preview-hex.png", frame())
+
+	selectionStart := st.hex.bufferStart
+	selectionLen := int64(len(st.hex.buffer))
+	if selectionLen > 48 {
+		selectionLen = 48
+	}
+	if selectionLen < 2 {
+		t.Fatalf("hex viewport has only %d selectable bytes", selectionLen)
+	}
+	st.hex.setSelectionRange(selectionStart, selectionLen)
+	wantCopy := formatHexSelectionTextCopy(st.hex.buffer[:selectionLen])
+	st.openContextMenu(image.Pt(420, 280), time.Now().Add(-time.Second))
+	shoot("hex-find-copy-selection-menu.png", frame())
+	st.copyTextToggle.Click()
+	frame()
+	_, copied, ok := router.WriteClipboard()
+	if !ok || string(copied) != wantCopy || copiedNow != wantCopy {
+		t.Fatalf("copy with Find open: Gio=(%t, %q) sync=%q want selection %q", ok, copied, copiedNow, wantCopy)
+	}
 }

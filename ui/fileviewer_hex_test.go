@@ -209,7 +209,6 @@ func TestCopyFileViewerHexUsesRemoteFindMatchBeforeChunkLoads(t *testing.T) {
 			v := newHexViewerState()
 			v.fileSize = 4096
 			v.buffer = []byte("old")
-			v.setSelectionRange(0, 3)
 			st := &fileViewerState{
 				mode:   "hex",
 				hex:    v,
@@ -238,6 +237,37 @@ func TestCopyFileViewerHexUsesRemoteFindMatchBeforeChunkLoads(t *testing.T) {
 				t.Fatalf("clipboard=(%t, %q), want (true, %q)", ok, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestCopyFileViewerHexUsesExplicitSelectionBeforeFindMatch(t *testing.T) {
+	oldWriteNow := writeFileViewerClipboardNow
+	writeFileViewerClipboardNow = func(string) error { return nil }
+	t.Cleanup(func() { writeFileViewerClipboardNow = oldWriteNow })
+
+	data := []byte("selected lines\n")
+	v := newHexViewerState()
+	v.fileSize = int64(len(data))
+	v.buffer = data
+	v.setSelectionRange(0, int64(len(data)))
+	st := &fileViewerState{mode: "hex", hex: v}
+	st.find.open = true
+	st.find.currentValid = true
+	st.find.currentStart = 0
+	st.find.currentLen = int64(len("failed"))
+	st.find.editor.SetText("failed")
+
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	router := new(input.Router)
+	gtx := layout.Context{Ops: new(op.Ops), Source: router.Source()}
+
+	if !ui.copyFileViewerHex(gtx, false, true) {
+		t.Fatalf("copy failed: status=%q", st.status)
+	}
+	_, got, ok := router.WriteClipboard()
+	if !ok || string(got) != string(data) {
+		t.Fatalf("clipboard=(%t, %q), want selected range %q", ok, got, data)
 	}
 }
 

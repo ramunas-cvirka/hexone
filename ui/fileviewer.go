@@ -752,10 +752,11 @@ func (ui *UI) copyFileViewerHex(gtx layout.Context, fallbackAll, asText bool) bo
 	var start, length int64
 	copyingFindMatch := st.find.open && st.find.currentValid && st.find.currentLen > 0
 	switch {
-	case copyingFindMatch:
-		start, length = st.find.currentStart, st.find.currentLen
 	case v.hasSelection():
 		start, length = v.selectionStart, v.selectionLen
+		copyingFindMatch = false
+	case copyingFindMatch:
+		start, length = st.find.currentStart, st.find.currentLen
 	case fallbackAll && len(v.buffer) > 0:
 		start, length = v.bufferStart, int64(len(v.buffer))
 	default:
@@ -817,9 +818,9 @@ func copyHexViewerBytes(v *hexViewerState, start, length int64) ([]byte, bool) {
 var writeFileViewerClipboardNow = platform.WriteClipboardTextNow
 
 func writeFileViewerClipboard(gtx layout.Context, text string) {
-	// Keep Gio's portable command for every platform. On Windows, the
-	// synchronous writer adds retries because Gio silently drops a clipboard
-	// write when its one OpenClipboard attempt loses a race.
+	// Keep Gio's portable command for every platform. The synchronous desktop
+	// writer prevents a copy from being lost to a closing popup on macOS and
+	// adds retries when Windows briefly has the clipboard locked.
 	_ = writeFileViewerClipboardNow(text)
 	gtx.Execute(clipboard.WriteCmd{
 		Type: "application/text",
