@@ -3510,10 +3510,6 @@ func httpEditableFieldHeight(th *material.Theme, gtx layout.Context) int {
 	return httpInlineTabHeight(th, gtx)
 }
 
-func httpRequestHeaderBlockHeight(th *material.Theme, gtx layout.Context) int {
-	return gtx.Dp(unit.Dp(filePaneTabConnectorHeightDp)) + httpEditableFieldHeight(th, gtx)
-}
-
 func (ui *UI) layoutHTTPRequestLine(th *material.Theme, gtx layout.Context, st *httpClientState) layout.Dimensions {
 	return fixedHeight(gtx, httpEditableFieldHeight(th, gtx), func(gtx layout.Context) layout.Dimensions {
 		return layoutHTTPRequestWirePanel(gtx, httpRequestLineBackground(), true, func(gtx layout.Context) layout.Dimensions {
@@ -3704,24 +3700,6 @@ func (ui *UI) layoutHTTPFlatSaveButton(gtx layout.Context, st *httpClientState, 
 			}
 			return dimensions
 		})
-	})
-}
-
-func layoutHTTPRequestWireButton(th *material.Theme, gtx layout.Context, typeface font.Typeface, click *widget.Clickable, text string, method, primary bool) layout.Dimensions {
-	bg := httpRequestLineBackground()
-	textColor := txtColor
-	if method {
-		methodName := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(text, "[ "), " ▾ ]"))
-		textColor = httpMethodColor(methodName)
-	}
-	if primary {
-		textColor = analyzerAccent
-	}
-	if click.Hovered() {
-		bg = color.NRGBA{R: 28, G: 49, B: 59, A: 255}
-	}
-	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layoutHTTPWireLabelTight(th, gtx, typeface, text, textColor, bg)
 	})
 }
 
@@ -4399,25 +4377,6 @@ func (ui *UI) layoutHTTPResponseEditor(th *material.Theme, gtx layout.Context, s
 	return layoutHTTPMultilineEditor(th, gtx, ui, "http-response", &st.responseEd, &st.responseScrollbar, hint, true)
 }
 
-func layoutHTTPSectionHeader(th *material.Theme, gtx layout.Context, typeface font.Typeface, title, right string) layout.Dimensions {
-	dimensions, _ := layoutHTTPWireLinePanel(gtx, analyzerHeaderBg, analyzerRule, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Left: unit.Dp(7), Right: unit.Dp(7)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutHTTPWireLabelTight(th, gtx, typeface, "[ "+title+" ]", analyzerAccent, analyzerHeaderBg)
-				}),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, 1)}
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layoutHTTPWireLabelTight(th, gtx, typeface, "[ "+right+" ]", hintColor, analyzerHeaderBg)
-				}),
-			)
-		})
-	})
-	return dimensions
-}
-
 func layoutHTTPWireLabelTight(th *material.Theme, gtx layout.Context, typeface font.Typeface, text string, textColor, bg color.NRGBA) layout.Dimensions {
 	trimmed := strings.TrimSpace(text)
 	bracketed := strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")
@@ -4546,34 +4505,6 @@ func (ui *UI) layoutHTTPActionTooltip(th *material.Theme, gtx layout.Context, ti
 	})
 }
 
-func layoutHTTPCompactButton(th *material.Theme, gtx layout.Context, typeface font.Typeface, click *widget.Clickable, label string, method, primary bool) layout.Dimensions {
-	bg := color.NRGBA{}
-	textColor := txtColor
-	if method {
-		textColor = httpMethodColor(strings.TrimSuffix(strings.TrimSpace(label), " ▾"))
-	}
-	if primary {
-		textColor = analyzerAccent
-		bg = color.NRGBA{R: 20, G: 44, B: 53, A: 255}
-	}
-	if click.Hovered() {
-		bg = color.NRGBA{R: 28, G: 49, B: 59, A: 255}
-	}
-	return click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				textLabel := material.Body2(th, label)
-				textLabel.Font.Typeface = typeface
-				textLabel.Font.Weight = font.Medium
-				textLabel.TextSize = scaleThemeFontSize(th, 10)
-				textLabel.Color = textColor
-				textLabel.MaxLines = 1
-				return textLabel.Layout(gtx)
-			})
-		})
-	})
-}
-
 func layoutHTTPSingleLineEditor(th *material.Theme, gtx layout.Context, ui *UI, menuID string, editor *widget.Editor, hint string) layout.Dimensions {
 	style := material.Editor(th, editor, hint)
 	style.Font.Typeface = ui.mainTypeface()
@@ -4638,32 +4569,6 @@ func httpEditorScrollbarStyle(th *material.Theme, scrollbar *widget.Scrollbar) m
 	style.Indicator.MinorWidth = unit.Dp(4)
 	style.Indicator.CornerRadius = 0
 	return style
-}
-
-func layoutHTTPPanel(gtx layout.Context, bg, rule color.NRGBA, top, bottom bool, content layout.Widget) layout.Dimensions {
-	recording := op.Record(gtx.Ops)
-	dimensions := content(gtx)
-	call := recording.Stop()
-	size := dimensions.Size
-	if size.X < gtx.Constraints.Min.X {
-		size.X = gtx.Constraints.Min.X
-	}
-	if size.X > gtx.Constraints.Max.X {
-		size.X = gtx.Constraints.Max.X
-	}
-	if size.X < 1 || size.Y < 1 {
-		call.Add(gtx.Ops)
-		return dimensions
-	}
-	paint.FillShape(gtx.Ops, bg, clip.Rect{Max: size}.Op())
-	if top {
-		paint.FillShape(gtx.Ops, rule, clip.Rect(image.Rect(0, 0, size.X, 1)).Op())
-	}
-	if bottom {
-		paint.FillShape(gtx.Ops, rule, clip.Rect(image.Rect(0, size.Y-1, size.X, size.Y)).Op())
-	}
-	call.Add(gtx.Ops)
-	return layout.Dimensions{Size: size}
 }
 
 func layoutHTTPOuterSurface(gtx layout.Context, bg, border color.NRGBA, content layout.Widget) layout.Dimensions {

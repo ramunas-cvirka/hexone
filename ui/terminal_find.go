@@ -213,15 +213,6 @@ func terminalFindRuneIndex(haystack, needle []rune) int {
 	return -1
 }
 
-func terminalFindPreview(lines []string, row int) []string {
-	preview, _ := terminalFindPreviewWindow(lines, row)
-	return preview
-}
-
-func terminalFindPreviewWindow(lines []string, row int) ([]string, int) {
-	return terminalFindPreviewWindowRange(lines, row, 0, 2)
-}
-
 func terminalFindPreviewWindowRange(lines []string, row, previewStart, previewEnd int) ([]string, int) {
 	return compactFindPreviewWindow(lines, row, previewStart, previewEnd)
 }

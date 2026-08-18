@@ -40,7 +40,6 @@ const (
 
 type hexViewerState struct {
 	resultCh chan fileViewerHexResult
-	seq      int
 
 	fileSize      int64
 	bufferStart   int64
@@ -203,14 +202,6 @@ func (v *hexViewerState) syncVisualTop() {
 	v.visualReady = true
 	v.visualAt = time.Time{}
 	v.updateDisplayState()
-}
-
-func (v *hexViewerState) resetVisualTop() {
-	if v == nil {
-		return
-	}
-	v.lastScrollDir = 0
-	v.syncVisualTop()
 }
 
 func (v *hexViewerState) clampByteOffset(off int64) int64 {
@@ -596,28 +587,6 @@ func (v *hexViewerState) runAutoScroll(now time.Time) bool {
 	}
 	v.autoScrollAt = now.Add(streamAutoScrollTick)
 	return true
-}
-
-func (v *hexViewerState) selectedBytes() ([]byte, bool) {
-	if v == nil || !v.hasSelection() {
-		return nil, false
-	}
-	endSel := v.selectionEnd()
-	if v.selectionStart < v.bufferStart {
-		return nil, false
-	}
-	bufferEnd := v.bufferStart + int64(len(v.buffer))
-	if endSel > bufferEnd {
-		return nil, false
-	}
-	start := int(v.selectionStart - v.bufferStart)
-	end := int(endSel - v.bufferStart)
-	if start < 0 || end < start || end > len(v.buffer) {
-		return nil, false
-	}
-	out := make([]byte, end-start)
-	copy(out, v.buffer[start:end])
-	return out, true
 }
 
 func (v *hexViewerState) visibleByteRange() (int64, int64) {
@@ -1020,33 +989,6 @@ func (v *hexViewerState) clearScrollbarHover() bool {
 	return changed
 }
 
-func (v *hexViewerState) rowFromPointY(y int) (int, bool) {
-	if v == nil || v.lineH <= 0 {
-		return 0, false
-	}
-	rendered := v.renderedLineCount()
-	if rendered < 1 {
-		return 0, false
-	}
-	topY := v.hexRect.Min.Y + v.displayY
-	if y < topY {
-		return 0, false
-	}
-	relY := y - topY
-	maxY := rendered * v.lineH
-	if relY < 0 || relY >= maxY {
-		return 0, false
-	}
-	row := relY / v.lineH
-	if row < 0 {
-		row = 0
-	}
-	if row >= rendered {
-		row = rendered - 1
-	}
-	return row, true
-}
-
 func (v *hexViewerState) lineFromPointY(y int) (int64, bool) {
 	if v == nil {
 		return 0, false
@@ -1099,10 +1041,6 @@ func (v *hexViewerState) lineFromPointY(y int) (int64, bool) {
 		line = maxLine
 	}
 	return line, true
-}
-
-func (v *hexViewerState) estimatedTopFromY(y int) int64 {
-	return v.estimatedTopFromDragY(y, v.thumbRect.Dy()/2)
 }
 
 func (v *hexViewerState) estimatedTopFromDragY(y, grabY int) int64 {
@@ -1173,21 +1111,6 @@ func hexLineColumns(bytesPerLine, groupBytes int) int {
 		}
 	}
 	return cols
-}
-
-func hexByteColumn(byteIndex, groupBytes int) int {
-	if byteIndex <= 0 {
-		return 0
-	}
-	col := 0
-	for i := 0; i < byteIndex; i++ {
-		col += 2
-		col++
-		if groupBytes > 1 && (i+1)%groupBytes == 0 {
-			col++
-		}
-	}
-	return col
 }
 
 func formatHexOffset(offset int64, digits int) string {

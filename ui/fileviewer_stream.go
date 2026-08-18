@@ -30,6 +30,8 @@ type streamOutputView struct {
 	lines         []string
 	lineOffsets   []int
 	lineRunes     []int
+	lineWidths    []int
+	tabCols       int
 	syntax        viewerSyntaxDocument
 	totalBytes    int
 	maxCols       int
@@ -134,6 +136,16 @@ const (
 	streamSmoothTau          = 28 * time.Millisecond
 	streamSmoothSnapEpsilon  = 0.02
 	streamSmoothJumpLines    = 6
+)
+
+// viewerTabColumns is the tab stop width of the viewer's fixed-cell text grid.
+// The read-only view bakes it into the text when it sanitizes content, and the
+// editor lays the file's original tab bytes out on the same stops, so one file
+// occupies identical columns in both modes. viewerTabSpaces is the padding both
+// slice from; it is longer than one stop so the width stays adjustable.
+const (
+	viewerTabColumns = 4
+	viewerTabSpaces  = "                "
 )
 
 func (v *streamOutputView) SetContent(raw string) {
@@ -400,11 +412,12 @@ func (v *streamOutputView) Append(chunk string) {
 	parts := strings.Split(chunk, "\n")
 	last := len(v.lines) - 1
 	v.lines[last] += parts[0]
-	updatedRunes := utf8.RuneCountInString(v.lines[last])
-	if len(v.lineRunes) == len(v.lines) {
-		v.lineRunes[last] = updatedRunes
-		if updatedRunes > v.maxCols {
-			v.maxCols = updatedRunes
+	if len(v.lineRunes) == len(v.lines) && len(v.lineWidths) == len(v.lines) {
+		v.lineRunes[last] = utf8.RuneCountInString(v.lines[last])
+		updatedCols := v.lineWidth(v.lines[last])
+		v.lineWidths[last] = updatedCols
+		if updatedCols > v.maxCols {
+			v.maxCols = updatedCols
 		}
 	}
 	v.totalBytes += len(parts[0])
@@ -414,10 +427,11 @@ func (v *streamOutputView) Append(chunk string) {
 		lineStart := v.totalBytes
 		v.lines = append(v.lines, p)
 		v.lineOffsets = append(v.lineOffsets, lineStart)
-		runes := utf8.RuneCountInString(p)
-		v.lineRunes = append(v.lineRunes, runes)
-		if runes > v.maxCols {
-			v.maxCols = runes
+		v.lineRunes = append(v.lineRunes, utf8.RuneCountInString(p))
+		cols := v.lineWidth(p)
+		v.lineWidths = append(v.lineWidths, cols)
+		if cols > v.maxCols {
+			v.maxCols = cols
 		}
 		v.totalBytes += len(p)
 	}
@@ -542,14 +556,16 @@ func (v *streamOutputView) rebuildLineOffsets() {
 	}
 	v.lineOffsets = make([]int, len(v.lines))
 	v.lineRunes = make([]int, len(v.lines))
+	v.lineWidths = make([]int, len(v.lines))
 	offset := 0
 	maxCols := 0
 	for i, line := range v.lines {
 		v.lineOffsets[i] = offset
-		runes := utf8.RuneCountInString(line)
-		v.lineRunes[i] = runes
-		if runes > maxCols {
-			maxCols = runes
+		v.lineRunes[i] = utf8.RuneCountInString(line)
+		cols := v.lineWidth(line)
+		v.lineWidths[i] = cols
+		if cols > maxCols {
+			maxCols = cols
 		}
 		offset += len(line)
 		if i+1 < len(v.lines) {
@@ -591,7 +607,7 @@ func (v *streamOutputView) prepareWrapRows(cols int) {
 	}
 	rows := make([]streamWrapRow, 0, len(v.lines))
 	for lineIndex, line := range v.lines {
-		rows = append(rows, streamWrapRowsForLine(lineIndex, line, cols)...)
+		rows = append(rows, v.wrapRowsForLine(lineIndex, line, cols)...)
 	}
 	if len(rows) == 0 {
 		rows = append(rows, streamWrapRow{})
@@ -599,6 +615,16 @@ func (v *streamOutputView) prepareWrapRows(cols int) {
 	v.wrapRows = rows
 	v.wrapCols = cols
 	v.clampTop()
+}
+
+// wrapRowsForLine returns the row spans of a line in display columns. Expanding
+// the tabs first is enough: rune indices into the expanded text are exactly the
+// columns the line occupies, so the plain wrap algorithm applies unchanged.
+func (v *streamOutputView) wrapRowsForLine(lineIndex int, line string, cols int) []streamWrapRow {
+	if v == nil || v.tabCols <= 0 || !strings.ContainsRune(line, '\t') {
+		return streamWrapRowsForLine(lineIndex, line, cols)
+	}
+	return streamWrapRowsForLine(lineIndex, v.displayText(line, 0), cols)
 }
 
 func streamWrapRowsForLine(lineIndex int, line string, cols int) []streamWrapRow {
@@ -983,8 +1009,8 @@ func (v *streamOutputView) rangeColsForLine(line, start, end int) (int, int, boo
 	if toByte < fromByte {
 		toByte = fromByte
 	}
-	from := runeIndexAtByte(lineText, fromByte)
-	to := runeIndexAtByte(lineText, toByte)
+	from := v.colAtByte(lineText, fromByte)
+	to := v.colAtByte(lineText, toByte)
 	if to <= from {
 		return 0, 0, false
 	}
@@ -1168,7 +1194,7 @@ func (v *streamOutputView) textOffsetFromPoint(pos image.Point) int {
 	if len(v.lineOffsets) == len(v.lines) {
 		base = v.lineOffsets[line]
 	}
-	offset := base + byteIndexAtRune(v.lines[line], col)
+	offset := base + v.byteAtCol(v.lines[line], col)
 	return v.clampOffset(offset)
 }
 
@@ -1309,6 +1335,117 @@ func runeIndexAtByte(s string, byteIdx int) int {
 	return runes
 }
 
+// The text grid places one rune per fixed-width cell, so a display column and a
+// rune index are the same number until a line contains a tab. The read-only
+// viewer never hits that case because sanitizing already expanded its tabs, but
+// the editor holds the file's raw bytes and has to lay them out on tab stops to
+// land on the columns the viewer used. These helpers do that conversion; a
+// tabCols of zero keeps the plain rune-index behaviour.
+
+func viewerLineDisplayCols(line string, tabCols int) int {
+	if tabCols <= 0 || !strings.ContainsRune(line, '\t') {
+		return utf8.RuneCountInString(line)
+	}
+	col := 0
+	for _, r := range line {
+		if r == '\t' {
+			col += tabCols - col%tabCols
+			continue
+		}
+		col++
+	}
+	return col
+}
+
+func viewerDisplayColAtByte(line string, byteIdx, tabCols int) int {
+	if tabCols <= 0 || !strings.ContainsRune(line, '\t') {
+		return runeIndexAtByte(line, byteIdx)
+	}
+	if byteIdx <= 0 {
+		return 0
+	}
+	col := 0
+	for i, r := range line {
+		if i >= byteIdx {
+			break
+		}
+		if r == '\t' {
+			col += tabCols - col%tabCols
+			continue
+		}
+		col++
+	}
+	return col
+}
+
+func viewerByteAtDisplayCol(line string, col, tabCols int) int {
+	if tabCols <= 0 || !strings.ContainsRune(line, '\t') {
+		return byteIndexAtRune(line, col)
+	}
+	if col <= 0 {
+		return 0
+	}
+	at := 0
+	for i, r := range line {
+		if at >= col {
+			return i
+		}
+		width := 1
+		if r == '\t' {
+			width = tabCols - at%tabCols
+		}
+		if at+width > col {
+			// The column lands inside a tab. Report the tab's own byte so every
+			// caller stays on a real byte boundary at or before the column.
+			return i
+		}
+		at += width
+	}
+	return len(line)
+}
+
+func viewerExpandLineTabs(text string, startCol, tabCols int) string {
+	if tabCols <= 0 || !strings.ContainsRune(text, '\t') {
+		return text
+	}
+	var b strings.Builder
+	b.Grow(len(text) + tabCols)
+	col := startCol
+	if col < 0 {
+		col = 0
+	}
+	for _, r := range text {
+		if r == '\t' {
+			width := tabCols - col%tabCols
+			if width > len(viewerTabSpaces) {
+				width = len(viewerTabSpaces)
+			}
+			b.WriteString(viewerTabSpaces[:width])
+			col += width
+			continue
+		}
+		b.WriteRune(r)
+		col++
+	}
+	return b.String()
+}
+
+func (v *streamOutputView) lineWidth(line string) int {
+	return viewerLineDisplayCols(line, v.tabCols)
+}
+
+func (v *streamOutputView) colAtByte(line string, byteIdx int) int {
+	return viewerDisplayColAtByte(line, byteIdx, v.tabCols)
+}
+
+func (v *streamOutputView) byteAtCol(line string, col int) int {
+	return viewerByteAtDisplayCol(line, col, v.tabCols)
+}
+
+func (v *streamOutputView) displayText(text string, startCol int) string {
+	return viewerExpandLineTabs(text, startCol, v.tabCols)
+}
+
 func measureTypefaceCharWidth(ui *UI, th *material.Theme, gtx layout.Context, face font.Typeface) int {
 	return measureTypefaceCharWidthAt(th, gtx, face, ui.viewerTextSize())
 }
@@ -1349,10 +1486,6 @@ func measureTypefaceCharWidthAt(th *material.Theme, gtx layout.Context, face fon
 	// Leave a small safety margin so exact-width hex cells don't clip glyph
 	// bounds at larger font sizes.
 	return cw + 1
-}
-
-func measureStreamCharWidth(ui *UI, th *material.Theme, gtx layout.Context) int {
-	return measureTypefaceCharWidth(ui, th, gtx, ui.viewerTypeface())
 }
 
 func measureTypefaceCharAdvance(ui *UI, th *material.Theme, gtx layout.Context, face font.Typeface) float32 {
@@ -1486,10 +1619,10 @@ func (v *streamOutputView) lineCols(line int) int {
 	if line < 0 || line >= len(v.lines) {
 		return 0
 	}
-	if len(v.lineRunes) == len(v.lines) {
-		return v.lineRunes[line]
+	if len(v.lineWidths) == len(v.lines) {
+		return v.lineWidths[line]
 	}
-	return utf8.RuneCountInString(v.lines[line])
+	return v.lineWidth(v.lines[line])
 }
 
 func (v *streamOutputView) colOffsetPx(cols int) int {
@@ -1536,13 +1669,21 @@ func (v *streamOutputView) linePaintSpec(line string) (text string, offsetX int)
 		if fromCol < 0 {
 			fromCol = 0
 		}
-		maxCol := utf8.RuneCountInString(line)
-		if fromCol > maxCol {
+		if maxCol := v.lineWidth(line); fromCol > maxCol {
 			fromCol = maxCol
 		}
-		return line[byteIndexAtRune(line, fromCol):], offsetX
+		fromByte := v.byteAtCol(line, fromCol)
+		startCol := v.colAtByte(line, fromByte)
+		// Scrolling can cut into a tab. Expand from the column the surviving
+		// bytes actually start on, then drop the padding scrolled off to the
+		// left, so the rest of the line keeps its columns.
+		text := v.displayText(line[fromByte:], startCol)
+		if drop := fromCol - startCol; drop > 0 && drop <= len(text) {
+			text = text[drop:]
+		}
+		return text, offsetX
 	}
-	return line, offsetX
+	return v.displayText(line, 0), offsetX
 }
 
 func (v *streamOutputView) maxHCol(textW int) int {
@@ -1642,10 +1783,6 @@ func (v *streamOutputView) computeScrollbar(size image.Point, viewportH, scrollb
 	v.thumbRect = viewerScrollbarThumbForScroll(v.trackRect, visible, total, float64(topForThumb), true)
 }
 
-func (v *streamOutputView) estimatedTopFromY(y int) int {
-	return v.estimatedTopFromDragY(y, v.thumbRect.Dy()/2)
-}
-
 func (v *streamOutputView) estimatedTopFromDragY(y, grabY int) int {
 	total := v.totalRows()
 	if total <= 0 {
@@ -1738,10 +1875,6 @@ func (v *streamOutputView) computeHorizontalScrollbar(size image.Point, barH int
 		left = maxH
 	}
 	v.hThumbRect = viewerScrollbarThumbForScroll(v.hTrackRect, visible, total, float64(left), false)
-}
-
-func (v *streamOutputView) estimatedHColFromX(x int) int {
-	return v.estimatedHColFromDragX(x, v.hThumbRect.Dx()/2)
 }
 
 func (v *streamOutputView) estimatedHColFromDragX(x, grabX int) int {
@@ -2258,9 +2391,13 @@ func (ui *UI) drawStreamOutputText(th *material.Theme, gtx layout.Context, st *f
 		lineDraw, textX := v.linePaintSpec(line)
 		rowHCol := v.hCol
 		if v.wrapEnabled {
-			fromByte := byteIndexAtRune(line, visualRow.from)
-			toByte := byteIndexAtRune(line, visualRow.to)
-			lineDraw = line[fromByte:toByte]
+			fromByte := v.byteAtCol(line, visualRow.from)
+			toByte := v.byteAtCol(line, visualRow.to)
+			startCol := v.colAtByte(line, fromByte)
+			lineDraw = v.displayText(line[fromByte:toByte], startCol)
+			if drop := visualRow.from - startCol; drop > 0 && drop <= len(lineDraw) {
+				lineDraw = lineDraw[drop:]
+			}
 			textX = v.textPad
 			rowHCol = visualRow.from
 		}
@@ -2354,7 +2491,7 @@ func (ui *UI) drawStreamOutputSyntaxLine(th *material.Theme, gtx layout.Context,
 		ui.drawStreamOutputPlainLine(th, gtx, fallback, face, size, weight, theme.Text)
 		offset.Pop()
 	}
-	if len(spans) == 0 {
+	if len(spans) == 0 || !viewerSyntaxSpansFitLine(line, spans) {
 		drawFallback()
 		return
 	}
@@ -2368,35 +2505,45 @@ func (ui *UI) drawStreamOutputSyntaxLine(th *material.Theme, gtx layout.Context,
 	maxVisibleCol := hCol + visibleCols + 1
 	drew := false
 	for _, span := range spans {
-		if span.colEnd <= hCol {
+		// Byte offsets are the span's anchor into the line; its recorded columns
+		// are rune indices, which differ from display columns once tabs are in
+		// play, so derive the columns from the bytes instead.
+		spanFrom := v.colAtByte(line, span.byteStart)
+		spanTo := v.colAtByte(line, span.byteEnd)
+		if spanTo <= hCol {
 			continue
 		}
-		if span.colStart >= maxVisibleCol {
+		if spanFrom >= maxVisibleCol {
 			break
 		}
-		visibleFrom := span.colStart
+		visibleFrom := spanFrom
 		if visibleFrom < hCol {
 			visibleFrom = hCol
 		}
-		visibleTo := span.colEnd
+		visibleTo := spanTo
 		if visibleTo > maxVisibleCol {
 			visibleTo = maxVisibleCol
 		}
 		if visibleTo <= visibleFrom {
 			continue
 		}
-		segment := line[span.byteStart:span.byteEnd]
-		relFrom := visibleFrom - span.colStart
-		relTo := visibleTo - span.colStart
-		if relFrom > 0 || relTo < span.colEnd-span.colStart {
-			byteFrom := byteIndexAtRune(segment, relFrom)
-			byteTo := byteIndexAtRune(segment, relTo)
-			if byteTo <= byteFrom {
-				continue
-			}
-			segment = segment[byteFrom:byteTo]
+		byteFrom, byteTo := span.byteStart, span.byteEnd
+		if visibleFrom > spanFrom {
+			byteFrom = v.byteAtCol(line, visibleFrom)
 		}
-		x := v.textPad + v.colOffsetPx(visibleFrom-hCol)
+		if visibleTo < spanTo {
+			byteTo = v.byteAtCol(line, visibleTo)
+		}
+		if byteTo <= byteFrom {
+			continue
+		}
+		startCol := v.colAtByte(line, byteFrom)
+		segment := v.displayText(line[byteFrom:byteTo], startCol)
+		if drop := visibleFrom - startCol; drop > 0 && drop <= len(segment) {
+			segment = segment[drop:]
+			startCol = visibleFrom
+		}
+		x := v.textPad + v.colOffsetPx(startCol-hCol)
 		if x >= textW {
 			break
 		}
@@ -2408,6 +2555,23 @@ func (ui *UI) drawStreamOutputSyntaxLine(th *material.Theme, gtx layout.Context,
 	if !drew {
 		drawFallback()
 	}
+}
+
+func viewerSyntaxSpansFitLine(line string, spans []viewerSyntaxSpan) bool {
+	cols := utf8.RuneCountInString(line)
+	for _, span := range spans {
+		if span.byteStart < 0 || span.byteEnd <= span.byteStart || span.byteEnd > len(line) ||
+			span.colStart < 0 || span.colEnd <= span.colStart || span.colEnd > cols {
+			return false
+		}
+		if span.byteStart < len(line) && !utf8.RuneStart(line[span.byteStart]) {
+			return false
+		}
+		if span.byteEnd < len(line) && !utf8.RuneStart(line[span.byteEnd]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (ui *UI) drawStreamOutputScrollbar(gtx layout.Context, st *fileViewerState) {

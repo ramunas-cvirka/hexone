@@ -1,4 +1,4 @@
-.PHONY: headers headers-stage build run test clean build-linux build-macos build-windows build-linux-pdfium build-macos-pdfium build-windows-pdfium build-all package-linux package-linux-zip package-macos package-windows package-windows-msix package-all windows-resource
+.PHONY: headers headers-stage build run test unused clean build-linux build-macos build-windows build-linux-pdfium build-macos-pdfium build-windows-pdfium build-all package-linux package-linux-zip package-macos package-windows package-windows-msix package-all windows-resource
 
 APP := hexone
 CMD := ./cmd/hexone
@@ -119,6 +119,9 @@ build: headers $(BUILD_DEPS)
 
 test: headers
 	go test ./...
+
+unused: headers
+	go run ./tools/unusedcheck
 
 build-linux: headers | $(DIST_DIR)
 	@if [ "$$(go env GOHOSTOS)" != "linux" ]; then \

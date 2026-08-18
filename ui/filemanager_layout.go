@@ -3047,57 +3047,6 @@ func layoutFilePaneSortDirectionArrow(gtx layout.Context, textSize unit.Sp, desc
 	})
 }
 
-func (ui *UI) layoutFileModeBadge(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
-	ui.processFileModeBadgeInput(gtx, idx, pane)
-	if pane == nil {
-		return layout.Dimensions{}
-	}
-	dims := pane.modeClick.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
-		border := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
-		iconColor := color.NRGBA{R: 210, G: 210, B: 210, A: 255}
-		if pane.modeClick.Hovered() {
-			bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-			border = color.NRGBA{R: 120, G: 150, B: 255, A: 70}
-			iconColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
-		}
-
-		return fillFlatBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(6), Right: unit.Dp(6), Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return ui.layoutFilePaneModeIcon(gtx, pane.table.Mode, iconColor)
-			})
-		})
-	})
-	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
-		return dims
-	}
-
-	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
-	pointer.CursorPointer.Add(gtx.Ops)
-	return dims
-}
-
-func (ui *UI) layoutFilePaneModeIcon(gtx layout.Context, mode table.Mode, iconColor color.NRGBA) layout.Dimensions {
-	size := image.Pt(gtx.Dp(unit.Dp(16)), gtx.Dp(unit.Dp(11)))
-	if max := gtx.Constraints.Max; max.X > 0 && size.X > max.X {
-		size.X = max.X
-	}
-	if max := gtx.Constraints.Max; max.Y > 0 && size.Y > max.Y {
-		size.Y = max.Y
-	}
-	if size.X < 10 {
-		size.X = 10
-	}
-	if size.Y < 8 {
-		size.Y = 8
-	}
-	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		iconGtx := gtx
-		iconGtx.Constraints = layout.Exact(size)
-		return layoutFilePaneModeGlyph(iconGtx, mode, iconColor)
-	})
-}
-
 func layoutFilePaneModeGlyph(gtx layout.Context, mode table.Mode, barColor color.NRGBA) layout.Dimensions {
 	size := gtx.Constraints.Min
 	if size.X <= 0 {
@@ -3175,35 +3124,6 @@ func layoutFilePaneModeGlyph(gtx layout.Context, mode table.Mode, barColor color
 	}
 
 	return layout.Dimensions{Size: size}
-}
-
-func (ui *UI) layoutFilePaneSortBadge(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
-	ui.processFilePaneSortBadgeInput(gtx, idx, pane)
-
-	dims := layoutModeButton(th, gtx, ui.mainTypeface(), &pane.sortClick, pane.sortBadgeText(), pane.sortMenuOpen)
-	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
-		return dims
-	}
-
-	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
-	pointer.CursorPointer.Add(gtx.Ops)
-	return dims
-}
-
-func (ui *UI) layoutFilePaneFavoriteBadge(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
-	if pane == nil {
-		return layout.Dimensions{}
-	}
-	ui.processFilePaneFavoriteBadgeInput(gtx, idx, pane)
-
-	dims := layoutTinyIconModeButton(th, gtx, &pane.favoriteClick, uitheme.FavoriteIcon(pane.favoriteMenuOpen), pane.favoriteMenuOpen)
-	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
-		return dims
-	}
-
-	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
-	pointer.CursorPointer.Add(gtx.Ops)
-	return dims
 }
 
 func (ui *UI) layoutFilePaneDriveMenu(th *material.Theme, gtx layout.Context, idx int, pane *filePaneState) layout.Dimensions {
@@ -4486,10 +4406,6 @@ func layoutFilePaneChrome(gtx layout.Context, active bool, accent, shade color.N
 	return dims
 }
 
-func layoutTinyModeButton(th *material.Theme, gtx layout.Context, typeface font.Typeface, c *widget.Clickable, label string, active bool) layout.Dimensions {
-	return layoutTinyModeButtonState(th, gtx, typeface, c, label, active, false)
-}
-
 func layoutTinyModeButtonState(th *material.Theme, gtx layout.Context, typeface font.Typeface, c *widget.Clickable, label string, active, focused bool) layout.Dimensions {
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
@@ -4564,35 +4480,6 @@ func layoutTinyIconModeButtonState(gtx layout.Context, c *widget.Clickable, icon
 					}
 					return layout.Dimensions{Size: image.Pt(size, size)}
 				})
-			})
-		})
-	})
-}
-
-func layoutModeButton(th *material.Theme, gtx layout.Context, typeface font.Typeface, c *widget.Clickable, label string, active bool) layout.Dimensions {
-	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
-		border := color.NRGBA{R: 255, G: 255, B: 255, A: 22}
-		labelColor := txtColor
-		if active {
-			bg = color.NRGBA{R: 68, G: 92, B: 180, A: 255}
-			border = color.NRGBA{R: 120, G: 150, B: 255, A: 90}
-			labelColor = color.NRGBA{R: 240, G: 246, B: 255, A: 255}
-		} else if c.Hovered() {
-			bg = color.NRGBA{R: 28, G: 34, B: 48, A: 255}
-			border = color.NRGBA{R: 120, G: 150, B: 255, A: 70}
-			labelColor = color.NRGBA{R: 230, G: 236, B: 255, A: 255}
-		}
-
-		return fillFlatBox(gtx, bg, border, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(3), Bottom: unit.Dp(3)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = typeface
-				lbl.Font.Weight = font.Medium
-				lbl.TextSize = scaleThemeFontSize(th, 11)
-				lbl.Color = labelColor
-				lbl.MaxLines = 1
-				return layoutVCenteredLabel(gtx, lbl)
 			})
 		})
 	})

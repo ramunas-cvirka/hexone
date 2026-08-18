@@ -824,14 +824,6 @@ func (st *customCommandEditorState) selectSlot(index int) {
 	st.loadSlotFields(index)
 }
 
-func (st *customCommandEditorState) selectCommand(index int) {
-	if st == nil || index < 0 || index >= 10 {
-		return
-	}
-	st.selectSlot(index)
-	st.setFocus(customCommandEditorFocusCommand)
-}
-
 func (st *customCommandEditorState) ensureDraftSlots() {
 	if st == nil {
 		return
@@ -862,14 +854,6 @@ func (st *customCommandEditorState) refreshSavedSlotsFromConfig(cfg *fm.Config) 
 		index = 0
 	}
 	st.loadSlotFields(index)
-}
-
-func (st *customCommandEditorState) selectedDraftCommand() fm.CustomCommand {
-	if st == nil || st.selected < 0 || st.selected >= 10 {
-		return fm.CustomCommand{}
-	}
-	st.ensureDraftSlots()
-	return st.draft[st.selected]
 }
 
 func (st *customCommandEditorState) currentCommandFields() (fm.CustomCommand, error) {

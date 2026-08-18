@@ -634,69 +634,6 @@ func (ui *UI) handleFileViewerCommandAreaPresses(gtx layout.Context, st *fileVie
 	}
 }
 
-func (ui *UI) paintFileViewerScrollHint(gtx layout.Context, st *fileViewerState, size image.Point) {
-	if st == nil || size.X < 8 || size.Y < 24 {
-		if st != nil {
-			st.scrollbarVisible = false
-			st.scrollbarTrack = image.Rectangle{}
-			st.scrollbarThumb = image.Rectangle{}
-			st.scrollbarHover = false
-		}
-		return
-	}
-	totalLines := viewerTotalLines(st.content)
-	if totalLines <= 1 {
-		st.scrollbarVisible = false
-		st.scrollbarTrack = image.Rectangle{}
-		st.scrollbarThumb = image.Rectangle{}
-		st.scrollbarHover = false
-		return
-	}
-
-	line, _ := st.contentEditor.CaretPos()
-	lineHeight := gtx.Sp(ui.viewerTextSize())
-	if lineHeight < 10 {
-		lineHeight = 10
-	}
-	visibleLines := size.Y / lineHeight
-	if visibleLines < 1 {
-		visibleLines = 1
-	}
-	if visibleLines > totalLines {
-		visibleLines = totalLines
-	}
-	maxTop := totalLines - visibleLines
-	top := line - visibleLines/2
-	if top < 0 {
-		top = 0
-	}
-	if top > maxTop {
-		top = maxTop
-	}
-
-	trackW := viewerScrollbarThickness(gtx, size.X)
-	if trackW <= 0 {
-		st.scrollbarVisible = false
-		st.scrollbarTrack = image.Rectangle{}
-		st.scrollbarThumb = image.Rectangle{}
-		st.scrollbarHover = false
-		return
-	}
-	trackX := size.X - trackW
-	if trackX < 0 {
-		trackX = 0
-	}
-	track := image.Rect(trackX, 0, trackX+trackW, size.Y)
-	thumb := viewerScrollbarThumbForScroll(track, visibleLines, totalLines, float64(top), true)
-	st.scrollbarVisible = true
-	st.scrollbarTrack = track
-	st.scrollbarThumb = thumb
-	st.scrollbarLines = totalLines
-	st.scrollbarVisibleN = visibleLines
-
-	paintViewerScrollbar(gtx, ui.fileViewerTheme(), track, thumb, st.scrollbarHover, st.scrollbarHover, st.scrollbarDragging)
-}
-
 func (ui *UI) applyFileViewerScrollCursor(gtx layout.Context, st *fileViewerState) {
 	if st == nil || !st.scrollbarVisible {
 		return
@@ -1586,11 +1523,6 @@ func (ui *UI) fileViewerBaseStatusText(st *fileViewerState) (string, color.NRGBA
 	return statusText, statusColor
 }
 
-func isViewerStreamingStatus(status string) bool {
-	status = strings.ToLower(strings.TrimSpace(status))
-	return status == "streaming" || status == "streaming, truncated"
-}
-
 func (ui *UI) fileViewerHeaderStatusText(st *fileViewerState) (string, color.NRGBA) {
 	if st == nil {
 		return "", ui.fileViewerTheme().Hint
@@ -1865,27 +1797,6 @@ func (ui *UI) layoutFileViewerInfoButtons(th *material.Theme, gtx layout.Context
 					return ui.layoutFlatCloseButton(gtx, &st.closeClick, false)
 				}),
 			)
-		})
-	})
-}
-
-func (ui *UI) layoutFileViewerHeaderSegment(th *material.Theme, gtx layout.Context, label string, bg, fg color.NRGBA, bold, roundLeft, roundRight, truncate bool, _ int) layout.Dimensions {
-	return fillSegmentBg(gtx, bg, gtx.Dp(unit.Dp(filePaneControlCornerDp-1)), roundLeft, roundRight, func(gtx layout.Context) layout.Dimensions {
-		return layout.Inset{Left: unit.Dp(9), Right: unit.Dp(9)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = ui.viewerTypeface()
-				if bold {
-					lbl.Font.Weight = font.Medium
-				}
-				lbl.TextSize = ui.viewerTextSize()
-				lbl.Color = fg
-				lbl.MaxLines = 1
-				if truncate {
-					lbl.Truncator = "..."
-				}
-				return lbl.Layout(gtx)
-			})
 		})
 	})
 }

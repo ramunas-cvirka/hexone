@@ -770,14 +770,6 @@ func collectTransferEntriesContextWithProgress(ctx context.Context, srcEp copyEn
 	return collectLocalTransferEntriesContextWithProgress(ctx, srcRoot, srcInfo, report)
 }
 
-func collectArchiveTransferEntries(srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
-	return collectArchiveTransferEntriesContext(context.Background(), srcRoot, srcInfo)
-}
-
-func collectArchiveTransferEntriesContext(ctx context.Context, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
-	return collectArchiveTransferEntriesContextWithProgress(ctx, srcRoot, srcInfo, nil)
-}
-
 func collectArchiveTransferEntriesContextWithProgress(ctx context.Context, srcRoot string, srcInfo os.FileInfo, report transferCollectProgress) ([]transferEntry, int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -884,14 +876,6 @@ func archiveDisplayPath(archivePath, innerPath string) string {
 	return filepath.Join(filepath.Clean(archivePath), filepath.FromSlash(innerPath))
 }
 
-func collectLocalTransferEntries(srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
-	return collectLocalTransferEntriesContext(context.Background(), srcRoot, srcInfo)
-}
-
-func collectLocalTransferEntriesContext(ctx context.Context, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
-	return collectLocalTransferEntriesContextWithProgress(ctx, srcRoot, srcInfo, nil)
-}
-
 func collectLocalTransferEntriesContextWithProgress(ctx context.Context, srcRoot string, srcInfo os.FileInfo, report transferCollectProgress) ([]transferEntry, int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -983,10 +967,6 @@ func collectLocalTransferEntriesContextWithProgress(ctx context.Context, srcRoot
 type sftpWalkerLike interface {
 	ReadDir(string) ([]os.FileInfo, error)
 	ReadLink(string) (string, error)
-}
-
-func collectRemoteTransferEntries(client sftpWalkerLike, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
-	return collectRemoteTransferEntriesContext(context.Background(), client, srcRoot, srcInfo)
 }
 
 func collectRemoteTransferEntriesContext(ctx context.Context, client sftpWalkerLike, srcRoot string, srcInfo os.FileInfo) ([]transferEntry, int64, error) {
@@ -1407,20 +1387,6 @@ func ensureEndpointDir(ep copyEndpoint, p string) error {
 		return errors.New("cannot create directories inside an archive")
 	}
 	return os.MkdirAll(p, 0o755)
-}
-
-type sftpClientLike interface {
-	Lstat(string) (os.FileInfo, error)
-	Stat(string) (os.FileInfo, error)
-	ReadDir(string) ([]os.FileInfo, error)
-	Open(string) (*sftp.File, error)
-	OpenFile(string, int) (*sftp.File, error)
-	MkdirAll(string) error
-	Chmod(string, os.FileMode) error
-	Chtimes(string, time.Time, time.Time) error
-	ReadLink(string) (string, error)
-	Symlink(string, string) error
-	RemoveAll(string) error
 }
 
 func reportCopyProgress(report func(filesys.CopyProgress), progress filesys.CopyProgress) {

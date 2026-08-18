@@ -25,9 +25,6 @@ type editorTextViewAccess interface {
 	ScrollBounds() image.Rectangle
 	ScrollOff() image.Point
 	ScrollRel(dx, dy int)
-	MoveCoord(image.Point)
-	Selection() (start, end int)
-	SetCaret(start, end int)
 }
 
 func editorVerticalScrollMetrics(ed *widget.Editor) (editorScrollMetrics, bool) {
@@ -61,56 +58,6 @@ func editorScrollToVerticalOffset(ed *widget.Editor, offset int) {
 	}
 	current := textView.ScrollOff().Y
 	textView.ScrollRel(0, offset-current)
-}
-
-func editorVisibleRuneRange(ed *widget.Editor) (start, end int, ok bool) {
-	textView, ok := editorTextView(ed)
-	if !ok {
-		return 0, 0, false
-	}
-	size := textView.Dimensions().Size
-	if size.X <= 0 || size.Y <= 0 {
-		return 0, 0, false
-	}
-	selStart, selEnd := textView.Selection()
-	caret, savedCaret, savedExactly := editorCaretSnapshot(ed)
-	defer func() {
-		if savedExactly {
-			caret.Set(savedCaret)
-		} else {
-			textView.SetCaret(selStart, selEnd)
-		}
-	}()
-	textView.MoveCoord(image.Pt(0, 0))
-	start, _ = textView.Selection()
-	textView.MoveCoord(image.Pt(size.X-1, size.Y-1))
-	end, _ = textView.Selection()
-	if end < start {
-		start, end = end, start
-	}
-	return start, end, true
-}
-
-func editorCaretSnapshot(ed *widget.Editor) (caret, saved reflect.Value, ok bool) {
-	if ed == nil {
-		return reflect.Value{}, reflect.Value{}, false
-	}
-	editorValue := reflect.ValueOf(ed)
-	if editorValue.Kind() != reflect.Pointer || editorValue.IsNil() {
-		return reflect.Value{}, reflect.Value{}, false
-	}
-	textField := editorValue.Elem().FieldByName("text")
-	if !textField.IsValid() || !textField.CanAddr() {
-		return reflect.Value{}, reflect.Value{}, false
-	}
-	caretField := textField.FieldByName("caret")
-	if !caretField.IsValid() || !caretField.CanAddr() {
-		return reflect.Value{}, reflect.Value{}, false
-	}
-	caret = reflect.NewAt(caretField.Type(), unsafe.Pointer(caretField.UnsafeAddr())).Elem()
-	saved = reflect.New(caret.Type()).Elem()
-	saved.Set(caret)
-	return caret, saved, true
 }
 
 func editorTextView(ed *widget.Editor) (editorTextViewAccess, bool) {

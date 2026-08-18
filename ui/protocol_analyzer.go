@@ -1153,23 +1153,6 @@ func buildRow2HexLines(th *material.Theme, gtx layout.Context, st *tab2State, ho
 	return out
 }
 
-// Selection = dotted border; Hover = thin solid border.
-func drawSelectionDecor(gtx layout.Context, selected, hovered bool, w layout.Widget) layout.Dimensions {
-	m := op.Record(gtx.Ops)
-	d := w(gtx)
-	call := m.Stop()
-
-	call.Add(gtx.Ops)
-
-	if hovered {
-		drawRectBorder(gtx, d.Size, color.NRGBA{R: 255, G: 255, B: 255, A: 70}, 1)
-	}
-	if selected {
-		drawDottedBorder(gtx, d.Size, color.NRGBA{R: 255, G: 255, B: 255, A: 170})
-	}
-	return d
-}
-
 func drawRectBorder(gtx layout.Context, sz image.Point, c color.NRGBA, wPx int) {
 	if sz.X <= 0 || sz.Y <= 0 {
 		return
@@ -1402,26 +1385,6 @@ func rowIndexVisible(pos layout.Position, idx, total int) bool {
 }
 
 // ---------- Misc helpers ----------
-
-func filterTopLevelSpans(spans []*protocols.Span, total int) []*protocols.Span {
-	out := make([]*protocols.Span, 0, len(spans))
-	for _, sp := range spans {
-		if sp == nil {
-			continue
-		}
-		if sp.Start < 0 || sp.End > total || sp.End <= sp.Start {
-			continue
-		}
-		out = append(out, sp)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Start == out[j].Start {
-			return out[i].End < out[j].End
-		}
-		return out[i].Start < out[j].Start
-	})
-	return out
-}
 
 func fillGapsWithMeta(spans []*protocols.Span, total int) []*protocols.Span {
 	var out []*protocols.Span
@@ -1664,29 +1627,6 @@ func clampU8(v int) uint8 {
 }
 
 // ---------- Background helpers ----------
-
-func card(gtx layout.Context, w layout.Widget) layout.Dimensions {
-	bg := color.NRGBA{R: 18, G: 22, B: 30, A: 255}
-	border := color.NRGBA{R: 255, G: 255, B: 255, A: 18}
-
-	// Record child to measure.
-	m := op.Record(gtx.Ops)
-	dims := w(gtx)
-	call := m.Stop()
-
-	fullW := gtx.Constraints.Max.X
-	if fullW < dims.Size.X {
-		fullW = dims.Size.X
-	}
-	rect := image.Rect(0, 0, fullW, dims.Size.Y)
-	rr := clip.UniformRRect(rect, gtx.Dp(unit.Dp(14)))
-	// Draw bg BEFORE content.
-	paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
-	paint.FillShape(gtx.Ops, border, clip.Stroke{Path: rr.Path(gtx.Ops), Width: 1}.Op())
-
-	call.Add(gtx.Ops)
-	return layout.Dimensions{Size: image.Pt(fullW, dims.Size.Y)}
-}
 
 func fillRoundedBox(gtx layout.Context, radius int, bg, border color.NRGBA, w layout.Widget) layout.Dimensions {
 	m := op.Record(gtx.Ops)

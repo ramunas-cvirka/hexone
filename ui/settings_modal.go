@@ -128,7 +128,6 @@ type settingsModalState struct {
 	filenameDefaultIcon          string
 	filenameDefaultTarget        string
 	filenameDefaultTargetAnim    settingsChoiceAnim
-	filenameDefaultTargetClicks  [3]widget.Clickable
 	filenameDefaultIconClick     widget.Clickable
 	filenameDefaultTextPicker    widget.Clickable
 	filenameIconPickerOpen       bool
@@ -324,7 +323,6 @@ type settingsModalState struct {
 	viewTargetCommandEdit        widget.Editor
 	viewTargetApplyClick         widget.Clickable
 	viewTargetPickClick          widget.Clickable
-	viewTargetRemoveClick        widget.Clickable
 	viewTargetPickOpen           bool
 	viewTargetPickList           widget.List
 	viewTargetPickRemember       int
@@ -338,7 +336,6 @@ type settingsModalState struct {
 	viewRuleCommandEdit          widget.Editor
 	viewRuleApplyClick           widget.Clickable
 	viewRulePickClick            widget.Clickable
-	viewRuleRemoveClick          widget.Clickable
 	viewRulePickOpen             bool
 	viewRulePickList             widget.List
 	viewRulePickRemember         int
@@ -1983,17 +1980,6 @@ func (st *settingsModalState) upsertCurrentViewerCommandTarget() (string, error)
 	return action, nil
 }
 
-func (st *settingsModalState) removeCurrentViewerCommandTarget() bool {
-	if st == nil {
-		return false
-	}
-	key := st.viewTargetEditingKey
-	if key == "" {
-		key = normalizeViewerCommandTargetInput(st.viewTargetKeyEdit.Text())
-	}
-	return st.removeViewerCommandTarget(key)
-}
-
 func (st *settingsModalState) removeViewerCommandTarget(key string) bool {
 	if st == nil || key == "" {
 		return false
@@ -2241,17 +2227,6 @@ func (st *settingsModalState) upsertCurrentViewerCommandRule() (string, error) {
 	st.loadViewerCommandRuleFields(rule.Pattern, rule.Command)
 	st.viewRuleEditingPattern = ""
 	return action, nil
-}
-
-func (st *settingsModalState) removeCurrentViewerCommandRule() bool {
-	if st == nil {
-		return false
-	}
-	pattern := st.viewRuleEditingPattern
-	if pattern == "" {
-		pattern = strings.TrimSpace(st.viewRulePatternEdit.Text())
-	}
-	return st.removeViewerCommandRule(pattern)
 }
 
 func (st *settingsModalState) removeViewerCommandRule(pattern string) bool {
@@ -3815,80 +3790,6 @@ func (ui *UI) layoutSettingsModalHeader(th *material.Theme, gtx layout.Context, 
 	)
 }
 
-func fillSettingsNavSegmentBg(gtx layout.Context, bg color.NRGBA, radius int, roundTop, roundBottom bool, w layout.Widget) layout.Dimensions {
-	m := op.Record(gtx.Ops)
-	dims := w(gtx)
-	call := m.Stop()
-	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
-		call.Add(gtx.Ops)
-		return dims
-	}
-	if bg.A != 0 {
-		rr := clip.RRect{Rect: image.Rect(0, 0, dims.Size.X, dims.Size.Y)}
-		if roundTop {
-			rr.NW = radius
-			rr.NE = radius
-		}
-		if roundBottom {
-			rr.SW = radius
-			rr.SE = radius
-		}
-		paint.FillShape(gtx.Ops, bg, rr.Op(gtx.Ops))
-	}
-	call.Add(gtx.Ops)
-	return dims
-}
-
-func (ui *UI) layoutSettingsNavSegment(th *material.Theme, gtx layout.Context, c *widget.Clickable, label string, activeFill, hoverFill, pulseFill float32, roundTop, roundBottom bool) layout.Dimensions {
-	if c == nil {
-		return layout.Dimensions{}
-	}
-	dims := c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		activeFill = clamp01(activeFill)
-		hoverFill = clamp01(hoverFill)
-		pulseFill = clamp01(pulseFill)
-		if c.Pressed() && pulseFill < 0.5 {
-			pulseFill = 0.5
-		}
-
-		baseBlue := color.NRGBA{R: 40, G: 40, B: 40, A: 255}
-		hoverDark := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
-		hoverLight := color.NRGBA{R: 54, G: 54, B: 54, A: 255}
-		pulseCol := color.NRGBA{R: 72, G: 72, B: 72, A: 255}
-
-		bg := mixNRGBA(color.NRGBA{}, baseBlue, activeFill)
-		darkMix := hoverFill * (1 - activeFill)
-		lightMix := hoverFill * activeFill * 0.25
-		bg = mixNRGBA(bg, hoverDark, darkMix)
-		bg = mixNRGBA(bg, hoverLight, lightMix)
-		bg = mixNRGBA(bg, pulseCol, pulseFill*0.35)
-
-		fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, activeFill)
-		fg = mixNRGBA(fg, color.NRGBA{R: 228, G: 228, B: 228, A: 255}, hoverFill*0.75)
-		fg = mixNRGBA(fg, color.NRGBA{R: 246, G: 246, B: 246, A: 255}, pulseFill*0.25)
-		radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
-		return fillSettingsNavSegmentBg(gtx, bg, radius, roundTop, roundBottom, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(6), Bottom: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.Font.Weight = font.Medium
-				lbl.TextSize = ui.scaleModalFontSize(10)
-				lbl.Color = fg
-				lbl.MaxLines = 1
-				lbl.Alignment = text.Middle
-				return layoutVCenteredLabel(gtx, lbl)
-			})
-		})
-	})
-	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
-		return dims
-	}
-
-	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
-	pointer.CursorPointer.Add(gtx.Ops)
-	return dims
-}
-
 func layoutSettingsNavSeparator(gtx layout.Context) layout.Dimensions {
 	h := gtx.Dp(unit.Dp(1))
 	if h < 1 {
@@ -3900,61 +3801,6 @@ func layoutSettingsNavSeparator(gtx layout.Context) layout.Dimensions {
 	}
 	paint.FillShape(gtx.Ops, color.NRGBA{R: 255, G: 255, B: 255, A: 22}, clip.Rect(image.Rect(0, 0, w, h)).Op())
 	return layout.Dimensions{Size: image.Pt(w, h)}
-}
-
-func (ui *UI) layoutSettingsHSegment(th *material.Theme, gtx layout.Context, c *widget.Clickable, label string, activeFill, hoverFill, pulseFill, focusFill float32, stripH int, roundLeft, roundRight bool) layout.Dimensions {
-	if c == nil {
-		return layout.Dimensions{}
-	}
-	dims := fixedHeight(gtx, stripH, func(gtx layout.Context) layout.Dimensions {
-		return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			activeFill = clamp01(activeFill)
-			hoverFill = clamp01(hoverFill)
-			pulseFill = clamp01(pulseFill)
-			focusFill = clamp01(focusFill)
-			if c.Pressed() && pulseFill < 0.5 {
-				pulseFill = 0.5
-			}
-
-			baseBlue := color.NRGBA{R: 40, G: 40, B: 40, A: 255}
-			hoverDark := color.NRGBA{R: 24, G: 24, B: 24, A: 255}
-			hoverLight := color.NRGBA{R: 54, G: 54, B: 54, A: 255}
-			pulseCol := color.NRGBA{R: 72, G: 72, B: 72, A: 255}
-
-			bg := mixNRGBA(color.NRGBA{}, baseBlue, activeFill)
-			darkMix := hoverFill * (1 - activeFill)
-			lightMix := hoverFill * activeFill * 0.25
-			bg = mixNRGBA(bg, hoverDark, darkMix)
-			bg = mixNRGBA(bg, hoverLight, lightMix)
-			bg = mixNRGBA(bg, pulseCol, pulseFill*0.35)
-			bg = mixNRGBA(bg, color.NRGBA{R: 212, G: 196, B: 164, A: 30}, focusFill*0.42)
-
-			fg := mixNRGBA(txtColor, color.NRGBA{R: 236, G: 236, B: 236, A: 255}, activeFill)
-			fg = mixNRGBA(fg, color.NRGBA{R: 228, G: 228, B: 228, A: 255}, hoverFill*0.75)
-			fg = mixNRGBA(fg, color.NRGBA{R: 246, G: 246, B: 246, A: 255}, pulseFill*0.25)
-			fg = mixNRGBA(fg, color.NRGBA{R: 248, G: 242, B: 228, A: 255}, focusFill*0.22)
-
-			radius := gtx.Dp(unit.Dp(filePaneControlCornerDp - 1))
-			return fillSegmentBg(gtx, bg, radius, roundLeft, roundRight, func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Left: unit.Dp(9), Right: unit.Dp(9)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					lbl := material.Body2(th, label)
-					lbl.Font.Typeface = ui.interfaceTypeface()
-					lbl.Font.Weight = font.Medium
-					lbl.TextSize = ui.scaleModalFontSize(10)
-					lbl.Color = fg
-					lbl.MaxLines = 1
-					lbl.Alignment = text.Middle
-					return layoutVCenteredLabel(gtx, lbl)
-				})
-			})
-		})
-	})
-	if dims.Size.X <= 0 || dims.Size.Y <= 0 {
-		return dims
-	}
-	defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
-	pointer.CursorPointer.Add(gtx.Ops)
-	return dims
 }
 
 func (ui *UI) layoutSettingsNavSliderSegment(th *material.Theme, gtx layout.Context, c *widget.Clickable, label string, activeFill, hoverFill, pulseFill, focusFill float32, stripH int) layout.Dimensions {
@@ -6727,32 +6573,6 @@ func (ui *UI) layoutSettingsColorCategoryPopup(th *material.Theme, gtx layout.Co
 		registerSettingsPopupArea(gtx, &st.colorCategoryPopupTag, dims.Size)
 		return dims
 	})
-}
-
-func (ui *UI) layoutSettingsColorCategoryOption(th *material.Theme, gtx layout.Context, click *widget.Clickable, label string, selected bool) layout.Dimensions {
-	dims := click.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		bg := color.NRGBA{}
-		if selected {
-			bg = color.NRGBA{R: 68, G: 92, B: 180, A: 54}
-		} else if click.Hovered() {
-			bg = color.NRGBA{R: 255, G: 255, B: 255, A: 10}
-		}
-		return fillBgExact(gtx, bg, func(gtx layout.Context) layout.Dimensions {
-			return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8), Top: unit.Dp(5), Bottom: unit.Dp(5)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				lbl := material.Body2(th, label)
-				lbl.Font.Typeface = ui.interfaceTypeface()
-				lbl.TextSize = ui.scaleModalFontSize(10)
-				lbl.Color = txtColor
-				lbl.MaxLines = 1
-				return layoutVCenteredLabel(gtx, lbl)
-			})
-		})
-	})
-	if dims.Size.X > 0 && dims.Size.Y > 0 {
-		defer clip.Rect(image.Rectangle{Max: dims.Size}).Push(gtx.Ops).Pop()
-		pointer.CursorPointer.Add(gtx.Ops)
-	}
-	return dims
 }
 
 func (ui *UI) layoutSettingsColorValueField(th *material.Theme, gtx layout.Context, st *settingsModalState, label string, swatch color.NRGBA, edit *widget.Editor, picker *widget.Clickable, pickerTarget string, groups []settingsColorSwatchGroup, pickerFocusTarget, editorFocusTarget settingsKeyboardFocus) layout.Dimensions {

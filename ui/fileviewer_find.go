@@ -624,11 +624,6 @@ func viewerPDFFindPageMatchesWithPreview(text viewerPDFPageText, query string, p
 	return matches
 }
 
-func viewerPDFFindSnippet(chars []viewerPDFTextChar, start, end int) string {
-	snippet, _ := viewerPDFFindSnippetWithHighlight(chars, start, end)
-	return snippet
-}
-
 func viewerPDFFindSnippetWithHighlight(chars []viewerPDFTextChar, start, end int) (string, compactFindHighlight) {
 	const contextRunes = 34
 	from := start - contextRunes
@@ -943,108 +938,6 @@ func (ui *UI) startHexFileViewerFindAll(now time.Time, pattern []byte, anchor in
 	}()
 }
 
-func (ui *UI) stepHexFileViewerFind(now time.Time, direction int) bool {
-	st := ui.fileViewer
-	if st == nil {
-		return false
-	}
-	pattern, errText := viewerFindPatternBytes(st.find.editor.Text(), st.find.hexInput)
-	useHex := st.find.hexInput
-	if errText != "" {
-		ui.cancelFileViewerFindSearch(st)
-		st.find.status = errText
-		st.find.currentValid = false
-		return false
-	}
-	if len(pattern) == 0 {
-		st.find.status = ""
-		st.find.currentValid = false
-		return false
-	}
-	if direction < 0 {
-		anchor := viewerHexFindAnchor(st, false)
-		if st.find.currentValid {
-			anchor = st.find.currentStart
-		}
-		ui.startHexFileViewerFindPrev(now, pattern, anchor, useHex)
-		return true
-	}
-	anchor := viewerHexFindAnchor(st, false)
-	if st.find.currentValid {
-		anchor = st.find.currentStart + 1
-	}
-	ui.startHexFileViewerFindNext(now, pattern, anchor, useHex)
-	return true
-}
-
-func (ui *UI) startHexFileViewerFindNext(now time.Time, pattern []byte, anchor int64, useHex bool) {
-	st := ui.fileViewer
-	if st == nil {
-		return
-	}
-	ui.cancelFileViewerFindSearch(st)
-	ctx, cancel := context.WithCancel(context.Background())
-	st.find.cancel = cancel
-	st.find.searching = true
-	st.find.searchStartedAt = now
-	if !st.find.currentValid {
-		st.find.status = ""
-	}
-	st.find.requestSeq++
-	requestSeq := st.find.requestSeq
-	path := st.path
-	remote := st.remote
-	remoteSearch := ui.viewerRemoteSearchSpec(remote, useHex, st.find.remoteSearch)
-	ch := st.find.resultCh
-
-	go func() {
-		res := searchViewerHexNext(ctx, path, remote, pattern, anchor, remoteSearch)
-		res.requestSeq = requestSeq
-		sendFileViewerFindResult(ch, res)
-		ui.invalidateFromWorker()
-	}()
-
-	if st.hex != nil {
-		st.markUserBrowsing(now)
-	}
-}
-
-func (ui *UI) startHexFileViewerFindPrev(now time.Time, pattern []byte, anchor int64, useHex bool) {
-	st := ui.fileViewer
-	if st == nil {
-		return
-	}
-	current := int64(-1)
-	if st.find.currentValid {
-		current = st.find.currentStart
-	}
-	ui.cancelFileViewerFindSearch(st)
-	ctx, cancel := context.WithCancel(context.Background())
-	st.find.cancel = cancel
-	st.find.searching = true
-	st.find.searchStartedAt = now
-	if !st.find.currentValid {
-		st.find.status = ""
-	}
-	st.find.requestSeq++
-	requestSeq := st.find.requestSeq
-	path := st.path
-	remote := st.remote
-	remoteSearch := ui.viewerRemoteSearchSpec(remote, useHex, st.find.remoteSearch)
-	ch := st.find.resultCh
-
-	go func() {
-		res := searchViewerHexPrev(ctx, path, remote, pattern, anchor, current, remoteSearch)
-		res.requestSeq = requestSeq
-		sendFileViewerFindResult(ch, res)
-		ui.invalidateFromWorker()
-	}()
-
-	if st.hex != nil {
-		st.markUserBrowsing(now)
-	}
-}
-
 func (ui *UI) pumpFileViewerFindState(gtx layout.Context, st *fileViewerState) {
 	if st == nil || st.find.resultCh == nil {
 		return
@@ -1272,11 +1165,6 @@ func (ui *UI) fileViewerFindPreviewRange() (int, int) {
 		return fm.NormalizeViewerPreviewRange(0, 2)
 	}
 	return fm.NormalizeViewerPreviewRange(ui.fmCfg.Viewer.PreviewStart, ui.fmCfg.Viewer.PreviewEnd)
-}
-
-func viewerFindTextSnippet(content string, start, end int) string {
-	snippet, _ := viewerFindTextSnippetWithHighlight(content, start, end)
-	return snippet
 }
 
 func viewerFindTextSnippetWithHighlight(content string, start, end int) (string, compactFindHighlight) {
@@ -3042,15 +2930,6 @@ func viewerHexFindPreview(st *fileViewerState, match viewerHexFindMatch, rows in
 		preview.Highlights = append(preview.Highlights, highlight)
 	}
 	return preview
-}
-
-func viewerHexDetectedPreviewLines(data []byte) [][]byte {
-	lineData := viewerHexDetectedPreviewLineData(data)
-	lines := make([][]byte, len(lineData))
-	for i := range lineData {
-		lines[i] = lineData[i].data
-	}
-	return lines
 }
 
 func viewerHexDetectedPreviewLineData(data []byte) []viewerHexPreviewLine {

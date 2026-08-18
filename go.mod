@@ -1,30 +1,30 @@
 module hexone
 
-go 1.26.0
+go 1.26.6
 
 require (
-	gioui.org v0.10.1
+	gioui.org v0.10.2
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/aymanbagabas/go-pty v0.2.3
 	github.com/creack/pty v1.1.24
 	github.com/danielgatis/go-ansicode v1.0.14
 	github.com/danielgatis/go-headless-term v1.0.9
-	github.com/klippa-app/go-pdfium v1.19.4
+	github.com/klippa-app/go-pdfium v1.19.8
 	github.com/mholt/archives v0.1.5
-	github.com/nwaples/rardecode/v2 v2.2.5
-	github.com/pkg/sftp v1.13.10
+	github.com/nwaples/rardecode/v2 v2.3.0
+	github.com/pkg/sftp v1.13.11
 	github.com/yuin/goldmark v1.8.5
 	github.com/zalando/go-keyring v0.2.8
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
-	golang.org/x/crypto v0.54.0
-	golang.org/x/exp/shiny v0.0.0-20260709172345-9ea1abe57597
-	golang.org/x/image v0.44.0
+	golang.org/x/crypto v0.55.0
+	golang.org/x/exp/shiny v0.0.0-20260813180055-c1d0aacb2297
+	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
-	golang.org/x/text v0.40.0
+	golang.org/x/text v0.41.0
 )
 
 require (
-	gioui.org/shader v1.0.8 // indirect
+	gioui.org/shader v1.0.9 // indirect
 	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect
@@ -65,6 +65,6 @@ require (
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
 	golang.org/x/net v0.57.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
-	google.golang.org/grpc v1.82.0 // indirect
+	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )

@@ -116,25 +116,12 @@ type fileViewerState struct {
 	editFocus            bool
 	editDirty            bool
 	editBaselineText     string
-	editRenderText       string
 	editSyntax           viewerSyntaxDocument
 	editSyntaxDue        time.Time
 	editSyntaxSeq        int
 	editSyntaxRunning    bool
 	editSyntaxCh         chan fileViewerEditSyntaxResult
 	editLineRunes        []int
-	editScrollbar        widget.Scrollbar
-	editHScrollbar       widget.Scrollbar
-	editHOffset          int
-	editMaxCols          int
-	editLayoutViewport   image.Point
-	editLayoutSize       image.Point
-	editLayoutDue        time.Time
-	editWrapInitialized  bool
-	editWrapValue        bool
-	editCaretStart       int
-	editScrollRatio      float32
-	editScrollPending    bool
 	editVirtualReady     bool
 	editWidgetMirrorText string
 	editKeyTag           fileViewerEventTag
@@ -235,7 +222,6 @@ type fileViewerState struct {
 	menuOpenedAt           time.Time
 	menuHoverID            string
 	menuPointerTag         fileViewerEventTag
-	scrollCarry            float32
 	scrollbarTrack         image.Rectangle
 	scrollbarThumb         image.Rectangle
 	scrollbarDragging      bool
@@ -1807,36 +1793,6 @@ func viewerTrimmedCommandOverlap(prev, next string) int {
 	return j
 }
 
-func viewerSelectionNearEnd(start, end, total int) bool {
-	if total <= 0 {
-		return true
-	}
-	if start > end {
-		start, end = end, start
-	}
-	if start < 0 {
-		start = 0
-	}
-	if end < 0 {
-		end = 0
-	}
-	if end > total {
-		end = total
-	}
-	const tailThreshold = 64
-	return total-end <= tailThreshold
-}
-
-func clampViewerCaret(pos, total int) int {
-	if pos < 0 {
-		return 0
-	}
-	if pos > total {
-		return total
-	}
-	return pos
-}
-
 func viewerPointInRect(pos image.Point, rect image.Rectangle) bool {
 	if rect.Dx() <= 0 || rect.Dy() <= 0 {
 		return false
@@ -2176,13 +2132,6 @@ func viewerWordSelectRegexp(cfg *fm.Config) (*regexp.Regexp, string) {
 		return re, pattern
 	}
 	return regexp.MustCompile(viewerDefaultWordRegex), viewerDefaultWordRegex
-}
-
-func viewerCommandAutoRefresh(cfg *fm.Config) bool {
-	if cfg == nil {
-		return viewerDefaultAutoRefresh
-	}
-	return cfg.Viewer.CommandAutoRefresh
 }
 
 func viewerWordWrap(cfg *fm.Config) bool {
@@ -4263,22 +4212,32 @@ func sanitizeViewerContent(raw string) string {
 	}
 	var b strings.Builder
 	b.Grow(len(raw))
+	col := 0
 	for _, r := range raw {
 		switch r {
 		case '\n':
 			b.WriteRune('\n')
+			col = 0
 		case '\r':
 			// Skip CR in CRLF sequences to avoid odd editor artifacts.
 		case '\t':
-			b.WriteString("    ")
+			// Advance to the next tab stop rather than inserting a fixed run of
+			// spaces, so the read-only view lands on the same columns the editor
+			// puts the original tab bytes on.
+			width := viewerTabColumns - col%viewerTabColumns
+			b.WriteString(viewerTabSpaces[:width])
+			col += width
 		case unicode.ReplacementChar:
 			b.WriteByte('.')
+			col++
 		default:
 			if !unicode.IsPrint(r) {
 				b.WriteByte('.')
+				col++
 				continue
 			}
 			b.WriteRune(r)
+			col++
 		}
 	}
 	return b.String()

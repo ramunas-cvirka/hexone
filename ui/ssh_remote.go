@@ -608,10 +608,6 @@ func (ui *UI) currentSSHModalSetup() (fm.SSHSetup, error) {
 	return setup, nil
 }
 
-func normalizeConnectSSHSetup(raw fm.SSHSetup) (fm.SSHSetup, error) {
-	return normalizeConnectSSHSetupWithAuth(raw, true)
-}
-
 func normalizeConnectSSHSetupWithAuth(raw fm.SSHSetup, requireExplicitAuth bool) (fm.SSHSetup, error) {
 	setup := fm.SSHSetup{
 		Name:          strings.TrimSpace(raw.Name),
@@ -770,10 +766,6 @@ func openMultiplexedSSHClients(address string, cfg *ssh.ClientConfig, deadline t
 	// SSH multiplexes the command sessions and SFTP subsystem as channels on
 	// one transport. A second TCP+SSH handshake only adds latency.
 	return sshClientBundle{sshClient: client, sftp: sftpClient}, nil
-}
-
-func newPaneSSHSession(setup fm.SSHSetup) (*paneSSHSession, error) {
-	return newPaneSSHSessionForSpec(directSSHConnectionSpec(setup))
 }
 
 func newPaneSSHSessionForSpec(spec sshConnectionSpec) (*paneSSHSession, error) {

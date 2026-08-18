@@ -1,0 +1,15 @@
+# Declarations that unusedcheck may report as unreachable but must be kept.
+#
+# An entry belongs here only when a symbol's sole caller lives in a build
+# configuration the checking machine cannot type-check — in practice, a
+# platform other than the one you are on. Give the reason: this file doubles as
+# the inventory of code that exists for a single platform.
+#
+# Format:  <path>: <staticcheck message>   # why it is kept
+#
+# Before adding anything, confirm the caller really exists:
+#   grep -rn '<symbol>' ui/ && head -6 <the file that calls it>
+# If the caller is not behind a build tag or a platform filename, the symbol is
+# genuinely dead — delete it instead of listing it here.
+
+ui/platform/file_clipboard.go: func fileClipboardURI is unused (U1000)   # called only from file_clipboard_linux.go (//go:build linux)

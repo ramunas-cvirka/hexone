@@ -54,8 +54,8 @@ func TestReadViewerFileKeepsUnsanitizedEditableText(t *testing.T) {
 	if errText != "" {
 		t.Fatalf("readViewerFile: %s", errText)
 	}
-	if content != "a    b\n" {
-		t.Fatalf("sanitized viewer content=%q", content)
+	if content != "a   b\n" {
+		t.Fatalf("sanitized viewer content=%q want the tab expanded to the next tab stop", content)
 	}
 	if info.editableText != "a\tb\n" {
 		t.Fatalf("editable text=%q want tabs preserved", info.editableText)
@@ -1302,6 +1302,42 @@ func TestFileViewerTextEditKeepsSyntaxAndExposesScrollbar(t *testing.T) {
 	}
 }
 
+func TestFileViewerTextEditRebuildsSyntaxWhenViewerSanitizedTabs(t *testing.T) {
+	raw := "{\n\t\"auths\": {},\n\t\"credsStore\": \"desktop\",\n\t\"currentContext\": \"desktop-linux\"\n}"
+	display := sanitizeViewerContent(raw)
+	doc := viewerBuildSyntaxDocument(context.Background(), "config.json", display)
+	if !doc.ready() {
+		t.Fatal("JSON fixture should produce syntax spans")
+	}
+	st := &fileViewerState{
+		mode:             "file",
+		path:             "config.json",
+		editBaselineText: raw,
+		content:          display,
+	}
+	st.contentEditor.SetText(raw)
+	st.stream.SetContent(display)
+	st.stream.setSyntax(doc)
+	ui := NewUI(fm.DefaultConfig())
+	ui.fileViewer = st
+	now := time.Now()
+	if !ui.startFileViewerEdit(now) {
+		t.Fatalf("startFileViewerEdit failed: %s", st.status)
+	}
+	if st.editSyntax.ready() || !st.editSyntaxDue.Equal(now) {
+		t.Fatalf("stale syntax was retained: ready=%v due=%v want=%v", st.editSyntax.ready(), st.editSyntaxDue, now)
+	}
+
+	gtx := layout.Context{
+		Ops:         new(op.Ops),
+		Source:      new(input.Router).Source(),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(480, 120)),
+		Now:         now,
+	}
+	ui.layoutFileViewerTextEditor(material.NewTheme(), gtx, st)
+}
+
 func TestFileViewerTextEditHonorsWordWrapSetting(t *testing.T) {
 	content := strings.Repeat("alpha beta gamma delta epsilon ", 24)
 	st := &fileViewerState{
@@ -1552,42 +1588,6 @@ func TestFileViewerVirtualTextEditMaintainsIncrementalMetadata(t *testing.T) {
 	current = st.virtualEditText()
 	newline := strings.Index(current, "\nwrapped")
 	applyAndCompare(newline, newline+1, "")
-}
-
-func TestFileViewerTextEditCoalescesWindowResizeReflow(t *testing.T) {
-	st := &fileViewerState{}
-	now := time.Now()
-	gtx := layout.Context{
-		Ops: new(op.Ops),
-		Now: now,
-	}
-	initialViewport := image.Pt(640, 400)
-	initialLayout := image.Pt(640, 400)
-	if got := st.fileViewerEditLayoutSize(gtx, initialViewport, initialLayout); got != initialLayout {
-		t.Fatalf("initial layout size=%v want %v", got, initialLayout)
-	}
-
-	resizedViewport := image.Pt(520, 400)
-	resizedLayout := image.Pt(520, 400)
-	gtx.Now = now.Add(10 * time.Millisecond)
-	if got := st.fileViewerEditLayoutSize(gtx, resizedViewport, resizedLayout); got != initialLayout {
-		t.Fatalf("active resize layout size=%v want stable %v", got, initialLayout)
-	}
-	if st.editLayoutDue.IsZero() {
-		t.Fatal("active resize did not schedule a settled reflow")
-	}
-
-	gtx.Now = st.editLayoutDue.Add(-time.Millisecond)
-	if got := st.fileViewerEditLayoutSize(gtx, resizedViewport, resizedLayout); got != initialLayout {
-		t.Fatalf("pre-settle layout size=%v want stable %v", got, initialLayout)
-	}
-	gtx.Now = st.editLayoutDue
-	if got := st.fileViewerEditLayoutSize(gtx, resizedViewport, resizedLayout); got != resizedLayout {
-		t.Fatalf("settled layout size=%v want %v", got, resizedLayout)
-	}
-	if !st.editLayoutDue.IsZero() {
-		t.Fatal("settled reflow deadline was not cleared")
-	}
 }
 
 func TestViewerFunctionBarUsesViewerSpecificCommands(t *testing.T) {

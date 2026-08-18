@@ -3451,10 +3451,6 @@ func (ui *UI) rollbackTerminalRemoteSyncTab(paneIdx, createdTab, originalTab int
 	}
 }
 
-func terminalChangeDirCommand(dir string) string {
-	return terminalChangeDirCommandForShell(dir, "", runtime.GOOS)
-}
-
 func terminalChangeDirCommandForShell(dir, shell, goos string) string {
 	if goos == "windows" && fm.ViewerShellIsWSL(shell) {
 		return "cd " + terminalPosixQuotePath(windowsPathToWSLPath(dir)) + "\r"

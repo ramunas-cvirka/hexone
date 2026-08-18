@@ -726,8 +726,8 @@ func TestSanitizeViewerContentReplacesControlRunesWithDots(t *testing.T) {
 
 	got := sanitizeViewerContent(raw)
 
-	if got != "A    B..C" {
-		t.Fatalf("sanitizeViewerContent=%q want %q", got, "A    B..C")
+	if got != "A   B..C" {
+		t.Fatalf("sanitizeViewerContent=%q want %q", got, "A   B..C")
 	}
 	if strings.Contains(got, `\x`) || strings.Contains(got, `\u`) {
 		t.Fatalf("sanitizeViewerContent=%q should not contain escaped controls", got)

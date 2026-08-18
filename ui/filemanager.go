@@ -1043,13 +1043,6 @@ func (p *filePaneState) setFilter(raw string) error {
 	return nil
 }
 
-func (p *filePaneState) inlineNameEntry() *filesys.Entry {
-	if p == nil || !p.inlineNameEditing || p.inlineNameRow < 0 || p.model == nil {
-		return nil
-	}
-	return p.model.Entry(p.inlineNameRow)
-}
-
 func (p *filePaneState) beginInlineNameEdit(row int) bool {
 	if p == nil || p.model == nil {
 		return false
@@ -1123,14 +1116,6 @@ func (p *filePaneState) queueInlineNameEdit(row int, at time.Time) {
 	}
 	p.inlineNamePendingRow = row
 	p.inlineNamePendingAt = at
-}
-
-func (p *filePaneState) queuePathNavigate(path string, at time.Time) {
-	if p == nil {
-		return
-	}
-	p.pendingPathNav = path
-	p.pendingPathAt = at
 }
 
 func (p *filePaneState) clearPathClickState() {
@@ -1466,12 +1451,6 @@ const (
 	filePathEstimatedCharPx = 8
 	filePathSeparatorPx     = 10
 )
-
-func estimatedFilePathSegmentsWidth(segments []filePathSegment) int {
-	return filePathSegmentsWidth(segments, func(segment filePathSegment, _ bool) int {
-		return utf8.RuneCountInString(segment.label) * filePathEstimatedCharPx
-	}, filePathSeparatorPx)
-}
 
 func filePathSegmentsWidth(segments []filePathSegment, segmentWidth func(filePathSegment, bool) int, separatorWidth int) int {
 	width := 0
@@ -2894,24 +2873,6 @@ func (k fileSortKey) sessionValue() string {
 	}
 }
 
-func (p *filePaneState) sortBadgeText() string {
-	if p == nil {
-		return "N↑"
-	}
-	arrow := "↑"
-	if p.sortDesc {
-		arrow = "↓"
-	}
-	return p.sortKey.badgeLabel() + arrow
-}
-
-func (p *filePaneState) modeBadgeText() string {
-	if p != nil && p.table != nil && p.table.Mode == table.ModeBrief {
-		return "2C"
-	}
-	return "1C"
-}
-
 func (p *filePaneState) sessionSortKey() string {
 	if p == nil {
 		return "name"
@@ -2955,23 +2916,6 @@ func (p *filePaneState) applyConfiguredSortForCurrentDir() {
 	p.sortKey = parseFileSortKey(key)
 	p.sortDesc = desc
 	p.dirsFirst = cfg.Sort.DirectoriesFirst
-}
-
-func (p *filePaneState) cycleSortKey() {
-	if p == nil {
-		return
-	}
-	switch p.sortKey {
-	case fileSortName:
-		p.sortKey = fileSortExt
-	case fileSortExt:
-		p.sortKey = fileSortSize
-	case fileSortSize:
-		p.sortKey = fileSortDate
-	default:
-		p.sortKey = fileSortName
-	}
-	p.sortDesc = false
 }
 
 func (p *filePaneState) setSortKey(next fileSortKey) {
@@ -3656,26 +3600,6 @@ func (ui *UI) submitPanePathEdit(idx int, raw string) bool {
 	}
 	_ = pane.setFilter(previousFilter)
 	return false
-}
-
-func (ui *UI) cyclePaneSort(idx int) {
-	if idx < 0 || idx >= len(ui.filePanes) {
-		return
-	}
-	pane := ui.filePanes[idx]
-	if pane == nil {
-		return
-	}
-	ui.setActiveFilePane(idx)
-	preserve := ""
-	if sel := pane.selectedEntry(); sel != nil {
-		preserve = sel.Path
-	}
-	pane.cycleSortKey()
-	pane.applySort(preserve)
-	pane.closeFavoriteMenu()
-	pane.closeContextMenu()
-	ui.rememberPaneSortForDirectory(idx)
 }
 
 func (ui *UI) togglePaneSortDirection(idx int) {

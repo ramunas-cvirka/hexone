@@ -1419,19 +1419,6 @@ func (ui *UI) functionBarToolCardWidth(th *material.Theme, gtx layout.Context, i
 	return width
 }
 
-func (ui *UI) functionBarHoveredToolID(items []functionBarToolSpec) string {
-	if ui == nil {
-		return ""
-	}
-	hoverID := ""
-	for i, item := range items {
-		if i < len(ui.functionBarToolClicks) && ui.functionBarToolClicks[i].Hovered() {
-			hoverID = item.key
-		}
-	}
-	return hoverID
-}
-
 func (ui *UI) functionBarHoveredToolIndex(items []functionBarToolSpec) int {
 	if ui == nil {
 		return -1

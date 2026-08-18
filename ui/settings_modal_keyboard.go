@@ -954,25 +954,6 @@ func (st *settingsModalState) normalizePopupKeyboardFocus(targetCount, ruleCount
 	return st.setPopupKeyboardFocus(first.kind, first.index, settingsPopupKeyboardActionRow)
 }
 
-func (st *settingsModalState) stepPopupKeyboardFocus(step, targetCount, ruleCount, assocCount, colorCategoryCount int) bool {
-	items := st.popupKeyboardItems(targetCount, ruleCount, assocCount, colorCategoryCount)
-	if len(items) == 0 {
-		return false
-	}
-	if st.popupFocusKind == settingsPopupKeyboardNone {
-		return false
-	}
-	current := -1
-	for i, item := range items {
-		if st.popupKeyboardMatches(item.kind, item.index, item.action) {
-			current = i
-			break
-		}
-	}
-	next := items[dialogWrappedIndex(current, len(items), step)]
-	return st.setPopupKeyboardFocus(next.kind, next.index, next.action)
-}
-
 func (st *settingsModalState) stepPopupKeyboardRow(step, targetCount, ruleCount, assocCount, colorCategoryCount int) bool {
 	items := st.popupKeyboardItems(targetCount, ruleCount, assocCount, colorCategoryCount)
 	if len(items) == 0 {

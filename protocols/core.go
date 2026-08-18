@@ -1865,18 +1865,6 @@ func readNumber(order binary.ByteOrder, b []byte, signed bool) (int64, uint64) {
 	}
 }
 
-func printableASCII(b []byte) string {
-	var sb strings.Builder
-	for _, c := range b {
-		if c >= 0x20 && c <= 0x7E {
-			sb.WriteByte(c)
-		} else {
-			sb.WriteByte('.')
-		}
-	}
-	return sb.String()
-}
-
 func formatBytesValue(f *FieldNode, b []byte) string {
 	switch f.ValueFmt {
 	case "ascii":

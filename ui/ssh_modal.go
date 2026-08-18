@@ -275,19 +275,6 @@ func (st *sshModalState) focusKeyboard() {
 	st.keyFocus.focusKeyboard()
 }
 
-func (st *sshModalState) hasFocusedEditor(gtx layout.Context) bool {
-	if st == nil {
-		return false
-	}
-	return gtx.Focused(&st.nameEdit) ||
-		gtx.Focused(&st.hostEdit) ||
-		gtx.Focused(&st.portEdit) ||
-		gtx.Focused(&st.userEdit) ||
-		gtx.Focused(&st.passEdit) ||
-		gtx.Focused(&st.keyPathEdit) ||
-		gtx.Focused(&st.keyPassEdit)
-}
-
 func (st *sshModalState) syncFocus(gtx layout.Context) {
 	if st == nil {
 		return
@@ -462,20 +449,6 @@ func (st *sshModalState) canFocus(target sshModalFocus) bool {
 		return st.selected >= 0 && st.selected < len(st.setups)
 	default:
 		return false
-	}
-}
-
-func (st *sshModalState) focusOrderEditors() []sshModalFocus {
-	if st == nil {
-		return nil
-	}
-	return []sshModalFocus{
-		sshModalFocusHost,
-		sshModalFocusPort,
-		sshModalFocusUser,
-		sshModalFocusPassword,
-		sshModalFocusKeyPath,
-		sshModalFocusPassphrase,
 	}
 }
 
@@ -1343,14 +1316,6 @@ func (ui *UI) sshSetupRowHeight(gtx layout.Context) int {
 		rowH = 1
 	}
 	return rowH
-}
-
-func (ui *UI) layoutSSHCloseButton(gtx layout.Context, c *widget.Clickable, focused bool) layout.Dimensions {
-	hover := float32(0)
-	if c != nil && c.Hovered() {
-		hover = 1
-	}
-	return ui.layoutSSHCloseButtonAnimated(gtx, c, focused, hover)
 }
 
 func (ui *UI) layoutSSHCloseButtonAnimated(gtx layout.Context, c *widget.Clickable, focused bool, hover float32) layout.Dimensions {

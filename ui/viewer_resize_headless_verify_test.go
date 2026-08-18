@@ -118,10 +118,12 @@ func TestHeadlessViewerWrappedEditResize(t *testing.T) {
 			activeMax = elapsed
 		}
 	}
+	// One more frame well after the resize stream stops, so any deferred reflow
+	// has had time to run.
 	settledElapsed := render(
 		"viewer-resize-settled.png",
 		image.Pt(widths[len(widths)-1], initialSize.Y),
-		lastNow.Add(fileViewerEditResizeSettleDelay+time.Millisecond),
+		lastNow.Add(500*time.Millisecond),
 	)
 	t.Logf("layout initial=%s active-max=%s settled=%s fixture-bytes=%d", initialElapsed, activeMax, settledElapsed, len(content))
 }

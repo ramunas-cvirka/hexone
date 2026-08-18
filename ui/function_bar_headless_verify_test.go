@@ -95,8 +95,9 @@ func TestHeadlessFunctionBar(t *testing.T) {
 	writePNG("function-bar-alt.png", render())
 
 	viewerDir := t.TempDir()
-	viewerPath := filepath.Join(viewerDir, "viewer-function-bar.txt")
-	if err := os.WriteFile(viewerPath, []byte("HexOne viewer function bar verification\n"), 0o644); err != nil {
+	viewerPath := filepath.Join(viewerDir, "config.json")
+	viewerContent := "{\n\t\"auths\": {},\n\t\"credsStore\": \"desktop\",\n\t\"currentContext\": \"desktop-linux\"\n}"
+	if err := os.WriteFile(viewerPath, []byte(viewerContent), 0o644); err != nil {
 		t.Fatalf("write viewer fixture: %v", err)
 	}
 	if !ui.requestPaneLoadWithSelection(0, viewerDir, viewerPath, "", 0) {
@@ -124,8 +125,10 @@ func TestHeadlessFunctionBar(t *testing.T) {
 	})
 	ui.functionBarHeldMods = 0
 	writePNG("function-bar-viewer.png", render())
-	if !ui.startFileViewerEdit(time.Now()) {
-		t.Fatalf("start viewer edit: %s", ui.fileViewer.status)
+	router.Queue(key.Event{Name: key.NameF4, State: key.Press})
+	viewerEdit := render()
+	if !ui.fileViewer.editMode {
+		t.Fatalf("F4 did not start viewer edit: %s", ui.fileViewer.status)
 	}
-	writePNG("function-bar-viewer-edit.png", render())
+	writePNG("function-bar-viewer-edit.png", viewerEdit)
 }

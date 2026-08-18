@@ -10,34 +10,22 @@ import (
 	"errors"
 	"hexone/filesys"
 	"hexone/fm"
-	"image"
-	"image/color"
 	"io"
-	"math"
 	"os"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf16"
-	"unicode/utf8"
 
-	"gioui.org/font"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/text"
-	"gioui.org/unit"
-	"gioui.org/widget"
 	"gioui.org/widget/material"
 	"golang.org/x/text/encoding/charmap"
 )
 
-const (
-	fileViewerEditSyntaxDelay       = 160 * time.Millisecond
-	fileViewerEditResizeSettleDelay = 140 * time.Millisecond
-)
+const fileViewerEditSyntaxDelay = 160 * time.Millisecond
 
 type fileViewerSaveResult struct {
 	mode       string
@@ -108,7 +96,6 @@ func (ui *UI) startFileViewerEdit(now time.Time) bool {
 	st.nextWatchCheck = time.Time{}
 	if st.mode == "file" {
 		initialLine := 0
-		st.editScrollRatio = 0
 		if len(st.stream.lines) > 0 {
 			topRow := st.stream.topLine
 			if topRow < 0 {
@@ -119,10 +106,6 @@ func (ui *UI) startFileViewerEdit(now time.Time) bool {
 					topRow = totalRows - 1
 				}
 				initialLine = st.stream.rowAt(topRow).line
-				maxTop := totalRows - max(1, st.stream.visibleLines)
-				if maxTop > 0 {
-					st.editScrollRatio = clamp01(float32(topRow) / float32(maxTop))
-				}
 			}
 		}
 		st.contentEditor.ReadOnly = false
@@ -131,11 +114,22 @@ func (ui *UI) startFileViewerEdit(now time.Time) bool {
 		}
 		syntax := st.stream.syntax
 		current := st.contentEditor.Text()
+		// The read-only viewer renders sanitized text (notably, tabs become
+		// spaces), while the editor must preserve the original bytes. Syntax
+		// spans from the viewer therefore cannot be reused when those texts
+		// differ: their byte offsets may point beyond the editor's lines.
+		syntaxNeedsRefresh := st.content != current
+		if syntaxNeedsRefresh {
+			syntax = viewerSyntaxDocument{}
+		}
 		st.initializeVirtualEditText(current)
 		st.editSyntax = syntax
 		st.stream.setSyntax(st.editSyntax)
-		st.editSyntaxDue = time.Time{}
-		st.editRenderText = current
+		if syntaxNeedsRefresh {
+			st.editSyntaxDue = now
+		} else {
+			st.editSyntaxDue = time.Time{}
+		}
 		st.editIndentStyle, st.editTabSize = viewerEditorIndentation(ui.fmCfg, current)
 		if st.editSyntaxCh == nil {
 			st.editSyntaxCh = make(chan fileViewerEditSyntaxResult, 1)
@@ -154,8 +148,6 @@ func (ui *UI) startFileViewerEdit(now time.Time) bool {
 			caret = 0
 		}
 		st.stream.beginSelection(caret)
-		st.editCaretStart = -1
-		st.editScrollPending = false
 		st.editCaretBlinkAt = now
 	} else if st.hex != nil {
 		v := st.hex
@@ -259,8 +251,9 @@ func (ui *UI) stopFileViewerEdit() bool {
 		st.contentEditor.SetText(st.editableContent)
 		st.editWidgetMirrorText = st.editableContent
 		st.content = sanitizeViewerContent(st.editableContent)
+		st.stream.tabCols = 0
 		st.stream.SetContent(st.content)
-		st.stream.setSyntax(st.editSyntax)
+		ui.applyFileViewerViewSyntax(st)
 		st.markdown.setSource(st.path, st.editableContent)
 	}
 	st.editMode = false
@@ -271,6 +264,29 @@ func (ui *UI) stopFileViewerEdit() bool {
 		st.status = "ready"
 	}
 	return true
+}
+
+// applyFileViewerViewSyntax installs a syntax document that matches the text the
+// read-only viewer is about to show. The editor keeps the file's raw bytes while
+// the viewer shows a sanitized copy, so a document built for one text addresses
+// the wrong offsets in the other: the painter draws only span-covered ranges, so
+// stale spans paint shifted slices and silently drop the tail of every line.
+func (ui *UI) applyFileViewerViewSyntax(st *fileViewerState) {
+	if st == nil {
+		return
+	}
+	// The editor's document is reusable only when it was built from exactly the
+	// text the viewer now shows and no rebuild is still outstanding; a pending or
+	// in-flight build means it predates the last keystrokes. Bumping the sequence
+	// makes the pump discard whatever that build eventually returns.
+	reusable := st.editSyntax.ready() && st.content == st.editableContent &&
+		st.editSyntaxDue.IsZero() && !st.editSyntaxRunning
+	if !reusable {
+		st.editSyntaxSeq++
+		st.editSyntaxDue = time.Time{}
+		st.editSyntax = viewerBuildSyntaxDocument(context.Background(), st.path, st.content)
+	}
+	st.stream.setSyntax(st.editSyntax)
 }
 
 func (ui *UI) toggleFileViewerEdit(now time.Time) bool {
@@ -305,12 +321,18 @@ func (ui *UI) discardFileViewerChanges(st *fileViewerState) bool {
 		st.editableContent = st.editBaselineText
 		st.content = sanitizeViewerContent(st.editBaselineText)
 		st.markdown.setSource(st.path, st.editableContent)
-		st.editSyntax = viewerBuildSyntaxDocument(context.Background(), st.path, st.editBaselineText)
-		st.stream.setSyntax(st.editSyntax)
-		st.editRenderText = st.editBaselineText
+		// The stream now holds the raw baseline text, so any document built for
+		// the previous buffer indexes different bytes. Drop it and let the editor
+		// rebuild off the UI thread; leaving edit mode resolves it synchronously
+		// against the viewer's sanitized text instead.
+		st.editSyntax = viewerSyntaxDocument{}
+		st.stream.clearSyntax()
 		st.editLineRunes = viewerEditLineRuneOffsetsFromLines(st.stream.lines)
 		st.editSyntaxSeq++
 		st.editSyntaxDue = time.Time{}
+		if st.editMode && st.editSyntaxCh != nil {
+			st.editSyntaxDue = time.Now()
+		}
 		st.editUndo = nil
 		st.editUndoIndex = 0
 		st.editRevision = 0
@@ -372,276 +394,6 @@ func (ui *UI) layoutFileViewerTextEditor(th *material.Theme, gtx layout.Context,
 	})
 }
 
-func (ui *UI) layoutFileViewerTextEditorBody(th *material.Theme, gtx layout.Context, st *fileViewerState) layout.Dimensions {
-	contentChanged := false
-	for {
-		ev, ok := st.contentEditor.Update(gtx)
-		if !ok {
-			break
-		}
-		if _, ok := ev.(widget.ChangeEvent); ok {
-			contentChanged = true
-		}
-	}
-	if contentChanged {
-		current := st.contentEditor.Text()
-		ui.syncFileViewerTextEditContent(st, current)
-		ui.updateFileViewerEditRenderContent(st, current, gtx.Now)
-	}
-	ui.pumpFileViewerEditSyntax(st)
-	ui.startFileViewerEditSyntaxIfDue(st, gtx)
-	if st.editFocus {
-		st.editFocus = false
-		gtx.Execute(key.FocusCmd{Tag: &st.contentEditor})
-	}
-	st.contentEditor.ReadOnly = false
-	if st.wrapEnabled {
-		st.contentEditor.WrapPolicy = text.WrapHeuristically
-	} else {
-		st.contentEditor.WrapPolicy = text.WrapWords
-	}
-	if !st.editWrapInitialized || st.editWrapValue != st.wrapEnabled {
-		st.editWrapInitialized = true
-		st.editWrapValue = st.wrapEnabled
-		st.editHOffset = 0
-		st.editCaretStart = -1
-		st.editLayoutViewport = image.Point{}
-		st.editLayoutSize = image.Point{}
-		st.editLayoutDue = time.Time{}
-	}
-	theme := ui.fileViewerTheme()
-	ed := material.Editor(th, &st.contentEditor, "")
-	ed.Font.Typeface = ui.viewerTypeface()
-	ed.Font.Weight = font.Normal
-	ed.TextSize = ui.viewerTextSize()
-	ed.Color = theme.Text
-	ed.HintColor = theme.Hint
-	ed.SelectionColor = theme.Selection
-	return layout.Inset{Left: unit.Dp(2), Right: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		size := gtx.Constraints.Max
-		st.stream.ensureTextMetrics(ui, th, gtx, true)
-		layoutWidth := size.X
-		hbarHeight := 0
-		if !st.wrapEnabled {
-			contentWidth := int(math.Ceil(float64(max(st.editMaxCols+2, 1)) * float64(st.stream.charAdvance)))
-			if contentWidth > layoutWidth {
-				layoutWidth = contentWidth
-				hbarHeight = viewerScrollbarThickness(gtx, size.Y)
-				if hbarHeight > size.Y/2 {
-					hbarHeight = size.Y / 2
-				}
-			}
-		}
-		textHeight := size.Y - hbarHeight
-		if textHeight < 1 {
-			textHeight = 1
-			hbarHeight = 0
-		}
-		editorSize := st.fileViewerEditLayoutSize(
-			gtx,
-			image.Pt(size.X, textHeight),
-			image.Pt(layoutWidth, textHeight),
-		)
-		editorGTX := gtx
-		editorGTX.Constraints = layout.Exact(editorSize)
-		editorClip := clip.Rect(image.Rect(0, 0, size.X, textHeight)).Push(gtx.Ops)
-		editorOffset := op.Offset(image.Pt(-st.editHOffset, 0)).Push(gtx.Ops)
-		ed.Layout(editorGTX)
-		editorOffset.Pop()
-		editorClip.Pop()
-
-		metrics, scrollable := editorVerticalScrollMetrics(&st.contentEditor)
-		if st.editScrollPending {
-			st.editScrollPending = false
-			if scrollable {
-				editorScrollToVerticalOffset(&st.contentEditor, int(st.editScrollRatio*float32(metrics.MaxOffset)))
-				metrics, scrollable = editorVerticalScrollMetrics(&st.contentEditor)
-				gtx.Execute(op.InvalidateCmd{})
-			}
-		}
-		textWidth := size.X
-		barWidth := 0
-		if scrollable {
-			style := material.Scrollbar(th, &st.editScrollbar)
-			style.Track.Color = theme.ScrollTrack
-			style.Indicator.Color = theme.ScrollThumb
-			style.Indicator.HoverColor = theme.ScrollThumbHover
-			style.Indicator.MajorMinLen = unit.Dp(fileViewerScrollbarMinThumbPx)
-			barWidth = gtx.Dp(style.Width())
-			if barWidth > 0 && barWidth < size.X {
-				textWidth -= barWidth
-				start := clamp01(float32(metrics.Offset) / float32(metrics.Content))
-				end := clamp01(float32(metrics.Offset+metrics.Viewport) / float32(metrics.Content))
-				barGTX := gtx
-				barGTX.Constraints = layout.Exact(image.Pt(barWidth, textHeight))
-				offset := op.Offset(image.Pt(size.X-barWidth, 0)).Push(gtx.Ops)
-				style.Layout(barGTX, layout.Vertical, start, end)
-				offset.Pop()
-				if delta := st.editScrollbar.ScrollDistance(); delta != 0 {
-					editorScrollToVerticalOffset(&st.contentEditor, metrics.Offset+int(delta*float32(metrics.Content)))
-					gtx.Execute(op.InvalidateCmd{})
-				}
-			}
-		}
-		horizontalViewport := textWidth
-		if horizontalViewport < 1 {
-			horizontalViewport = 1
-		}
-		if st.wrapEnabled || layoutWidth <= horizontalViewport {
-			st.editHOffset = 0
-			hbarHeight = 0
-		} else {
-			maxOffset := layoutWidth - horizontalViewport
-			caretStart, _ := st.contentEditor.Selection()
-			if caretStart != st.editCaretStart {
-				st.editCaretStart = caretStart
-				caretX := int(st.contentEditor.CaretCoords().X)
-				margin := max(1, st.stream.charW)
-				switch {
-				case caretX < st.editHOffset:
-					st.editHOffset = caretX
-				case caretX+margin > st.editHOffset+horizontalViewport:
-					st.editHOffset = caretX + margin - horizontalViewport
-				}
-			}
-			if st.editHOffset < 0 {
-				st.editHOffset = 0
-			}
-			if st.editHOffset > maxOffset {
-				st.editHOffset = maxOffset
-			}
-		}
-
-		syntaxClip := clip.Rect(image.Rect(0, 0, horizontalViewport, textHeight)).Push(gtx.Ops)
-		syntaxOffset := op.Offset(image.Pt(-st.editHOffset, 0)).Push(gtx.Ops)
-		syntaxGTX := gtx
-		syntaxGTX.Constraints = layout.Exact(editorSize)
-		ui.drawFileViewerEditSyntax(th, syntaxGTX, st, metrics, editorSize.X)
-		syntaxOffset.Pop()
-		syntaxClip.Pop()
-
-		if hbarHeight > 0 {
-			style := material.Scrollbar(th, &st.editHScrollbar)
-			style.Track.Color = theme.ScrollTrack
-			style.Indicator.Color = theme.ScrollThumb
-			style.Indicator.HoverColor = theme.ScrollThumbHover
-			style.Indicator.MajorMinLen = unit.Dp(fileViewerScrollbarMinThumbPx)
-			trackWidth := horizontalViewport
-			start := clamp01(float32(st.editHOffset) / float32(layoutWidth))
-			end := clamp01(float32(st.editHOffset+horizontalViewport) / float32(layoutWidth))
-			barGTX := gtx
-			barGTX.Constraints = layout.Exact(image.Pt(trackWidth, hbarHeight))
-			offset := op.Offset(image.Pt(0, textHeight)).Push(gtx.Ops)
-			style.Layout(barGTX, layout.Horizontal, start, end)
-			offset.Pop()
-			if delta := st.editHScrollbar.ScrollDistance(); delta != 0 {
-				st.editHOffset += int(delta * float32(layoutWidth))
-				maxOffset := layoutWidth - horizontalViewport
-				if st.editHOffset < 0 {
-					st.editHOffset = 0
-				}
-				if st.editHOffset > maxOffset {
-					st.editHOffset = maxOffset
-				}
-				gtx.Execute(op.InvalidateCmd{})
-			}
-		}
-		return layout.Dimensions{Size: size}
-	})
-}
-
-// fileViewerEditLayoutSize keeps Gio's editor viewport stable while native
-// window-resize events are arriving. Gio v0.10 reshapes and re-indexes the
-// entire document whenever either viewport dimension changes; for wrapped
-// files that can allocate hundreds of megabytes for every resize frame. The
-// outer clip still follows the window immediately, then one exact reflow is
-// performed after the resize stream settles.
-func (st *fileViewerState) fileViewerEditLayoutSize(gtx layout.Context, viewport, desired image.Point) image.Point {
-	if viewport.X < 1 {
-		viewport.X = 1
-	}
-	if viewport.Y < 1 {
-		viewport.Y = 1
-	}
-	if desired.X < 1 {
-		desired.X = 1
-	}
-	if desired.Y < 1 {
-		desired.Y = 1
-	}
-	if st.editLayoutSize.X <= 0 || st.editLayoutSize.Y <= 0 {
-		st.editLayoutViewport = viewport
-		st.editLayoutSize = desired
-		st.editLayoutDue = time.Time{}
-		return desired
-	}
-	if viewport != st.editLayoutViewport {
-		st.editLayoutViewport = viewport
-		st.editLayoutDue = gtx.Now.Add(fileViewerEditResizeSettleDelay)
-		gtx.Execute(op.InvalidateCmd{At: st.editLayoutDue})
-		return st.editLayoutSize
-	}
-	if !st.editLayoutDue.IsZero() {
-		if gtx.Now.Before(st.editLayoutDue) {
-			gtx.Execute(op.InvalidateCmd{At: st.editLayoutDue})
-			return st.editLayoutSize
-		}
-		st.editLayoutDue = time.Time{}
-	}
-	st.editLayoutSize = desired
-	return desired
-}
-
-func (ui *UI) updateFileViewerEditRender(st *fileViewerState, now time.Time) {
-	if st == nil || st.mode != "file" {
-		return
-	}
-	ui.updateFileViewerEditRenderContent(st, st.contentEditor.Text(), now)
-}
-
-func (ui *UI) updateFileViewerEditRenderContent(st *fileViewerState, current string, now time.Time) {
-	if st == nil || st.mode != "file" {
-		return
-	}
-	if current == st.editRenderText {
-		return
-	}
-	st.editRenderText = current
-	if st.editSyntaxCh == nil {
-		st.editSyntaxCh = make(chan fileViewerEditSyntaxResult, 1)
-	}
-	syntax := st.editSyntax
-	st.initializeVirtualEditText(current)
-	st.stream.setSyntax(syntax)
-	st.editMaxCols = viewerEditMaxColumns(current)
-	st.editSyntaxSeq++
-	st.editSyntaxDue = now.Add(fileViewerEditSyntaxDelay)
-}
-
-func viewerEditMaxColumns(content string) int {
-	maxCols := 0
-	for _, line := range splitStreamLines(sanitizeViewerContent(content)) {
-		if cols := utf8.RuneCountInString(line); cols > maxCols {
-			maxCols = cols
-		}
-	}
-	return maxCols
-}
-
-func viewerEditLineRuneOffsets(content string) []int {
-	lines := splitStreamLines(content)
-	offsets := make([]int, len(lines))
-	runeOffset := 0
-	for i, line := range lines {
-		offsets[i] = runeOffset
-		runeOffset += utf8.RuneCountInString(line)
-		if i+1 < len(lines) {
-			runeOffset++
-		}
-	}
-	return offsets
-}
-
 func (ui *UI) startFileViewerEditSyntaxIfDue(st *fileViewerState, gtx layout.Context) {
 	if st == nil || st.editSyntaxDue.IsZero() {
 		return
@@ -698,62 +450,6 @@ func (ui *UI) pumpFileViewerEditSyntax(st *fileViewerState) {
 	}
 }
 
-func (ui *UI) drawFileViewerEditSyntax(th *material.Theme, gtx layout.Context, st *fileViewerState, _ editorScrollMetrics, textWidth int) {
-	if st == nil || !st.editSyntax.ready() || textWidth <= 0 || len(st.editLineRunes) == 0 {
-		return
-	}
-	v := &st.stream
-	firstLine := 0
-	lastLine := len(st.editSyntax.lines) - 1
-	if visibleStart, visibleEnd, ok := editorVisibleRuneRange(&st.contentEditor); ok {
-		firstLine = viewerEditLineAtRune(st.editLineRunes, visibleStart) - 2
-		lastLine = viewerEditLineAtRune(st.editLineRunes, visibleEnd) + 2
-	}
-	if firstLine < 0 {
-		firstLine = 0
-	}
-	if lastLine >= len(st.editSyntax.lines) {
-		lastLine = len(st.editSyntax.lines) - 1
-	}
-	if lastLine >= len(v.lines) {
-		lastLine = len(v.lines) - 1
-	}
-	if lastLine < firstLine {
-		return
-	}
-
-	defer clip.Rect(image.Rect(0, 0, textWidth, gtx.Constraints.Max.Y)).Push(gtx.Ops).Pop()
-	theme := ui.fileViewerTheme()
-	for lineIndex := firstLine; lineIndex <= lastLine; lineIndex++ {
-		line := v.lines[lineIndex]
-		globalStart := st.editLineRunes[lineIndex]
-		for _, span := range st.editSyntax.lines[lineIndex].spans {
-			if span.role == viewerSyntaxText || span.byteStart < 0 || span.byteEnd > len(line) || span.byteEnd <= span.byteStart {
-				continue
-			}
-			start := globalStart + span.colStart
-			end := globalStart + span.colEnd
-			regions := st.contentEditor.Regions(start, end, nil)
-			if len(regions) == 0 {
-				continue
-			}
-			segment := line[span.byteStart:span.byteEnd]
-			fg := viewerSyntaxColor(theme, span.role)
-			if len(regions) == 1 {
-				ui.drawFileViewerEditSyntaxSegment(th, gtx, segment, regions[0], fg, textWidth)
-				continue
-			}
-			runes := []rune(segment)
-			for i, r := range runes {
-				runeRegions := st.contentEditor.Regions(start+i, start+i+1, nil)
-				for _, region := range runeRegions {
-					ui.drawFileViewerEditSyntaxSegment(th, gtx, string(r), region, fg, textWidth)
-				}
-			}
-		}
-	}
-}
-
 func viewerEditLineAtRune(lineRunes []int, runeOffset int) int {
 	if len(lineRunes) == 0 {
 		return 0
@@ -768,37 +464,6 @@ func viewerEditLineAtRune(lineRunes []int, runeOffset int) int {
 		return len(lineRunes) - 1
 	}
 	return line
-}
-
-func (ui *UI) drawFileViewerEditSyntaxSegment(th *material.Theme, gtx layout.Context, segment string, region widget.Region, fg color.NRGBA, textWidth int) {
-	if segment == "" || region.Bounds.Empty() || region.Bounds.Min.X >= textWidth {
-		return
-	}
-	width := textWidth - region.Bounds.Min.X
-	if width < 1 {
-		return
-	}
-	label := material.Body2(th, segment)
-	label.Font.Typeface = ui.viewerTypeface()
-	label.Font.Weight = font.Normal
-	label.TextSize = ui.viewerTextSize()
-	label.Color = fg
-	label.MaxLines = 1
-	label.Truncator = ""
-	labelGTX := gtx
-	labelGTX.Constraints.Min = image.Point{}
-	labelGTX.Constraints.Max.X = width
-	if labelGTX.Constraints.Max.Y < region.Bounds.Dy()*2 {
-		labelGTX.Constraints.Max.Y = region.Bounds.Dy() * 2
-	}
-	record := op.Record(gtx.Ops)
-	dims := label.Layout(labelGTX)
-	call := record.Stop()
-	regionBaseline := region.Bounds.Max.Y - region.Baseline
-	labelBaseline := dims.Size.Y - dims.Baseline
-	offset := op.Offset(image.Pt(region.Bounds.Min.X, regionBaseline-labelBaseline)).Push(gtx.Ops)
-	call.Add(gtx.Ops)
-	offset.Pop()
 }
 
 func (ui *UI) startFileViewerSave(now time.Time) bool {
@@ -900,8 +565,9 @@ func (ui *UI) pumpFileViewerSaveState(gtx layout.Context, st *fileViewerState) {
 				st.editSavedRevision = res.revision
 				st.editDirty = st.editRevision != st.editSavedRevision
 				if !st.editMode {
-					st.content = sanitizeViewerContent(st.virtualEditText())
+					st.content = sanitizeViewerContent(st.editableContent)
 					st.stream.SetContent(st.content)
+					ui.applyFileViewerViewSyntax(st)
 				}
 			case "hex":
 				applySavedViewerHexChanges(st.hex, res.hexChanges)

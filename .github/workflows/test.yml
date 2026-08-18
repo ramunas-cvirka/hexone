@@ -43,3 +43,9 @@ jobs:
 
       - name: Run unit tests
         run: go test -count=1 ./...
+
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+
+      - name: Check for unreachable code
+        run: go run ./tools/unusedcheck

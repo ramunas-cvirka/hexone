@@ -51,11 +51,14 @@ func (st *fileViewerState) initializeVirtualEditText(content string) {
 	if st == nil {
 		return
 	}
+	// The editor buffer keeps the file's original bytes, so the view has to lay
+	// its tabs out on tab stops to reach the columns the sanitized read-only
+	// text already occupies.
+	st.stream.tabCols = viewerTabColumns
 	st.stream.SetContent(content)
 	st.editVirtualReady = true
 	st.editWidgetMirrorText = content
 	st.editLineRunes = viewerEditLineRuneOffsetsFromLines(st.stream.lines)
-	st.editMaxCols = st.stream.maxCols
 	st.editDesiredColSet = false
 	if !st.stream.selActive {
 		st.stream.beginSelection(0)
@@ -198,6 +201,7 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 	oldLines := v.lines
 	oldOffsets := v.lineOffsets
 	oldRunes := v.lineRunes
+	oldWidths := v.lineWidths
 	oldTop := v.topLine
 	oldWrapRows := v.wrapRows
 	hadWrapCache := v.wrapEnabled && v.wrapCols > 0 && len(oldWrapRows) > 0
@@ -218,23 +222,26 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 		// Normal typing stays entirely in the existing document arrays. Only
 		// byte/rune offsets after the edited line need an integer adjustment.
 		oldLineRunes := oldRunes[startLine]
+		oldLineCols := oldWidths[startLine]
 		newLine := replacementLines[0]
 		newLineRunes := utf8.RuneCountInString(newLine)
+		newLineCols := v.lineWidth(newLine)
 		byteDelta := len(newLine) - len(oldLines[startLine])
 		runeDelta := newLineRunes - oldLineRunes
 		v.lines[startLine] = newLine
 		v.lineRunes[startLine] = newLineRunes
+		v.lineWidths[startLine] = newLineCols
 		for i := startLine + 1; i < len(v.lineOffsets); i++ {
 			v.lineOffsets[i] += byteDelta
 		}
 		v.totalBytes += byteDelta
-		if newLineRunes >= v.maxCols {
-			v.maxCols = newLineRunes
-		} else if oldLineRunes == v.maxCols && newLineRunes < oldLineRunes {
+		if newLineCols >= v.maxCols {
+			v.maxCols = newLineCols
+		} else if oldLineCols == v.maxCols && newLineCols < oldLineCols {
 			v.maxCols = 0
-			for _, runes := range v.lineRunes {
-				if runes > v.maxCols {
-					v.maxCols = runes
+			for _, cols := range v.lineWidths {
+				if cols > v.maxCols {
+					v.maxCols = cols
 				}
 			}
 		}
@@ -246,7 +253,7 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 			st.editLineRunes = viewerEditLineRuneOffsetsFromView(v)
 		}
 		if hadWrapCache {
-			changedRows := streamWrapRowsForLine(startLine, newLine, v.wrapCols)
+			changedRows := v.wrapRowsForLine(startLine, newLine, v.wrapCols)
 			oldRowCount := oldWrapEnd - oldWrapStart
 			if len(changedRows) == oldRowCount {
 				copy(v.wrapRows[oldWrapStart:oldWrapEnd], changedRows)
@@ -279,13 +286,17 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 		// offsets still require cheap integer work, never decoding file contents.
 		v.lineOffsets = make([]int, newCount)
 		v.lineRunes = make([]int, newCount)
+		v.lineWidths = make([]int, newCount)
 		copy(v.lineOffsets[:startLine], oldOffsets[:startLine])
 		copy(v.lineRunes[:startLine], oldRunes[:startLine])
+		copy(v.lineWidths[:startLine], oldWidths[:startLine])
 		for i, line := range replacementLines {
 			v.lineRunes[startLine+i] = utf8.RuneCountInString(line)
+			v.lineWidths[startLine+i] = v.lineWidth(line)
 		}
 		newSuffixStart := startLine + len(replacementLines)
 		copy(v.lineRunes[newSuffixStart:], oldRunes[endLine+1:])
+		copy(v.lineWidths[newSuffixStart:], oldWidths[endLine+1:])
 		offset := 0
 		if startLine > 0 {
 			offset = oldOffsets[startLine]
@@ -299,9 +310,9 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 		}
 		v.totalBytes = offset
 		v.maxCols = 0
-		for _, runes := range v.lineRunes {
-			if runes > v.maxCols {
-				v.maxCols = runes
+		for _, cols := range v.lineWidths {
+			if cols > v.maxCols {
+				v.maxCols = cols
 			}
 		}
 
@@ -309,7 +320,7 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 			newWrapRows := make([]streamWrapRow, 0, len(oldWrapRows)-(oldWrapEnd-oldWrapStart)+len(replacementLines))
 			newWrapRows = append(newWrapRows, oldWrapRows[:oldWrapStart]...)
 			for i, line := range replacementLines {
-				newWrapRows = append(newWrapRows, streamWrapRowsForLine(startLine+i, line, v.wrapCols)...)
+				newWrapRows = append(newWrapRows, v.wrapRowsForLine(startLine+i, line, v.wrapCols)...)
 			}
 			newWrapEnd := len(newWrapRows)
 			for _, row := range oldWrapRows[oldWrapEnd:] {
@@ -347,7 +358,6 @@ func (st *fileViewerState) applyVirtualEditReplacement(start, end int, replaceme
 	if !fastSingleLine {
 		st.editLineRunes = viewerEditLineRuneOffsetsFromView(v)
 	}
-	st.editMaxCols = v.maxCols
 	st.editDesiredColSet = false
 	st.editSyntax = viewerPreserveSyntaxAfterEdit(oldSyntax, oldChangedLines, startLine, endLine, startLocal, endLocal, replacement, v.lines)
 	v.setSyntax(st.editSyntax)
@@ -570,7 +580,7 @@ func (st *fileViewerState) moveVirtualEditCaretVertical(rows int, extend bool) {
 	if !ok {
 		return
 	}
-	col := runeIndexAtByte(v.lines[line], local)
+	col := v.colAtByte(v.lines[line], local)
 	if v.wrapEnabled && len(v.wrapRows) > 0 {
 		rowIndex := v.rowForLineCol(line, col)
 		row := v.rowAt(rowIndex)
@@ -590,7 +600,7 @@ func (st *fileViewerState) moveVirtualEditCaretVertical(rows int, extend bool) {
 		if targetCol > target.to {
 			targetCol = target.to
 		}
-		offset := v.lineByteStart(target.line) + byteIndexAtRune(v.lines[target.line], targetCol)
+		offset := v.lineByteStart(target.line) + v.byteAtCol(v.lines[target.line], targetCol)
 		virtualEditSetCaret(v, offset, extend)
 		return
 	}
@@ -606,10 +616,10 @@ func (st *fileViewerState) moveVirtualEditCaretVertical(rows int, extend bool) {
 		targetLine = len(v.lines) - 1
 	}
 	targetCol := st.editDesiredCol
-	if maxCol := utf8.RuneCountInString(v.lines[targetLine]); targetCol > maxCol {
+	if maxCol := v.lineCols(targetLine); targetCol > maxCol {
 		targetCol = maxCol
 	}
-	offset := v.lineByteStart(targetLine) + byteIndexAtRune(v.lines[targetLine], targetCol)
+	offset := v.lineByteStart(targetLine) + v.byteAtCol(v.lines[targetLine], targetCol)
 	virtualEditSetCaret(v, offset, extend)
 }
 
@@ -622,7 +632,7 @@ func (st *fileViewerState) revealVirtualEditCaret() {
 	if !ok {
 		return
 	}
-	col := runeIndexAtByte(v.lines[line], local)
+	col := v.colAtByte(v.lines[line], local)
 	row := line
 	if v.wrapEnabled && len(v.wrapRows) > 0 {
 		row = v.rowForLineCol(line, col)
@@ -849,13 +859,13 @@ func (ui *UI) handleFileViewerVirtualEditKey(st *fileViewerState, gtx layout.Con
 		st.moveVirtualEditCaretVertical(max(1, v.visibleLines), extend)
 	case key.NameHome, key.NameEnd:
 		line, local, _ := v.lineForOffset(v.selHead)
-		col := runeIndexAtByte(v.lines[line], local)
+		col := v.colAtByte(v.lines[line], local)
 		target := v.lineByteStart(line)
 		if v.wrapEnabled && len(v.wrapRows) > 0 {
 			row := v.rowAt(v.rowForLineCol(line, col))
-			target = v.lineByteStart(line) + byteIndexAtRune(v.lines[line], row.from)
+			target = v.lineByteStart(line) + v.byteAtCol(v.lines[line], row.from)
 			if ke.Name == key.NameEnd {
-				target = v.lineByteStart(line) + byteIndexAtRune(v.lines[line], row.to)
+				target = v.lineByteStart(line) + v.byteAtCol(v.lines[line], row.to)
 			}
 		} else if ke.Name == key.NameEnd {
 			target = v.lineByteEnd(line)
@@ -974,9 +984,9 @@ func (ui *UI) drawFileViewerVirtualCaret(gtx layout.Context, st *fileViewerState
 	if !ok {
 		return
 	}
-	col := runeIndexAtByte(v.lines[line], local)
+	col := v.colAtByte(v.lines[line], local)
 	rowIndex := line
-	row := streamWrapRow{line: line, from: 0, to: utf8.RuneCountInString(v.lines[line])}
+	row := streamWrapRow{line: line, from: 0, to: v.lineCols(line)}
 	if v.wrapEnabled && len(v.wrapRows) > 0 {
 		rowIndex = v.rowForLineCol(line, col)
 		row = v.rowAt(rowIndex)
@@ -1009,7 +1019,7 @@ func (ui *UI) updateFileViewerVirtualIME(gtx layout.Context, st *fileViewerState
 	if !ok {
 		return
 	}
-	col := runeIndexAtByte(v.lines[line], local)
+	col := v.colAtByte(v.lines[line], local)
 	rowIndex := line
 	rowFrom := 0
 	if v.wrapEnabled && len(v.wrapRows) > 0 {

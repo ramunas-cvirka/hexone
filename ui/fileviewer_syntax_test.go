@@ -6,6 +6,7 @@ package ui
 import (
 	"context"
 	"testing"
+	"unicode/utf8"
 
 	"gioui.org/io/input"
 	"gioui.org/layout"
@@ -128,6 +129,16 @@ func TestStreamOutputViewSetContentClearsSyntax(t *testing.T) {
 	v.SetContent("alpha")
 	if v.syntax.ready() {
 		t.Fatal("SetContent should clear stale syntax spans")
+	}
+}
+
+func TestViewerSyntaxSpansFitLineRejectsStaleOffsets(t *testing.T) {
+	line := "\t\"auths\": {}"
+	if viewerSyntaxSpansFitLine(line, []viewerSyntaxSpan{{byteStart: 1, byteEnd: 16, colStart: 1, colEnd: 16}}) {
+		t.Fatal("span extending beyond the raw tab-indented line should be rejected")
+	}
+	if !viewerSyntaxSpansFitLine(line, []viewerSyntaxSpan{{byteStart: 1, byteEnd: len(line), colStart: 1, colEnd: utf8.RuneCountInString(line)}}) {
+		t.Fatal("valid raw-line span should be accepted")
 	}
 }
 
