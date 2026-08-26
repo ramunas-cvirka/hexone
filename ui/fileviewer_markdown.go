@@ -104,6 +104,12 @@ type markdownPreviewState struct {
 	tableLists map[int]*widget.List
 	codeLists  map[int]*widget.List
 
+	// scrollLists holds the horizontal scrollbars that were actually laid out
+	// on the previous frame, so a press on one is left to the scrollbar
+	// instead of starting a text selection.
+	scrollLists []*widget.List
+	codeMetrics map[int]markdownCodeMetrics
+
 	selectionTag        struct{}
 	selectionViewport   image.Rectangle
 	blockHeights        []int
@@ -123,6 +129,15 @@ type markdownPreviewState struct {
 	selectionAutoDir    int
 	selectionAutoStep   float32
 	selectionAutoAt     time.Time
+}
+
+// markdownCodeMetrics records the rendered geometry of a code block so the
+// selection line mapping can follow the code rows instead of spreading evenly
+// across the padding and the horizontal scrollbar strip.
+type markdownCodeMetrics struct {
+	padTop     int
+	padBottom  int
+	lineHeight int
 }
 
 type markdownVisibleBlock struct {
@@ -168,6 +183,29 @@ func (st *markdownPreviewState) ensureMaps() {
 	if st.codeLists == nil {
 		st.codeLists = make(map[int]*widget.List)
 	}
+	if st.codeMetrics == nil {
+		st.codeMetrics = make(map[int]markdownCodeMetrics)
+	}
+}
+
+// scrollbarEngaged reports whether the pointer is on a scrollbar or already
+// dragging it, in which case the pointer belongs to the scrollbar.
+func scrollbarEngaged(bar *widget.Scrollbar) bool {
+	return bar != nil && (bar.Dragging() || bar.TrackHovered() || bar.IndicatorHovered())
+}
+
+// pointerOnScrollLists reports whether the pointer is on one of the horizontal
+// scrollbars rendered inside code blocks or tables.
+func (st *markdownPreviewState) pointerOnScrollLists() bool {
+	if st == nil {
+		return false
+	}
+	for _, list := range st.scrollLists {
+		if list != nil && scrollbarEngaged(&list.Scrollbar) {
+			return true
+		}
+	}
+	return false
 }
 
 func (st *markdownPreviewState) setSource(path, source string) {
@@ -190,6 +228,8 @@ func (st *markdownPreviewState) setSource(path, source string) {
 	st.selectAll = false
 	st.tableLists = make(map[int]*widget.List)
 	st.codeLists = make(map[int]*widget.List)
+	st.codeMetrics = make(map[int]markdownCodeMetrics)
+	st.scrollLists = nil
 	st.blockHeights = nil
 	st.blockContentTop = nil
 	st.blockContentSize = nil
@@ -296,8 +336,14 @@ func (st *markdownPreviewState) blockSourceLines(index int) []markdownSourceLine
 	if block.kind == markdownBlockCode && len(lines) >= 2 &&
 		markdownSourceLineLooksFence([]byte(st.source), lines[0].start) &&
 		markdownSourceLineLooksFence([]byte(st.source), lines[len(lines)-1].start) {
+		// Fences are not rendered, so fold them into the neighbouring code
+		// lines: the selectable lines must map one-to-one onto the rendered
+		// rows or pointer positions resolve to the wrong line.
 		visible := append([]markdownSourceLine(nil), lines[:len(lines)-1]...)
 		visible[len(visible)-1].end = lines[len(lines)-1].end
+		if len(visible) >= 2 {
+			visible = append([]markdownSourceLine{{start: visible[0].start, end: visible[1].end}}, visible[2:]...)
+		}
 		return visible
 	}
 	return lines
@@ -958,6 +1004,12 @@ func (ui *UI) handleMarkdownPreviewSelectionEvents(gtx layout.Context, viewer *f
 				pos.X >= st.selectionViewport.Max.X-gtx.Dp(unit.Dp(12)) {
 				continue
 			}
+			// The preview passes pointer events through to this selection
+			// layer, so a press aimed at a code or table scrollbar would also
+			// start a selection and then grab the pointer away from the drag.
+			if st.pointerOnScrollLists() {
+				continue
+			}
 			index, line, ok := st.selectionPointAt(pos, false)
 			if !ok {
 				continue
@@ -1011,6 +1063,19 @@ func (ui *UI) measureMarkdownSelectionLineWeights(th *material.Theme, gtx layout
 		return weights
 	}
 	block := state.doc.blocks[index]
+	if block.kind == markdownBlockCode {
+		// Weigh the code rows by their rendered height and give the padding
+		// and scrollbar strip to the outer rows, so a press resolves to the
+		// row under the pointer and its highlight hugs that row.
+		if metrics, ok := state.codeMetrics[block.id]; ok && metrics.lineHeight > 0 {
+			for line := range weights {
+				weights[line] = metrics.lineHeight
+			}
+			weights[0] += metrics.padTop
+			weights[len(weights)-1] += metrics.padBottom
+			return weights
+		}
+	}
 	if block.kind == markdownBlockTable || block.kind == markdownBlockCode || block.kind == markdownBlockRule {
 		for line := range weights {
 			weights[line] = 1
@@ -1111,13 +1176,8 @@ func (ui *UI) layoutMarkdownPreview(th *material.Theme, gtx layout.Context, view
 	state := &viewer.markdown
 	state.ensureMaps()
 	colors := markdownPreviewColors(ui.fileViewerTheme())
-	style := material.List(th, &state.list)
+	style := ui.markdownListStyle(th, &state.list)
 	style.AnchorStrategy = material.Occupy
-	style.ScrollbarStyle.Track.Color = ui.fileViewerTheme().ScrollTrack
-	style.ScrollbarStyle.Indicator.Color = ui.fileViewerTheme().ScrollThumb
-	style.ScrollbarStyle.Indicator.HoverColor = ui.fileViewerTheme().ScrollThumbHover
-	style.ScrollbarStyle.Indicator.MinorWidth = unit.Dp(7)
-	style.ScrollbarStyle.Indicator.CornerRadius = unit.Dp(4)
 	state.selectionViewport = image.Rectangle{Max: gtx.Constraints.Max}
 	ui.handleMarkdownPreviewSelectionEvents(gtx, viewer)
 	if state.runBlockSelectionAutoScroll(gtx.Now) {
@@ -1145,6 +1205,9 @@ func (ui *UI) layoutMarkdownPreview(th *material.Theme, gtx layout.Context, view
 	event.Op(gtx.Ops, &state.selectionTag)
 	selectionArea.Pop()
 
+	// Rebuilt while laying out below, after the press handler above consumed
+	// the set from the previous frame.
+	state.scrollLists = state.scrollLists[:0]
 	pass := pointer.PassOp{}.Push(gtx.Ops)
 	dims := style.Layout(gtx, len(state.doc.blocks), func(gtx layout.Context, index int) layout.Dimensions {
 		bottom := markdownSpaceMD
@@ -1335,6 +1398,17 @@ func (ui *UI) layoutMarkdownList(th *material.Theme, gtx layout.Context, viewer 
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 
+func (ui *UI) markdownListStyle(th *material.Theme, state *widget.List) material.ListStyle {
+	theme := ui.fileViewerTheme()
+	style := material.List(th, state)
+	style.ScrollbarStyle.Track.Color = theme.ScrollTrack
+	style.ScrollbarStyle.Indicator.Color = theme.ScrollThumb
+	style.ScrollbarStyle.Indicator.HoverColor = theme.ScrollThumbHover
+	style.ScrollbarStyle.Indicator.MinorWidth = unit.Dp(7)
+	style.ScrollbarStyle.Indicator.CornerRadius = unit.Dp(4)
+	return style
+}
+
 func (ui *UI) markdownHorizontalList(state *markdownPreviewState, id int, table bool) *widget.List {
 	state.ensureMaps()
 	lists := state.codeLists
@@ -1351,35 +1425,35 @@ func (ui *UI) markdownHorizontalList(state *markdownPreviewState, id int, table 
 
 func (ui *UI) layoutMarkdownCode(th *material.Theme, gtx layout.Context, viewer *fileViewerState, block markdownBlock, colors markdownColors) layout.Dimensions {
 	return fillRoundedBox(gtx, gtx.Dp(unit.Dp(5)), colors.codeBg, colors.codeBorder, func(gtx layout.Context) layout.Dimensions {
+		pad := gtx.Dp(markdownSpaceMD)
 		return layout.UniformInset(markdownSpaceMD).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			children := make([]layout.FlexChild, 0, 3)
-			if block.language != "" {
-				children = append(children,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						label := material.Caption(th, strings.ToUpper(block.language))
-						label.Font.Typeface = ui.viewerMonospaceTypeface()
-						label.Font.Weight = font.Medium
-						label.TextSize = unit.Sp(float32(ui.viewerTextSize()) * 0.82)
-						label.Color = colors.muted
-						return label.Layout(gtx)
-					}),
-					layout.Rigid(layout.Spacer{Height: markdownSpaceSM}.Layout),
-				)
+			code := strings.ReplaceAll(strings.TrimSuffix(block.text, "\n"), "\t", "    ")
+			label := material.Body2(th, code)
+			label.Font.Typeface = ui.viewerMonospaceTypeface()
+			label.TextSize = unit.Sp(float32(ui.viewerTextSize()) * 0.92)
+			label.Color = colors.text
+			state := &viewer.markdown
+			listState := ui.markdownHorizontalList(state, block.id, false)
+			style := ui.markdownListStyle(th, listState)
+			style.AnchorStrategy = material.Overlay
+			strip := 0
+			if measureLabelUnconstrained(gtx, label).Size.X > gtx.Constraints.Max.X {
+				// Overflowing code scrolls horizontally; reserve a strip below
+				// the text so the scrollbar never occludes the last line.
+				style.AnchorStrategy = material.Occupy
+				strip = gtx.Dp(style.Width())
+				state.scrollLists = append(state.scrollLists, listState)
 			}
-			children = append(children, layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				listState := ui.markdownHorizontalList(&viewer.markdown, block.id, false)
-				style := material.List(th, listState)
-				style.AnchorStrategy = material.Overlay
-				return style.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-					code := strings.ReplaceAll(strings.TrimSuffix(block.text, "\n"), "\t", "    ")
-					label := material.Body2(th, code)
-					label.Font.Typeface = ui.viewerMonospaceTypeface()
-					label.TextSize = unit.Sp(float32(ui.viewerTextSize()) * 0.92)
-					label.Color = colors.text
-					return label.Layout(gtx)
-				})
-			}))
-			return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+			dims := style.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+				return label.Layout(gtx)
+			})
+			state.ensureMaps()
+			state.codeMetrics[block.id] = markdownCodeMetrics{
+				padTop:     pad,
+				padBottom:  pad + strip,
+				lineHeight: (dims.Size.Y - strip) / max(1, strings.Count(code, "\n")+1),
+			}
+			return dims
 		})
 	})
 }
@@ -1397,8 +1471,11 @@ func (ui *UI) layoutMarkdownTable(th *material.Theme, gtx layout.Context, viewer
 	tableW := max(viewportW, minCellW*columns)
 	cellW := tableW / columns
 	listState := ui.markdownHorizontalList(&viewer.markdown, block.id, true)
-	style := material.List(th, listState)
+	style := ui.markdownListStyle(th, listState)
 	style.AnchorStrategy = material.Occupy
+	if tableW > viewportW {
+		viewer.markdown.scrollLists = append(viewer.markdown.scrollLists, listState)
+	}
 	return style.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
 		return fixedWidth(gtx, tableW, func(gtx layout.Context) layout.Dimensions {
 			children := make([]layout.FlexChild, 0, len(block.rows))

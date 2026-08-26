@@ -340,3 +340,111 @@ func markdownInlineText(inlines []markdownInline) string {
 	}
 	return b.String()
 }
+
+func markdownCodeLayoutContext(maxWidth int) layout.Context {
+	return layout.Context{
+		Ops:         new(op.Ops),
+		Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Constraints{Max: image.Pt(maxWidth, 4000)},
+		Now:         time.Now(),
+	}
+}
+
+func TestMarkdownListStyleUsesViewerScrollTheme(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	th := material.NewTheme()
+	style := ui.markdownListStyle(th, &widget.List{})
+	theme := ui.fileViewerTheme()
+	if style.ScrollbarStyle.Track.Color != theme.ScrollTrack {
+		t.Fatalf("track color=%v want viewer theme %v", style.ScrollbarStyle.Track.Color, theme.ScrollTrack)
+	}
+	if style.ScrollbarStyle.Indicator.Color != theme.ScrollThumb {
+		t.Fatalf("indicator color=%v want viewer theme %v", style.ScrollbarStyle.Indicator.Color, theme.ScrollThumb)
+	}
+	if style.ScrollbarStyle.Indicator.HoverColor != theme.ScrollThumbHover {
+		t.Fatalf("indicator hover color=%v want viewer theme %v", style.ScrollbarStyle.Indicator.HoverColor, theme.ScrollThumbHover)
+	}
+}
+
+func TestLayoutMarkdownCodeReservesScrollbarStripWhenOverflowing(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{mode: "file", path: "README.md", name: "README.md"}
+	ui.fileViewer = st
+	th := material.NewTheme()
+	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	colors := markdownPreviewColors(ui.fileViewerTheme())
+	line := strings.Repeat("x", 200) + "\n"
+	fitting := ui.layoutMarkdownCode(th, markdownCodeLayoutContext(4000), st, markdownBlock{id: 1, kind: markdownBlockCode, text: line}, colors)
+	overflowing := ui.layoutMarkdownCode(th, markdownCodeLayoutContext(600), st, markdownBlock{id: 2, kind: markdownBlockCode, text: line}, colors)
+	gtx := markdownCodeLayoutContext(600)
+	strip := gtx.Dp(ui.markdownListStyle(th, &widget.List{}).Width())
+	if overflowing.Size.Y != fitting.Size.Y+strip {
+		t.Fatalf("overflowing code height=%d want fitting height %d plus %dpx scrollbar strip below the text",
+			overflowing.Size.Y, fitting.Size.Y, strip)
+	}
+}
+
+func TestMarkdownFencedCodeSourceLinesAlignWithRenderedLines(t *testing.T) {
+	const source = "```sh\nfirst --flag\nsecond --flag\nthird --flag\n```\n"
+	st := &markdownPreviewState{}
+	st.setSource("README.md", source)
+	lines := st.blockSourceLines(0)
+	// A fenced block renders exactly its code lines, so the selectable source
+	// lines must match one-to-one or pointer positions map to the wrong line.
+	if len(lines) != 3 {
+		t.Fatalf("fenced code selectable lines=%d want 3 rendered code lines", len(lines))
+	}
+	want := []string{"```sh\nfirst --flag\n", "second --flag\n", "third --flag\n```\n"}
+	for index, line := range lines {
+		if got := source[line.start:line.end]; got != want[index] {
+			t.Fatalf("line %d=%q want %q", index, got, want[index])
+		}
+	}
+}
+
+func TestMarkdownCodeSelectionWeightsFollowRenderedRows(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{mode: "file", path: "README.md", name: "README.md"}
+	st.markdown.setSource(st.path, "```sh\nalpha --flag\nbeta --flag\ngamma --flag\n```\n")
+	ui.fileViewer = st
+	th := material.NewTheme()
+	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	// The first pass records the rendered code geometry; the second weighs the
+	// selection lines with it.
+	for range 2 {
+		ui.layoutMarkdownPreview(th, layout.Context{
+			Ops:         new(op.Ops),
+			Metric:      unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(900, 600)),
+			Now:         time.Now(),
+		}, st)
+	}
+	weights := st.markdown.blockLineWeights[0]
+	if len(weights) != 3 {
+		t.Fatalf("code selection weights=%v want one per rendered row", weights)
+	}
+	// The outer rows carry the box padding, so only the middle row weighs a
+	// bare line height.
+	if weights[1] >= weights[0] || weights[1] >= weights[2] {
+		t.Fatalf("weights=%v want the padding charged to the first and last rows", weights)
+	}
+	_, total := markdownSelectionWeightOffset(weights, len(weights))
+	if diff := total - st.markdown.blockContentSize[0]; diff > len(weights) || diff < -len(weights) {
+		t.Fatalf("weights total=%d want the rendered block height %d", total, st.markdown.blockContentSize[0])
+	}
+}
+
+func TestLayoutMarkdownCodeOmitsLanguageCaption(t *testing.T) {
+	ui := NewUI(fm.DefaultConfig())
+	st := &fileViewerState{mode: "file", path: "README.md", name: "README.md"}
+	ui.fileViewer = st
+	th := material.NewTheme()
+	th.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	colors := markdownPreviewColors(ui.fileViewerTheme())
+	text := "echo hello\n"
+	plain := ui.layoutMarkdownCode(th, markdownCodeLayoutContext(600), st, markdownBlock{id: 1, kind: markdownBlockCode, text: text}, colors)
+	tagged := ui.layoutMarkdownCode(th, markdownCodeLayoutContext(600), st, markdownBlock{id: 2, kind: markdownBlockCode, language: "sh", text: text}, colors)
+	if tagged.Size != plain.Size {
+		t.Fatalf("language-tagged code block dims=%v want %v (no language caption rendered)", tagged.Size, plain.Size)
+	}
+}
