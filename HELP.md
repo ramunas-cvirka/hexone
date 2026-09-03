@@ -73,6 +73,63 @@ Each pane also has a sort badge in the header.
 
 Use this when a folder makes more sense grouped by modification time, extension, or size instead of name.
 
+## Pane Status Bar
+
+Each pane has a compact status bar along its bottom edge describing the item the cursor is on. It matters most in `brief` mode, where the grid shows filenames only and there are no size or date columns to read.
+
+The bar is a two-region row anchored to the pane's edges: the item's details on the left, the volume's free space flush on the right, and a `│` rule between them.
+
+```
+Makefile  •  1.39 KB  •  2026-08-18 16:40              │  519.71 GB free (56%)
+```
+
+The filename always comes first and is always shown. After it, separated by `•`, come the fields you enable:
+
+```
+Field          What it shows
+-------------  -----------------------------------------------------------
+Size           2.40 MB, or <DIR> for a directory and <UP> for the .. row
+Date           the item's modification date, in the layout you pick below
+Permissions    -rw-r--r--, or 0644 when the octal format is selected
+Owner / group  demo:staff; SSH panes report numeric ids like 1000:1000
+Free space     519.71 GB free (56%), right-anchored; the percentage is how
+               much of the volume is free
+```
+
+Every column has a fixed width derived from the directory listing and your settings — never from the item under the cursor — so moving the cursor never shifts anything sideways. A filename longer than its column is compacted the way the grid compacts it, keeping the start and the extension: `gpstrack-dashb….go`. Owner and group are blank for local files on Windows and for anything inside an archive; a field with nothing to report leaves its column empty rather than shifting its neighbours.
+
+While any rows are marked, the left side is replaced by a summary of the marked selection, and returns to the item's details when the marks are cleared. This is automatic, not a field you enable; free space stays put on the right.
+
+```
+3 items selected  •  14.20 MB                          │  519.71 GB free (56%)
+```
+
+When a pane is too narrow for the whole row, the filename column shrinks first, compacting the name. Below a usable name width, whole fields drop in this order: owner, permissions, free space, date, size — and the filename survives last. Size and date outlive the rest because reading them in `brief` mode is the reason this bar exists.
+
+Use `Settings -> File panes -> Status bar` to choose what appears.
+
+- `Show pane status bar` turns the strip off entirely.
+- `Hide it in full mode` keeps it in `brief` mode only, where size and date are not already columns.
+- The five field checkboxes are greyed out while the bar is off. Clearing all of them is treated the same as turning the bar off.
+- `Date layout` picks the bar's own date format. `Match columns` follows the date and time format you build under `Settings -> File panes -> Full mode`; the other three options are fixed layouts, shown as rendered samples (`2026-08-18 16:40`, `08/18/2026 4:40 PM`, `08-18 16:40`).
+- The preview below is a small `brief` pane with one row under the cursor and its status bar along the bottom edge, so you can see the bar describing the highlighted file rather than a line of sample text on its own. It renders through the same layout a real pane uses, and every checkbox and the date layout visibly change it. Field sets too wide for the preview frame are drawn as a smaller pane rather than dropped, so nothing you tick is invisible. The marked-selection line is not previewed: it is automatic and has no settings.
+
+Free space used to float over the opposite pane and report the active pane's volume. It now belongs to the pane it describes, so each side reports its own. The old floating badge comes back whenever the bar is not carrying free space: when you untick the `Free space` field, when you turn the whole bar off with `Show pane status bar`, and when `Hide it in full mode` hides the bar of the pane you are working in. Free space is never simply gone — it is either in the bar or back in the badge.
+
+While an archive extraction or a file paste is running, that pane's strip shows the operation's progress instead and returns to file information when it finishes. Turning the status bar off does not take progress feedback with it.
+
+The same settings live in `hexone.yaml`:
+
+```yaml
+status_bar:
+  enabled: true
+  hide_in_full: false
+  fields: [size, date, free]
+  date_format: auto   # auto | iso | us | short
+```
+
+`fields` accepts `size`, `date`, `perms`, `owner`, and `free` in any order; Hexone sorts them into display order and ignores anything it does not recognize — the `items` and `selection` keys from earlier builds are dropped this way. Omitting the block gives size, date, and free space in both view modes. `date_format` is the `Date layout` picker: `auto` matches the columns, `iso` is `2026-08-18 16:40`, `us` is `08/18/2026 4:40 PM`, and `short` is `08-18 16:40`.
+
 ## Function Key Bar
 
 - `F1` opens or closes Help.
@@ -96,8 +153,9 @@ the system file clipboard. Finder, File Explorer, and applications that accept
 file clipboard data can paste them. When the system clipboard contains files,
 the local pane context menu also offers **Paste File(s)** and starts copying
 immediately into the current directory. Paste progress appears in the pane's
-bottom status bar without opening a modal. File clipboard actions are
-unavailable inside archives and SSH panes.
+bottom status bar without opening a modal, replacing the file information
+described under Pane Status Bar until the copy finishes. File clipboard actions
+are unavailable inside archives and SSH panes.
 
 When the terminal drawer is open, `Shift+Tab` toggles keyboard focus between the terminal and the file panes. Plain `Tab` stays available to the terminal for shell completion while the terminal is focused.
 

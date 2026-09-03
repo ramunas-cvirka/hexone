@@ -24,6 +24,9 @@ const (
 	settingsKeyboardFocusGeneralUseTrash
 	settingsKeyboardFocusGeneralDeleteWithoutConfirm
 	settingsKeyboardFocusGeneralCompletionSound
+	settingsKeyboardFocusStatusBarEnabled
+	settingsKeyboardFocusStatusBarHideInFull
+	settingsKeyboardFocusStatusBarDateFormat
 	settingsKeyboardFocusFilePaneMode
 	settingsKeyboardFocusFilePaneFileWeight
 	settingsKeyboardFocusFilePaneDirWeight
@@ -120,6 +123,32 @@ const (
 	settingsKeyboardFocusFooter
 )
 
+// settingsKeyboardFocusStatusBarField0 opens a contiguous run of
+// statusBarFieldCount focus targets, one per status bar field checkbox, placed
+// past the end of the block above.
+//
+// A derived range rather than seven more named constants on purpose: the field
+// set is already spread across enough hand-maintained lists (see the checklist
+// above filePaneStatusField), and writing them out would add four more — one in
+// each of isWidgetFocusTarget, syncFocusedWidget, toggleFocusedCheckbox and
+// focusOrder. This way a seventh field needs only the statusBarFieldCount bump
+// it already needs.
+const settingsKeyboardFocusStatusBarField0 = settingsKeyboardFocusFooter + 1
+
+func settingsKeyboardFocusStatusBarField(field filePaneStatusField) settingsKeyboardFocus {
+	return settingsKeyboardFocusStatusBarField0 + settingsKeyboardFocus(field)
+}
+
+// settingsStatusBarFieldForFocus reverses settingsKeyboardFocusStatusBarField,
+// reporting false for every focus target outside the range.
+func settingsStatusBarFieldForFocus(focus settingsKeyboardFocus) (filePaneStatusField, bool) {
+	idx := int(focus - settingsKeyboardFocusStatusBarField0)
+	if idx < 0 || idx >= statusBarFieldCount {
+		return 0, false
+	}
+	return filePaneStatusField(idx), true
+}
+
 type settingsPopupKeyboardKind int
 
 const (
@@ -175,8 +204,13 @@ func (st *settingsModalState) showColorTextField() bool {
 }
 
 func (st *settingsModalState) isWidgetFocusTarget(target settingsKeyboardFocus) bool {
+	if _, ok := settingsStatusBarFieldForFocus(target); ok {
+		return true
+	}
 	switch target {
-	case settingsKeyboardFocusGeneralDimInactive,
+	case settingsKeyboardFocusStatusBarEnabled,
+		settingsKeyboardFocusStatusBarHideInFull,
+		settingsKeyboardFocusGeneralDimInactive,
 		settingsKeyboardFocusGeneralFavoritesNewTab,
 		settingsKeyboardFocusGeneralWheelMovesSelection,
 		settingsKeyboardFocusGeneralUseTrash,
@@ -225,7 +259,19 @@ func (st *settingsModalState) syncFocusedWidget(gtx layout.Context) {
 	if st == nil {
 		return
 	}
+	// Looped rather than listed as seven more cases below, for the reason given
+	// above settingsKeyboardFocusStatusBarField0.
+	for i := range st.statusBarFieldBools {
+		if gtx.Focused(&st.statusBarFieldBools[i]) {
+			st.focus = settingsKeyboardFocusStatusBarField(filePaneStatusField(i))
+			return
+		}
+	}
 	switch {
+	case gtx.Focused(&st.statusBarEnabledBool):
+		st.focus = settingsKeyboardFocusStatusBarEnabled
+	case gtx.Focused(&st.statusBarHideInFullBool):
+		st.focus = settingsKeyboardFocusStatusBarHideInFull
 	case gtx.Focused(&st.generalDimInactiveBool):
 		st.focus = settingsKeyboardFocusGeneralDimInactive
 	case gtx.Focused(&st.generalFavoritesNewTabBool):
@@ -325,6 +371,22 @@ func (st *settingsModalState) focusOrder() []settingsKeyboardFocus {
 		switch normalizeSettingsPaneMode(st.paneSettingsMode) {
 		case "brief":
 			order = append(order, settingsKeyboardFocusFilePaneBriefChars)
+		case "statusbar":
+			order = append(order, settingsKeyboardFocusStatusBarEnabled)
+			// Everything below the master switch is laid out with
+			// gtx.Disabled() while the bar is off, so it is skipped here too.
+			// Listing it anyway would let Space toggle a greyed control that
+			// ignores the mouse — toggleFocusedCheckbox writes the widget.Bool
+			// directly and never sees the disabled context — and would aim
+			// applyPendingWidgetFocus at a disabled gtx, whose FocusCmd is a
+			// silent no-op, leaving Gio focus on whatever held it before.
+			if st.statusBarEnabledBool.Value {
+				order = append(order, settingsKeyboardFocusStatusBarHideInFull)
+				for _, row := range settingsStatusBarFieldRows() {
+					order = append(order, settingsKeyboardFocusStatusBarField(row.field))
+				}
+				order = append(order, settingsKeyboardFocusStatusBarDateFormat)
+			}
 		case "other":
 			order = append(order,
 				settingsKeyboardFocusGeneralDimInactive,
@@ -562,7 +624,17 @@ func (st *settingsModalState) toggleFocusedCheckbox() bool {
 	if st == nil {
 		return false
 	}
+	if field, ok := settingsStatusBarFieldForFocus(st.focus); ok {
+		st.statusBarFieldBools[field].Value = !st.statusBarFieldBools[field].Value
+		return true
+	}
 	switch st.focus {
+	case settingsKeyboardFocusStatusBarEnabled:
+		st.statusBarEnabledBool.Value = !st.statusBarEnabledBool.Value
+		return true
+	case settingsKeyboardFocusStatusBarHideInFull:
+		st.statusBarHideInFullBool.Value = !st.statusBarHideInFullBool.Value
+		return true
 	case settingsKeyboardFocusGeneralDimInactive:
 		st.generalDimInactiveBool.Value = !st.generalDimInactiveBool.Value
 		return true
@@ -1769,6 +1841,8 @@ func (st *settingsModalState) stepFocusedHorizontalGroup(step int, families []re
 		return st.stepPaneWeight(&st.paneDateWeight, &st.paneDateWeightAnim, fm.FontWeightRegular, step, now)
 	case settingsKeyboardFocusFilePanePermissionFormat:
 		return st.stepPanePermissionFormat(step, now)
+	case settingsKeyboardFocusStatusBarDateFormat:
+		return st.stepStatusBarDateFormat(step, now)
 	case settingsKeyboardFocusFilePaneMode:
 		return st.stepPaneSettingsMode(step, now)
 	case settingsKeyboardFocusFilePaneDateStyle:

@@ -572,6 +572,7 @@ func (ui *UI) syncThemeRuntime(th *material.Theme) {
 func (ui *UI) Layout(th *material.Theme, gtx layout.Context) layout.Dimensions {
 	ui.syncThemeRuntime(th)
 	ui.pumpTerminalDirProbe(gtx)
+	ui.pumpFilePaneVolumeLookups(gtx)
 	ui.handleFunctionBarModifierKeys(gtx)
 	ui.handleHTTPClientKeys(gtx)
 	ui.handleGlobalFunctionKeys(gtx)

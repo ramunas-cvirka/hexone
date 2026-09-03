@@ -101,11 +101,18 @@ codebase, and new work should follow it:
 `fileViewerState` is the fullest example: separate sequence-guarded pipelines
 for content loading, syntax highlighting, find, and saving.
 
+`filePaneVolumeBadgeState` (`startVolumeLookup` / `pumpFilePaneVolumeLookups`) is
+the smallest one worth reading, and it shows the wrinkle the pattern hides: a
+goroutine finishing cannot wake Gio by itself, so a pump with work outstanding
+has to schedule its own invalidation and come back to look. It also stops polling
+a pane no frame has asked about, and caps the goroutines it will leave behind on
+a wedged mount — an abandoned lookup is not a cancelled one.
+
 ## Package map
 
 ### `ui/` — everything visual
 
-79 files. The prefix of a filename is its feature cluster; that is the fastest
+81 files. The prefix of a filename is its feature cluster; that is the fastest
 way to navigate. Paths in this table are relative to `ui/`.
 
 | Cluster | Files | What it owns |

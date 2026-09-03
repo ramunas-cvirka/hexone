@@ -31,6 +31,7 @@ type Entry struct {
 	SizeText    string
 	SizeBytes   int64
 	DateText    string
+	OwnerText   string
 	ModTime     time.Time
 	Kind        EntryKind
 	Path        string
@@ -101,6 +102,7 @@ func readLocalDir(abs string) (Listing, error) {
 		} else {
 			populateListingEntry(&row, name, info)
 		}
+		row.OwnerText = localOwnerText(info)
 		if row.Kind == EntryFile && ArchiveNameSupported(name) {
 			row.CanEnter = true
 		}

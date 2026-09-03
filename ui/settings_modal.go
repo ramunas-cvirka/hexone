@@ -307,57 +307,68 @@ type settingsModalState struct {
 	generalCompletionSound       string
 	generalCompletionSoundAnim   settingsChoiceAnim
 	generalCompletionSoundClicks [3]widget.Clickable
-	viewSmoothScrollingBool      widget.Bool
-	viewShowLineNumbersBool      widget.Bool
-	viewHideFunctionBarBool      widget.Bool
-	viewPreviewStart             int
-	viewPreviewEnd               int
-	viewHexPreviewRows           int
-	viewPreviewStartStepper      settingsNumberStepperState
-	viewPreviewEndStepper        settingsNumberStepperState
-	viewHexPreviewRowsStepper    settingsNumberStepperState
-	generalTabList               widget.List
-	viewerTabList                widget.List
-	colorsTabList                widget.List
-	viewTargetKeyEdit            widget.Editor
-	viewTargetCommandEdit        widget.Editor
-	viewTargetApplyClick         widget.Clickable
-	viewTargetPickClick          widget.Clickable
-	viewTargetPickOpen           bool
-	viewTargetPickList           widget.List
-	viewTargetPickRemember       int
-	viewTargetRowClicks          map[string]*widget.Clickable
-	viewTargetRowRemoveClicks    map[string]*widget.Clickable
-	viewTargetEntries            []viewerCommandTargetEntry
-	viewTargetSavedEntries       []viewerCommandTargetEntry
-	viewTargetLookupKey          string
-	viewTargetEditingKey         string
-	viewRulePatternEdit          widget.Editor
-	viewRuleCommandEdit          widget.Editor
-	viewRuleApplyClick           widget.Clickable
-	viewRulePickClick            widget.Clickable
-	viewRulePickOpen             bool
-	viewRulePickList             widget.List
-	viewRulePickRemember         int
-	viewRuleRowClicks            map[string]*widget.Clickable
-	viewRuleRowRemoveClicks      map[string]*widget.Clickable
-	viewRuleEntries              []fm.ViewerCommandRule
-	viewRuleSavedEntries         []fm.ViewerCommandRule
-	viewRuleLookupPattern        string
-	viewRuleEditingPattern       string
-	viewAssocExtEdit             widget.Editor
-	viewAssocAppEdit             widget.Editor
-	viewAssocApplyClick          widget.Clickable
-	viewAssocPickClick           widget.Clickable
-	viewAssocRemoveClick         widget.Clickable
-	viewAssocPickOpen            bool
-	viewAssocPickList            layout.List
-	viewAssocPickRemember        int
-	viewAssocRowClicks           map[string]*widget.Clickable
-	viewAssocEntries             []fm.ViewerAssociation
-	viewAssocSavedEntries        []fm.ViewerAssociation
-	viewAssocLookupExt           string
-	viewAssocEditingExt          string
+	statusBarEnabledBool         widget.Bool
+	statusBarHideInFullBool      widget.Bool
+	statusBarFieldBools          [statusBarFieldCount]widget.Bool
+	// The bar's own date layout (status_bar.date_format): auto | iso | us |
+	// short. The anim and clicks are the layoutSettingsShellPicker state the
+	// permission-format picker also carries; the picker lives in the Status bar
+	// tab (layoutSettingsPaneStatusBarTab).
+	statusBarDateFormat        string
+	statusBarDateFormatAnim    settingsChoiceAnim
+	statusBarDateFormatClicks  [4]widget.Clickable
+	paneSettingsStatusBarClick widget.Clickable
+	viewSmoothScrollingBool    widget.Bool
+	viewShowLineNumbersBool    widget.Bool
+	viewHideFunctionBarBool    widget.Bool
+	viewPreviewStart           int
+	viewPreviewEnd             int
+	viewHexPreviewRows         int
+	viewPreviewStartStepper    settingsNumberStepperState
+	viewPreviewEndStepper      settingsNumberStepperState
+	viewHexPreviewRowsStepper  settingsNumberStepperState
+	generalTabList             widget.List
+	viewerTabList              widget.List
+	colorsTabList              widget.List
+	viewTargetKeyEdit          widget.Editor
+	viewTargetCommandEdit      widget.Editor
+	viewTargetApplyClick       widget.Clickable
+	viewTargetPickClick        widget.Clickable
+	viewTargetPickOpen         bool
+	viewTargetPickList         widget.List
+	viewTargetPickRemember     int
+	viewTargetRowClicks        map[string]*widget.Clickable
+	viewTargetRowRemoveClicks  map[string]*widget.Clickable
+	viewTargetEntries          []viewerCommandTargetEntry
+	viewTargetSavedEntries     []viewerCommandTargetEntry
+	viewTargetLookupKey        string
+	viewTargetEditingKey       string
+	viewRulePatternEdit        widget.Editor
+	viewRuleCommandEdit        widget.Editor
+	viewRuleApplyClick         widget.Clickable
+	viewRulePickClick          widget.Clickable
+	viewRulePickOpen           bool
+	viewRulePickList           widget.List
+	viewRulePickRemember       int
+	viewRuleRowClicks          map[string]*widget.Clickable
+	viewRuleRowRemoveClicks    map[string]*widget.Clickable
+	viewRuleEntries            []fm.ViewerCommandRule
+	viewRuleSavedEntries       []fm.ViewerCommandRule
+	viewRuleLookupPattern      string
+	viewRuleEditingPattern     string
+	viewAssocExtEdit           widget.Editor
+	viewAssocAppEdit           widget.Editor
+	viewAssocApplyClick        widget.Clickable
+	viewAssocPickClick         widget.Clickable
+	viewAssocRemoveClick       widget.Clickable
+	viewAssocPickOpen          bool
+	viewAssocPickList          layout.List
+	viewAssocPickRemember      int
+	viewAssocRowClicks         map[string]*widget.Clickable
+	viewAssocEntries           []fm.ViewerAssociation
+	viewAssocSavedEntries      []fm.ViewerAssociation
+	viewAssocLookupExt         string
+	viewAssocEditingExt        string
 
 	footerFocus     settingsFooterAction
 	footerHoverKey  string
@@ -738,6 +749,18 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.generalDeleteWithoutConfirm.Value = cfg.General.DeleteWithoutConfirm
 	st.generalCompletionSound = fm.NormalizeCompletionSound(cfg.General.CompletionSound)
 	st.generalCompletionSoundAnim = settingsChoiceAnim{}
+	st.statusBarEnabledBool.Value = cfg.StatusBar.Enabled
+	st.statusBarHideInFullBool.Value = cfg.StatusBar.HideInFull
+	// Cleared first: loadFromConfig also runs after a save and on every reopen,
+	// so leaving the previous draft's ticks in place would only ever add fields.
+	for i := range st.statusBarFieldBools {
+		st.statusBarFieldBools[i].Value = false
+	}
+	for _, field := range filePaneStatusFields(cfg.StatusBar.Fields) {
+		st.statusBarFieldBools[field].Value = true
+	}
+	st.statusBarDateFormat = fm.NormalizeStatusBarDateFormat(cfg.StatusBar.DateFormat)
+	st.statusBarDateFormatAnim = settingsChoiceAnim{}
 	st.viewSmoothScrollingBool.Value = cfg.Viewer.SmoothScrolling
 	st.viewShowLineNumbersBool.Value = cfg.Viewer.ShowLineNumbers
 	st.viewHideFunctionBarBool.Value = cfg.Viewer.HideFunctionBarWhenOpen
@@ -774,6 +797,54 @@ func (st *settingsModalState) loadFromConfig(cfg *fm.Config) {
 	st.assocInfoText = ""
 	st.baselineConfig = st.configEdit.Text()
 	st.baselineDraft = st.draftSignature()
+}
+
+// statusBarFieldCount sizes statusBarFieldBools, which is indexed by
+// filePaneStatusField rather than by display position. A sixth field constant
+// without a bump here would make the load loop above panic with an index out of
+// range on the first open of the settings modal;
+// TestStatusBarFieldBoolsCoverEveryField guards that. The always-on name value
+// is not counted: it has no checkbox (see the checklist comment in
+// filepane_status_fields.go).
+const statusBarFieldCount = 5
+
+// statusBarFieldConfigKeys maps each checkbox slot back to its fm config key.
+// The slot is chosen by filePaneStatusFieldFromConfigKey rather than written out
+// in enum order, so this cannot silently drift out of order the way a fourth
+// hand-ordered parallel list would — a mis-ordered list is invisible at runtime
+// and would make the Perms checkbox save "owner". The one manual step left is
+// which keys exist at all, because Go cannot enumerate constants and
+// fm.statusBarFieldOrder is unexported.
+var statusBarFieldConfigKeys = buildStatusBarFieldConfigKeys()
+
+func buildStatusBarFieldConfigKeys() [statusBarFieldCount]string {
+	var keys [statusBarFieldCount]string
+	for _, key := range []string{
+		fm.StatusBarFieldSize, fm.StatusBarFieldDate, fm.StatusBarFieldPerms,
+		fm.StatusBarFieldOwner, fm.StatusBarFieldFree,
+	} {
+		field, ok := filePaneStatusFieldFromConfigKey(key)
+		if !ok || int(field) >= len(keys) {
+			continue
+		}
+		keys[field] = key
+	}
+	return keys
+}
+
+// statusBarSelectedFields converts the checkbox array back into config keys, in
+// canonical order.
+func (st *settingsModalState) statusBarSelectedFields() []string {
+	if st == nil {
+		return nil
+	}
+	out := make([]string, 0, len(statusBarFieldConfigKeys))
+	for i, key := range statusBarFieldConfigKeys {
+		if key != "" && st.statusBarFieldBools[i].Value {
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 func settingsColorOptionsForScope(scope string) []settingsColorOption {
@@ -3325,6 +3396,15 @@ func (ui *UI) saveSettingsModal(now time.Time) error {
 	ui.fmCfg.General.UseTrash = st.generalUseTrash.Value
 	ui.fmCfg.General.DeleteWithoutConfirm = st.generalDeleteWithoutConfirm.Value
 	ui.fmCfg.General.CompletionSound = fm.NormalizeCompletionSound(st.generalCompletionSound)
+	statusBarFields := st.statusBarSelectedFields()
+	// Unchecking every field is how a user says "I don't want this bar". Honour
+	// that literally: NormalizeStatusBarFields restores the defaults for an
+	// empty list, so without this the checkboxes would visibly snap back to
+	// size/date/free on the next open, which reads as a bug.
+	ui.fmCfg.StatusBar.Enabled = st.statusBarEnabledBool.Value && len(statusBarFields) > 0
+	ui.fmCfg.StatusBar.HideInFull = st.statusBarHideInFullBool.Value
+	ui.fmCfg.StatusBar.Fields = fm.NormalizeStatusBarFields(statusBarFields)
+	ui.fmCfg.StatusBar.DateFormat = fm.NormalizeStatusBarDateFormat(st.statusBarDateFormat)
 	ui.fmCfg.Viewer.SmoothScrolling = st.viewSmoothScrollingBool.Value
 	ui.fmCfg.Viewer.ShowLineNumbers = st.viewShowLineNumbersBool.Value
 	ui.fmCfg.Viewer.HideFunctionBarWhenOpen = st.viewHideFunctionBarBool.Value
@@ -4652,12 +4732,19 @@ func (ui *UI) layoutSettingsShellPicker(th *material.Theme, gtx layout.Context, 
 	if len(options) == 0 || len(clicks) < len(options) {
 		return layout.Dimensions{}
 	}
+	// A picker laid out under gtx.Disabled() greys out the way
+	// layoutThemeCheckbox does when it reads the same flag: every segment is
+	// marked Disabled (the slidingTabSpec mechanism multi-rename's tab strip
+	// already uses), hover and pulse are suppressed, and the slider stays where
+	// it is so the greyed picker still shows its value. The status bar tab's
+	// date-layout picker is the first caller to lay one out disabled.
+	enabled := gtx.Enabled()
 	textSize := ui.scaleModalFontSize(10)
 	keys := make([]string, len(options))
 	hoverKey := ""
 	for i, opt := range options {
 		keys[i] = opt.Key
-		if i < len(clicks) && clicks[i].Hovered() {
+		if enabled && i < len(clicks) && clicks[i].Hovered() {
 			hoverKey = opt.Key
 		}
 	}
@@ -4696,6 +4783,9 @@ func (ui *UI) layoutSettingsShellPicker(th *material.Theme, gtx layout.Context, 
 		if focused && opt.Key == active {
 			focusFill = 1
 		}
+		if !enabled {
+			hoverFill, pulseFill = 0, 0
+		}
 		specs = append(specs, slidingTabSpec{
 			Label:      opt.Label,
 			Click:      &clicks[i],
@@ -4703,6 +4793,7 @@ func (ui *UI) layoutSettingsShellPicker(th *material.Theme, gtx layout.Context, 
 			HoverFill:  hoverFill,
 			PulseFill:  pulseFill,
 			FocusFill:  focusFill,
+			Disabled:   !enabled,
 		})
 	}
 	for _, opt := range options {

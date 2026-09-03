@@ -15,6 +15,7 @@ func (st *settingsModalState) draftSignature() string {
 		ViewerFields, ViewerEntries                string
 		Fonts, PaneAppearance, PaneBehavior        string
 		PaneColumns, PaneDates, Terminal           string
+		StatusBar                                  string
 		ConfigYAML                                 string
 	}{
 		PaneColors: fmt.Sprintf("%q", []string{
@@ -57,6 +58,11 @@ func (st *settingsModalState) draftSignature() string {
 			st.generalUseTrash.Value,
 			st.generalDeleteWithoutConfirm.Value,
 			st.generalCompletionSound),
+		StatusBar: fmt.Sprintf("%t|%t|%q|%q",
+			st.statusBarEnabledBool.Value,
+			st.statusBarHideInFullBool.Value,
+			st.statusBarSelectedFields(),
+			st.statusBarDateFormat),
 		PaneColumns: fmt.Sprintf("%v|%v|%t|%q",
 			st.paneFullChars, st.paneBriefChars, st.paneShowPermissions, st.panePermissionFormat),
 		PaneDates:  fmt.Sprintf("%q|%q", st.paneDateFormatEdit.Text(), st.paneDateFallbackFormats),

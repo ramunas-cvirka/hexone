@@ -43,6 +43,11 @@ type filePaneModel struct {
 	measureCache    map[string]int
 	briefTextWidth  int
 	briefWidthValid bool
+	// entriesGen counts setEntries calls. It exists for caches that live
+	// outside the model — the status bar's column widths key on it
+	// (filePaneStatusBarMeasure) the way briefWidthValid keys the cache above —
+	// so a new listing invalidates them without the model knowing who they are.
+	entriesGen uint64
 }
 
 type filePaneTextMeasureKey struct {
@@ -79,6 +84,7 @@ func (m *filePaneModel) setEntries(entries []filesys.Entry) {
 	m.entries = entries
 	m.briefTextWidth = 0
 	m.briefWidthValid = false
+	m.entriesGen++
 	clear(m.measureCache)
 }
 
@@ -447,6 +453,7 @@ type filePaneState struct {
 	noticeShownAt             time.Time
 	noticeUntil               time.Time
 	volumeBadge               filePaneVolumeBadgeState
+	statusBar                 filePaneStatusBarMeasureState
 	markedRows                map[int]struct{}
 }
 

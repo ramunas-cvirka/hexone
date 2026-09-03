@@ -86,6 +86,7 @@ func ReadDirSFTP(client *sftp.Client, dir string) (Listing, error) {
 		} else {
 			populateListingEntry(&row, name, item)
 		}
+		row.OwnerText = remoteOwnerText(item)
 
 		rows = append(rows, sortable{entry: row, key: strings.ToLower(name), group: listingEntryGroup(row)})
 	}

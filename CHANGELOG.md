@@ -95,3 +95,9 @@ Release notes extraction in CI expects release headings that begin with `## v...
 - Greatly accelerated SFTP transfers, especially uploads, by pipelining remote I/O. Redesigned copy and move overwrite confirmations to preview multiple conflicts and source/destination differences.
 - Improved viewer editing with automatic or configurable tabs/spaces indentation, reduced syntax-highlighting flicker, external file-size change detection, and UTF-8-aware Hex `Copy as Text`.
 - Expanded terminal-to-pane SSH sync: no saved Hexone SSH setup or remote shell configuration is required; Hexone uses OpenSSH configuration and `ssh-agent`, queries the remote directory on demand, preserves or reuses server tabs, and multiplexes SFTP and commands over one connection.
+
+## v1.3.0 - Unreleased
+
+- Added a status bar along the bottom edge of each file pane: the filename of the item under the cursor with optional size, date, permissions, and owner/group columns anchored on the left, and the volume's free space with a percentage anchored on the right. Column widths never follow the cursor, long names compact like the grid's, marked rows switch the bar to a marked-selection summary, and fields drop in a fixed order when the pane is too narrow. A new Status bar tab in File panes settings turns it off, restricts it to Brief mode, selects the fields, picks the bar's date layout, and previews both modes live.
+- Free and total disk space moved out of the floating badge over the opposite pane and into each pane's own status bar, so both panes now report the volume they are actually browsing. Turning the Free space field off restores the previous badge.
+- Volume space is now measured in the background instead of during layout, so panes on slow or reconnecting SFTP servers no longer freeze the interface while free space is read, and a failed reading is retried on its own schedule rather than on every frame.

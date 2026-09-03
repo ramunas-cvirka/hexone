@@ -629,7 +629,7 @@ func (ui *UI) layoutFilePaneVolumeBadges(th *material.Theme, gtx layout.Context,
 }
 
 func (ui *UI) filePaneVolumeBadgesHidden(gtx layout.Context) bool {
-	return ui.terminalVisuallyFocused(gtx)
+	return ui.terminalVisuallyFocused(gtx) || ui.filePaneStatusBarShowsFreeSpace()
 }
 
 func filePaneTabHeight(gtx layout.Context, pane *filePaneState) int {

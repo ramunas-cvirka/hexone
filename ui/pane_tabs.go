@@ -378,6 +378,7 @@ func (ui *UI) closeFilePaneTab(paneIdx, tabIdx int) bool {
 	closing := set.tabs[tabIdx]
 	if closing != nil {
 		closeFilePaneTabTransient(closing)
+		closing.volumeBadge.cancelLookup()
 		if closing.remote != nil {
 			closing.remote.close()
 		}

@@ -8,8 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"go.yaml.in/yaml/v4"
 )
@@ -1796,4 +1798,307 @@ func mustMarshalConfig(t *testing.T, cfg *Config) []byte {
 		t.Fatalf("marshal config: %v", err)
 	}
 	return data
+}
+
+func TestStatusBarConfigDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.StatusBar.Enabled {
+		t.Fatalf("status bar should default to enabled")
+	}
+	if cfg.StatusBar.HideInFull {
+		t.Fatalf("status bar should default to visible in full mode")
+	}
+	want := []string{"size", "date", "free"}
+	if !slices.Equal(cfg.StatusBar.Fields, want) {
+		t.Fatalf("default fields = %v, want %v", cfg.StatusBar.Fields, want)
+	}
+}
+
+func TestStatusBarConfigAbsentBlockKeepsDefaults(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("columns:\n  brief_chars: 20\n"), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cfg.normalize()
+	if !cfg.StatusBar.Enabled {
+		t.Fatalf("absent status_bar block should leave the bar enabled")
+	}
+	want := []string{"size", "date", "free"}
+	if !slices.Equal(cfg.StatusBar.Fields, want) {
+		t.Fatalf("fields = %v, want %v", cfg.StatusBar.Fields, want)
+	}
+}
+
+func TestStatusBarConfigAbsentEnabledKeyMeansTrue(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("status_bar:\n  hide_in_full: true\n"), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cfg.normalize()
+	if !cfg.StatusBar.Enabled {
+		t.Fatalf("absent enabled key should mean true, not false")
+	}
+	if !cfg.StatusBar.HideInFull {
+		t.Fatalf("hide_in_full should have been read")
+	}
+}
+
+func TestStatusBarConfigExplicitDisable(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("status_bar:\n  enabled: false\n"), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cfg.normalize()
+	if cfg.StatusBar.Enabled {
+		t.Fatalf("enabled: false should disable the bar")
+	}
+}
+
+func TestNormalizeStatusBarFields(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"empty falls back to defaults", nil, []string{"size", "date", "free"}},
+		{"unknown keys dropped", []string{"size", "bogus", "date"}, []string{"size", "date"}},
+		{"duplicates removed", []string{"size", "size", "date"}, []string{"size", "date"}},
+		{"sorted into canonical order", []string{"free", "perms", "size"}, []string{"size", "perms", "free"}},
+		{"all unknown falls back to defaults", []string{"nope"}, []string{"size", "date", "free"}},
+		{"case and space tolerant", []string{" Size ", "DATE"}, []string{"size", "date"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := NormalizeStatusBarFields(tc.in)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("NormalizeStatusBarFields(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStatusBarFieldsDropRetiredSelectionKey pins the Revision 2 migration. The
+// selection field is no longer configurable — the marked-mode summary renders
+// whenever rows are marked — so "selection" became an unknown key, and
+// NormalizeStatusBarFields' documented behaviour for unknown keys is to drop
+// them silently. A Revision 1 config that carried the field must load as the
+// same config without it, not fail or fall back to the defaults.
+func TestStatusBarFieldsDropRetiredSelectionKey(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("status_bar:\n  fields: [size, selection, free]\n"), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cfg.normalize()
+	if want := []string{"size", "free"}; !slices.Equal(cfg.StatusBar.Fields, want) {
+		t.Fatalf("fields = %v, want %v; the retired selection key must be dropped as an unknown key, keeping the rest", cfg.StatusBar.Fields, want)
+	}
+}
+
+// TestStatusBarFieldsDropRetiredItemsKey pins the Revision 2.1 migration. The
+// item count field is retired — it was never a per-file attribute, and the
+// marked-mode summary already reports counts — so "items" joins "selection" as
+// an unknown key that NormalizeStatusBarFields silently drops. A config that
+// carried the field must load as the same config without it.
+func TestStatusBarFieldsDropRetiredItemsKey(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("status_bar:\n  fields: [size, items, free]\n"), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cfg.normalize()
+	if want := []string{"size", "free"}; !slices.Equal(cfg.StatusBar.Fields, want) {
+		t.Fatalf("fields = %v, want %v; the retired items key must be dropped as an unknown key, keeping the rest", cfg.StatusBar.Fields, want)
+	}
+}
+
+func TestStatusBarConfigRoundTrip(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StatusBar.Enabled = false
+	cfg.StatusBar.HideInFull = true
+	cfg.StatusBar.Fields = []string{"size", "date", "perms", "owner", "free"}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Without this the round trip below would pass vacuously: an omitted
+	// enabled key is read back as the default true, which is not what we
+	// are trying to prove survives.
+	if !strings.Contains(string(data), "enabled: false") {
+		t.Fatalf("marshalled config should carry an explicit enabled: false, got:\n%s", data)
+	}
+	var back Config
+	if err := yaml.Unmarshal(data, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	back.normalize()
+	if back.StatusBar.Enabled {
+		t.Fatalf("enabled: false did not survive the round trip")
+	}
+	if !back.StatusBar.HideInFull {
+		t.Fatalf("hide_in_full did not survive the round trip")
+	}
+	if !slices.Equal(back.StatusBar.Fields, cfg.StatusBar.Fields) {
+		t.Fatalf("fields = %v, want %v", back.StatusBar.Fields, cfg.StatusBar.Fields)
+	}
+}
+
+// TestStatusBarDateFormatDefaultsToAuto pins the upgrade path: a config written
+// before status_bar.date_format existed must load as "auto", which renders the
+// bar's date through DateFormats[0] exactly as it did before — nobody's bar
+// changes on upgrade.
+func TestStatusBarDateFormatDefaultsToAuto(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("status_bar:\n  hide_in_full: true\n"), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cfg.normalize()
+	if got := cfg.StatusBar.DateFormat; got != StatusBarDateFormatAuto {
+		t.Fatalf("absent date_format loaded as %q, want %q", got, StatusBarDateFormatAuto)
+	}
+	if got := DefaultConfig().StatusBar.DateFormat; got != StatusBarDateFormatAuto {
+		t.Fatalf("default config date_format = %q, want %q", got, StatusBarDateFormatAuto)
+	}
+}
+
+func TestNormalizeStatusBarDateFormat(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"auto", "auto"},
+		{"iso", "iso"},
+		{"us", "us"},
+		{"short", "short"},
+		{"", "auto"},
+		{"bogus", "auto"},
+		{" ISO ", "iso"},
+		{"Short", "short"},
+	}
+	for _, tc := range tests {
+		if got := NormalizeStatusBarDateFormat(tc.in); got != tc.want {
+			t.Fatalf("NormalizeStatusBarDateFormat(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestStatusBarDateFormatNormalizedOnLoad covers both places an unknown value
+// can enter: StatusBarConfig.UnmarshalYAML's overlay and Config.normalize(),
+// mirroring how columns.permission_format is treated.
+func TestStatusBarDateFormatNormalizedOnLoad(t *testing.T) {
+	var cfg Config
+	if err := yaml.Unmarshal([]byte("status_bar:\n  date_format: bogus\n"), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := cfg.StatusBar.DateFormat; got != StatusBarDateFormatAuto {
+		t.Fatalf("unmarshal left date_format = %q, want %q", got, StatusBarDateFormatAuto)
+	}
+
+	cfg.StatusBar.DateFormat = "nonsense"
+	cfg.normalize()
+	if got := cfg.StatusBar.DateFormat; got != StatusBarDateFormatAuto {
+		t.Fatalf("normalize left date_format = %q, want %q", got, StatusBarDateFormatAuto)
+	}
+
+	var iso Config
+	if err := yaml.Unmarshal([]byte("status_bar:\n  date_format: iso\n"), &iso); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	iso.normalize()
+	if got := iso.StatusBar.DateFormat; got != StatusBarDateFormatISO {
+		t.Fatalf("date_format = %q, want a valid key to survive as %q", got, StatusBarDateFormatISO)
+	}
+}
+
+func TestStatusBarDateFormatRoundTrip(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StatusBar.DateFormat = StatusBarDateFormatUS
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), "date_format: us") {
+		t.Fatalf("marshalled config should carry date_format: us, got:\n%s", data)
+	}
+	var back Config
+	if err := yaml.Unmarshal(data, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	back.normalize()
+	if got := back.StatusBar.DateFormat; got != StatusBarDateFormatUS {
+		t.Fatalf("date_format = %q after the round trip, want %q", got, StatusBarDateFormatUS)
+	}
+}
+
+// TestStatusBarDateLayout pins the key-to-layout table from the Revision 2.1
+// design. "auto" (and, defensively, anything unknown — normalize() rewrites
+// those to auto before this is ever consulted) returns "", which sends the bar
+// down the pre-existing DateFormats[0] path.
+func TestStatusBarDateLayout(t *testing.T) {
+	sample := time.Date(2026, time.August, 18, 16, 40, 0, 0, time.Local)
+	tests := []struct {
+		key        string
+		wantLayout string
+		wantSample string
+	}{
+		{StatusBarDateFormatISO, "2006-01-02 15:04", "2026-08-18 16:40"},
+		{StatusBarDateFormatUS, "01/02/2006 3:04 PM", "08/18/2026 4:40 PM"},
+		{StatusBarDateFormatShort, "01-02 15:04", "08-18 16:40"},
+		{StatusBarDateFormatAuto, "", ""},
+		{"bogus", "", ""},
+	}
+	for _, tc := range tests {
+		got := StatusBarDateLayout(tc.key)
+		if got != tc.wantLayout {
+			t.Fatalf("StatusBarDateLayout(%q) = %q, want %q", tc.key, got, tc.wantLayout)
+		}
+		if tc.wantSample != "" {
+			if rendered := sample.Format(got); rendered != tc.wantSample {
+				t.Fatalf("layout %q renders %q, want the design table's %q", got, rendered, tc.wantSample)
+			}
+		}
+	}
+}
+
+// The StatusBarField* constants and statusBarFieldOrder are two parallel lists
+// that must stay in sync: NormalizeStatusBarFields keeps only keys present in
+// statusBarFieldOrder, so a constant missing from it is silently stripped from
+// every user's config rather than reported. This pins the invariant.
+//
+// Caveat: adding an eighth constant still requires adding it to knownFields
+// below. That is weaker than a compile-time guarantee, but it turns a silent
+// config-data-loss bug into a loud failure for anyone who updates one list and
+// not the other.
+func TestStatusBarFieldOrderCoversEveryFieldConstant(t *testing.T) {
+	knownFields := []string{
+		StatusBarFieldSize,
+		StatusBarFieldDate,
+		StatusBarFieldPerms,
+		StatusBarFieldOwner,
+		StatusBarFieldFree,
+	}
+
+	// Two constants sharing a value would satisfy the checks below while still
+	// making one of them unreachable.
+	seen := make(map[string]bool, len(knownFields))
+	for _, field := range knownFields {
+		if seen[field] {
+			t.Fatalf("two StatusBarField* constants share the value %q", field)
+		}
+		seen[field] = true
+	}
+
+	// Assert the consequence, not just the data: a constant absent from
+	// statusBarFieldOrder makes NormalizeStatusBarFields discard it and fall
+	// back to the defaults.
+	for _, field := range knownFields {
+		got := NormalizeStatusBarFields([]string{field})
+		if !slices.Equal(got, []string{field}) {
+			t.Fatalf("NormalizeStatusBarFields(%q) = %v, want %v; the constant is probably missing from statusBarFieldOrder, so it would be silently dropped from user configs", field, got, []string{field})
+		}
+	}
+
+	if len(statusBarFieldOrder) != len(knownFields) {
+		t.Fatalf("statusBarFieldOrder has %d entries but there are %d field constants: %v vs %v", len(statusBarFieldOrder), len(knownFields), statusBarFieldOrder, knownFields)
+	}
 }

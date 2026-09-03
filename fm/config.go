@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -55,6 +56,80 @@ const (
 	defaultTabFixedWidthDp = 118
 	defaultTabMaxWidthDp   = 168
 )
+
+// Two retired keys are deliberately absent, and both migrate the same way:
+// they became unknown keys, and NormalizeStatusBarFields drops unknown keys
+// from old configs on load.
+//
+//   - "selection" (Revision 1's marked-selection field): the marked-mode
+//     summary now renders whenever rows are marked, not via a field.
+//   - "items" (retired by Revision 2.1): the item count was never a per-file
+//     attribute, and the marked mode already reports counts.
+const (
+	StatusBarFieldSize  = "size"
+	StatusBarFieldDate  = "date"
+	StatusBarFieldPerms = "perms"
+	StatusBarFieldOwner = "owner"
+	StatusBarFieldFree  = "free"
+)
+
+// Status bar field keys, in canonical display order. The order of this slice
+// is the order fields render in; NormalizeStatusBarFields sorts into it.
+// Every StatusBarField* constant above must appear here, or
+// NormalizeStatusBarFields will silently drop it; a guard test enforces this.
+var statusBarFieldOrder = []string{
+	StatusBarFieldSize,
+	StatusBarFieldDate,
+	StatusBarFieldPerms,
+	StatusBarFieldOwner,
+	StatusBarFieldFree,
+}
+
+func defaultStatusBarFields() []string {
+	return []string{StatusBarFieldSize, StatusBarFieldDate, StatusBarFieldFree}
+}
+
+// status_bar.date_format keys (Revision 2.1): the bar's own date layout,
+// independent of the Full-mode column date builder.
+const (
+	// StatusBarDateFormatAuto follows DateFormats[0] through the column date
+	// path — the pre-existing behaviour, so nobody's bar changes on upgrade.
+	StatusBarDateFormatAuto  = "auto"
+	StatusBarDateFormatISO   = "iso"
+	StatusBarDateFormatUS    = "us"
+	StatusBarDateFormatShort = "short"
+)
+
+// NormalizeStatusBarDateFormat maps anything that is not a known
+// status_bar.date_format key to "auto", matching how columns.permission_format
+// treats unknown values.
+func NormalizeStatusBarDateFormat(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case StatusBarDateFormatISO:
+		return StatusBarDateFormatISO
+	case StatusBarDateFormatUS:
+		return StatusBarDateFormatUS
+	case StatusBarDateFormatShort:
+		return StatusBarDateFormatShort
+	}
+	return StatusBarDateFormatAuto
+}
+
+// StatusBarDateLayout returns the Go time layout for a status_bar.date_format
+// key, or "" for "auto" (and, defensively, for anything unknown — normalize()
+// rewrites those to auto before this is consulted). An empty layout tells the
+// bar to follow DateFormats[0] via the pane's own formatDate path instead.
+func StatusBarDateLayout(key string) string {
+	switch key {
+	case StatusBarDateFormatISO:
+		return "2006-01-02 15:04"
+	case StatusBarDateFormatUS:
+		return "01/02/2006 3:04 PM"
+	case StatusBarDateFormatShort:
+		return "01-02 15:04"
+	}
+	return ""
+}
 
 const (
 	ViewerFileEncodingAuto    = "auto"
@@ -159,6 +234,72 @@ func (c *ColumnWidths) UnmarshalYAML(node *yaml.Node) error {
 
 	*c = out
 	return nil
+}
+
+type StatusBarConfig struct {
+	Enabled    bool     `yaml:"enabled"`
+	HideInFull bool     `yaml:"hide_in_full"`
+	Fields     []string `yaml:"fields"`
+	DateFormat string   `yaml:"date_format"`
+}
+
+func defaultStatusBarConfig() StatusBarConfig {
+	return StatusBarConfig{
+		Enabled:    true,
+		HideInFull: false,
+		Fields:     defaultStatusBarFields(),
+		DateFormat: StatusBarDateFormatAuto,
+	}
+}
+
+func (s *StatusBarConfig) UnmarshalYAML(node *yaml.Node) error {
+	var raw struct {
+		Enabled    *bool    `yaml:"enabled"`
+		HideInFull bool     `yaml:"hide_in_full"`
+		Fields     []string `yaml:"fields"`
+		DateFormat string   `yaml:"date_format"`
+	}
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+
+	out := defaultStatusBarConfig()
+	if raw.Enabled != nil {
+		out.Enabled = *raw.Enabled
+	}
+	out.HideInFull = raw.HideInFull
+	if len(raw.Fields) > 0 {
+		out.Fields = NormalizeStatusBarFields(raw.Fields)
+	}
+	// An absent key normalises to the "auto" default, so no presence check is
+	// needed the way Fields needs one.
+	out.DateFormat = NormalizeStatusBarDateFormat(raw.DateFormat)
+
+	*s = out
+	return nil
+}
+
+// NormalizeStatusBarFields drops unknown keys, removes duplicates and sorts the
+// result into canonical display order, so a hand-edited config cannot produce an
+// unexpected field arrangement. An empty result falls back to the defaults.
+func NormalizeStatusBarFields(raw []string) []string {
+	seen := make(map[string]bool, len(raw))
+	for _, field := range raw {
+		key := strings.ToLower(strings.TrimSpace(field))
+		if slices.Contains(statusBarFieldOrder, key) {
+			seen[key] = true
+		}
+	}
+	if len(seen) == 0 {
+		return defaultStatusBarFields()
+	}
+	out := make([]string, 0, len(seen))
+	for _, field := range statusBarFieldOrder {
+		if seen[field] {
+			out = append(out, field)
+		}
+	}
+	return out
 }
 
 type SortConfig struct {
@@ -677,6 +818,7 @@ type Config struct {
 	FavoriteLocations []string             `yaml:"favorite_locations"`
 	NameCompact       NameCompact          `yaml:"name_compact"`
 	Columns           ColumnWidths         `yaml:"columns"`
+	StatusBar         StatusBarConfig      `yaml:"status_bar"`
 	Sort              SortConfig           `yaml:"sort"`
 	Terminal          TerminalConfig       `yaml:"terminal"`
 	Tabs              TabsConfig           `yaml:"tabs"`
@@ -699,6 +841,7 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 		FavoriteLocations []string             `yaml:"favorite_locations"`
 		NameCompact       NameCompact          `yaml:"name_compact"`
 		Columns           *ColumnWidths        `yaml:"columns"`
+		StatusBar         *StatusBarConfig     `yaml:"status_bar"`
 		Sort              SortConfig           `yaml:"sort"`
 		Terminal          TerminalConfig       `yaml:"terminal"`
 		Tabs              TabsConfig           `yaml:"tabs"`
@@ -745,11 +888,16 @@ func (c *Config) UnmarshalYAML(node *yaml.Node) error {
 	if raw.Columns != nil {
 		columns = *raw.Columns
 	}
+	statusBar := defaultStatusBarConfig()
+	if raw.StatusBar != nil {
+		statusBar = *raw.StatusBar
+	}
 	*c = Config{
 		DateFormats:       raw.DateFormats,
 		FavoriteLocations: raw.FavoriteLocations,
 		NameCompact:       raw.NameCompact,
 		Columns:           columns,
+		StatusBar:         statusBar,
 		Sort:              raw.Sort,
 		Terminal:          raw.Terminal,
 		Tabs:              raw.Tabs,
@@ -780,7 +928,8 @@ func DefaultConfig() *Config {
 			KeepStartChars: defaultNameKeepStartChars,
 			Marker:         defaultNameCompactMarker,
 		},
-		Columns: defaultColumnWidths(),
+		Columns:   defaultColumnWidths(),
+		StatusBar: defaultStatusBarConfig(),
 		Sort: SortConfig{
 			DefaultKey:       "name",
 			Descending:       false,
@@ -1134,6 +1283,9 @@ func (c *Config) normalize() {
 	default:
 		c.Columns.PermissionFormat = "auto"
 	}
+
+	c.StatusBar.Fields = NormalizeStatusBarFields(c.StatusBar.Fields)
+	c.StatusBar.DateFormat = NormalizeStatusBarDateFormat(c.StatusBar.DateFormat)
 
 	c.Sort.DefaultKey = NormalizeSortKey(c.Sort.DefaultKey)
 	c.Sort.PerDir = NormalizeSortPerDir(c.Sort.PerDir, c.Sort)

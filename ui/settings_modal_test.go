@@ -1145,6 +1145,227 @@ func TestSettingsModalLoadsTogglesAndSavesDeleteSafetyOptions(t *testing.T) {
 	}
 }
 
+// newStatusBarSettingsUI opens the settings modal against a throwaway config
+// file. saveSettingsModal writes to ui.configSavePath(), which without the
+// override is the user's real hexone.yaml.
+func newStatusBarSettingsUI(t *testing.T, cfg *fm.Config) (*UI, *settingsModalState) {
+	t.Helper()
+	ui := NewUI(cfg)
+	ui.configPath = filepath.Join(t.TempDir(), "hexone.yaml")
+	ui.openSettingsModal()
+	st := ui.settingsModal
+	if st == nil {
+		t.Fatal("settings modal did not open")
+	}
+	return ui, st
+}
+
+func TestSettingsModalLoadsAndSavesStatusBarSettings(t *testing.T) {
+	cfg := fm.DefaultConfig()
+	cfg.StatusBar.Enabled = false
+	cfg.StatusBar.HideInFull = true
+	cfg.StatusBar.Fields = []string{fm.StatusBarFieldPerms, fm.StatusBarFieldOwner}
+	cfg.StatusBar.DateFormat = fm.StatusBarDateFormatUS
+	ui, st := newStatusBarSettingsUI(t, cfg)
+
+	if st.statusBarEnabledBool.Value {
+		t.Fatal("settings should load the disabled status bar")
+	}
+	if !st.statusBarHideInFullBool.Value {
+		t.Fatal("settings should load hide-in-full")
+	}
+	if st.statusBarDateFormat != fm.StatusBarDateFormatUS {
+		t.Fatalf("settings loaded date format %q, want %q", st.statusBarDateFormat, fm.StatusBarDateFormatUS)
+	}
+	wantChecked := map[filePaneStatusField]bool{
+		filePaneStatusFieldPerms: true,
+		filePaneStatusFieldOwner: true,
+	}
+	for _, field := range allFilePaneStatusFields {
+		if got := st.statusBarFieldBools[field].Value; got != wantChecked[field] {
+			t.Fatalf("field %d checkbox = %t, want %t", field, got, wantChecked[field])
+		}
+	}
+	if got, want := st.statusBarSelectedFields(), cfg.StatusBar.Fields; !slices.Equal(got, want) {
+		t.Fatalf("selected fields = %v, want %v", got, want)
+	}
+
+	// Loading a second time must not accumulate: the previously ticked perms
+	// and owner boxes have to clear when a narrower config comes in.
+	narrower := fm.DefaultConfig()
+	narrower.StatusBar.Fields = []string{fm.StatusBarFieldFree}
+	st.loadFromConfig(narrower)
+	if got, want := st.statusBarSelectedFields(), []string{fm.StatusBarFieldFree}; !slices.Equal(got, want) {
+		t.Fatalf("reload left stale checkboxes: selected fields = %v, want %v", got, want)
+	}
+
+	st.statusBarEnabledBool.Value = true
+	st.statusBarHideInFullBool.Value = false
+	for i := range st.statusBarFieldBools {
+		st.statusBarFieldBools[i].Value = false
+	}
+	st.statusBarFieldBools[filePaneStatusFieldFree].Value = true
+	st.statusBarFieldBools[filePaneStatusFieldSize].Value = true
+	st.statusBarDateFormat = fm.StatusBarDateFormatShort
+
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("saveSettingsModal: %v", err)
+	}
+
+	want := []string{fm.StatusBarFieldSize, fm.StatusBarFieldFree}
+	if got := ui.fmCfg.StatusBar; !got.Enabled || got.HideInFull || !slices.Equal(got.Fields, want) {
+		t.Fatalf("saved status bar = %#v, want enabled with fields %v", got, want)
+	}
+	if got := ui.fmCfg.StatusBar.DateFormat; got != fm.StatusBarDateFormatShort {
+		t.Fatalf("saved date format = %q, want %q", got, fm.StatusBarDateFormatShort)
+	}
+	saved := fm.LoadConfig(ui.configPath)
+	if !saved.StatusBar.Enabled || saved.StatusBar.HideInFull || !slices.Equal(saved.StatusBar.Fields, want) {
+		t.Fatalf("status bar on disk = %#v, want enabled with fields %v", saved.StatusBar, want)
+	}
+	if got := saved.StatusBar.DateFormat; got != fm.StatusBarDateFormatShort {
+		t.Fatalf("date format on disk = %q, want %q", got, fm.StatusBarDateFormatShort)
+	}
+
+	// A stray draft value must save as auto, mirroring the normaliser.
+	st.statusBarDateFormat = "bogus"
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("saveSettingsModal: %v", err)
+	}
+	if got := ui.fmCfg.StatusBar.DateFormat; got != fm.StatusBarDateFormatAuto {
+		t.Fatalf("saved bogus date format as %q, want %q", got, fm.StatusBarDateFormatAuto)
+	}
+}
+
+func TestStatusBarUncheckingEveryFieldDisablesTheBar(t *testing.T) {
+	ui, st := newStatusBarSettingsUI(t, fm.DefaultConfig())
+
+	st.statusBarEnabledBool.Value = true
+	for i := range st.statusBarFieldBools {
+		st.statusBarFieldBools[i].Value = false
+	}
+
+	if got := st.statusBarSelectedFields(); len(got) != 0 {
+		t.Fatalf("selected fields = %v, want none", got)
+	}
+
+	if err := ui.saveSettingsModal(time.Now()); err != nil {
+		t.Fatalf("saveSettingsModal: %v", err)
+	}
+
+	if ui.fmCfg.StatusBar.Enabled {
+		t.Fatalf("unticking every field should disable the bar")
+	}
+	// The field list still normalises to the defaults, so re-enabling the bar
+	// gives a usable configuration rather than an empty strip.
+	if len(ui.fmCfg.StatusBar.Fields) == 0 {
+		t.Fatalf("fields should fall back to the defaults, got none")
+	}
+	// And the reload at the end of the save must show that state honestly:
+	// the enabled box unticked, the default fields ticked again.
+	if st.statusBarEnabledBool.Value {
+		t.Fatal("the reloaded enabled checkbox should be unticked")
+	}
+	if got := st.statusBarSelectedFields(); !slices.Equal(got, ui.fmCfg.StatusBar.Fields) {
+		t.Fatalf("reloaded field checkboxes = %v, want the saved defaults %v", got, ui.fmCfg.StatusBar.Fields)
+	}
+}
+
+// TestStatusBarFieldBoolsCoverEveryField guards the coupling between the
+// filePaneStatusField enum and the fixed-size checkbox array. The array is
+// indexed by the enum, so a seventh field constant would make the load loop
+// panic with an index out of range on the first open of the settings modal.
+//
+// It also pins the key mapping in both directions: a slot holding the wrong key
+// is completely silent — the Perms checkbox would quietly save "owner".
+func TestStatusBarFieldBoolsCoverEveryField(t *testing.T) {
+	var st settingsModalState
+	if len(st.statusBarFieldBools) != len(allFilePaneStatusFields) {
+		t.Fatalf("statusBarFieldBools has %d slots but there are %d field constants; the load loop indexes this array by the enum", len(st.statusBarFieldBools), len(allFilePaneStatusFields))
+	}
+	if len(statusBarFieldConfigKeys) != len(st.statusBarFieldBools) {
+		t.Fatalf("statusBarFieldConfigKeys has %d entries, statusBarFieldBools has %d", len(statusBarFieldConfigKeys), len(st.statusBarFieldBools))
+	}
+
+	for _, field := range allFilePaneStatusFields {
+		if int(field) >= len(st.statusBarFieldBools) {
+			t.Fatalf("filePaneStatusField %d is out of range for the %d-slot checkbox array", field, len(st.statusBarFieldBools))
+		}
+		key := statusBarFieldConfigKeys[field]
+		if key == "" {
+			t.Fatalf("filePaneStatusField %d has no config key, so its checkbox could never be saved", field)
+		}
+		if got, ok := filePaneStatusFieldFromConfigKey(key); !ok || got != field {
+			t.Fatalf("statusBarFieldConfigKeys[%d] = %q, which maps back to field %d (ok=%t)", field, key, got, ok)
+		}
+	}
+
+	// Ticking every box must yield exactly the canonical key set, so the helper
+	// cannot drop or duplicate a field.
+	for i := range st.statusBarFieldBools {
+		st.statusBarFieldBools[i].Value = true
+	}
+	got := st.statusBarSelectedFields()
+	if len(got) != len(allFilePaneStatusFields) {
+		t.Fatalf("all boxes ticked = %v (%d keys), want %d", got, len(got), len(allFilePaneStatusFields))
+	}
+	if want := fm.NormalizeStatusBarFields(got); !slices.Equal(got, want) {
+		t.Fatalf("statusBarSelectedFields() = %v, want canonical order %v", got, want)
+	}
+}
+
+func TestStatusBarSelectedFieldsNilReceiver(t *testing.T) {
+	var st *settingsModalState
+	if got := st.statusBarSelectedFields(); got != nil {
+		t.Fatalf("nil receiver = %v, want nil", got)
+	}
+}
+
+// TestSettingsDraftSignatureNoticesStatusBarEdits keeps the status bar in the
+// unsaved-changes signature. Without it the Save button never grows its "(*)"
+// marker for a status bar edit, so the change looks like it was already saved.
+func TestSettingsDraftSignatureNoticesStatusBarEdits(t *testing.T) {
+	_, st := newStatusBarSettingsUI(t, fm.DefaultConfig())
+
+	if st.dirty() {
+		t.Fatal("a freshly loaded modal should not be dirty")
+	}
+
+	st.statusBarEnabledBool.Value = !st.statusBarEnabledBool.Value
+	if !st.dirty() {
+		t.Fatal("toggling the status bar enabled checkbox should mark the draft dirty")
+	}
+	st.statusBarEnabledBool.Value = !st.statusBarEnabledBool.Value
+
+	st.statusBarHideInFullBool.Value = !st.statusBarHideInFullBool.Value
+	if !st.dirty() {
+		t.Fatal("toggling hide-in-full should mark the draft dirty")
+	}
+	st.statusBarHideInFullBool.Value = !st.statusBarHideInFullBool.Value
+
+	for _, field := range allFilePaneStatusFields {
+		before := st.statusBarFieldBools[field].Value
+		st.statusBarFieldBools[field].Value = !before
+		if !st.dirty() {
+			t.Fatalf("toggling field %d should mark the draft dirty", field)
+		}
+		st.statusBarFieldBools[field].Value = before
+		if st.dirty() {
+			t.Fatalf("restoring field %d should clear the dirty flag", field)
+		}
+	}
+
+	beforeFormat := st.statusBarDateFormat
+	st.statusBarDateFormat = fm.StatusBarDateFormatISO
+	if !st.dirty() {
+		t.Fatal("changing the status bar date format should mark the draft dirty")
+	}
+	st.statusBarDateFormat = beforeFormat
+	if st.dirty() {
+		t.Fatal("restoring the status bar date format should clear the dirty flag")
+	}
+}
+
 func TestSettingsModalKeyboardSpaceTogglesTerminalAcceleratedKeys(t *testing.T) {
 	ui := NewUI(fm.DefaultConfig())
 	ui.openSettingsModal()
